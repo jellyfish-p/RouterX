@@ -1,0 +1,115 @@
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Go build outputs
+/bin/
+/build/
+/dist/
+/out/
+/tmp/
+/server
+/server.exe
+/migrate
+/migrate.exe
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace and local tooling
+go.work
+go.work.sum
+.air/
+tmp/
+
+# Test, coverage, and profiling artifacts
+coverage/
+coverage.*
+*.coverprofile
+*.prof
+*.pprof
+cpu.out
+mem.out
+junit.xml
+test-results/
+reports/
+
+# Frontend dependencies and package-manager caches
+**/node_modules/
+**/.pnp
+**/.pnp.*
+**/.yarn/cache/
+**/.yarn/unplugged/
+**/.yarn/build-state.yml
+**/.yarn/install-state.gz
+**/.pnpm-store/
+**/.npm/
+**/.turbo/
+
+# Frontend build and test outputs
+frontend/**/dist/
+frontend/**/build/
+frontend/**/.next/
+frontend/**/out/
+frontend/**/.nuxt/
+frontend/**/.svelte-kit/
+frontend/**/.vite/
+frontend/**/.vitest/
+frontend/**/.nyc_output/
+frontend/**/coverage/
+frontend/**/playwright-report/
+frontend/**/blob-report/
+
+# Local databases and runtime data
+data/*.db
+data/*.db-*
+data/*.sqlite
+data/*.sqlite3
+data/*.sqlite-*
+data/*.sqlite3-*
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Local caches and temporary files
+.cache/
+.tmp/
+.temp/
+*.tmp
+*.temp
+
+# Kilo local state
+.kilo/agent-manager.json
+.kilo/node_modules/
+.kilo/package.json
+.kilo/package-lock.json
+.kilo/pnpm-lock.yaml
+.kilo/yarn.lock
+.kilo/bun.lock
