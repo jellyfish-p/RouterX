@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,10 @@ func TestP0BackendFlow(t *testing.T) {
 	status := performJSON(r, http.MethodGet, "/v0/setup/status", "", nil)
 	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"initialized":false`) {
 		t.Fatalf("expected uninitialized setup status, got %d %s", status.Code, status.Body.String())
+	}
+	uninitializedV1 := performJSON(r, http.MethodGet, "/v1/models", "Bearer sk-anything", nil)
+	if uninitializedV1.Code != http.StatusServiceUnavailable || strings.Contains(uninitializedV1.Body.String(), `"success"`) {
+		t.Fatalf("expected /v1 uninitialized OpenAI error, got %d %s", uninitializedV1.Code, uninitializedV1.Body.String())
 	}
 
 	initBody := map[string]interface{}{
@@ -66,15 +71,25 @@ func TestP0BackendFlow(t *testing.T) {
 		t.Fatalf("login failed: %d %s", loginResp.Code, loginResp.Body.String())
 	}
 	userJWT := "Bearer " + loginPayload.Data.Token
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "admin").Update("quota", int64(100000)).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	adminList := performJSON(r, http.MethodGet, "/v0/admin/user", userJWT, nil)
 	if adminList.Code != http.StatusOK || !strings.Contains(adminList.Body.String(), `"success":true`) {
 		t.Fatalf("expected admin list success, got %d %s", adminList.Code, adminList.Body.String())
 	}
+	adminLoginRoute := performJSON(r, http.MethodPost, "/v0/admin/login", "", map[string]interface{}{
+		"account":  "admin",
+		"password": "password123",
+	})
+	if adminLoginRoute.Code != http.StatusNotFound {
+		t.Fatalf("admin login route should not exist, got %d %s", adminLoginRoute.Code, adminLoginRoute.Body.String())
+	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
-		"name":         "sdk",
-		"remain_quota": 1000,
+		"name":      "sdk",
+		"unlimited": true,
 	})
 	var tokenPayload struct {
 		Success bool `json:"success"`
@@ -95,6 +110,13 @@ func TestP0BackendFlow(t *testing.T) {
 	}
 	if storedToken.Key == tokenPayload.Data.Key || storedToken.Key != common.SHA256Hex(tokenPayload.Data.Key) {
 		t.Fatalf("api key should be stored as sha256 hash")
+	}
+	quotaEdit := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(storedToken.ID), userJWT, map[string]interface{}{
+		"remain_quota": 1000000,
+		"unlimited":    true,
+	})
+	if quotaEdit.Code != http.StatusForbidden {
+		t.Fatalf("token quota should not be editable through user API, got %d %s", quotaEdit.Code, quotaEdit.Body.String())
 	}
 
 	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", userJWT, map[string]interface{}{
@@ -125,6 +147,153 @@ func TestP0BackendFlow(t *testing.T) {
 	}
 	if strings.Contains(validModels.Body.String(), "upstream-secret") {
 		t.Fatalf("model list leaked upstream secret: %s", validModels.Body.String())
+	}
+	emptyTokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
+		"name": "empty",
+	})
+	var emptyTokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(emptyTokenResp.Body.Bytes(), &emptyTokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if emptyTokenResp.Code != http.StatusOK || emptyTokenPayload.Data.Key == "" {
+		t.Fatalf("expected empty api key response, got %d %s", emptyTokenResp.Code, emptyTokenResp.Body.String())
+	}
+	exhaustedModels := performJSON(r, http.MethodGet, "/v1/models", "Bearer "+emptyTokenPayload.Data.Key, nil)
+	if exhaustedModels.Code != http.StatusTooManyRequests || strings.Contains(exhaustedModels.Body.String(), `"success"`) {
+		t.Fatalf("expected exhausted api key 429 with OpenAI error, got %d %s", exhaustedModels.Code, exhaustedModels.Body.String())
+	}
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "admin").Update("status", common.UserStatusDisabled).Error; err != nil {
+		t.Fatal(err)
+	}
+	disabledUserModels := performJSON(r, http.MethodGet, "/v1/models", "Bearer "+tokenPayload.Data.Key, nil)
+	if disabledUserModels.Code != http.StatusForbidden || strings.Contains(disabledUserModels.Body.String(), `"success"`) {
+		t.Fatalf("expected disabled user api key 403 with OpenAI error, got %d %s", disabledUserModels.Code, disabledUserModels.Body.String())
+	}
+}
+
+func TestAdminPrivilegeBoundaries(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createAdmin := performJSON(r, http.MethodPost, "/v0/admin/admin", rootJWT, map[string]interface{}{
+		"username": "ops",
+		"password": "password123",
+		"role":     common.RoleAdmin,
+	})
+	if createAdmin.Code != http.StatusOK {
+		t.Fatalf("create admin failed: %d %s", createAdmin.Code, createAdmin.Body.String())
+	}
+	createPeerSuper := performJSON(r, http.MethodPost, "/v0/admin/admin", rootJWT, map[string]interface{}{
+		"username": "peer-root",
+		"password": "password123",
+		"role":     common.RoleSuper,
+	})
+	if createPeerSuper.Code == http.StatusOK {
+		t.Fatalf("super admin created same-level super admin: %s", createPeerSuper.Body.String())
+	}
+	opsJWT := loginBearer(t, r, "ops", "password123")
+	var opsUser model.User
+	if err := internal.DB.Where("username = ?", "ops").First(&opsUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	promoteOps := performJSON(r, http.MethodPut, "/v0/admin/admin/"+uintString(opsUser.ID), rootJWT, map[string]interface{}{
+		"role": common.RoleSuper,
+	})
+	if promoteOps.Code == http.StatusOK {
+		t.Fatalf("super admin promoted lower admin to same-level super: %s", promoteOps.Body.String())
+	}
+
+	createUser := performJSON(r, http.MethodPost, "/v0/admin/user", opsJWT, map[string]interface{}{
+		"username": "alice",
+		"password": "password123",
+		"role":     common.RoleUser,
+	})
+	if createUser.Code != http.StatusOK {
+		t.Fatalf("normal admin should create normal user, got %d %s", createUser.Code, createUser.Body.String())
+	}
+
+	createAdminThroughUser := performJSON(r, http.MethodPost, "/v0/admin/user", opsJWT, map[string]interface{}{
+		"username": "mallory",
+		"password": "password123",
+		"role":     common.RoleAdmin,
+	})
+	if createAdminThroughUser.Code != http.StatusForbidden {
+		t.Fatalf("user management must reject admin creation, got %d %s", createAdminThroughUser.Code, createAdminThroughUser.Body.String())
+	}
+	createAdminByAdmin := performJSON(r, http.MethodPost, "/v0/admin/admin", opsJWT, map[string]interface{}{
+		"username": "mallory-admin",
+		"password": "password123",
+		"role":     common.RoleAdmin,
+	})
+	if createAdminByAdmin.Code != http.StatusForbidden {
+		t.Fatalf("normal admin must not create admin through admin management, got %d %s", createAdminByAdmin.Code, createAdminByAdmin.Body.String())
+	}
+
+	adminMgmtByAdmin := performJSON(r, http.MethodGet, "/v0/admin/admin", opsJWT, nil)
+	if adminMgmtByAdmin.Code != http.StatusOK || !strings.Contains(adminMgmtByAdmin.Body.String(), `"username":"root"`) || !strings.Contains(adminMgmtByAdmin.Body.String(), `"username":"ops"`) {
+		t.Fatalf("normal admin should view admin list, got %d %s", adminMgmtByAdmin.Code, adminMgmtByAdmin.Body.String())
+	}
+	settingByAdmin := performJSON(r, http.MethodGet, "/v0/admin/setting", opsJWT, nil)
+	if settingByAdmin.Code != http.StatusForbidden {
+		t.Fatalf("normal admin must not access settings, got %d %s", settingByAdmin.Code, settingByAdmin.Body.String())
+	}
+	settingBySuper := performJSON(r, http.MethodGet, "/v0/admin/setting", rootJWT, nil)
+	if settingBySuper.Code != http.StatusOK {
+		t.Fatalf("super admin should access settings, got %d %s", settingBySuper.Code, settingBySuper.Body.String())
+	}
+	if strings.Contains(settingBySuper.Body.String(), "test-jwt-secret") {
+		t.Fatalf("settings response leaked jwt secret: %s", settingBySuper.Body.String())
+	}
+
+	adminRoleList := performJSON(r, http.MethodGet, "/v0/admin/user?role=2", opsJWT, nil)
+	if adminRoleList.Code != http.StatusOK || !strings.Contains(adminRoleList.Body.String(), `"username":"root"`) || strings.Contains(adminRoleList.Body.String(), `"username":"ops"`) || strings.Contains(adminRoleList.Body.String(), `"username":"alice"`) {
+		t.Fatalf("normal admin should view super admins through user list, got %d %s", adminRoleList.Code, adminRoleList.Body.String())
+	}
+	allAccountList := performJSON(r, http.MethodGet, "/v0/admin/user", opsJWT, nil)
+	if allAccountList.Code != http.StatusOK || !strings.Contains(allAccountList.Body.String(), `"username":"root"`) || !strings.Contains(allAccountList.Body.String(), `"username":"alice"`) {
+		t.Fatalf("normal admin should view all users and admins, got %d %s", allAccountList.Code, allAccountList.Body.String())
+	}
+
+	var rootUser model.User
+	if err := internal.DB.Where("username = ?", "root").First(&rootUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	disableRoot := performJSON(r, http.MethodPut, "/v0/admin/user/"+uintString(rootUser.ID), opsJWT, map[string]interface{}{
+		"status": common.UserStatusDisabled,
+	})
+	if disableRoot.Code == http.StatusOK {
+		t.Fatalf("normal admin disabled super admin through user management: %s", disableRoot.Body.String())
+	}
+	deleteRoot := performJSON(r, http.MethodDelete, "/v0/admin/user/"+uintString(rootUser.ID), opsJWT, nil)
+	if deleteRoot.Code == http.StatusOK {
+		t.Fatalf("normal admin deleted super admin through user management: %s", deleteRoot.Body.String())
+	}
+
+	selfDemote := performJSON(r, http.MethodPut, "/v0/admin/admin/"+uintString(rootUser.ID), rootJWT, map[string]interface{}{
+		"role": common.RoleAdmin,
+	})
+	if selfDemote.Code == http.StatusOK {
+		t.Fatalf("super admin demoted self: %s", selfDemote.Body.String())
+	}
+	selfDisable := performJSON(r, http.MethodPut, "/v0/admin/admin/"+uintString(rootUser.ID), rootJWT, map[string]interface{}{
+		"status": common.UserStatusDisabled,
+	})
+	if selfDisable.Code == http.StatusOK {
+		t.Fatalf("super admin disabled self: %s", selfDisable.Body.String())
 	}
 }
 
@@ -189,4 +358,29 @@ func performJSON(r http.Handler, method, path, bearer string, body interface{}) 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
+}
+
+func loginBearer(t *testing.T, r http.Handler, account, password string) string {
+	t.Helper()
+	resp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  account,
+		"password": password,
+	})
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != http.StatusOK || !payload.Success || payload.Data.Token == "" {
+		t.Fatalf("login failed for %s: %d %s", account, resp.Code, resp.Body.String())
+	}
+	return "Bearer " + payload.Data.Token
+}
+
+func uintString(id uint) string {
+	return strconv.FormatUint(uint64(id), 10)
 }

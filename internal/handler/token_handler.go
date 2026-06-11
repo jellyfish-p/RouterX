@@ -88,11 +88,9 @@ func (h *TokenHandler) Update(c *gin.Context) {
 	if req.Status != nil {
 		updates["status"] = *req.Status
 	}
-	if req.RemainQuota != nil {
-		updates["remain_quota"] = *req.RemainQuota
-	}
-	if req.Unlimited != nil {
-		updates["unlimited"] = *req.Unlimited
+	if req.RemainQuota != nil || req.Unlimited != nil {
+		common.FailWithStatus(c, 403, "API Key 额度不能通过编辑接口修改")
+		return
 	}
 	if req.ExpiredAt != nil {
 		if *req.ExpiredAt <= 0 {

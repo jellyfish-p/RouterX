@@ -98,22 +98,6 @@ func (s *AuthService) Register(username, password, displayName, email string) (*
 	return user, err
 }
 
-// AdminLogin 管理员登录。
-// 1. 查 user_identities 并关联 users: role>=1, status=1
-// 2. 验证密码
-// 3. 生成 JWT / Session Cookie
-// 4. 返回用户信息 (不返密码)
-func (s *AuthService) AdminLogin(username, password string) (*model.User, string, error) {
-	user, token, err := s.UserLogin(username, password)
-	if err != nil {
-		return nil, "", err
-	}
-	if user.Role < common.RoleAdmin {
-		return nil, "", errors.New("admin permission required")
-	}
-	return user, token, nil
-}
-
 // UserLogin 用户登录 (返回 JWT)。
 // 支持通过已启用的 username/email/phone 本地身份匹配密码。
 func (s *AuthService) UserLogin(username, password string) (*model.User, string, error) {
@@ -176,16 +160,6 @@ func (s *AuthService) ChangePassword(userID uint, oldPassword, newPassword strin
 		return err
 	}
 	return internal.DB.Model(&identity).Update("password_hash", hash).Error
-}
-
-// Logout 管理员登出 (清除 Session)。
-func (s *AuthService) Logout(sessionID string) error {
-	return nil
-}
-
-// ValidateAdminSession 验证 Admin 会话有效性。
-func (s *AuthService) ValidateAdminSession(sessionID string) (*model.User, error) {
-	return nil, errors.New("session validation is not used; use User JWT")
 }
 
 func GetJWTSecret() (string, error) {

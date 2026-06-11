@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -58,12 +60,21 @@ func authenticateAPIKey(c *gin.Context) bool {
 		ok = key != ""
 	}
 	if !ok {
-		common.FailWithStatus(c, 401, "未提供有效的 API Key")
+		writeOpenAIAuthError(c, http.StatusUnauthorized, "invalid api key", "authentication_error", "invalid_api_key")
 		return false
 	}
-	token, err := service.NewTokenService().ValidateAndGetToken(key)
+	tokenSvc := service.NewTokenService()
+	token, err := tokenSvc.ValidateAndGetToken(key)
 	if err != nil {
-		common.FailWithStatus(c, 401, "未提供有效的 API Key")
+		if errors.Is(err, service.ErrAPIUserDisabled) {
+			writeOpenAIAuthError(c, http.StatusForbidden, "user is disabled", "permission_error", "user_disabled")
+			return false
+		}
+		writeOpenAIAuthError(c, http.StatusUnauthorized, "invalid api key", "authentication_error", "invalid_api_key")
+		return false
+	}
+	if !tokenSvc.HasAvailableQuota(token) {
+		writeOpenAIAuthError(c, http.StatusTooManyRequests, "insufficient quota", "insufficient_quota", "insufficient_quota")
 		return false
 	}
 	c.Set("current_token", token)
@@ -73,6 +84,10 @@ func authenticateAPIKey(c *gin.Context) bool {
 		c.Set("user", token.User)
 	}
 	return true
+}
+
+func writeOpenAIAuthError(c *gin.Context, status int, message, typ, code string) {
+	c.JSON(status, common.OpenAIError(message, typ, code))
 }
 
 func CurrentAPIToken(c *gin.Context) (*model.Token, bool) {

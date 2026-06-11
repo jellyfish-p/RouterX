@@ -2,9 +2,11 @@ package main
 
 import (
 	"io"
+	"log"
 	"os"
 
 	"ariga.io/atlas-provider-gorm/gormschema"
+	"routerx/internal/migrate"
 	"routerx/internal/model"
 )
 
@@ -15,6 +17,7 @@ import (
 // 用法:
 //
 //	go run cmd/migrate/main.go > schema.hcl
+//	go run cmd/migrate/main.go up
 //	atlas migrate diff <name> --dev-url "sqlite://file?mode=memory" --to file://schema.hcl --dir file://migrations/<dialect>
 //
 // 示例 (PostgreSQL):
@@ -22,6 +25,14 @@ import (
 //	go run cmd/migrate/main.go > schema.hcl
 //	atlas migrate diff add_channel_weight --dev-url "sqlite://file?mode=memory&_fk=1" --to file://schema.hcl --dir file://migrations/postgres
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "up" {
+		if err := migrate.Run(os.Getenv("SQL_DSN")); err != nil {
+			log.Fatalf("migration failed: %v", err)
+		}
+		log.Println("migration completed")
+		return
+	}
+
 	stmts, err := gormschema.New("postgres").Load(
 		&model.User{},
 		&model.UserIdentity{},

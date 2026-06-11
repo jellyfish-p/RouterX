@@ -17,15 +17,24 @@ func NewTokenService() *TokenService {
 	return &TokenService{}
 }
 
+var (
+	ErrInvalidAPIKey          = errors.New("invalid api key")
+	ErrAPIKeyDisabled         = errors.New("api key is disabled")
+	ErrAPIKeyExpired          = errors.New("api key is expired")
+	ErrAPIUserDisabled        = errors.New("user is disabled")
+	ErrInsufficientUserQuota  = errors.New("insufficient user quota")
+	ErrInsufficientTokenQuota = errors.New("insufficient token quota")
+)
+
 // ValidateAndGetToken 验证 API Key 有效性：
 // 1. 查 tokens 表匹配 key
 // 2. 校验 status=1 且未过期
-// 3. 校验 remain_quota > 0 或 unlimited=true
+// 3. 校验所属用户状态
 // 4. 返回关联 User 信息
 func (s *TokenService) ValidateAndGetToken(key string) (*model.Token, error) {
 	key = strings.TrimSpace(key)
 	if !strings.HasPrefix(key, "sk-") {
-		return nil, errors.New("invalid api key")
+		return nil, ErrInvalidAPIKey
 	}
 
 	hash := common.SHA256Hex(key)
@@ -40,16 +49,16 @@ func (s *TokenService) ValidateAndGetToken(key string) (*model.Token, error) {
 		}
 	}
 	if err != nil {
-		return nil, errors.New("invalid api key")
+		return nil, ErrInvalidAPIKey
 	}
 	if token.Status != common.TokenStatusEnabled {
-		return nil, errors.New("api key is disabled")
+		return nil, ErrAPIKeyDisabled
 	}
 	if token.ExpiredAt != nil && token.ExpiredAt.Before(time.Now()) {
-		return nil, errors.New("api key is expired")
+		return nil, ErrAPIKeyExpired
 	}
 	if token.User == nil || token.User.Status != common.UserStatusEnabled {
-		return nil, errors.New("user is disabled")
+		return nil, ErrAPIUserDisabled
 	}
 	return &token, nil
 }
@@ -86,48 +95,75 @@ func (s *TokenService) Create(userID uint, name string, remainQuota int64, unlim
 	}
 	if unlimited {
 		remainQuota = common.QuotaUnlimited
+	} else if remainQuota < 0 {
+		return nil, errors.New("token quota cannot be negative")
 	}
 	var expires *time.Time
 	if expiredAt != nil && *expiredAt > 0 {
 		t := time.Unix(*expiredAt, 0)
 		expires = &t
 	}
-	var user model.User
-	if err := internal.DB.First(&user, userID).Error; err != nil {
+
+	var created *model.Token
+	var plainKey string
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		var user model.User
+		if err := tx.First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.Status != common.UserStatusEnabled {
+			return ErrAPIUserDisabled
+		}
+		if !unlimited && remainQuota > 0 {
+			res := tx.Model(&model.User{}).
+				Where("id = ? AND status = ? AND quota >= ?", userID, common.UserStatusEnabled, remainQuota).
+				Update("quota", gorm.Expr("quota - ?", remainQuota))
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return ErrInsufficientUserQuota
+			}
+		}
+
+		for i := 0; i < 3; i++ {
+			plain, err := common.GenerateTokenKey()
+			if err != nil {
+				return err
+			}
+			token := &model.Token{
+				UserID:      userID,
+				Name:        name,
+				Key:         common.SHA256Hex(plain),
+				Status:      common.TokenStatusEnabled,
+				ExpiredAt:   expires,
+				RemainQuota: remainQuota,
+				Unlimited:   unlimited,
+			}
+			if err := tx.Create(token).Error; err != nil {
+				if i < 2 {
+					continue
+				}
+				return err
+			}
+			plainKey = plain
+			created = token
+			return nil
+		}
+		return errors.New("failed to generate api key")
+	})
+	if err != nil {
 		return nil, err
 	}
-
-	for i := 0; i < 3; i++ {
-		plain, err := common.GenerateTokenKey()
-		if err != nil {
-			return nil, err
-		}
-		token := &model.Token{
-			UserID:      userID,
-			Name:        name,
-			Key:         common.SHA256Hex(plain),
-			Status:      common.TokenStatusEnabled,
-			ExpiredAt:   expires,
-			RemainQuota: remainQuota,
-			Unlimited:   unlimited,
-		}
-		if err := internal.DB.Create(token).Error; err != nil {
-			if i < 2 {
-				continue
-			}
-			return nil, err
-		}
-		token.Key = plain
-		return token, nil
-	}
-	return nil, errors.New("failed to generate api key")
+	created.Key = plainKey
+	return created, nil
 }
 
 // Update 编辑 Token。
 func (s *TokenService) Update(id uint, updates map[string]interface{}) error {
-	allowed := filterUpdates(updates, "name", "status", "remain_quota", "unlimited", "expired_at")
-	if unlimited, ok := allowed["unlimited"].(bool); ok && unlimited {
-		allowed["remain_quota"] = common.QuotaUnlimited
+	allowed := filterUpdates(updates, "name", "status", "expired_at")
+	if status, ok := allowed["status"].(int); ok && status != common.TokenStatusDisabled && status != common.TokenStatusEnabled {
+		return errors.New("invalid token status")
 	}
 	if len(allowed) == 0 {
 		return nil
@@ -159,7 +195,7 @@ func (s *TokenService) DeductQuota(tokenID uint, quota int64) error {
 				return res.Error
 			}
 			if res.RowsAffected == 0 {
-				return errors.New("insufficient user quota")
+				return ErrInsufficientUserQuota
 			}
 			return nil
 		}
@@ -170,7 +206,7 @@ func (s *TokenService) DeductQuota(tokenID uint, quota int64) error {
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return errors.New("insufficient token quota")
+			return ErrInsufficientTokenQuota
 		}
 		return nil
 	})

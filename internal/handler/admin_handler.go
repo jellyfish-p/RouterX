@@ -19,9 +19,18 @@ func NewAdminHandler(svc *service.AdminService) *AdminHandler {
 
 // GET /v0/admin/admin — 管理员列表
 func (h *AdminHandler) List(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	if operator.Role < common.RoleAdmin {
+		common.FailWithStatus(c, 403, "需要管理员权限")
+		return
+	}
 	page := queryInt(c, "page", 1)
 	pageSize := queryInt(c, "page_size", 20)
-	admins, total, err := h.svc.ListAdmins(page, pageSize)
+	admins, total, err := h.svc.ListAdmins(operator.Role, page, pageSize)
 	if err != nil {
 		common.FailWithStatus(c, 500, "查询管理员失败")
 		return
@@ -83,7 +92,7 @@ func (h *AdminHandler) Update(c *gin.Context) {
 	if req.Status != nil {
 		updates["status"] = *req.Status
 	}
-	if err := h.svc.UpdateAdmin(operator.Role, id, updates); err != nil {
+	if err := h.svc.UpdateAdmin(operator.ID, operator.Role, id, updates); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
@@ -101,7 +110,7 @@ func (h *AdminHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteAdmin(operator.ID, id); err != nil {
+	if err := h.svc.DeleteAdmin(operator.ID, operator.Role, id); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}

@@ -19,9 +19,14 @@ func NewUserHandler(svc *service.UserService) *UserHandler {
 
 // GET /v0/admin/user — 用户列表
 func (h *UserHandler) List(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
 	var req dto.UserListRequest
 	_ = c.ShouldBindQuery(&req)
-	users, total, err := h.svc.List(req.Page, req.PageSize, req.Keyword, req.Role, req.Status, req.GroupID)
+	users, total, err := h.svc.List(operator.Role, req.Page, req.PageSize, req.Keyword, req.Role, req.Status, req.GroupID)
 	if err != nil {
 		common.FailWithStatus(c, 500, "查询用户失败")
 		return
@@ -36,12 +41,25 @@ func (h *UserHandler) List(c *gin.Context) {
 
 // POST /v0/admin/user — 创建用户
 func (h *UserHandler) Create(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	if operator.Role < common.RoleAdmin {
+		common.FailWithStatus(c, 403, "需要管理员权限")
+		return
+	}
 	var req dto.CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.FailWithStatus(c, 400, "创建用户参数无效")
 		return
 	}
-	user, err := h.svc.Create(req.Username, req.Password, req.DisplayName, req.Email, req.Role, req.Quota, req.GroupID)
+	if req.Role != common.RoleUser {
+		common.FailWithStatus(c, 403, "用户管理接口只能创建普通用户")
+		return
+	}
+	user, err := h.svc.Create(operator.Role, req.Username, req.Password, req.DisplayName, req.Email, req.Role, req.Quota, req.GroupID)
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
@@ -51,6 +69,11 @@ func (h *UserHandler) Create(c *gin.Context) {
 
 // PUT /v0/admin/user/:id — 编辑用户
 func (h *UserHandler) Update(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
 	id, ok := parseUintParam(c, "id")
 	if !ok {
 		return
@@ -68,7 +91,8 @@ func (h *UserHandler) Update(c *gin.Context) {
 		updates["email"] = req.Email
 	}
 	if req.Role != nil {
-		updates["role"] = *req.Role
+		common.FailWithStatus(c, 403, "用户管理接口不能变更角色")
+		return
 	}
 	if req.Status != nil {
 		updates["status"] = *req.Status
@@ -76,7 +100,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 	if req.GroupID != nil {
 		updates["group_id"] = *req.GroupID
 	}
-	if err := h.svc.Update(id, updates); err != nil {
+	if err := h.svc.UpdateByAdmin(operator.ID, operator.Role, id, updates); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
@@ -85,11 +109,16 @@ func (h *UserHandler) Update(c *gin.Context) {
 
 // DELETE /v0/admin/user/:id — 删除用户
 func (h *UserHandler) Delete(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
 	id, ok := parseUintParam(c, "id")
 	if !ok {
 		return
 	}
-	if err := h.svc.Delete(id); err != nil {
+	if err := h.svc.DeleteByAdmin(operator.ID, operator.Role, id); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
@@ -98,6 +127,11 @@ func (h *UserHandler) Delete(c *gin.Context) {
 
 // PATCH /v0/admin/user/:id/quota — 调整用户余额
 func (h *UserHandler) UpdateQuota(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
 	id, ok := parseUintParam(c, "id")
 	if !ok {
 		return
@@ -107,7 +141,7 @@ func (h *UserHandler) UpdateQuota(c *gin.Context) {
 		common.FailWithStatus(c, 400, "额度参数无效")
 		return
 	}
-	if err := h.svc.UpdateQuota(id, req.Quota); err != nil {
+	if err := h.svc.UpdateQuotaByAdmin(operator.ID, operator.Role, id, req.Quota); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}

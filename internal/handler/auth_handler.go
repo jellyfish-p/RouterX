@@ -16,29 +16,6 @@ func NewAuthHandler(svc *service.AuthService) *AuthHandler {
 	return &AuthHandler{svc: svc}
 }
 
-// POST /v0/admin/login — 管理员登录
-func (h *AuthHandler) AdminLogin(c *gin.Context) {
-	var req dto.LoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		common.FailWithStatus(c, 400, "登录参数无效")
-		return
-	}
-	account := loginAccount(req)
-	user, token, err := h.svc.AdminLogin(account, req.Password)
-	if err != nil {
-		common.FailWithStatus(c, 401, "账号或凭据错误")
-		return
-	}
-	setJWTCookie(c, token)
-	common.Success(c, dto.LoginResponse{Token: token, User: dto.UserBriefFromModel(user)})
-}
-
-// POST /v0/admin/logout — 管理员登出
-func (h *AuthHandler) AdminLogout(c *gin.Context) {
-	c.SetCookie("jwt_token", "", -1, "/", "", c.Request.TLS != nil, true)
-	common.SuccessMsg(c, "已登出")
-}
-
 // POST /v0/user/register — 用户注册
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req dto.RegisterRequest
