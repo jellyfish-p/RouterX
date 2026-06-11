@@ -16,12 +16,24 @@ func NewSettingHandler(svc *service.SettingService) *SettingHandler {
 
 // GET /v0/admin/setting — 获取所有系统设置
 func (h *SettingHandler) GetAll(c *gin.Context) {
-	// TODO: Phase 4 实现
-	common.Success(c, nil)
+	settings, err := h.svc.GetAll(c.Query("category"))
+	if err != nil {
+		common.FailWithStatus(c, 500, "查询设置失败")
+		return
+	}
+	common.Success(c, settings)
 }
 
 // PUT /v0/admin/setting — 批量更新系统设置
 func (h *SettingHandler) BatchSet(c *gin.Context) {
-	// TODO: Phase 4 实现
+	var req map[string]string
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "设置参数无效")
+		return
+	}
+	if err := h.svc.BatchSet(req); err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
 	common.SuccessMsg(c, "设置已更新")
 }

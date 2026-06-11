@@ -1,16 +1,26 @@
 package service
 
 import (
+	"errors"
 	"os"
+	"strings"
+	"sync"
+	"time"
 
 	"routerx/internal"
+	"routerx/internal/common"
 	"routerx/internal/model"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type SetupService struct {
 	userService    *UserService
 	settingService *SettingService
 }
+
+var setupMu sync.Mutex
 
 func NewSetupService(us *UserService, ss *SettingService) *SetupService {
 	return &SetupService{userService: us, settingService: ss}
@@ -29,43 +39,139 @@ func (s *SetupService) GetInitStatus() (bool, error) {
 // Init 首次初始化：创建超级管理员 + 写入默认系统设置。
 // 仅在系统未初始化时可调用。
 func (s *SetupService) Init(username, password, displayName, email string) (*model.User, error) {
-	// TODO: Phase 1 实现
-	// 1. 检查是否已初始化, 若已初始化则返回错误
-	// 2. 开启事务:
-	//    a. 创建超级管理员用户和本地 UserIdentity (role=2)
-	//    b. 批量写入 settings 表默认值 (jwt.secret, server.port, ...)
-	// 3. 提交事务, 加载 settings 到 Redis 缓存
-	_ = internal.DB
-	return nil, nil
+	setupMu.Lock()
+	defer setupMu.Unlock()
+
+	username = strings.TrimSpace(username)
+	email = strings.TrimSpace(email)
+	if username == "" || password == "" {
+		return nil, errors.New("username and password are required")
+	}
+	if len(password) < 6 {
+		return nil, errors.New("password length must be at least 6")
+	}
+	if displayName == "" {
+		displayName = username
+	}
+
+	var created *model.User
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&model.User{}).Where("role >= ?", common.RoleAdmin).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return gorm.ErrDuplicatedKey
+		}
+
+		var identityCount int64
+		if err := tx.Model(&model.UserIdentity{}).
+			Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodUsername, model.UserIdentityProviderLocal, username).
+			Count(&identityCount).Error; err != nil {
+			return err
+		}
+		if identityCount > 0 {
+			return errors.New("username already exists")
+		}
+
+		passwordHash, err := common.HashPassword(password)
+		if err != nil {
+			return err
+		}
+
+		usernamePtr := username
+		var emailPtr *string
+		if email != "" {
+			emailPtr = &email
+		}
+		user := &model.User{
+			Username:    &usernamePtr,
+			DisplayName: displayName,
+			Email:       emailPtr,
+			Role:        common.RoleSuper,
+			Status:      common.UserStatusEnabled,
+			Quota:       0,
+		}
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		now := time.Now()
+		identity := model.UserIdentity{
+			UserID:       user.ID,
+			Method:       model.UserIdentityMethodUsername,
+			Provider:     model.UserIdentityProviderLocal,
+			Identifier:   username,
+			PasswordHash: passwordHash,
+			VerifiedAt:   &now,
+		}
+		if err := tx.Create(&identity).Error; err != nil {
+			return err
+		}
+
+		for category, values := range buildDefaultSettings() {
+			for key, value := range values {
+				setting := model.Setting{Key: key, Value: value, Category: category}
+				if err := tx.Clauses(clause.OnConflict{
+					Columns:   []clause.Column{{Name: "key"}},
+					DoNothing: true,
+				}).Create(&setting).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		created = user
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return nil, errors.New("system already initialized")
+		}
+		return nil, err
+	}
+	if s.settingService != nil {
+		_ = s.settingService.LoadCache()
+	}
+	return created, nil
 }
 
-var defaultSettings = map[string]map[string]string{
-	"server": {
-		"server.port": "3000",
-		"server.mode": "release",
-	},
-	"jwt": {
-		"jwt.secret":             os.Getenv("JWT_SECRET"), // 生产和多实例应通过环境变量指定
-		"jwt.admin_expire_hours": "24",
-		"jwt.user_expire_hours":  "168",
-	},
-	"rate_limit": {
-		"rate_limit.enabled":           "true",
-		"rate_limit.global_per_min":    "1000",
-		"rate_limit.per_token_per_min": "60",
-		"rate_limit.per_ip_per_min":    "30",
-	},
-	"relay": {
-		"relay.timeout":             "120",
-		"relay.retry_count":         "2",
-		"relay.error_auto_ban":      "true",
-		"relay.error_ban_threshold": "10",
-	},
-	"cors": {
-		"cors.allowed_origins":   `["http://localhost:5173","http://localhost:5174"]`,
-		"cors.allow_credentials": "true",
-	},
-	"billing": {
-		"billing.default_ratio": "1.0",
-	},
+func buildDefaultSettings() map[string]map[string]string {
+	jwtSecret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
+	if jwtSecret == "" {
+		jwtSecret, _ = common.GenerateRandomString(32)
+	}
+	return map[string]map[string]string{
+		"server": {
+			"server.port": "3000",
+			"server.mode": "release",
+		},
+		"jwt": {
+			"jwt.secret":             jwtSecret,
+			"jwt.admin_expire_hours": "24",
+			"jwt.user_expire_hours":  "168",
+		},
+		"rate_limit": {
+			"rate_limit.enabled":           "true",
+			"rate_limit.global_per_min":    "1000",
+			"rate_limit.per_token_per_min": "60",
+			"rate_limit.per_ip_per_min":    "30",
+		},
+		"relay": {
+			"relay.timeout":             "120",
+			"relay.retry_count":         "0",
+			"relay.error_auto_ban":      "true",
+			"relay.error_ban_threshold": "10",
+			"relay.log_body_max_bytes":  "0",
+		},
+		"cors": {
+			"cors.allowed_origins":   `["http://localhost:5173","http://localhost:5174"]`,
+			"cors.allow_credentials": "true",
+		},
+		"billing": {
+			"billing.default_ratio": "1.0",
+		},
+		"log": {
+			"log.body_max_bytes": "0",
+		},
+	}
 }

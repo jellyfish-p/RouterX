@@ -27,15 +27,17 @@ func main() {
 	userSvc := service.NewUserService()
 	authSvc := service.NewAuthService()
 	channelSvc := service.NewChannelService()
-	_ = service.NewTokenService() // Phase 2: will be injected into token handler
+	tokenSvc := service.NewTokenService()
 	logSvc := service.NewLogService()
 	setupSvc := service.NewSetupService(userSvc, settingSvc)
-	relaySvc := service.NewRelayService(channelSvc)
+	relaySvc := service.NewRelayService(channelSvc, tokenSvc, logSvc, settingSvc)
+	_ = settingSvc.LoadCache()
 
 	// 4. 依赖注入: Handler 层
 	adminH := handler.NewAdminHandler(adminSvc)
 	authH := handler.NewAuthHandler(authSvc)
 	userH := handler.NewUserHandler(userSvc)
+	tokenH := handler.NewTokenHandler(tokenSvc)
 	channelH := handler.NewChannelHandler(channelSvc)
 	relayH := handler.NewRelayHandler(relaySvc)
 	logH := handler.NewLogHandler(logSvc)
@@ -43,7 +45,7 @@ func main() {
 	setupH := handler.NewSetupHandler(setupSvc)
 
 	// 5. 配置路由
-	r := router.SetupRouter(authH, userH, adminH, channelH, relayH, logH, settingH, setupH)
+	r := router.SetupRouter(authH, userH, tokenH, adminH, channelH, relayH, logH, settingH, setupH)
 
 	// 6. 启动服务
 	port := os.Getenv("SERVER_PORT")

@@ -2,13 +2,14 @@ package dto
 
 // LoginRequest Admin / User 登录请求
 type LoginRequest struct {
-	Username string `json:"username" binding:"required"`
+	Username string `json:"username"`
+	Account  string `json:"account"`
 	Password string `json:"password" binding:"required"`
 }
 
 // LoginResponse 登录响应
 type LoginResponse struct {
-	Token string `json:"token,omitempty"` // User端返回JWT; Admin端不返回 (Cookie)
+	Token string    `json:"token,omitempty"` // User端返回JWT; Admin端不返回 (Cookie)
 	User  UserBrief `json:"user"`
 }
 

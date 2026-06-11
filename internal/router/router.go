@@ -1,9 +1,13 @@
 package router
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
+	"routerx/internal"
 	"routerx/internal/handler"
 	"routerx/internal/middleware"
+	"routerx/internal/model"
 )
 
 // SetupRouter 创建并配置所有路由。
@@ -13,6 +17,7 @@ import (
 func SetupRouter(
 	authH *handler.AuthHandler,
 	userH *handler.UserHandler,
+	tokenH *handler.TokenHandler,
 	adminH *handler.AdminHandler,
 	channelH *handler.ChannelHandler,
 	relayH *handler.RelayHandler,
@@ -31,6 +36,7 @@ func SetupRouter(
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "healthy"})
 	})
+	r.GET("/ready", readyHandler)
 
 	// Setup 初始化路由 (无需鉴权, 无需系统已初始化)
 	setupPublicRoutes(r, setupH)
@@ -39,10 +45,30 @@ func SetupRouter(
 	setupAdminRoutes(r, authH, userH, adminH, channelH, relayH, logH, settingH)
 
 	// User Web API (需要 UserJwtAuth + 系统已初始化)
-	setupUserRoutes(r, authH, userH, logH)
+	setupUserRoutes(r, authH, userH, tokenH, logH)
 
 	// /v1 OpenAI-Compatible 转发路由 (需要 ApiKeyAuth + 系统已初始化)
 	setupV1Routes(r, relayH)
 
 	return r
+}
+
+func readyHandler(c *gin.Context) {
+	if internal.DB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "database": "unavailable"})
+		return
+	}
+	sqlDB, err := internal.DB.DB()
+	if err != nil || sqlDB.Ping() != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "database": "unavailable"})
+		return
+	}
+	if internal.IsInitialized() {
+		var setting model.Setting
+		if err := internal.DB.Where("key = ?", "jwt.secret").First(&setting).Error; err != nil || setting.Value == "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "jwt": "missing"})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ready"})
 }

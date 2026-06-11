@@ -13,7 +13,7 @@ type Token struct {
 	UserID      uint           `gorm:"not null;index" json:"user_id"`
 	User        *User          `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	Name        string         `gorm:"type:varchar(64);not null" json:"name"`          // 令牌备注名
-	Key         string         `gorm:"type:varchar(64);not null;uniqueIndex" json:"key"` // sk-xxxxxx
+	Key         string         `gorm:"type:varchar(64);not null;uniqueIndex" json:"-"` // SHA256(sk-xxxxxx)
 	Status      int            `gorm:"not null;default:1" json:"status"`               // 0=禁用, 1=启用
 	ExpiredAt   *time.Time     `json:"expired_at"`                                     // 过期时间, nil=永不过期
 	RemainQuota int64          `gorm:"not null;default:0" json:"remain_quota"`         // 剩余额度, -1=无限制

@@ -1,8 +1,14 @@
 package service
 
 import (
+	"errors"
 	"routerx/internal"
+	"routerx/internal/common"
 	"routerx/internal/model"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
 )
 
 type UserService struct{}
@@ -13,49 +19,161 @@ func NewUserService() *UserService {
 
 // GetByID 根据 ID 获取用户。
 func (s *UserService) GetByID(id uint) (*model.User, error) {
-	// TODO: Phase 2 实现
-	_ = internal.DB
-	return nil, nil
+	var user model.User
+	if err := internal.DB.First(&user, id).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
 }
 
 // List 用户分页列表, 支持 keyword/role/status/group 筛选。
 func (s *UserService) List(page, pageSize int, keyword string, role, status *int, groupID *uint) ([]model.User, int64, error) {
-	// TODO: Phase 4 实现
-	_ = internal.DB
-	return nil, 0, nil
+	page, pageSize = normalizePage(page, pageSize)
+	query := internal.DB.Model(&model.User{})
+	if keyword != "" {
+		like := "%" + strings.TrimSpace(keyword) + "%"
+		query = query.Where("username LIKE ? OR display_name LIKE ? OR email LIKE ?", like, like, like)
+	}
+	if role != nil {
+		query = query.Where("role = ?", *role)
+	}
+	if status != nil {
+		query = query.Where("status = ?", *status)
+	}
+	if groupID != nil {
+		query = query.Where("group_id = ?", *groupID)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var users []model.User
+	err := query.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&users).Error
+	return users, total, err
 }
 
 // Create 管理员创建用户。
 func (s *UserService) Create(username, password, displayName, email string, role int, quota int64, groupID *uint) (*model.User, error) {
-	// TODO: Phase 4 实现
-	_ = internal.DB
-	return nil, nil
+	username = strings.TrimSpace(username)
+	email = normalizeEmail(email)
+	if username == "" || password == "" {
+		return nil, errors.New("username and password are required")
+	}
+	if len(password) < 6 {
+		return nil, errors.New("password length must be at least 6")
+	}
+	if role < common.RoleUser || role > common.RoleSuper {
+		role = common.RoleUser
+	}
+	if displayName == "" {
+		displayName = username
+	}
+	var user *model.User
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		if exists, err := identityExists(tx, model.UserIdentityMethodUsername, username); err != nil {
+			return err
+		} else if exists {
+			return errors.New("username already exists")
+		}
+		hash, err := common.HashPassword(password)
+		if err != nil {
+			return err
+		}
+		usernamePtr := username
+		var emailPtr *string
+		if email != "" {
+			emailPtr = &email
+		}
+		u := &model.User{
+			Username:    &usernamePtr,
+			DisplayName: displayName,
+			Email:       emailPtr,
+			Role:        role,
+			Quota:       quota,
+			Status:      common.UserStatusEnabled,
+			GroupID:     groupID,
+		}
+		if err := tx.Create(u).Error; err != nil {
+			return err
+		}
+		now := time.Now()
+		identity := model.UserIdentity{
+			UserID:       u.ID,
+			Method:       model.UserIdentityMethodUsername,
+			Provider:     model.UserIdentityProviderLocal,
+			Identifier:   username,
+			PasswordHash: hash,
+			VerifiedAt:   &now,
+		}
+		if err := tx.Create(&identity).Error; err != nil {
+			return err
+		}
+		user = u
+		return nil
+	})
+	return user, err
 }
 
 // Update 管理员编辑用户信息。
 func (s *UserService) Update(id uint, updates map[string]interface{}) error {
-	// TODO: Phase 4 实现
-	_ = internal.DB
-	return nil
+	allowed := filterUpdates(updates, "display_name", "email", "role", "status", "group_id")
+	if len(allowed) == 0 {
+		return nil
+	}
+	return internal.DB.Model(&model.User{}).Where("id = ?", id).Updates(allowed).Error
 }
 
 // Delete 软删除用户。
 func (s *UserService) Delete(id uint) error {
-	// TODO: Phase 4 实现
-	_ = internal.DB
-	return nil
+	return internal.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Token{}).Where("user_id = ?", id).Update("status", common.TokenStatusDisabled).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.User{}, id).Error
+	})
 }
 
 // UpdateQuota 调整用户余额。
 func (s *UserService) UpdateQuota(id uint, delta int64) error {
-	// TODO: Phase 4 实现
-	_ = internal.DB
-	return nil
+	return internal.DB.Model(&model.User{}).Where("id = ?", id).
+		Update("quota", gorm.Expr("quota + ?", delta)).Error
 }
 
 // UpdateSelf 用户自助修改个人信息。
 func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
-	// TODO: Phase 5 实现
-	_ = internal.DB
-	return nil
+	updates := map[string]interface{}{}
+	if strings.TrimSpace(displayName) != "" {
+		updates["display_name"] = strings.TrimSpace(displayName)
+	}
+	if strings.TrimSpace(email) != "" {
+		normalized := normalizeEmail(email)
+		updates["email"] = normalized
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return internal.DB.Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
+}
+
+func normalizePage(page, pageSize int) (int, int) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	return page, pageSize
+}
+
+func filterUpdates(updates map[string]interface{}, keys ...string) map[string]interface{} {
+	allowed := make(map[string]interface{})
+	for _, key := range keys {
+		if v, ok := updates[key]; ok {
+			allowed[key] = v
+		}
+	}
+	return allowed
 }

@@ -13,6 +13,7 @@ func setupUserRoutes(
 	r *gin.Engine,
 	authH *handler.AuthHandler,
 	userH *handler.UserHandler,
+	tokenH *handler.TokenHandler,
 	logH *handler.LogHandler,
 ) {
 	// User Web API (v0)
@@ -29,6 +30,11 @@ func setupUserRoutes(
 			jwtRequired.PUT("/self", userH.UpdateSelf)
 			jwtRequired.POST("/self/password", authH.ChangePassword)
 
+			jwtRequired.GET("/token", tokenH.List)
+			jwtRequired.POST("/token", tokenH.Create)
+			jwtRequired.PUT("/token/:id", tokenH.Update)
+			jwtRequired.DELETE("/token/:id", tokenH.Delete)
+
 			jwtRequired.GET("/log", logH.UserList)
 			jwtRequired.GET("/billing", logH.UserBilling)
 		}
@@ -44,6 +50,7 @@ func setupV1Routes(
 	v1 := r.Group("/v1")
 	v1.Use(middleware.SetupCheck())
 	v1.Use(middleware.ApiKeyAuthRequired())
+	v1.Use(middleware.RateLimit())
 	{
 		v1.POST("/chat/completions", relayH.ChatCompletions)
 		v1.POST("/completions", relayH.Completions)

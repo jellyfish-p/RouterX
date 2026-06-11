@@ -15,11 +15,11 @@ type SetupInitRequest struct {
 
 // DashboardStats 仪表盘统计数据
 type DashboardStats struct {
-	UserCount       int64 `json:"user_count"`
-	ChannelCount    int64 `json:"channel_count"`
-	TokenCount      int64 `json:"token_count"`
-	TodayCallCount  int64 `json:"today_call_count"`
-	TodayQuotaUsed  int64 `json:"today_quota_used"`
+	UserCount          int64 `json:"user_count"`
+	ChannelCount       int64 `json:"channel_count"`
+	TokenCount         int64 `json:"token_count"`
+	TodayCallCount     int64 `json:"today_call_count"`
+	TodayQuotaUsed     int64 `json:"today_quota_used"`
 	ActiveChannelCount int64 `json:"active_channel_count"`
 }
 

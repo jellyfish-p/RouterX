@@ -27,9 +27,15 @@ func (h *SetupHandler) Status(c *gin.Context) {
 
 // POST /v0/setup/init — 首次初始化
 func (h *SetupHandler) Init(c *gin.Context) {
-	// TODO: Phase 1 实现
-	// 1. 绑定 SetupInitRequest
-	// 2. 调用 svc.Init
-	// 3. 返回成功
-	common.Fail(c, "not implemented")
+	var req dto.SetupInitRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "初始化参数无效")
+		return
+	}
+	user, err := h.svc.Init(req.Username, req.Password, req.DisplayName, req.Email)
+	if err != nil {
+		common.FailWithStatus(c, 409, err.Error())
+		return
+	}
+	common.Success(c, dto.UserBriefFromModel(user))
 }

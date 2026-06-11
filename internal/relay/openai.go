@@ -1,8 +1,13 @@
 package relay
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"strings"
 
 	"routerx/internal/common"
 )
@@ -22,35 +27,112 @@ func (a *OpenAIAdapter) GetChannelType() int {
 }
 
 func (a *OpenAIAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
-	// TODO: Phase 3 实现
-	// OpenAI 格式无需转换，直接透传
-	// 可能需要根据 apiType 调整路由
-	return body, nil
+	if apiType == APIModels {
+		return nil, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	delete(payload, "routerx")
+	return json.Marshal(payload)
 }
 
 func (a *OpenAIAdapter) GetAPIEndpoint(apiType APIType, model string) string {
-	// TODO: Phase 3 实现
-	// 返回 OpenAI 标准 API 路径
-	// 如: /v1/chat/completions
-	return ""
+	switch apiType {
+	case APIChatCompletions:
+		return "/v1/chat/completions"
+	case APICompletions:
+		return "/v1/completions"
+	case APIEmbeddings:
+		return "/v1/embeddings"
+	case APIImagesGenerations:
+		return "/v1/images/generations"
+	case APIAudioTranscriptions:
+		return "/v1/audio/transcriptions"
+	case APIAudioSpeech:
+		return "/v1/audio/speech"
+	case APIModels:
+		return "/v1/models"
+	default:
+		return ""
+	}
 }
 
 func (a *OpenAIAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey string, body []byte) (*http.Response, error) {
-	// TODO: Phase 3 实现
-	// HTTP POST + Authorization: Bearer {apiKey}
-	// 支持流式和非流式
-	// 超时控制从 SettingService 读取 relay.timeout
-	return nil, nil
+	if endpoint == "" {
+		return nil, errors.New("unsupported api type")
+	}
+	method := http.MethodPost
+	var reader io.Reader
+	if body == nil {
+		method = http.MethodGet
+	} else {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, joinBaseURL(baseURL, endpoint), reader)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Accept", "application/json")
+	return http.DefaultClient.Do(req)
 }
 
 func (a *OpenAIAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
-	// TODO: Phase 3 实现
-	// 直接解析 OpenAI 响应，提取 Usage
-	return nil, nil, nil
+	if !json.Valid(body) {
+		return nil, nil, errors.New("upstream returned invalid json")
+	}
+	var envelope struct {
+		Usage *Usage `json:"usage"`
+	}
+	_ = json.Unmarshal(body, &envelope)
+	return body, envelope.Usage, nil
 }
 
 func (a *OpenAIAdapter) GetModelList(ctx context.Context, baseURL string, apiKey string) ([]string, error) {
-	// TODO: Phase 3 实现
-	// GET {baseURL}/v1/models
-	return nil, nil
+	resp, err := a.DoRequest(ctx, baseURL, "/v1/models", apiKey, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, errors.New(common.FormatHTTPError(resp.StatusCode, "model list request failed"))
+	}
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	models := make([]string, 0, len(result.Data))
+	for _, item := range result.Data {
+		if item.ID != "" {
+			models = append(models, item.ID)
+		}
+	}
+	return models, nil
+}
+
+func joinBaseURL(baseURL, endpoint string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+	if endpoint == "" {
+		return baseURL
+	}
+	if !strings.HasPrefix(endpoint, "/") {
+		endpoint = "/" + endpoint
+	}
+	return baseURL + endpoint
 }

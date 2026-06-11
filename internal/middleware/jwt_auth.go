@@ -2,7 +2,10 @@ package middleware
 
 import (
 	"github.com/gin-gonic/gin"
+	"routerx/internal"
 	"routerx/internal/common"
+	"routerx/internal/model"
+	"routerx/internal/service"
 )
 
 // UserJwtAuth Gin 中间件：用户 JWT 鉴权 (用于 /v0/user/* 管理接口)。
@@ -11,12 +14,10 @@ import (
 // 与 ApiKeyAuth 的区别: 此中间件校验用户登录态 (JWT)，而非 API Key (sk-xxx)。
 func UserJwtAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// TODO: Phase 5 实现
-		// 1. 提取 Authorization header
-		// 2. 解析 JWT，验证签名 (密钥来自 settings.jwt.secret)
-		// 3. 校验过期时间
-		// 4. 失败返回 401
-		// 5. 成功: c.Set("user", user)
+		if !authenticateJWT(c) {
+			c.Abort()
+			return
+		}
 		c.Next()
 	}
 }
@@ -30,8 +31,43 @@ func GetJwtUser(c *gin.Context) interface{} {
 // UserJwtAuthRequired 用户 JWT 鉴权入口。
 func UserJwtAuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// TODO: Phase 5 — 包装 UserJwtAuth() 逻辑
-		common.FailWithStatus(c, 401, "未登录或登录已过期")
-		c.Abort()
+		if !authenticateJWT(c) {
+			c.Abort()
+			return
+		}
+		c.Next()
 	}
+}
+
+func authenticateJWT(c *gin.Context) bool {
+	raw, ok := common.BearerToken(c.GetHeader("Authorization"))
+	if !ok {
+		if cookie, err := c.Cookie("jwt_token"); err == nil {
+			raw = cookie
+			ok = raw != ""
+		}
+	}
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return false
+	}
+	secret, err := service.GetJWTSecret()
+	if err != nil {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return false
+	}
+	claims, err := common.ParseUserJWT(raw, secret)
+	if err != nil {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return false
+	}
+	var user model.User
+	if err := internal.DB.First(&user, claims.UserID).Error; err != nil || user.Status != common.UserStatusEnabled {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return false
+	}
+	c.Set("current_user", &user)
+	c.Set("user", &user)
+	c.Set("jwt_claims", claims)
+	return true
 }
