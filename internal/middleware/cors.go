@@ -17,7 +17,7 @@ func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 		allowedOrigins, allowCredentials := corsConfig()
-		if origin != "" && originAllowed(origin, allowedOrigins) {
+		if origin != "" && originAllowed(origin, allowedOrigins, allowCredentials) {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
 		}
@@ -65,13 +65,13 @@ func corsConfig() ([]string, bool) {
 	return allowed, allowCredentials
 }
 
-func originAllowed(origin string, allowed []string) bool {
+func originAllowed(origin string, allowed []string, allowCredentials bool) bool {
 	for _, item := range allowed {
 		item = strings.TrimSpace(item)
 		if item == origin {
 			return true
 		}
-		if item == "*" {
+		if item == "*" && !allowCredentials {
 			return true
 		}
 	}

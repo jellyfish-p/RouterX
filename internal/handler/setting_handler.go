@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"routerx/internal/common"
 	"routerx/internal/service"
@@ -21,6 +23,11 @@ func (h *SettingHandler) GetAll(c *gin.Context) {
 		common.FailWithStatus(c, 500, "查询设置失败")
 		return
 	}
+	for i := range settings {
+		if isSensitiveSetting(settings[i].Key) {
+			settings[i].Value = common.RedactSecret(settings[i].Value)
+		}
+	}
 	common.Success(c, settings)
 }
 
@@ -36,4 +43,15 @@ func (h *SettingHandler) BatchSet(c *gin.Context) {
 		return
 	}
 	common.SuccessMsg(c, "设置已更新")
+}
+
+func isSensitiveSetting(key string) bool {
+	key = strings.ToLower(key)
+	sensitiveParts := []string{"secret", "password", "token", "api_key", "apikey", "private_key", "webhook_secret", "client_secret", "payment"}
+	for _, part := range sensitiveParts {
+		if strings.Contains(key, part) {
+			return true
+		}
+	}
+	return false
 }

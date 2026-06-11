@@ -27,7 +27,13 @@ func (s *UserService) GetByID(id uint) (*model.User, error) {
 }
 
 // List 用户分页列表, 支持 keyword/role/status/group 筛选。
-func (s *UserService) List(page, pageSize int, keyword string, role, status *int, groupID *uint) ([]model.User, int64, error) {
+func (s *UserService) List(operatorRole int, page, pageSize int, keyword string, role, status *int, groupID *uint) ([]model.User, int64, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, 0, errors.New("admin role required")
+	}
+	if role != nil && (*role < common.RoleUser || *role > common.RoleSuper) {
+		return nil, 0, errors.New("invalid role")
+	}
 	page, pageSize = normalizePage(page, pageSize)
 	query := internal.DB.Model(&model.User{})
 	if keyword != "" {
@@ -53,7 +59,10 @@ func (s *UserService) List(page, pageSize int, keyword string, role, status *int
 }
 
 // Create 管理员创建用户。
-func (s *UserService) Create(username, password, displayName, email string, role int, quota int64, groupID *uint) (*model.User, error) {
+func (s *UserService) Create(operatorRole int, username, password, displayName, email string, role int, quota int64, groupID *uint) (*model.User, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
 	username = strings.TrimSpace(username)
 	email = normalizeEmail(email)
 	if username == "" || password == "" {
@@ -62,8 +71,8 @@ func (s *UserService) Create(username, password, displayName, email string, role
 	if len(password) < 6 {
 		return nil, errors.New("password length must be at least 6")
 	}
-	if role < common.RoleUser || role > common.RoleSuper {
-		role = common.RoleUser
+	if role != common.RoleUser {
+		return nil, errors.New("admin user management can only create normal users")
 	}
 	if displayName == "" {
 		displayName = username
@@ -115,28 +124,47 @@ func (s *UserService) Create(username, password, displayName, email string, role
 }
 
 // Update 管理员编辑用户信息。
-func (s *UserService) Update(id uint, updates map[string]interface{}) error {
-	allowed := filterUpdates(updates, "display_name", "email", "role", "status", "group_id")
+func (s *UserService) UpdateByAdmin(operatorID uint, operatorRole int, targetID uint, updates map[string]interface{}) error {
+	if err := s.ensureNormalUserTarget(operatorID, operatorRole, targetID); err != nil {
+		return err
+	}
+	allowed := filterUpdates(updates, "display_name", "email", "status", "group_id")
 	if len(allowed) == 0 {
 		return nil
 	}
-	return internal.DB.Model(&model.User{}).Where("id = ?", id).Updates(allowed).Error
+	return internal.DB.Model(&model.User{}).Where("id = ? AND role = ?", targetID, common.RoleUser).Updates(allowed).Error
 }
 
 // Delete 软删除用户。
-func (s *UserService) Delete(id uint) error {
+func (s *UserService) DeleteByAdmin(operatorID uint, operatorRole int, targetID uint) error {
+	if err := s.ensureNormalUserTarget(operatorID, operatorRole, targetID); err != nil {
+		return err
+	}
 	return internal.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.Token{}).Where("user_id = ?", id).Update("status", common.TokenStatusDisabled).Error; err != nil {
+		if err := tx.Model(&model.Token{}).Where("user_id = ?", targetID).Update("status", common.TokenStatusDisabled).Error; err != nil {
 			return err
 		}
-		return tx.Delete(&model.User{}, id).Error
+		return tx.Where("role = ?", common.RoleUser).Delete(&model.User{}, targetID).Error
 	})
 }
 
 // UpdateQuota 调整用户余额。
-func (s *UserService) UpdateQuota(id uint, delta int64) error {
-	return internal.DB.Model(&model.User{}).Where("id = ?", id).
-		Update("quota", gorm.Expr("quota + ?", delta)).Error
+func (s *UserService) UpdateQuotaByAdmin(operatorID uint, operatorRole int, targetID uint, delta int64) error {
+	if err := s.ensureNormalUserTarget(operatorID, operatorRole, targetID); err != nil {
+		return err
+	}
+	query := internal.DB.Model(&model.User{}).Where("id = ? AND role = ?", targetID, common.RoleUser)
+	if delta < 0 {
+		query = query.Where("quota >= ?", -delta)
+	}
+	res := query.Update("quota", gorm.Expr("quota + ?", delta))
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return errors.New("insufficient user quota")
+	}
+	return nil
 }
 
 // UpdateSelf 用户自助修改个人信息。
@@ -176,4 +204,24 @@ func filterUpdates(updates map[string]interface{}, keys ...string) map[string]in
 		}
 	}
 	return allowed
+}
+
+func (s *UserService) ensureNormalUserTarget(operatorID uint, operatorRole int, targetID uint) error {
+	if operatorID == 0 {
+		return errors.New("operator is required")
+	}
+	if operatorRole < common.RoleAdmin {
+		return errors.New("admin role required")
+	}
+	if operatorID == targetID {
+		return errors.New("admin user management cannot operate on self")
+	}
+	var target model.User
+	if err := internal.DB.First(&target, targetID).Error; err != nil {
+		return err
+	}
+	if target.Role >= common.RoleAdmin {
+		return errors.New("admin accounts must be managed through super admin endpoints")
+	}
+	return nil
 }

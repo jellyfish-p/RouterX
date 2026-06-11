@@ -3,6 +3,8 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,20 +24,29 @@ func RateLimit() gin.HandlerFunc {
 		now := time.Now().Unix() / 60
 		ipKey := fmt.Sprintf("rl:ip:%s:%d", c.ClientIP(), now)
 		if exceeded(ipKey, 120) {
-			common.FailWithStatus(c, 429, "请求过于频繁")
+			writeRateLimitError(c)
 			c.Abort()
 			return
 		}
 		if token, ok := CurrentAPIToken(c); ok {
 			tokenKey := fmt.Sprintf("rl:token:%d:%d", token.ID, now)
 			if exceeded(tokenKey, 60) {
-				common.FailWithStatus(c, 429, "请求过于频繁")
+				writeRateLimitError(c)
 				c.Abort()
 				return
 			}
 		}
 		c.Next()
 	}
+}
+
+func writeRateLimitError(c *gin.Context) {
+	path := c.Request.URL.Path
+	if strings.HasPrefix(path, "/v1/") || path == "/v1" {
+		c.JSON(http.StatusTooManyRequests, common.OpenAIError("rate limit exceeded", "rate_limit_error", "rate_limit_exceeded"))
+		return
+	}
+	common.FailWithStatus(c, http.StatusTooManyRequests, "请求过于频繁")
 }
 
 func exceeded(key string, limit int64) bool {

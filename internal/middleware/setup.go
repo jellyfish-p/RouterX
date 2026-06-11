@@ -1,8 +1,12 @@
 package middleware
 
 import (
+	"net/http"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"routerx/internal"
+	"routerx/internal/common"
 )
 
 // SetupCheck Gin 中间件：系统初始化状态检查。
@@ -22,6 +26,10 @@ func SetupCheck() gin.HandlerFunc {
 		}
 
 		if !internal.IsInitialized() {
+			if strings.HasPrefix(path, "/v1/") || path == "/v1" {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, common.OpenAIError("service is not initialized", "server_error", "service_not_initialized"))
+				return
+			}
 			c.AbortWithStatusJSON(200, gin.H{
 				"success": false,
 				"message": "系统尚未初始化，请先完成首次设置",

@@ -22,13 +22,9 @@ func setupAdminRoutes(
 	admin := r.Group("/v0/admin")
 	admin.Use(middleware.SetupCheck())
 	{
-		admin.POST("/login", authH.AdminLogin)
-
 		authRequired := admin.Group("")
 		authRequired.Use(middleware.AdminAuthRequired())
 		{
-			authRequired.POST("/logout", authH.AdminLogout)
-
 			// 用户管理 (Admin+)
 			authRequired.GET("/user", userH.List)
 			authRequired.POST("/user", userH.Create)
@@ -36,11 +32,11 @@ func setupAdminRoutes(
 			authRequired.DELETE("/user/:id", userH.Delete)
 			authRequired.PATCH("/user/:id/quota", userH.UpdateQuota)
 
-			// 管理员账户管理 (仅 SuperAdmin)
+			// 管理员账户查看 (Admin+)；写操作仅 SuperAdmin。
+			authRequired.GET("/admin", adminH.List)
 			adminMgmt := authRequired.Group("/admin")
 			adminMgmt.Use(middleware.RequireSuperAdmin())
 			{
-				adminMgmt.GET("", adminH.List)
 				adminMgmt.POST("", adminH.Create)
 				adminMgmt.PUT("/:id", adminH.Update)
 				adminMgmt.DELETE("/:id", adminH.Delete)
@@ -56,8 +52,12 @@ func setupAdminRoutes(
 			authRequired.DELETE("/log", logH.AdminClear)
 			authRequired.GET("/dashboard", logH.Dashboard)
 
-			authRequired.GET("/setting", settingH.GetAll)
-			authRequired.PUT("/setting", settingH.BatchSet)
+			settingMgmt := authRequired.Group("/setting")
+			settingMgmt.Use(middleware.RequireSuperAdmin())
+			{
+				settingMgmt.GET("", settingH.GetAll)
+				settingMgmt.PUT("", settingH.BatchSet)
+			}
 		}
 	}
 }

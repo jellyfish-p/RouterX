@@ -3,8 +3,10 @@ package middleware
 import (
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"routerx/internal/common"
 )
 
 // Recovery Gin 中间件：Panic 恢复。
@@ -15,6 +17,11 @@ func Recovery() gin.HandlerFunc {
 		defer func() {
 			if err := recover(); err != nil {
 				log.Printf("[PANIC] %v", err)
+				path := c.Request.URL.Path
+				if strings.HasPrefix(path, "/v1/") || path == "/v1" {
+					c.AbortWithStatusJSON(http.StatusInternalServerError, common.OpenAIError("internal server error", "server_error", "internal_error"))
+					return
+				}
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
 					"success": false,
 					"message": "Internal Server Error",
