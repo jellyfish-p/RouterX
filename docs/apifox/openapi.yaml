@@ -1,0 +1,1785 @@
+openapi: 3.0.3
+info:
+  title: RouterX API
+  version: 0.1.0
+  description: |
+    RouterX 后端 API 文档，供 Apifox 直接导入。
+
+    本文件以当前 Go 路由注册和 docs/API.md 为准：
+    - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
+    - /v1 使用入口协议兼容响应，不包裹 success/data/message。
+    - 支付、充值码、OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+servers:
+  - url: http://localhost:3000
+    description: Local backend
+tags:
+  - name: Health
+    description: 健康检查与就绪检查。
+  - name: Setup
+    description: 首次初始化。
+  - name: User Auth
+    description: 注册、登录和个人资料。
+  - name: User API Key
+    description: 用户 API Key 生命周期。
+  - name: User Usage
+    description: 用户调用日志和账单统计。
+  - name: Admin Users
+    description: 管理员用户管理。
+  - name: Admin Accounts
+    description: 管理员账号管理。
+  - name: Admin Channels
+    description: 上游通道管理。
+  - name: Admin Logs
+    description: 全局日志、看板和设置。
+  - name: OpenAI Compatible
+    description: OpenAI-compatible /v1 入口。
+  - name: Anthropic Compatible
+    description: Anthropic-compatible /v1 入口。
+  - name: Gemini Compatible
+    description: Gemini-compatible /v1 入口。
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: 进程健康检查
+      description: 不要求系统初始化或鉴权，只证明 HTTP 进程存活。
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /ready:
+    get:
+      tags: [Health]
+      summary: 服务就绪检查
+      description: 检查数据库可用性；初始化后还会检查 JWT 配置。
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+  /v0/setup/status:
+    get:
+      tags: [Setup]
+      summary: 查询初始化状态
+      responses:
+        "200":
+          description: 初始化状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SetupStatus"
+  /v0/setup/init:
+    post:
+      tags: [Setup]
+      summary: 首次初始化超级管理员
+      description: 仅未初始化时可调用；会创建超级管理员、本地身份和默认 settings。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetupInitRequest"
+      responses:
+        "200":
+          description: 初始化成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+        "409":
+          description: 已初始化
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+  /v0/user/register:
+    post:
+      tags: [User Auth]
+      summary: 用户注册
+      description: 当前基础实现为用户名密码注册；是否允许公开注册由 settings 控制。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "200":
+          description: 注册成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserBrief"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/user/login:
+    post:
+      tags: [User Auth]
+      summary: 用户统一登录
+      description: 管理后台也使用本接口获取 User JWT，不提供独立 /v0/admin/login。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/user/self:
+    get:
+      tags: [User Auth]
+      summary: 获取个人信息
+      security:
+        - UserJWT: []
+      responses:
+        "200":
+          description: 当前登录用户
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserBrief"
+        "401":
+          $ref: "#/components/responses/StandardUnauthorized"
+    put:
+      tags: [User Auth]
+      summary: 修改个人信息
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSelfRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+        "401":
+          $ref: "#/components/responses/StandardUnauthorized"
+  /v0/user/self/password:
+    post:
+      tags: [User Auth]
+      summary: 修改登录密码
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+        "401":
+          $ref: "#/components/responses/StandardUnauthorized"
+  /v0/user/token:
+    get:
+      tags: [User API Key]
+      summary: 当前用户 API Key 列表
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: API Key 分页列表，永不返回完整明文 key。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenPage"
+    post:
+      tags: [User API Key]
+      summary: 创建 API Key
+      description: 返回一次性 sk- 明文；有限额度 Key 创建时只设置预算上限，不扣用户余额，调用成功时再扣费。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTokenRequest"
+      responses:
+        "200":
+          description: 创建成功，key 只在本次响应展示。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CreateTokenResponse"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/user/token/{id}:
+    put:
+      tags: [User API Key]
+      summary: 编辑 API Key
+      description: 普通用户只能编辑名称、状态和过期时间，不能通过本接口修改额度或无限标记。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTokenRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "403":
+          $ref: "#/components/responses/StandardForbidden"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
+    delete:
+      tags: [User API Key]
+      summary: 删除 API Key
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
+  /v0/user/log:
+    get:
+      tags: [User Usage]
+      summary: 当前用户调用日志
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/TokenID"
+        - $ref: "#/components/parameters/ChannelID"
+        - $ref: "#/components/parameters/Model"
+        - $ref: "#/components/parameters/Status"
+        - $ref: "#/components/parameters/StartTime"
+        - $ref: "#/components/parameters/EndTime"
+      responses:
+        "200":
+          description: 当前用户自己的日志分页。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/LogPage"
+  /v0/user/billing:
+    get:
+      tags: [User Usage]
+      summary: 当前用户账单统计
+      description: 聚合成功调用日志中的 call_count、total_quota 和 total_tokens。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/StartTime"
+        - $ref: "#/components/parameters/EndTime"
+      responses:
+        "200":
+          description: 用户账单聚合。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/BillingStats"
+  /v0/admin/user:
+    get:
+      tags: [Admin Users]
+      summary: 用户列表
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Keyword"
+        - $ref: "#/components/parameters/Role"
+        - $ref: "#/components/parameters/Status"
+        - $ref: "#/components/parameters/GroupID"
+      responses:
+        "200":
+          description: 用户分页列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserPage"
+    post:
+      tags: [Admin Users]
+      summary: 创建普通用户
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "200":
+          description: 创建成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserBrief"
+        "403":
+          $ref: "#/components/responses/StandardForbidden"
+  /v0/admin/user/{id}:
+    put:
+      tags: [Admin Users]
+      summary: 编辑普通用户
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "403":
+          $ref: "#/components/responses/StandardForbidden"
+    delete:
+      tags: [Admin Users]
+      summary: 删除普通用户
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "403":
+          $ref: "#/components/responses/StandardForbidden"
+  /v0/admin/user/{id}/quota:
+    patch:
+      tags: [Admin Users]
+      summary: 调整用户额度
+      description: quota 为增量；负数表示扣减，扣减时要求余额足够。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateQuotaRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/admin:
+    get:
+      tags: [Admin Accounts]
+      summary: 管理员列表
+      description: 管理员及以上可查看。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: 管理员分页列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserPage"
+    post:
+      tags: [Admin Accounts]
+      summary: 创建管理员
+      description: 仅超级管理员可创建管理员账号。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "200":
+          description: 创建成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "403":
+          $ref: "#/components/responses/StandardForbidden"
+  /v0/admin/admin/{id}:
+    put:
+      tags: [Admin Accounts]
+      summary: 编辑管理员
+      description: 仅超级管理员；禁止越权编辑同级或破坏最后一个超级管理员。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "403":
+          $ref: "#/components/responses/StandardForbidden"
+    delete:
+      tags: [Admin Accounts]
+      summary: 删除管理员
+      description: 仅超级管理员；删除时保护最后一个超级管理员。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "403":
+          $ref: "#/components/responses/StandardForbidden"
+  /v0/admin/channel:
+    get:
+      tags: [Admin Channels]
+      summary: 通道列表
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: type
+          in: query
+          schema: { type: integer }
+          description: 通道类型筛选。
+        - $ref: "#/components/parameters/Status"
+      responses:
+        "200":
+          description: 通道分页列表，密钥字段脱敏。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChannelPage"
+    post:
+      tags: [Admin Channels]
+      summary: 创建通道
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChannelRequest"
+      responses:
+        "200":
+          description: 创建成功，返回脱敏通道信息。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChannelInfo"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/channel/{id}:
+    put:
+      tags: [Admin Channels]
+      summary: 编辑通道
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateChannelRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+    delete:
+      tags: [Admin Channels]
+      summary: 删除通道
+      description: 历史日志保留，但解除 channel_id 引用。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+  /v0/admin/channel/{id}/disable:
+    patch:
+      tags: [Admin Channels]
+      summary: 禁用通道
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+  /v0/admin/channel/{id}/enable:
+    patch:
+      tags: [Admin Channels]
+      summary: 启用通道
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+  /v0/admin/channel/{id}/test:
+    post:
+      tags: [Admin Channels]
+      summary: 测试通道连通性
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: 通道测试结果。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TestChannelResult"
+  /v0/admin/channel/{id}/models:
+    get:
+      tags: [Admin Channels]
+      summary: 拉取上游模型列表
+      description: 基础实现只支持单 base_url 通道。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: 上游模型列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/FetchChannelModelsResult"
+  /v0/admin/log:
+    get:
+      tags: [Admin Logs]
+      summary: 全局调用日志
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/UserID"
+        - $ref: "#/components/parameters/TokenID"
+        - $ref: "#/components/parameters/ChannelID"
+        - $ref: "#/components/parameters/Model"
+        - $ref: "#/components/parameters/Status"
+        - $ref: "#/components/parameters/StartTime"
+        - $ref: "#/components/parameters/EndTime"
+      responses:
+        "200":
+          description: 全局日志分页。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/LogPage"
+    delete:
+      tags: [Admin Logs]
+      summary: 清理历史日志
+      description: 需要 before 查询参数，删除该时间之前的日志。
+      security:
+        - UserJWT: []
+      parameters:
+        - name: before
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+          description: 删除此时间之前的日志。
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/dashboard:
+    get:
+      tags: [Admin Logs]
+      summary: 管理看板统计
+      security:
+        - UserJWT: []
+      responses:
+        "200":
+          description: 看板统计。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DashboardStats"
+  /v0/admin/setting:
+    get:
+      tags: [Admin Logs]
+      summary: 获取系统设置
+      description: 仅超级管理员；敏感值会脱敏。
+      security:
+        - UserJWT: []
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+          description: 设置分类筛选。
+      responses:
+        "200":
+          description: 设置列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Setting"
+        "403":
+          $ref: "#/components/responses/StandardForbidden"
+    put:
+      tags: [Admin Logs]
+      summary: 批量更新系统设置
+      description: 仅超级管理员。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchSetSettingsRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "403":
+          $ref: "#/components/responses/StandardForbidden"
+  /v1/responses:
+    post:
+      tags: [OpenAI Compatible]
+      summary: OpenAI Responses API 转发
+      description: 已注册；当前按 OpenAI-compatible 请求体转发，能力等级以 docs/PROTOCOLS.md 为准。
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: OpenAI-compatible 响应。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/chat/completions:
+    post:
+      tags: [OpenAI Compatible]
+      summary: OpenAI Chat Completions 非流式转发
+      description: P0 稳定闭环；stream=true 在当前阶段返回 unsupported_stream。
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          description: OpenAI-compatible Chat 响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+        "400":
+          $ref: "#/components/responses/OpenAIError"
+        "401":
+          $ref: "#/components/responses/OpenAIError"
+        "429":
+          $ref: "#/components/responses/OpenAIError"
+        "502":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/completions:
+    post:
+      tags: [OpenAI Compatible]
+      summary: Legacy Completions 转发
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          $ref: "#/components/responses/GenericJSON"
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/embeddings:
+    post:
+      tags: [OpenAI Compatible]
+      summary: Embeddings 转发
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          $ref: "#/components/responses/GenericJSON"
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/images/generations:
+    post:
+      tags: [OpenAI Compatible]
+      summary: 图像生成转发
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          $ref: "#/components/responses/GenericJSON"
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/images/edits:
+    post:
+      tags: [OpenAI Compatible]
+      summary: 图像编辑转发
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          $ref: "#/components/responses/GenericJSON"
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/images/variations:
+    post:
+      tags: [OpenAI Compatible]
+      summary: 图像变体转发
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          $ref: "#/components/responses/GenericJSON"
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/audio/transcriptions:
+    post:
+      tags: [OpenAI Compatible]
+      summary: 语音转文字转发
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          $ref: "#/components/responses/GenericJSON"
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/audio/translations:
+    post:
+      tags: [OpenAI Compatible]
+      summary: 语音翻译转发
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          $ref: "#/components/responses/GenericJSON"
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/audio/speech:
+    post:
+      tags: [OpenAI Compatible]
+      summary: 文本转语音转发
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          $ref: "#/components/responses/GenericJSON"
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/moderations:
+    post:
+      tags: [OpenAI Compatible]
+      summary: 内容审核转发
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          $ref: "#/components/responses/GenericJSON"
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/models:
+    get:
+      tags: [OpenAI Compatible]
+      summary: 模型列表
+      description: 默认返回 OpenAI models 外形；format=gemini 或 format=anthropic 返回对应协议外形。
+      security:
+        - ApiKeyBearer: []
+      parameters:
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [openai, gemini, google, anthropic]
+          description: 路径冲突时指定响应协议。
+        - name: anthropic-version
+          in: header
+          required: false
+          schema: { type: string }
+          description: 存在时按 Anthropic 模型列表外形返回。
+      responses:
+        "200":
+          description: 模型列表。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/OpenAIModelList"
+                  - $ref: "#/components/schemas/GeminiModelList"
+                  - $ref: "#/components/schemas/AnthropicModelList"
+        "401":
+          $ref: "#/components/responses/OpenAIError"
+        "429":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/models/{model}:
+    get:
+      tags: [OpenAI Compatible]
+      summary: 模型详情
+      security:
+        - ApiKeyBearer: []
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OpenAI-compatible 模型详情。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIModel"
+        "404":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/messages:
+    post:
+      tags: [Anthropic Compatible]
+      summary: Anthropic Messages
+      security:
+        - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnthropicMessageRequest"
+      responses:
+        "200":
+          description: Anthropic-compatible message response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnthropicMessageResponse"
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/messages/count_tokens:
+    post:
+      tags: [Anthropic Compatible]
+      summary: Anthropic Token 计数
+      description: 当前为近似计数。
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          description: Token 计数结果。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  input_tokens:
+                    type: integer
+  /v1/models/{model}:generateContent:
+    post:
+      tags: [Gemini Compatible]
+      summary: Gemini generateContent
+      description: |
+        Gin 当前注册为 /v1/models/:model，可匹配 gemini-pro:generateContent 这一类单段路径。
+        当前实现会转换到 OpenAI-compatible Chat 主链路。
+      security:
+        - ApiKeyBearer: []
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema: { type: string }
+          description: Gemini 模型名，例如 gemini-pro。
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          description: Gemini-compatible response.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "4XX":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/models/{model}:streamGenerateContent:
+    post:
+      tags: [Gemini Compatible]
+      summary: Gemini streamGenerateContent
+      description: 当前已注册，但 P0 阶段会返回 unsupported_stream。
+      security:
+        - ApiKeyBearer: []
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          description: Gemini-compatible streaming response when supported.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/OpenAIError"
+        "5XX":
+          $ref: "#/components/responses/OpenAIError"
+  /v1/models/{model}:countTokens:
+    post:
+      tags: [Gemini Compatible]
+      summary: Gemini countTokens
+      description: 当前为近似计数。
+      security:
+        - ApiKeyBearer: []
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          description: Token 计数结果。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalTokens:
+                    type: integer
+components:
+  securitySchemes:
+    UserJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: /v0/user 和 /v0/admin 使用的用户登录态。
+    ApiKeyBearer:
+      type: http
+      scheme: bearer
+      description: /v1 模型接口使用 sk- API Key。
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: uint64 }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, default: 1, minimum: 1 }
+    PageSize:
+      name: page_size
+      in: query
+      schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+    Keyword:
+      name: keyword
+      in: query
+      schema: { type: string }
+    Role:
+      name: role
+      in: query
+      schema: { type: integer }
+      description: 1=user, 10=admin, 100=super admin。
+    Status:
+      name: status
+      in: query
+      schema: { type: integer }
+    GroupID:
+      name: group_id
+      in: query
+      schema: { type: integer, format: uint64 }
+    UserID:
+      name: user_id
+      in: query
+      schema: { type: integer, format: uint64 }
+    TokenID:
+      name: token_id
+      in: query
+      schema: { type: integer, format: uint64 }
+    ChannelID:
+      name: channel_id
+      in: query
+      schema: { type: integer, format: uint64 }
+    Model:
+      name: model
+      in: query
+      schema: { type: string }
+    StartTime:
+      name: start_time
+      in: query
+      schema: { type: string, format: date-time }
+    EndTime:
+      name: end_time
+      in: query
+      schema: { type: string, format: date-time }
+  requestBodies:
+    GenericJSON:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+  responses:
+    StandardOK:
+      description: 成功。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StandardResponse"
+    StandardBadRequest:
+      description: 参数或业务错误。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StandardResponse"
+    StandardUnauthorized:
+      description: 未登录或登录已过期。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StandardResponse"
+    StandardForbidden:
+      description: 权限不足。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StandardResponse"
+    StandardNotFound:
+      description: 资源不存在。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StandardResponse"
+    OpenAIError:
+      description: /v1 入口协议兼容错误。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenAIErrorEnvelope"
+    GenericJSON:
+      description: JSON response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+  schemas:
+    StandardResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          nullable: true
+      required: [success]
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: healthy
+    ReadyResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        database:
+          type: string
+          nullable: true
+        jwt:
+          type: string
+          nullable: true
+    SetupStatus:
+      type: object
+      properties:
+        initialized:
+          type: boolean
+    SetupInitRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+        password:
+          type: string
+          minLength: 6
+          maxLength: 128
+        display_name:
+          type: string
+        email:
+          type: string
+          format: email
+    RegisterRequest:
+      allOf:
+        - $ref: "#/components/schemas/SetupInitRequest"
+    LoginRequest:
+      type: object
+      required: [password]
+      properties:
+        account:
+          type: string
+          description: 用户名、邮箱或其他统一账号标识。
+        username:
+          type: string
+          description: 兼容旧客户端。
+        password:
+          type: string
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: User JWT。
+        user:
+          $ref: "#/components/schemas/UserBrief"
+    UserBrief:
+      type: object
+      properties:
+        id: { type: integer, format: uint64 }
+        username: { type: string }
+        display_name: { type: string }
+        email: { type: string }
+        role: { type: integer, description: "1=user, 10=admin, 100=super admin" }
+        quota: { type: integer, format: int64 }
+        status: { type: integer }
+        group_id: { type: integer, format: uint64, nullable: true }
+    CreateUserRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 3, maxLength: 64 }
+        password: { type: string, minLength: 6, maxLength: 128 }
+        display_name: { type: string }
+        email: { type: string }
+        role: { type: integer }
+        quota: { type: integer, format: int64 }
+        group_id: { type: integer, format: uint64, nullable: true }
+    UpdateUserRequest:
+      type: object
+      properties:
+        display_name: { type: string }
+        email: { type: string }
+        role: { type: integer, nullable: true }
+        status: { type: integer, nullable: true }
+        group_id: { type: integer, format: uint64, nullable: true }
+    UpdateSelfRequest:
+      type: object
+      properties:
+        display_name: { type: string }
+        email: { type: string }
+    ChangePasswordRequest:
+      type: object
+      required: [old_password, new_password]
+      properties:
+        old_password: { type: string }
+        new_password: { type: string, minLength: 6 }
+    UpdateQuotaRequest:
+      type: object
+      required: [quota]
+      properties:
+        quota:
+          type: integer
+          format: int64
+          description: 额度增量；负数表示扣减。
+    PaginatedResult:
+      type: object
+      properties:
+        total: { type: integer, format: int64 }
+        page: { type: integer }
+        page_size: { type: integer }
+        data:
+          type: array
+          items: {}
+    UserPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/UserBrief"
+    CreateTokenRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 64 }
+        remain_quota:
+          type: integer
+          format: int64
+          description: 有限 Key 的预算上限；0 表示无可用预算。
+        unlimited:
+          type: boolean
+          description: true 时 remain_quota 为 -1，调用仍扣用户余额。
+        expired_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: Unix 秒时间戳。
+    UpdateTokenRequest:
+      type: object
+      properties:
+        name: { type: string }
+        status: { type: integer, nullable: true }
+        expired_at: { type: integer, format: int64, nullable: true }
+        remain_quota:
+          type: integer
+          format: int64
+          nullable: true
+          deprecated: true
+          description: 用户编辑接口不允许修改额度；传入会返回 403。
+        unlimited:
+          type: boolean
+          nullable: true
+          deprecated: true
+          description: 用户编辑接口不允许修改无限标记；传入会返回 403。
+    Token:
+      type: object
+      properties:
+        id: { type: integer, format: uint64 }
+        user_id: { type: integer, format: uint64 }
+        name: { type: string }
+        status: { type: integer }
+        expired_at: { type: string, format: date-time, nullable: true }
+        remain_quota: { type: integer, format: int64 }
+        unlimited: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateTokenResponse:
+      allOf:
+        - $ref: "#/components/schemas/Token"
+        - type: object
+          properties:
+            key:
+              type: string
+              example: sk-xxxxxxxx
+              description: 只在创建响应出现一次。
+    TokenPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Token"
+    ChannelUpstreamRequest:
+      type: object
+      properties:
+        base_url: { type: string }
+        api_key: { type: string }
+    ChannelUpstreamPublic:
+      type: object
+      properties:
+        base_url: { type: string }
+        has_api_key: { type: boolean }
+    CreateChannelRequest:
+      type: object
+      required: [type, name, models]
+      properties:
+        idx: { type: integer }
+        type: { type: integer, minimum: 1 }
+        name: { type: string, maxLength: 64 }
+        models:
+          type: string
+          description: 逗号分隔模型名，* 表示匹配所有模型。
+        base_url: { type: string }
+        base_urls:
+          type: array
+          items: { type: string }
+        api_key:
+          type: string
+          writeOnly: true
+        api_keys:
+          type: array
+          items: { type: string }
+          writeOnly: true
+        key_selection_mode:
+          type: string
+          enum: [round_robin, random]
+        upstreams:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelUpstreamRequest"
+        model_rewrites:
+          type: object
+          additionalProperties: { type: string }
+        group:
+          type: string
+        upstream_options:
+          type: object
+          additionalProperties: true
+        priority: { type: integer }
+        weight: { type: integer }
+        status: { type: integer }
+    UpdateChannelRequest:
+      allOf:
+        - $ref: "#/components/schemas/CreateChannelRequest"
+    ChannelInfo:
+      type: object
+      properties:
+        id: { type: integer, format: uint64 }
+        idx: { type: integer }
+        type: { type: integer }
+        name: { type: string }
+        models: { type: string }
+        base_url: { type: string }
+        base_urls:
+          type: array
+          items: { type: string }
+        key_selection_mode: { type: string }
+        api_key_count: { type: integer }
+        upstreams:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelUpstreamPublic"
+        model_rewrites:
+          type: object
+          additionalProperties: true
+        group: { type: string }
+        upstream_options:
+          type: object
+          additionalProperties: true
+        priority: { type: integer }
+        weight: { type: integer }
+        status: { type: integer }
+        response_ms: { type: integer }
+        balance: { type: integer, format: int64 }
+        error_count: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ChannelPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/ChannelInfo"
+    TestChannelResult:
+      type: object
+      properties:
+        success: { type: boolean }
+        response_ms: { type: integer, format: int64 }
+        error: { type: string }
+        model_count: { type: integer }
+    FetchChannelModelsResult:
+      type: object
+      properties:
+        models:
+          type: array
+          items: { type: string }
+    Log:
+      type: object
+      properties:
+        id: { type: integer, format: uint64 }
+        user_id: { type: integer, format: uint64 }
+        token_id: { type: integer, format: uint64, nullable: true }
+        channel_id: { type: integer, format: uint64, nullable: true }
+        model: { type: string }
+        prompt_tokens: { type: integer }
+        completion_tokens: { type: integer }
+        total_tokens: { type: integer }
+        quota_used: { type: integer, format: int64 }
+        status: { type: integer, description: "1=success, 2=failed" }
+        error_msg: { type: string }
+        ip: { type: string }
+        created_at: { type: string, format: date-time }
+    LogPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Log"
+    BillingStats:
+      type: object
+      properties:
+        call_count: { type: integer, format: int64 }
+        total_quota: { type: integer, format: int64 }
+        total_tokens: { type: integer, format: int64 }
+    DashboardStats:
+      type: object
+      properties:
+        user_count: { type: integer, format: int64 }
+        channel_count: { type: integer, format: int64 }
+        token_count: { type: integer, format: int64 }
+        today_call_count: { type: integer, format: int64 }
+        today_quota_used: { type: integer, format: int64 }
+        active_channel_count: { type: integer, format: int64 }
+    Setting:
+      type: object
+      properties:
+        id: { type: integer, format: uint64 }
+        key: { type: string }
+        value: { type: string }
+        type: { type: string }
+        category: { type: string }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    BatchSetSettingsRequest:
+      type: object
+      properties:
+        settings:
+          type: object
+          additionalProperties:
+            type: string
+      additionalProperties: true
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model: { type: string }
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        temperature: { type: number, format: double, nullable: true }
+        top_p: { type: number, format: double, nullable: true }
+        n: { type: integer, nullable: true }
+        stream:
+          type: boolean
+          description: 当前 P0 阶段必须为 false 或省略。
+        stop:
+          type: array
+          items: { type: string }
+        max_tokens: { type: integer, nullable: true }
+        presence_penalty: { type: number, format: double, nullable: true }
+        frequency_penalty: { type: number, format: double, nullable: true }
+        user: { type: string }
+        routerx:
+          type: object
+          additionalProperties: true
+          description: RouterX 私有扩展字段；普通 OpenAI-compatible 上游不会透传。
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+                additionalProperties: true
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, example: chat.completion }
+        created: { type: integer, format: int64 }
+        model: { type: string }
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index: { type: integer }
+              message:
+                $ref: "#/components/schemas/ChatMessage"
+              finish_reason: { type: string }
+        usage:
+          $ref: "#/components/schemas/Usage"
+    Usage:
+      type: object
+      properties:
+        prompt_tokens: { type: integer }
+        completion_tokens: { type: integer }
+        total_tokens: { type: integer }
+    OpenAIErrorEnvelope:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message: { type: string }
+            type: { type: string }
+            code: { type: string }
+    OpenAIModelList:
+      type: object
+      properties:
+        object:
+          type: string
+          example: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenAIModel"
+    OpenAIModel:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, example: model }
+        created: { type: integer }
+        owned_by: { type: string }
+    GeminiModelList:
+      type: object
+      properties:
+        models:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              version: { type: string }
+              displayName: { type: string }
+              supportedGenerationMethods:
+                type: array
+                items: { type: string }
+    AnthropicModelList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              type: { type: string }
+              display_name: { type: string }
+        has_more: { type: boolean }
+    AnthropicMessageRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model: { type: string }
+        system: {}
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { type: string, enum: [user, assistant] }
+              content: {}
+        max_tokens: { type: integer }
+        temperature: { type: number }
+        top_p: { type: number }
+        stop_sequences:
+          type: array
+          items: { type: string }
+        stream: { type: boolean }
+    AnthropicMessageResponse:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string, example: message }
+        role: { type: string, example: assistant }
+        model: { type: string }
+        content:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        stop_reason: { type: string }
+        stop_sequence:
+          nullable: true
+        usage:
+          type: object
+          properties:
+            input_tokens: { type: integer }
+            output_tokens: { type: integer }

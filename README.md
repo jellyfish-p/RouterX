@@ -263,6 +263,7 @@ RouterX 正处于快速迭代阶段。当前代码已经覆盖初始化、登录
 - [架构设计](docs/ARCHITECTURE.md)
 - [模块责任边界](docs/MODULE_BOUNDARIES.md)
 - [API 设计](docs/API.md)
+- [Apifox/OpenAPI 导入文档](docs/apifox/openapi.yaml)
 - [数据模型](docs/DATA_MODEL.md)
 - [模型转发设计](docs/RELAY.md)
 - [账号系统设计](docs/ACCOUNTS.md)

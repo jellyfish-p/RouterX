@@ -6,6 +6,8 @@ RouterX 对外提供三类 API。
 
 API 设计遵循“默认简单、扩展明确”的原则。初始化、账号、通道、API Key、日志和基础模型调用构成开箱路径；支付、多协议高级接口、企业账号等能力作为目标扩展分阶段接入。模型转发 API 必须优先兼容调用方 SDK，不能为了统一管理端响应而破坏 OpenAI、Gemini 或 Anthropic 的错误格式。
 
+Apifox 可导入文档位于 `docs/apifox/openapi.yaml`。该文件只整理当前后端真实注册的 API，目标扩展接口在完成路由和实现前不会写入 OpenAPI paths，避免误导调用方。
+
 开箱路径所需接口必须优先稳定：
 
 ```text
