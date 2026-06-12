@@ -176,11 +176,12 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 		_ = s.markChannelFailure(channel, latencyMs)
 		message := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, message, clientIP)
-		status := 502
-		if resp.StatusCode == 429 {
-			status = 429
+		return nil, nil, &HTTPError{
+			Status:  clientStatusFromUpstream(resp.StatusCode),
+			Message: message,
+			Type:    upstreamErrorType(resp.StatusCode),
+			Code:    fmt.Sprintf("upstream_%d", resp.StatusCode),
 		}
-		return nil, nil, &HTTPError{Status: status, Message: message, Type: "upstream_error", Code: fmt.Sprintf("upstream_%d", resp.StatusCode)}
 	}
 
 	converted, usage, err := adapter.ConvertResponse(apiType, respBody)
@@ -564,6 +565,24 @@ func quotaFromUsage(usage *relay.Usage) int64 {
 		return 1
 	}
 	return int64(usage.TotalTokens)
+}
+
+func clientStatusFromUpstream(status int) int {
+	switch {
+	case status == 400:
+		return 400
+	case status == 429:
+		return 429
+	default:
+		return 502
+	}
+}
+
+func upstreamErrorType(status int) string {
+	if status == 400 {
+		return "invalid_request_error"
+	}
+	return "upstream_error"
 }
 
 func (s *RelayService) recordLog(token *model.Token, channel *model.Channel, modelName string, usage *relay.Usage, status int, quotaUsed int64, errMsg, ip string) error {

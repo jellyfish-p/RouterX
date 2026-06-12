@@ -114,18 +114,6 @@ func (s *TokenService) Create(userID uint, name string, remainQuota int64, unlim
 		if user.Status != common.UserStatusEnabled {
 			return ErrAPIUserDisabled
 		}
-		if !unlimited && remainQuota > 0 {
-			res := tx.Model(&model.User{}).
-				Where("id = ? AND status = ? AND quota >= ?", userID, common.UserStatusEnabled, remainQuota).
-				Update("quota", gorm.Expr("quota - ?", remainQuota))
-			if res.Error != nil {
-				return res.Error
-			}
-			if res.RowsAffected == 0 {
-				return ErrInsufficientUserQuota
-			}
-		}
-
 		for i := 0; i < 3; i++ {
 			plain, err := common.GenerateTokenKey()
 			if err != nil {
@@ -208,6 +196,15 @@ func (s *TokenService) DeductQuota(tokenID uint, quota int64) error {
 		if res.RowsAffected == 0 {
 			return ErrInsufficientTokenQuota
 		}
+		res = tx.Model(&model.User{}).
+			Where("id = ? AND status = ? AND quota >= ?", token.UserID, common.UserStatusEnabled, quota).
+			Update("quota", gorm.Expr("quota - ?", quota))
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrInsufficientUserQuota
+		}
 		return nil
 	})
 }
@@ -226,5 +223,15 @@ func (s *TokenService) HasAvailableQuota(token *model.Token) bool {
 		}
 		return token.User.Status == common.UserStatusEnabled && token.User.Quota > 0
 	}
-	return token.RemainQuota > 0
+	if token.RemainQuota <= 0 {
+		return false
+	}
+	if token.User == nil {
+		var user model.User
+		if err := internal.DB.First(&user, token.UserID).Error; err != nil {
+			return false
+		}
+		token.User = &user
+	}
+	return token.User.Status == common.UserStatusEnabled && token.User.Quota > 0
 }
