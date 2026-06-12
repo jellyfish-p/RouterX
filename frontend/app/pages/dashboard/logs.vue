@@ -35,36 +35,53 @@ onMounted(() => {
 watch(page, () => {
   fetchLogs()
 })
+
+function statusLabel(status: number) {
+  if (status === 1) return '成功'
+  if (status === 2) return '失败'
+  return '未知'
+}
 </script>
 
 <template>
   <div>
 
-    <UTable
-      :rows="logs"
-      :columns="[
-        { key: 'id', label: 'ID' },
-        { key: 'model', label: '模型' },
-        { key: 'prompt_tokens', label: '输入 Token' },
-        { key: 'completion_tokens', label: '输出 Token' },
-        { key: 'quota_used', label: '消耗额度' },
-        { key: 'status', label: '状态' },
-        { key: 'created_at', label: '时间' }
-      ]"
-      :loading="loading"
-    >
-      <template #status-data="{ row }">
-        <UBadge :color="row.status === 1 ? 'success' : row.status === 2 ? 'error' : 'neutral'">
-          {{ row.status === 1 ? '成功' : row.status === 2 ? '失败' : '未知' }}
-        </UBadge>
-      </template>
-      <template #quota_used-data="{ row }">
-        {{ (row.quota_used / 100000000).toFixed(4) }}
-      </template>
-      <template #created_at-data="{ row }">
-        {{ new Date(row.created_at).toLocaleString() }}
-      </template>
-    </UTable>
+    <div class="overflow-x-auto rounded border border-gray-200">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-left text-gray-500">
+          <tr>
+            <th class="px-3 py-2 font-medium">ID</th>
+            <th class="px-3 py-2 font-medium">模型</th>
+            <th class="px-3 py-2 font-medium">输入 Token</th>
+            <th class="px-3 py-2 font-medium">输出 Token</th>
+            <th class="px-3 py-2 font-medium">消耗额度</th>
+            <th class="px-3 py-2 font-medium">状态</th>
+            <th class="px-3 py-2 font-medium">时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="loading">
+            <td colspan="7" class="px-3 py-8 text-center text-gray-500">加载中</td>
+          </tr>
+          <tr v-for="log in logs" v-else :key="log.id" class="border-t border-gray-100">
+            <td class="px-3 py-2">{{ log.id }}</td>
+            <td class="px-3 py-2">{{ log.model }}</td>
+            <td class="px-3 py-2">{{ log.prompt_tokens }}</td>
+            <td class="px-3 py-2">{{ log.completion_tokens }}</td>
+            <td class="px-3 py-2">{{ (log.quota_used / 100000000).toFixed(4) }}</td>
+            <td class="px-3 py-2">
+              <UBadge :color="log.status === 1 ? 'success' : log.status === 2 ? 'error' : 'neutral'">
+                {{ statusLabel(log.status) }}
+              </UBadge>
+            </td>
+            <td class="px-3 py-2">{{ new Date(log.created_at).toLocaleString() }}</td>
+          </tr>
+          <tr v-if="!loading && logs.length === 0">
+            <td colspan="7" class="px-3 py-8 text-center text-gray-500">暂无日志</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <div class="flex justify-center mt-4">
       <UPagination

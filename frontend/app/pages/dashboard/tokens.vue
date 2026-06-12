@@ -35,6 +35,12 @@ const editForm = reactive<UpdateTokenRequest>({
   expired_at: undefined
 })
 const editLoading = ref(false)
+const showEdit = computed({
+  get: () => !!editingToken.value,
+  set: (open: boolean) => {
+    if (!open) editingToken.value = null
+  }
+})
 
 async function fetchTokens() {
   loading.value = true
@@ -118,6 +124,10 @@ async function copyKey() {
 onMounted(() => {
   fetchTokens()
 })
+
+function formatQuota(token: TokenInfo) {
+  return token.unlimited ? '无限' : (token.remain_quota / 100000000).toFixed(2)
+}
 </script>
 
 <template>
@@ -128,39 +138,45 @@ onMounted(() => {
       <UButton @click="showCreate = true">创建令牌</UButton>
     </div>
 
-    <UTable
-      :rows="tokens"
-      :columns="[
-        { key: 'name', label: '名称' },
-        { key: 'status', label: '状态' },
-        { key: 'remain_quota', label: '剩余额度' },
-        { key: 'expired_at', label: '过期时间' },
-        { key: 'created_at', label: '创建时间' },
-        { key: 'actions', label: '操作' }
-      ]"
-      :loading="loading"
-    >
-      <template #status-data="{ row }">
-        <UBadge :color="row.status === 1 ? 'success' : 'error'">
-          {{ row.status === 1 ? '启用' : '禁用' }}
-        </UBadge>
-      </template>
-      <template #remain_quota-data="{ row }">
-        {{ row.unlimited ? '无限' : (row.remain_quota / 100000000).toFixed(2) }}
-      </template>
-      <template #expired_at-data="{ row }">
-        {{ row.expired_at ? new Date(row.expired_at).toLocaleString() : '永不过期' }}
-      </template>
-      <template #created_at-data="{ row }">
-        {{ new Date(row.created_at).toLocaleString() }}
-      </template>
-      <template #actions-data="{ row }">
-        <div class="flex gap-2">
-          <UButton variant="ghost" size="xs" @click="startEdit(row)">编辑</UButton>
-          <UButton variant="ghost" size="xs" color="error" @click="handleDelete(row)">删除</UButton>
-        </div>
-      </template>
-    </UTable>
+    <div class="overflow-x-auto rounded border border-gray-200">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-left text-gray-500">
+          <tr>
+            <th class="px-3 py-2 font-medium">名称</th>
+            <th class="px-3 py-2 font-medium">状态</th>
+            <th class="px-3 py-2 font-medium">剩余额度</th>
+            <th class="px-3 py-2 font-medium">过期时间</th>
+            <th class="px-3 py-2 font-medium">创建时间</th>
+            <th class="px-3 py-2 font-medium">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="loading">
+            <td colspan="6" class="px-3 py-8 text-center text-gray-500">加载中</td>
+          </tr>
+          <tr v-for="token in tokens" v-else :key="token.id" class="border-t border-gray-100">
+            <td class="px-3 py-2 font-medium">{{ token.name }}</td>
+            <td class="px-3 py-2">
+              <UBadge :color="token.status === 1 ? 'success' : 'error'">
+                {{ token.status === 1 ? '启用' : '禁用' }}
+              </UBadge>
+            </td>
+            <td class="px-3 py-2">{{ formatQuota(token) }}</td>
+            <td class="px-3 py-2">{{ token.expired_at ? new Date(token.expired_at).toLocaleString() : '永不过期' }}</td>
+            <td class="px-3 py-2">{{ new Date(token.created_at).toLocaleString() }}</td>
+            <td class="px-3 py-2">
+              <div class="flex gap-2">
+                <UButton variant="ghost" size="xs" @click="startEdit(token)">编辑</UButton>
+                <UButton variant="ghost" size="xs" color="error" @click="handleDelete(token)">删除</UButton>
+              </div>
+            </td>
+          </tr>
+          <tr v-if="!loading && tokens.length === 0">
+            <td colspan="6" class="px-3 py-8 text-center text-gray-500">暂无令牌</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <!-- Create Modal -->
     <UModal v-model:open="showCreate" title="创建 API 令牌">
@@ -192,7 +208,7 @@ onMounted(() => {
     </UModal>
 
     <!-- Edit Modal -->
-    <UModal v-model:open="editingToken" :open="!!editingToken" title="编辑令牌">
+    <UModal v-model:open="showEdit" title="编辑令牌">
       <template #body>
         <form v-if="editingToken" class="space-y-4" @submit.prevent="handleEdit">
           <UFormField label="名称">

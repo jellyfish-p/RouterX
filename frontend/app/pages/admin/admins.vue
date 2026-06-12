@@ -31,6 +31,12 @@ const editForm = reactive({
   email: '',
 })
 const editLoading = ref(false)
+const showEdit = computed({
+  get: () => !!editAdmin.value,
+  set: (open: boolean) => {
+    if (!open) editAdmin.value = null
+  }
+})
 
 async function fetchAdmins() {
   loading.value = true
@@ -90,6 +96,12 @@ async function handleDelete(admin: UserBrief) {
   }
 }
 
+function startEdit(admin: UserBrief) {
+  editAdmin.value = admin
+  editForm.display_name = admin.display_name || ''
+  editForm.email = admin.email || ''
+}
+
 onMounted(() => fetchAdmins())
 </script>
 
@@ -101,36 +113,51 @@ onMounted(() => fetchAdmins())
       <UButton v-if="auth.isSuperAdmin" @click="showCreate = true">创建管理员</UButton>
     </div>
 
-    <UTable
-      :rows="admins"
-      :columns="[
-        { key: 'id', label: 'ID' },
-        { key: 'username', label: '用户名' },
-        { key: 'display_name', label: '显示名' },
-        { key: 'email', label: '邮箱' },
-        { key: 'role', label: '角色' },
-        { key: 'status', label: '状态' },
-        { key: 'actions', label: '操作' }
-      ]"
-      :loading="loading"
-    >
-      <template #role-data="{ row }">
-        <UBadge :color="row.role === 2 ? 'error' : 'warning'">
-          {{ row.role === 2 ? '超级管理员' : '管理员' }}
-        </UBadge>
-      </template>
-      <template #status-data="{ row }">
-        <UBadge :color="row.status === 1 ? 'success' : 'error'">
-          {{ row.status === 1 ? '启用' : '禁用' }}
-        </UBadge>
-      </template>
-      <template #actions-data="{ row }">
-        <div v-if="auth.isSuperAdmin" class="flex gap-1">
-          <UButton variant="ghost" size="xs" @click="editAdmin = row; editForm.display_name = row.display_name || ''; editForm.email = row.email || ''">编辑</UButton>
-          <UButton variant="ghost" size="xs" color="error" @click="handleDelete(row)">删除</UButton>
-        </div>
-      </template>
-    </UTable>
+    <div class="overflow-x-auto rounded border border-gray-200">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-left text-gray-500">
+          <tr>
+            <th class="px-3 py-2 font-medium">ID</th>
+            <th class="px-3 py-2 font-medium">用户名</th>
+            <th class="px-3 py-2 font-medium">显示名</th>
+            <th class="px-3 py-2 font-medium">邮箱</th>
+            <th class="px-3 py-2 font-medium">角色</th>
+            <th class="px-3 py-2 font-medium">状态</th>
+            <th class="px-3 py-2 font-medium">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="loading">
+            <td colspan="7" class="px-3 py-8 text-center text-gray-500">加载中</td>
+          </tr>
+          <tr v-for="admin in admins" v-else :key="admin.id" class="border-t border-gray-100">
+            <td class="px-3 py-2">{{ admin.id }}</td>
+            <td class="px-3 py-2 font-medium">{{ admin.username }}</td>
+            <td class="px-3 py-2">{{ admin.display_name || '-' }}</td>
+            <td class="px-3 py-2">{{ admin.email || '-' }}</td>
+            <td class="px-3 py-2">
+              <UBadge :color="admin.role === 2 ? 'error' : 'warning'">
+                {{ admin.role === 2 ? '超级管理员' : '管理员' }}
+              </UBadge>
+            </td>
+            <td class="px-3 py-2">
+              <UBadge :color="admin.status === 1 ? 'success' : 'error'">
+                {{ admin.status === 1 ? '启用' : '禁用' }}
+              </UBadge>
+            </td>
+            <td class="px-3 py-2">
+              <div v-if="auth.isSuperAdmin" class="flex gap-1">
+                <UButton variant="ghost" size="xs" @click="startEdit(admin)">编辑</UButton>
+                <UButton variant="ghost" size="xs" color="error" @click="handleDelete(admin)">删除</UButton>
+              </div>
+            </td>
+          </tr>
+          <tr v-if="!loading && admins.length === 0">
+            <td colspan="7" class="px-3 py-8 text-center text-gray-500">暂无管理员</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <UModal v-model:open="showCreate" title="创建管理员">
       <template #body>
@@ -157,7 +184,7 @@ onMounted(() => fetchAdmins())
       </template>
     </UModal>
 
-    <UModal v-model:open="editAdmin" :open="!!editAdmin" title="编辑管理员">
+    <UModal v-model:open="showEdit" title="编辑管理员">
       <template #body>
         <form v-if="editAdmin" class="space-y-4" @submit.prevent="handleEdit">
           <UFormField label="显示名称">
