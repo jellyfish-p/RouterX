@@ -163,7 +163,7 @@ Gemini-compatible 错误示例：
 - 401/403 必须区分认证失败和权限不足；但登录场景可继续使用模糊提示防止账号枚举。
 - 余额不足、访问控制不通过、没有可用通道时必须在日志中记录可排障原因。
 - 下游原始错误可保存脱敏摘要；对客户端返回时必须转换为当前入口协议兼容格式。
-- `/v1` API Key 鉴权、用户禁用和配额预检查会按入口协议返回 OpenAI-compatible、Anthropic 或 Gemini 错误外形；更深层的转发、转换和上游错误继续按 P1 测试矩阵收敛。
+- `/v1` API Key 鉴权、用户禁用和配额预检查会按入口协议返回 OpenAI-compatible、Anthropic 或 Gemini 错误外形；Anthropic/Gemini 基础非流式成功和字段降级已有测试，更深层的流式、原生字段保真和上游错误继续按 P1 测试矩阵收敛。
 
 ## 公共接口
 
@@ -622,7 +622,7 @@ P0 明确失败：
 |------|------|------|
 | GET | `/v1/models` | 基础实现，模型列表 |
 | GET | `/v1/models/{model}` | 基础实现，模型详情 |
-| POST | `/v1/models/{model}:generateContent` | 基础实现，内容生成 |
+| POST | `/v1/models/{model}:generateContent` | 基础实现，内容生成；当前转 OpenAI-compatible Chat，非文本 parts 降级为 compact JSON 文本 |
 | POST | `/v1/models/{model}:streamGenerateContent` | 已注册，流式内容生成 |
 | POST | `/v1/models/{model}:countTokens` | 基础实现，Token 计数 |
 | POST | `/v1/models/{model}:embedContent` | 目标扩展，单条 Embedding |
@@ -632,7 +632,7 @@ P0 明确失败：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/v1/messages` | 基础实现，Messages |
+| POST | `/v1/messages` | 基础实现，Messages；当前转 OpenAI-compatible Chat，非文本 content blocks 降级为 compact JSON 文本 |
 | POST | `/v1/messages/count_tokens` | 基础实现，Token 计数 |
 | GET | `/v1/models` | 基础实现，模型列表 |
 | GET | `/v1/models/:model` | 基础实现，模型详情 |

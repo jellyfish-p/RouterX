@@ -537,6 +537,136 @@ func TestAPIKeyAuthErrorsUseEntryProtocolShape(t *testing.T) {
 	}
 }
 
+func TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamBodies := make([]string, 0, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		raw := new(bytes.Buffer)
+		_, _ = raw.ReadFrom(req.Body)
+		upstreamBodies = append(upstreamBodies, raw.String())
+		if strings.Contains(raw.String(), "upstream-secret") {
+			t.Errorf("upstream request body leaked channel secret: %s", raw.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(raw.String(), `"model":"claude-test"`):
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-anthropic","object":"chat.completion","model":"claude-test","choices":[{"index":0,"message":{"role":"assistant","content":"anthropic ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":4,"total_tokens":7}}`))
+		case strings.Contains(raw.String(), `"model":"gemini-test"`):
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-gemini","object":"chat.completion","model":"gemini-test","choices":[{"index":0,"message":{"role":"assistant","content":"gemini ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":6,"total_tokens":11}}`))
+		default:
+			t.Errorf("unexpected upstream body: %s", raw.String())
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "protocols",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "protocols",
+		"models":   "claude-test,gemini-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	anthropicResp := performJSON(r, http.MethodPost, "/v1/messages", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model":      "claude-test",
+		"max_tokens": 64,
+		"system":     "be precise",
+		"messages": []map[string]interface{}{
+			{
+				"role": "user",
+				"content": []map[string]interface{}{
+					{"type": "text", "text": "hello"},
+					{"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": map[string]string{"q": "routerx"}},
+				},
+			},
+		},
+		"temperature":    0.2,
+		"stop_sequences": []string{"END"},
+	})
+	if anthropicResp.Code != http.StatusOK || !strings.Contains(anthropicResp.Body.String(), `"type":"message"`) || !strings.Contains(anthropicResp.Body.String(), `"text":"anthropic ok"`) || !strings.Contains(anthropicResp.Body.String(), `"input_tokens":3`) || !strings.Contains(anthropicResp.Body.String(), `"output_tokens":4`) {
+		t.Fatalf("anthropic success should use Anthropic shape and usage, got %d %s", anthropicResp.Code, anthropicResp.Body.String())
+	}
+	if len(upstreamBodies) != 1 || !strings.Contains(upstreamBodies[0], "be precise") || !strings.Contains(upstreamBodies[0], "tool_use") || !strings.Contains(upstreamBodies[0], `"stop":["END"]`) {
+		t.Fatalf("anthropic conversion should preserve system, stop and degraded content blocks, got %#v", upstreamBodies)
+	}
+
+	geminiResp := performJSON(r, http.MethodPost, "/v1/models/gemini-test:generateContent", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{
+				"role": "user",
+				"parts": []map[string]interface{}{
+					{"text": "hello"},
+					{"functionCall": map[string]interface{}{"name": "lookup", "args": map[string]string{"q": "routerx"}}},
+				},
+			},
+		},
+		"systemInstruction": map[string]interface{}{
+			"parts": []map[string]string{{"text": "follow policy"}},
+		},
+		"generationConfig": map[string]interface{}{
+			"maxOutputTokens": 9,
+			"temperature":     0.1,
+			"topP":            0.8,
+			"stopSequences":   []string{"STOP"},
+		},
+	})
+	if geminiResp.Code != http.StatusOK || !strings.Contains(geminiResp.Body.String(), `"candidates"`) || !strings.Contains(geminiResp.Body.String(), `"text":"gemini ok"`) || !strings.Contains(geminiResp.Body.String(), `"finishReason":"STOP"`) || !strings.Contains(geminiResp.Body.String(), `"totalTokenCount":11`) {
+		t.Fatalf("gemini success should use Gemini shape and usage, got %d %s", geminiResp.Code, geminiResp.Body.String())
+	}
+	if len(upstreamBodies) != 2 || !strings.Contains(upstreamBodies[1], "follow policy") || !strings.Contains(upstreamBodies[1], "functionCall") || !strings.Contains(upstreamBodies[1], `"max_tokens":9`) {
+		t.Fatalf("gemini conversion should preserve system, config and degraded non-text parts, got %#v", upstreamBodies)
+	}
+
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 32 {
+		t.Fatalf("protocol calls should deduct combined usage from token budget, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 82 {
+		t.Fatalf("protocol calls should deduct combined usage from user quota, got %d", root.Quota)
+	}
+}
+
 func TestRelayPrecheckRejectsBeforeUpstream(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

@@ -496,15 +496,11 @@ func anthropicMessagesToOpenAI(body []byte) ([]byte, error) {
 func geminiGenerateToOpenAI(modelName string, body []byte, stream bool) ([]byte, error) {
 	var input struct {
 		Contents []struct {
-			Role  string `json:"role"`
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
+			Role  string            `json:"role"`
+			Parts []json.RawMessage `json:"parts"`
 		} `json:"contents"`
 		SystemInstruction *struct {
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
+			Parts []json.RawMessage `json:"parts"`
 		} `json:"systemInstruction"`
 		GenerationConfig map[string]interface{} `json:"generationConfig"`
 	}
@@ -519,8 +515,8 @@ func geminiGenerateToOpenAI(modelName string, body []byte, stream bool) ([]byte,
 	if input.SystemInstruction != nil {
 		parts := make([]string, 0, len(input.SystemInstruction.Parts))
 		for _, part := range input.SystemInstruction.Parts {
-			if strings.TrimSpace(part.Text) != "" {
-				parts = append(parts, part.Text)
+			if text := strings.TrimSpace(relay.TextFromContent(part)); text != "" {
+				parts = append(parts, text)
 			}
 		}
 		if len(parts) > 0 {
@@ -530,8 +526,8 @@ func geminiGenerateToOpenAI(modelName string, body []byte, stream bool) ([]byte,
 	for _, content := range input.Contents {
 		parts := make([]string, 0, len(content.Parts))
 		for _, part := range content.Parts {
-			if strings.TrimSpace(part.Text) != "" {
-				parts = append(parts, part.Text)
+			if text := strings.TrimSpace(relay.TextFromContent(part)); text != "" {
+				parts = append(parts, text)
 			}
 		}
 		role := "user"

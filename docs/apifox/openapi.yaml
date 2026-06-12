@@ -1037,6 +1037,9 @@ paths:
     post:
       tags: [Anthropic Compatible]
       summary: Anthropic Messages
+      description: |
+        当前实现会转换到 OpenAI-compatible Chat 主链路，再返回 Anthropic-compatible message response。
+        文本 content 保留；非文本 content blocks 会以 compact JSON 文本降级，stream=true 当前返回 unsupported_stream。
       security:
         - ApiKeyBearer: []
       requestBody:
@@ -1085,7 +1088,9 @@ paths:
       summary: Gemini generateContent
       description: |
         Gin 当前注册为 /v1/models/:model，可匹配 gemini-pro:generateContent 这一类单段路径。
-        当前实现会转换到 OpenAI-compatible Chat 主链路。
+        当前实现会转换到 OpenAI-compatible Chat 主链路，再返回 Gemini-compatible response。
+        contents/systemInstruction 中的 text part 保留；非文本 parts 会以 compact JSON 文本降级。
+        generationConfig.maxOutputTokens、temperature、topP、stopSequences 会映射到 OpenAI-compatible 字段。
       security:
         - ApiKeyBearer: []
       parameters:

@@ -366,7 +366,7 @@ P1 验收：
 
 - 主流 SDK 可通过 RouterX 完成基础非流式和流式调用。
 - `routerx.route` 合法、非法、越权和无候选路径都有稳定行为。
-- 多协议入口错误外形分别兼容 OpenAI、Anthropic 和 Gemini。
+- 多协议入口成功和错误外形分别兼容 OpenAI、Anthropic 和 Gemini。
 - 重试和熔断行为能从日志解释。
 
 P2 验收：

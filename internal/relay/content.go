@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 )
@@ -28,15 +29,12 @@ func messageContentText(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &text); err == nil {
 		return text
 	}
-	var parts []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
+	var parts []json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err == nil {
 		values := make([]string, 0, len(parts))
 		for _, part := range parts {
-			if strings.TrimSpace(part.Text) != "" {
-				values = append(values, part.Text)
+			if text := strings.TrimSpace(contentPartText(part)); text != "" {
+				values = append(values, text)
 			}
 		}
 		return strings.Join(values, "\n")
@@ -45,13 +43,34 @@ func messageContentText(raw json.RawMessage) string {
 		Text string `json:"text"`
 	}
 	if err := json.Unmarshal(raw, &object); err == nil {
-		return object.Text
+		if strings.TrimSpace(object.Text) != "" {
+			return object.Text
+		}
+		return compactJSON(raw)
 	}
 	return string(raw)
 }
 
 func TextFromContent(raw json.RawMessage) string {
 	return messageContentText(raw)
+}
+
+func contentPartText(raw json.RawMessage) string {
+	var object struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &object); err == nil && strings.TrimSpace(object.Text) != "" {
+		return object.Text
+	}
+	return compactJSON(raw)
+}
+
+func compactJSON(raw json.RawMessage) string {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err == nil {
+		return buf.String()
+	}
+	return string(raw)
 }
 
 func jsonString(value string) json.RawMessage {
