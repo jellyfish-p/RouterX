@@ -191,7 +191,7 @@ P2 验收标准：
 | WP0-2 账号与权限 | P0 | auth、user、admin middleware | 用户登录签发 JWT；管理员/超级管理员边界正确；普通用户不能越权 | `TestAdminPrivilegeBoundaries` 覆盖管理员边界 |
 | WP0-3 API Key 生命周期 | P0 | token、API Key auth、Redis 缓存 | Key 明文只返回一次；DB 保存哈希；禁用、过期、删除、用户禁用立即影响 `/v1` | `TestP0BackendFlow` 覆盖创建、禁用和额度边界 |
 | WP0-4 通道基础管理 | P0 | channel、adapter registry、secret encryption | 管理员可创建/测试/启停通道；下游密钥加密；响应和日志不泄露密钥 | `TestP0BackendFlow`、`TestChannelExtendedManagement` |
-| WP0-5 OpenAI-compatible 非流式闭环 | P0 | relay handler/service、OpenAI adapter、logs、quota | `/v1/models` 和 Chat 非流式可用；无可用通道、余额不足、无效 Key 返回 SDK 兼容错误；成功调用写日志并扣费 | 已有 Chat 成功、下游 400、预检拒绝测试；仍需补本地请求错误和更多下游状态 |
+| WP0-5 OpenAI-compatible 非流式闭环 | P0 | relay handler/service、OpenAI adapter、logs、quota | `/v1/models` 和 Chat 非流式可用；无可用通道、余额不足、无效 Key 返回 SDK 兼容错误；成功调用写日志并扣费 | 已有 Chat 成功、本地请求错误、下游 400、预检拒绝测试；仍需补更多下游状态 |
 | WP0-6 基础日志与账单 | P0 | logs、billing stats、dashboard | 用户只看自己的日志；管理员可筛选全局日志；账单聚合来自日志事实 | 已有单次成功账单聚合；仍需补多次成功/失败混合一致性 |
 | WP1-1 流式和取消 | P1 | relay stream、adapter stream、context cancel | SSE 不缓存完整响应；客户端断开取消下游；流式 usage 可结算或估算 | 新增流式集成测试 |
 | WP1-2 路由决策快照 | P1 | channel selection、route policy、logs、POLICIES | 记录候选过滤、`routerx.route` 处理、最终通道、模型重写和重试结果 | 新增路由策略单元/集成测试 |
@@ -218,7 +218,7 @@ P2 验收标准：
 | 优先级 | 测试主题 | 当前状态 | 覆盖原因 |
 |--------|----------|----------|----------|
 | 1 | Chat 非流式成功调用写日志并扣费 | 已覆盖：`TestChatCompletionSuccessLogsAndDeductsQuota` | 证明 P0 不只是 `/v1/models` 可用，而是真正完成一次模型调用闭环。 |
-| 2 | Chat 非流式下游 400/401/403/5xx/超时错误映射 | 部分覆盖：已有下游 400；仍需补 401/403/429/5xx/超时 | 证明 SDK 兼容错误、重试边界和通道故障归因正确。 |
+| 2 | Chat 非流式本地请求错误和下游 400/401/403/5xx/超时错误映射 | 部分覆盖：本地请求错误和下游 400 已覆盖；仍需补 401/403/429/5xx/超时 | 证明 SDK 兼容错误、重试边界和通道故障归因正确。 |
 | 3 | 余额不足、禁用用户、禁用 API Key、禁用通道不调用下游 | 已覆盖：`TestRelayPrecheckRejectsBeforeUpstream` | 证明安全和计费预检发生在下游调用前。 |
 | 4 | settings 注册表、类型校验、缓存刷新和生产 readiness | 部分覆盖：默认值、类型校验和 readiness 已覆盖；仍需缓存刷新边界 | 证明配置不是散落字符串，关键配置错误能阻止生产实例接流量。 |
 | 5 | 多 key、多 base URL、`upstreams` 优先级和模型重写 | 待补真实 Relay 请求效果 | 证明通道高级配置不会产生不可解释的随机行为。 |

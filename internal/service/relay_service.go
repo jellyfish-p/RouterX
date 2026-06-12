@@ -33,6 +33,11 @@ type HTTPError struct {
 	Code    string
 }
 
+var (
+	errInvalidJSONBody = errors.New("invalid json body")
+	errModelRequired   = errors.New("model is required")
+)
+
 func (e *HTTPError) Error() string {
 	return e.Message
 }
@@ -117,7 +122,7 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 	}
 	reqInfo, err := parseRelayRequest(apiType, body)
 	if err != nil {
-		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: relayRequestErrorCode(err)}
 	}
 	if reqInfo.Stream {
 		return nil, nil, &HTTPError{Status: 400, Message: "stream is not supported in P0 relay", Type: "invalid_request_error", Code: "unsupported_stream"}
@@ -289,13 +294,24 @@ func parseRelayRequest(apiType relay.APIType, body []byte) (relayRequestInfo, er
 		Stream bool   `json:"stream"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return relayRequestInfo{}, errors.New("invalid json body")
+		return relayRequestInfo{}, errInvalidJSONBody
 	}
 	payload.Model = strings.TrimSpace(payload.Model)
 	if payload.Model == "" {
-		return relayRequestInfo{}, errors.New("model is required")
+		return relayRequestInfo{}, errModelRequired
 	}
 	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream}, nil
+}
+
+func relayRequestErrorCode(err error) string {
+	switch {
+	case errors.Is(err, errInvalidJSONBody):
+		return "invalid_json"
+	case errors.Is(err, errModelRequired):
+		return "model_required"
+	default:
+		return "invalid_request"
+	}
 }
 
 func replaceRequestModel(body []byte, modelName string) ([]byte, error) {
