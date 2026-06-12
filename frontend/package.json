@@ -1,0 +1,32 @@
+{
+  "name": "routerx-frontend",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "scripts": {
+    "ensure:bun": "bun ./scripts/ensure-bun.mjs",
+    "preinstall": "bun ./scripts/ensure-bun.mjs",
+    "dev": "bun ./scripts/ensure-bun.mjs && nuxt dev --port 5173",
+    "build": "bun ./scripts/ensure-bun.mjs && nuxt build",
+    "generate": "bun ./scripts/ensure-bun.mjs && nuxt generate",
+    "preview": "bun ./scripts/ensure-bun.mjs && nuxt preview",
+    "lint": "bun ./scripts/ensure-bun.mjs && eslint .",
+    "typecheck": "bun ./scripts/ensure-bun.mjs && nuxt typecheck"
+  },
+  "dependencies": {
+    "nuxt": "^4.4.0",
+    "@nuxt/ui": "^4.8.0",
+    "@pinia/nuxt": "^0.11.0",
+    "pinia": "^3.0.0",
+    "vue": "^3.5.0",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@nuxt/eslint": "^1.4.2",
+    "@vue/tsconfig": "^0.8.0",
+    "typescript": "~5.8.0"
+  }
+}

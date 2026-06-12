@@ -70,12 +70,17 @@ reports/
 **/.pnpm-store/
 **/.npm/
 **/.turbo/
+frontend/**/package-lock.json
+frontend/**/pnpm-lock.yaml
+frontend/**/pnpm-workspace.yaml
+frontend/**/yarn.lock
 
 # Frontend build and test outputs
 frontend/**/dist/
 frontend/**/build/
 frontend/**/.next/
 frontend/**/out/
+frontend/**/.output/
 frontend/**/.nuxt/
 frontend/**/.svelte-kit/
 frontend/**/.vite/
