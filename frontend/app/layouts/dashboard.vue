@@ -35,8 +35,12 @@ const sidebarItems = computed(() => {
             RouterX
           </NuxtLink>
         </div>
-        <nav class="flex-1 overflow-y-auto p-4 space-y-1">
-          <UVerticalNavigation :links="sidebarItems" />
+        <nav class="flex-1 overflow-y-auto p-4">
+          <UNavigationMenu
+            orientation="vertical"
+            :items="sidebarItems"
+            highlight
+          />
         </nav>
         <div class="p-4 border-t border-gray-200 dark:border-gray-800">
           <div class="flex items-center gap-3">
