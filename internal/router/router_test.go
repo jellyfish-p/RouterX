@@ -1267,6 +1267,235 @@ func TestChatCompletionUpstreamBadRequestMapping(t *testing.T) {
 	}
 }
 
+func TestChatCompletionUpstreamErrorStatusMapping(t *testing.T) {
+	cases := []struct {
+		name           string
+		upstreamStatus int
+		wantStatus     int
+		wantCode       string
+	}{
+		{name: "unauthorized", upstreamStatus: http.StatusUnauthorized, wantStatus: http.StatusBadGateway, wantCode: "upstream_401"},
+		{name: "forbidden", upstreamStatus: http.StatusForbidden, wantStatus: http.StatusBadGateway, wantCode: "upstream_403"},
+		{name: "rate limited", upstreamStatus: http.StatusTooManyRequests, wantStatus: http.StatusTooManyRequests, wantCode: "upstream_429"},
+		{name: "server error", upstreamStatus: http.StatusInternalServerError, wantStatus: http.StatusBadGateway, wantCode: "upstream_500"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("JWT_SECRET", "test-jwt-secret")
+			t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+			upstreamCalls := 0
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				upstreamCalls++
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.upstreamStatus)
+				_, _ = w.Write([]byte(`{"error":{"message":"upstream failed","type":"upstream_error","code":"provider_error","secret":"upstream-secret"}}`))
+			}))
+			defer upstream.Close()
+
+			r := newTestRouter(t)
+			initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+				"username": "root",
+				"password": "password123",
+			})
+			if initResp.Code != http.StatusOK {
+				t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+			}
+			rootJWT := loginBearer(t, r, "root", "password123")
+			if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+				t.Fatal(err)
+			}
+			tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+				"name":         "upstream-" + tt.name,
+				"remain_quota": 50,
+			})
+			var tokenPayload struct {
+				Data struct {
+					ID  uint   `json:"id"`
+					Key string `json:"key"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+				t.Fatal(err)
+			}
+			if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+				t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+			}
+			channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+				"type":     common.ChannelTypeOpenAICompat,
+				"name":     "upstream-" + tt.name,
+				"models":   "gpt-test",
+				"base_url": upstream.URL,
+				"api_key":  "upstream-secret",
+			})
+			var channelPayload struct {
+				Data struct {
+					ID uint `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(channelResp.Body.Bytes(), &channelPayload); err != nil {
+				t.Fatal(err)
+			}
+			if channelResp.Code != http.StatusOK || channelPayload.Data.ID == 0 {
+				t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+			}
+
+			chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+				"model": "gpt-test",
+				"messages": []map[string]string{
+					{"role": "user", "content": "hello"},
+				},
+			})
+			if chatResp.Code != tt.wantStatus || !strings.Contains(chatResp.Body.String(), `"code":"`+tt.wantCode+`"`) {
+				t.Fatalf("upstream %d should map to %d/%s, got %d %s", tt.upstreamStatus, tt.wantStatus, tt.wantCode, chatResp.Code, chatResp.Body.String())
+			}
+			if strings.Contains(chatResp.Body.String(), "upstream-secret") {
+				t.Fatalf("upstream error leaked secret: %s", chatResp.Body.String())
+			}
+			if upstreamCalls != 1 {
+				t.Fatalf("expected one upstream request, got %d", upstreamCalls)
+			}
+			var callLog model.Log
+			if err := internal.DB.First(&callLog).Error; err != nil {
+				t.Fatal(err)
+			}
+			if callLog.Status != common.LogStatusFailed || callLog.QuotaUsed != 0 || !strings.Contains(callLog.ErrorMsg, strconv.Itoa(tt.upstreamStatus)) || strings.Contains(callLog.ErrorMsg, "upstream-secret") {
+				t.Fatalf("unexpected failed call log: %+v", callLog)
+			}
+			var storedToken model.Token
+			if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if storedToken.RemainQuota != 50 {
+				t.Fatalf("upstream failures should not deduct token budget, got %d", storedToken.RemainQuota)
+			}
+			var root model.User
+			if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+				t.Fatal(err)
+			}
+			if root.Quota != 100 {
+				t.Fatalf("upstream failures should not deduct user quota, got %d", root.Quota)
+			}
+			var channel model.Channel
+			if err := internal.DB.First(&channel, channelPayload.Data.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if channel.ErrorCount != 1 {
+				t.Fatalf("upstream failure should increment channel error_count, got %d", channel.ErrorCount)
+			}
+		})
+	}
+}
+
+func TestChatCompletionUpstreamTimeoutMapping(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		time.Sleep(1500 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"late","object":"chat.completion","choices":[],"usage":{"total_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("relay.timeout", "1"); err != nil {
+		t.Fatal(err)
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "timeout",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "timeout",
+		"models":   "gpt-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	var channelPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(channelResp.Body.Bytes(), &channelPayload); err != nil {
+		t.Fatal(err)
+	}
+	if channelResp.Code != http.StatusOK || channelPayload.Data.ID == 0 {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	start := time.Now()
+	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-test",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	})
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("timeout test took too long: %s", elapsed)
+	}
+	if chatResp.Code != http.StatusGatewayTimeout || !strings.Contains(chatResp.Body.String(), `"code":"upstream_timeout"`) {
+		t.Fatalf("upstream timeout should map to 504/upstream_timeout, got %d %s", chatResp.Code, chatResp.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("expected one upstream request, got %d", upstreamCalls)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusFailed || callLog.QuotaUsed != 0 || !strings.Contains(callLog.ErrorMsg, "timeout") {
+		t.Fatalf("unexpected timeout log: %+v", callLog)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 50 {
+		t.Fatalf("timeout should not deduct token budget, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("timeout should not deduct user quota, got %d", root.Quota)
+	}
+	var channel model.Channel
+	if err := internal.DB.First(&channel, channelPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if channel.ErrorCount != 1 {
+		t.Fatalf("timeout should increment channel error_count, got %d", channel.ErrorCount)
+	}
+}
+
 func newTestRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)

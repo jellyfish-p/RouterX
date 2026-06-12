@@ -32,11 +32,12 @@
 | `TestUserBillingMatchesLogs` | 多次成功/失败混合后，用户账单、日志、余额和 Key 预算一致 |
 | `TestChatCompletionSuccessLogsAndDeductsQuota` | Chat 非流式成功调用、日志、用户额度、Key 预算和账单聚合 |
 | `TestChatCompletionUpstreamBadRequestMapping` | 下游 400 错误映射、失败日志和密钥不泄露 |
+| `TestChatCompletionUpstreamErrorStatusMapping` | 下游 401/403/429/5xx 错误映射、失败日志、通道错误计数和不扣费 |
+| `TestChatCompletionUpstreamTimeoutMapping` | 下游超时错误映射、失败日志、通道错误计数和不扣费 |
 | `TestRelayPrecheckRejectsBeforeUpstream` | 无效 Key、禁用 Key、额度不足、禁用通道不调用下游 |
 
 仍需优先补齐：
 
-- 下游 401/403/429/5xx/超时错误映射。
 - settings 缓存刷新和运行时生效边界。
 
 ## 测试原则

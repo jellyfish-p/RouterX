@@ -125,7 +125,7 @@
 | Anthropic/Gemini wrapper 转换失败当前可能返回 `response_conversion_failed`。 | 统一归入 `upstream_conversion_failed`，可保留 `response_conversion_failed` 作为兼容别名。 |
 | `parseRelayRequest` 对缺少 model 当前可能走 `invalid_request`。 | 对外目标使用 `model_required`，日志可保留原始解析错误摘要。 |
 | 上游 400/401/403 当前多以 502 + `upstream_<status>` 返回。 | P1 可按入口协议细化，但 401/403 仍应归因通道配置且不重试。 |
-| 超时当前可能落入 `upstream_request_failed`。 | 目标拆成 `upstream_timeout`，便于告警和客户端重试判断。 |
+| 超时已拆分为 `upstream_timeout`。 | 由 `TestChatCompletionUpstreamTimeoutMapping` 覆盖，便于告警和客户端重试判断。 |
 | `/v0` 统一响应当前没有稳定 code 字段。 | 若增加 code，需要保持旧字段并更新 API 文档和测试。 |
 
 ## `/v0` 错误语义

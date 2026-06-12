@@ -166,6 +166,10 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 	latencyMs := int(time.Since(start).Milliseconds())
 	if err != nil {
 		_ = s.markChannelFailure(channel, latencyMs)
+		if errors.Is(err, context.DeadlineExceeded) {
+			_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream timeout", clientIP)
+			return nil, nil, &HTTPError{Status: 504, Message: "upstream request timed out", Type: "upstream_error", Code: "upstream_timeout"}
+		}
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream request failed", clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "upstream request failed", Type: "upstream_error", Code: "upstream_request_failed"}
 	}
