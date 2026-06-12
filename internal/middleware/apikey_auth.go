@@ -60,6 +60,10 @@ func authenticateAPIKey(c *gin.Context) bool {
 		ok = key != ""
 	}
 	if !ok {
+		key = strings.TrimSpace(c.Query("key"))
+		ok = key != ""
+	}
+	if !ok {
 		writeOpenAIAuthError(c, http.StatusUnauthorized, "invalid api key", "authentication_error", "invalid_api_key")
 		return false
 	}

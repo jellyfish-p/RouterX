@@ -57,6 +57,50 @@ func (s *RelayService) RelayCompletions(ctx context.Context, token *model.Token,
 	return s.Relay(ctx, token, relay.APICompletions, body, clientIP)
 }
 
+func (s *RelayService) RelayAnthropicMessages(ctx context.Context, token *model.Token, body []byte, clientIP string) ([]byte, *relay.Usage, error) {
+	canonical, err := anthropicMessagesToOpenAI(body)
+	if err != nil {
+		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+	}
+	resp, usage, err := s.Relay(ctx, token, relay.APIChatCompletions, canonical, clientIP)
+	if err != nil {
+		return nil, usage, err
+	}
+	converted, err := openAIChatToAnthropic(resp)
+	if err != nil {
+		return nil, usage, &HTTPError{Status: 502, Message: "response conversion failed", Type: "upstream_error", Code: "response_conversion_failed"}
+	}
+	return converted, usage, nil
+}
+
+func (s *RelayService) RelayGeminiGenerateContent(ctx context.Context, token *model.Token, modelName string, body []byte, stream bool, clientIP string) ([]byte, *relay.Usage, error) {
+	canonical, err := geminiGenerateToOpenAI(modelName, body, stream)
+	if err != nil {
+		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+	}
+	resp, usage, err := s.Relay(ctx, token, relay.APIChatCompletions, canonical, clientIP)
+	if err != nil {
+		return nil, usage, err
+	}
+	converted, err := openAIChatToGemini(resp)
+	if err != nil {
+		return nil, usage, &HTTPError{Status: 502, Message: "response conversion failed", Type: "upstream_error", Code: "response_conversion_failed"}
+	}
+	return converted, usage, nil
+}
+
+func (s *RelayService) AnthropicCountTokens(body []byte) ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
+		"input_tokens": approximateTokenCount(body),
+	})
+}
+
+func (s *RelayService) GeminiCountTokens(body []byte) ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
+		"totalTokens": approximateTokenCount(body),
+	})
+}
+
 // GetAdapter 根据通道类型返回对应的适配器实例。
 func (s *RelayService) GetAdapter(channelType int) (relay.Adapter, error) {
 	adapter, ok := relay.GetAdapter(channelType)
@@ -93,22 +137,27 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "unsupported upstream channel", Type: "upstream_error", Code: "unsupported_channel"}
 	}
-	apiKey, err := common.DecryptSecret(channel.APIKey)
+	target, err := s.channelService.ResolveUpstream(channel)
 	if err != nil {
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream secret decrypt failed", clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "upstream channel secret is not available", Type: "upstream_error", Code: "upstream_secret_error"}
 	}
-
-	outBody, err := adapter.ConvertRequest(apiType, body)
+	upstreamModel := s.channelService.ApplyModelRewrite(channel, reqInfo.Model)
+	outInputBody, err := replaceRequestModel(body, upstreamModel)
 	if err != nil {
 		return nil, nil, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 	}
-	endpoint := adapter.GetAPIEndpoint(apiType, reqInfo.Model)
+
+	outBody, err := adapter.ConvertRequest(apiType, outInputBody)
+	if err != nil {
+		return nil, nil, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
+	}
+	endpoint := adapter.GetAPIEndpoint(apiType, upstreamModel)
 	timeout := s.relayTimeout()
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	start := time.Now()
-	resp, err := adapter.DoRequest(reqCtx, channel.BaseURL, endpoint, apiKey, outBody)
+	resp, err := adapter.DoRequest(reqCtx, target.BaseURL, endpoint, target.APIKey, outBody)
 	latencyMs := int(time.Since(start).Milliseconds())
 	if err != nil {
 		_ = s.markChannelFailure(channel, latencyMs)
@@ -170,6 +219,61 @@ func (s *RelayService) ListModels() ([]byte, error) {
 	})
 }
 
+func (s *RelayService) ModelDetail(modelName string) ([]byte, error) {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return nil, errors.New("model is required")
+	}
+	models, err := s.channelService.ListModels()
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range models {
+		if candidate == modelName || "models/"+candidate == modelName {
+			return json.Marshal(map[string]interface{}{
+				"id":       candidate,
+				"object":   "model",
+				"created":  0,
+				"owned_by": "routerx",
+			})
+		}
+	}
+	return nil, &HTTPError{Status: 404, Message: "model not found", Type: "invalid_request_error", Code: "model_not_found"}
+}
+
+func (s *RelayService) ListGeminiModels() ([]byte, error) {
+	models, err := s.channelService.ListModels()
+	if err != nil {
+		return nil, err
+	}
+	data := make([]map[string]interface{}, 0, len(models))
+	for _, modelName := range models {
+		data = append(data, map[string]interface{}{
+			"name":                       "models/" + modelName,
+			"version":                    "",
+			"displayName":                modelName,
+			"supportedGenerationMethods": []string{"generateContent", "streamGenerateContent", "countTokens"},
+		})
+	}
+	return json.Marshal(map[string]interface{}{"models": data})
+}
+
+func (s *RelayService) ListAnthropicModels() ([]byte, error) {
+	models, err := s.channelService.ListModels()
+	if err != nil {
+		return nil, err
+	}
+	data := make([]map[string]interface{}, 0, len(models))
+	for _, modelName := range models {
+		data = append(data, map[string]interface{}{
+			"id":           modelName,
+			"type":         "model",
+			"display_name": modelName,
+		})
+	}
+	return json.Marshal(map[string]interface{}{"data": data, "has_more": false})
+}
+
 type relayRequestInfo struct {
 	Model  string
 	Stream bool
@@ -191,6 +295,258 @@ func parseRelayRequest(apiType relay.APIType, body []byte) (relayRequestInfo, er
 		return relayRequestInfo{}, errors.New("model is required")
 	}
 	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream}, nil
+}
+
+func replaceRequestModel(body []byte, modelName string) ([]byte, error) {
+	if strings.TrimSpace(modelName) == "" {
+		return body, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	rawModel, err := json.Marshal(modelName)
+	if err != nil {
+		return nil, err
+	}
+	payload["model"] = rawModel
+	return json.Marshal(payload)
+}
+
+func anthropicMessagesToOpenAI(body []byte) ([]byte, error) {
+	var input struct {
+		Model    string          `json:"model"`
+		System   json.RawMessage `json:"system"`
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+		MaxTokens     *int     `json:"max_tokens"`
+		Temperature   *float64 `json:"temperature"`
+		TopP          *float64 `json:"top_p"`
+		StopSequences []string `json:"stop_sequences"`
+		Stream        bool     `json:"stream"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, errors.New("invalid json body")
+	}
+	input.Model = strings.TrimSpace(input.Model)
+	if input.Model == "" {
+		return nil, errors.New("model is required")
+	}
+	messages := make([]map[string]interface{}, 0, len(input.Messages)+1)
+	if system := strings.TrimSpace(relay.TextFromContent(input.System)); system != "" {
+		messages = append(messages, map[string]interface{}{"role": "system", "content": system})
+	}
+	for _, message := range input.Messages {
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		if role != "assistant" {
+			role = "user"
+		}
+		messages = append(messages, map[string]interface{}{
+			"role":    role,
+			"content": relay.TextFromContent(message.Content),
+		})
+	}
+	output := map[string]interface{}{
+		"model":    input.Model,
+		"messages": messages,
+		"stream":   input.Stream,
+	}
+	if input.MaxTokens != nil {
+		output["max_tokens"] = *input.MaxTokens
+	}
+	if input.Temperature != nil {
+		output["temperature"] = *input.Temperature
+	}
+	if input.TopP != nil {
+		output["top_p"] = *input.TopP
+	}
+	if len(input.StopSequences) > 0 {
+		output["stop"] = input.StopSequences
+	}
+	return json.Marshal(output)
+}
+
+func geminiGenerateToOpenAI(modelName string, body []byte, stream bool) ([]byte, error) {
+	var input struct {
+		Contents []struct {
+			Role  string `json:"role"`
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"contents"`
+		SystemInstruction *struct {
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"systemInstruction"`
+		GenerationConfig map[string]interface{} `json:"generationConfig"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, errors.New("invalid json body")
+	}
+	modelName = strings.TrimPrefix(strings.TrimSpace(modelName), "models/")
+	if modelName == "" {
+		return nil, errors.New("model is required")
+	}
+	messages := make([]map[string]interface{}, 0, len(input.Contents)+1)
+	if input.SystemInstruction != nil {
+		parts := make([]string, 0, len(input.SystemInstruction.Parts))
+		for _, part := range input.SystemInstruction.Parts {
+			if strings.TrimSpace(part.Text) != "" {
+				parts = append(parts, part.Text)
+			}
+		}
+		if len(parts) > 0 {
+			messages = append(messages, map[string]interface{}{"role": "system", "content": strings.Join(parts, "\n")})
+		}
+	}
+	for _, content := range input.Contents {
+		parts := make([]string, 0, len(content.Parts))
+		for _, part := range content.Parts {
+			if strings.TrimSpace(part.Text) != "" {
+				parts = append(parts, part.Text)
+			}
+		}
+		role := "user"
+		if strings.EqualFold(content.Role, "model") {
+			role = "assistant"
+		}
+		messages = append(messages, map[string]interface{}{"role": role, "content": strings.Join(parts, "\n")})
+	}
+	output := map[string]interface{}{
+		"model":    modelName,
+		"messages": messages,
+		"stream":   stream,
+	}
+	if config := input.GenerationConfig; len(config) > 0 {
+		if value, ok := config["maxOutputTokens"]; ok {
+			output["max_tokens"] = value
+		}
+		if value, ok := config["temperature"]; ok {
+			output["temperature"] = value
+		}
+		if value, ok := config["topP"]; ok {
+			output["top_p"] = value
+		}
+		if value, ok := config["stopSequences"]; ok {
+			output["stop"] = value
+		}
+	}
+	return json.Marshal(output)
+}
+
+func openAIChatToAnthropic(body []byte) ([]byte, error) {
+	var input struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage *relay.Usage `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, err
+	}
+	content := ""
+	stopReason := "end_turn"
+	if len(input.Choices) > 0 {
+		content = input.Choices[0].Message.Content
+		stopReason = anthropicStopReason(input.Choices[0].FinishReason)
+	}
+	usage := map[string]int{"input_tokens": 0, "output_tokens": 0}
+	if input.Usage != nil {
+		usage["input_tokens"] = input.Usage.PromptTokens
+		usage["output_tokens"] = input.Usage.CompletionTokens
+	}
+	return json.Marshal(map[string]interface{}{
+		"id":            input.ID,
+		"type":          "message",
+		"role":          "assistant",
+		"model":         input.Model,
+		"content":       []map[string]string{{"type": "text", "text": content}},
+		"stop_reason":   stopReason,
+		"stop_sequence": nil,
+		"usage":         usage,
+	})
+}
+
+func openAIChatToGemini(body []byte) ([]byte, error) {
+	var input struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage *relay.Usage `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, err
+	}
+	candidates := make([]map[string]interface{}, 0, len(input.Choices))
+	for _, choice := range input.Choices {
+		candidates = append(candidates, map[string]interface{}{
+			"content": map[string]interface{}{
+				"role":  "model",
+				"parts": []map[string]string{{"text": choice.Message.Content}},
+			},
+			"finishReason": geminiFinishReason(choice.FinishReason),
+		})
+	}
+	usage := map[string]int{}
+	if input.Usage != nil {
+		usage["promptTokenCount"] = input.Usage.PromptTokens
+		usage["candidatesTokenCount"] = input.Usage.CompletionTokens
+		usage["totalTokenCount"] = input.Usage.TotalTokens
+	}
+	return json.Marshal(map[string]interface{}{
+		"candidates":    candidates,
+		"usageMetadata": usage,
+	})
+}
+
+func anthropicStopReason(reason string) string {
+	switch reason {
+	case "length":
+		return "max_tokens"
+	case "stop":
+		return "end_turn"
+	default:
+		return reason
+	}
+}
+
+func geminiFinishReason(reason string) string {
+	switch reason {
+	case "length":
+		return "MAX_TOKENS"
+	case "stop":
+		return "STOP"
+	default:
+		return strings.ToUpper(reason)
+	}
+}
+
+func approximateTokenCount(body []byte) int {
+	text := string(body)
+	fields := strings.FieldsFunc(text, func(r rune) bool {
+		return r == ' ' || r == '\n' || r == '\r' || r == '\t' || r == '"' || r == '\'' || r == ',' || r == ':' || r == '{' || r == '}' || r == '[' || r == ']'
+	})
+	count := 0
+	for _, field := range fields {
+		if strings.TrimSpace(field) != "" {
+			count++
+		}
+	}
+	if count == 0 && len(body) > 0 {
+		return 1
+	}
+	return count
 }
 
 func (s *RelayService) relayTimeout() time.Duration {

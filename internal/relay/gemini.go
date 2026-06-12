@@ -1,8 +1,15 @@
 package relay
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
+	"time"
 
 	"routerx/internal/common"
 )
@@ -20,36 +27,216 @@ func (a *GeminiAdapter) GetChannelType() int {
 }
 
 func (a *GeminiAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
-	// TODO: Phase 7 实现
-	// OpenAI ChatCompletionRequest → Gemini GenerateContentRequest
-	// 格式差异:
-	//   - messages → contents[] (parts[])
-	//   - system message → system_instruction
-	//   - stop → stopSequences
-	//   - max_tokens → maxOutputTokens
-	return nil, nil
+	if apiType != APIChatCompletions && apiType != APIGeminiGenerateContent && apiType != APIGeminiStreamGenerateContent {
+		return nil, errors.New("unsupported api type")
+	}
+	var input openAIChatRequest
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, err
+	}
+	type geminiPart struct {
+		Text string `json:"text"`
+	}
+	type geminiContent struct {
+		Role  string       `json:"role,omitempty"`
+		Parts []geminiPart `json:"parts"`
+	}
+	output := struct {
+		Contents          []geminiContent        `json:"contents"`
+		SystemInstruction *geminiContent         `json:"systemInstruction,omitempty"`
+		GenerationConfig  map[string]interface{} `json:"generationConfig,omitempty"`
+	}{}
+	systemParts := make([]geminiPart, 0)
+	for _, message := range input.Messages {
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		content := messageContentText(message.Content)
+		if content == "" {
+			continue
+		}
+		if role == "system" {
+			systemParts = append(systemParts, geminiPart{Text: content})
+			continue
+		}
+		geminiRole := "user"
+		if role == "assistant" {
+			geminiRole = "model"
+		}
+		output.Contents = append(output.Contents, geminiContent{
+			Role:  geminiRole,
+			Parts: []geminiPart{{Text: content}},
+		})
+	}
+	if len(systemParts) > 0 {
+		output.SystemInstruction = &geminiContent{Parts: systemParts}
+	}
+	config := map[string]interface{}{}
+	if input.MaxTokens != nil && *input.MaxTokens > 0 {
+		config["maxOutputTokens"] = *input.MaxTokens
+	}
+	if input.Temperature != nil {
+		config["temperature"] = *input.Temperature
+	}
+	if input.TopP != nil {
+		config["topP"] = *input.TopP
+	}
+	if stops := parseStopStrings(input.Stop); len(stops) > 0 {
+		config["stopSequences"] = stops
+	}
+	if len(config) > 0 {
+		output.GenerationConfig = config
+	}
+	return json.Marshal(output)
 }
 
 func (a *GeminiAdapter) GetAPIEndpoint(apiType APIType, model string) string {
-	// TODO: Phase 7 实现
-	// POST /v1beta/models/{model}:generateContent?key={apiKey}
-	return ""
+	model = strings.TrimPrefix(strings.TrimSpace(model), "models/")
+	escapedModel := url.PathEscape(model)
+	switch apiType {
+	case APIChatCompletions, APIGeminiGenerateContent:
+		return "/v1beta/models/" + escapedModel + ":generateContent"
+	case APIGeminiStreamGenerateContent:
+		return "/v1beta/models/" + escapedModel + ":streamGenerateContent"
+	case APIModels:
+		return "/v1beta/models"
+	default:
+		return ""
+	}
 }
 
 func (a *GeminiAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey string, body []byte) (*http.Response, error) {
-	// TODO: Phase 7 实现
-	// API Key 通过 URL query 参数传递，非 Header
-	return nil, nil
+	if endpoint == "" {
+		return nil, errors.New("unsupported api type")
+	}
+	method := http.MethodPost
+	var reader io.Reader
+	if body == nil {
+		method = http.MethodGet
+	} else {
+		reader = bytes.NewReader(body)
+	}
+	targetURL, err := url.Parse(joinGeminiBaseURL(baseURL, endpoint))
+	if err != nil {
+		return nil, err
+	}
+	query := targetURL.Query()
+	query.Set("key", apiKey)
+	targetURL.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, method, targetURL.String(), reader)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return http.DefaultClient.Do(req)
 }
 
 func (a *GeminiAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
-	// TODO: Phase 7 实现
-	// Gemini GenerateContentResponse → OpenAI ChatCompletionResponse
-	return nil, nil, nil
+	if apiType != APIChatCompletions && apiType != APIGeminiGenerateContent && apiType != APIGeminiStreamGenerateContent {
+		return nil, nil, errors.New("unsupported api type")
+	}
+	var input struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+			FinishReason string `json:"finishReason"`
+		} `json:"candidates"`
+		UsageMetadata struct {
+			PromptTokenCount     int `json:"promptTokenCount"`
+			CandidatesTokenCount int `json:"candidatesTokenCount"`
+			TotalTokenCount      int `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
+		ModelVersion string `json:"modelVersion"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, nil, err
+	}
+	choices := make([]map[string]interface{}, 0, len(input.Candidates))
+	for idx, candidate := range input.Candidates {
+		parts := make([]string, 0, len(candidate.Content.Parts))
+		for _, part := range candidate.Content.Parts {
+			if part.Text != "" {
+				parts = append(parts, part.Text)
+			}
+		}
+		choices = append(choices, map[string]interface{}{
+			"index": idx,
+			"message": map[string]interface{}{
+				"role":    "assistant",
+				"content": strings.Join(parts, ""),
+			},
+			"finish_reason": normalizeGeminiFinishReason(candidate.FinishReason),
+		})
+	}
+	usage := &Usage{
+		PromptTokens:     input.UsageMetadata.PromptTokenCount,
+		CompletionTokens: input.UsageMetadata.CandidatesTokenCount,
+		TotalTokens:      input.UsageMetadata.TotalTokenCount,
+	}
+	output := map[string]interface{}{
+		"id":      "chatcmpl-gemini",
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   input.ModelVersion,
+		"choices": choices,
+		"usage":   usage,
+	}
+	converted, err := json.Marshal(output)
+	return converted, usage, err
 }
 
 func (a *GeminiAdapter) GetModelList(ctx context.Context, baseURL string, apiKey string) ([]string, error) {
-	// TODO: Phase 7 实现
-	// GET /v1beta/models?key={apiKey}
-	return nil, nil
+	resp, err := a.DoRequest(ctx, baseURL, "/v1beta/models", apiKey, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, errors.New(common.FormatHTTPError(resp.StatusCode, "model list request failed"))
+	}
+	var result struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	models := make([]string, 0, len(result.Models))
+	for _, item := range result.Models {
+		if item.Name != "" {
+			models = append(models, strings.TrimPrefix(item.Name, "models/"))
+		}
+	}
+	return models, nil
+}
+
+func normalizeGeminiFinishReason(reason string) string {
+	switch strings.ToUpper(reason) {
+	case "STOP":
+		return "stop"
+	case "MAX_TOKENS":
+		return "length"
+	default:
+		return strings.ToLower(reason)
+	}
+}
+
+func joinGeminiBaseURL(baseURL, endpoint string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = "https://generativelanguage.googleapis.com"
+	}
+	if !strings.HasPrefix(endpoint, "/") {
+		endpoint = "/" + endpoint
+	}
+	return baseURL + endpoint
 }

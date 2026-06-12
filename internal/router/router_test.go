@@ -3,6 +3,7 @@ package router
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -294,6 +295,77 @@ func TestAdminPrivilegeBoundaries(t *testing.T) {
 	})
 	if selfDisable.Code == http.StatusOK {
 		t.Fatalf("super admin disabled self: %s", selfDisable.Body.String())
+	}
+}
+
+func TestChannelExtendedManagement(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"idx":                7,
+		"type":               common.ChannelTypeOpenAICompat,
+		"name":               "extended",
+		"models":             "client-model",
+		"base_urls":          []string{"http://127.0.0.1:9000"},
+		"api_keys":           []string{"upstream-secret-a", "upstream-secret-b"},
+		"key_selection_mode": "random",
+		"model_rewrites":     map[string]string{"client-model": "upstream-model"},
+		"group":              "paid",
+		"priority":           10,
+		"weight":             3,
+	})
+	if createResp.Code != http.StatusOK || strings.Contains(createResp.Body.String(), "upstream-secret") {
+		t.Fatalf("extended channel response failed or leaked key: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			ID          uint   `json:"id"`
+			Idx         int    `json:"idx"`
+			Group       string `json:"group"`
+			APIKeyCount int    `json:"api_key_count"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data.ID == 0 || payload.Data.Idx != 7 || payload.Data.Group != "paid" || payload.Data.APIKeyCount != 2 {
+		t.Fatalf("unexpected extended channel payload: %s", createResp.Body.String())
+	}
+	var stored model.Channel
+	if err := internal.DB.First(&stored, payload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored.APIKeys), "upstream-secret") || !strings.Contains(string(stored.APIKeys), "enc:v1:") {
+		t.Fatalf("api_keys should be encrypted: %s", string(stored.APIKeys))
+	}
+
+	disableResp := performJSON(r, http.MethodPatch, "/v0/admin/channel/"+uintString(payload.Data.ID)+"/disable", rootJWT, nil)
+	if disableResp.Code != http.StatusOK {
+		t.Fatalf("disable channel failed: %d %s", disableResp.Code, disableResp.Body.String())
+	}
+	enableResp := performJSON(r, http.MethodPatch, "/v0/admin/channel/"+uintString(payload.Data.ID)+"/enable", rootJWT, nil)
+	if enableResp.Code != http.StatusOK {
+		t.Fatalf("enable channel failed: %d %s", enableResp.Code, enableResp.Body.String())
+	}
+	deleteResp := performJSON(r, http.MethodDelete, "/v0/admin/channel/"+uintString(payload.Data.ID), rootJWT, nil)
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("delete channel failed: %d %s", deleteResp.Code, deleteResp.Body.String())
+	}
+	var deleted model.Channel
+	err := internal.DB.Unscoped().First(&deleted, payload.Data.ID).Error
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("channel should be hard deleted, got err=%v row=%+v", err, deleted)
 	}
 }
 

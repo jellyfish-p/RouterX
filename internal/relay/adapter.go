@@ -9,19 +9,27 @@ import (
 type APIType int
 
 const (
-	APIChatCompletions     APIType = iota // /v1/chat/completions
-	APICompletions                        // /v1/completions
-	APIImagesGenerations                  // /v1/images/generations
-	APIImagesEdits                        // /v1/images/edits
-	APIImagesVariations                   // /v1/images/variations
-	APIAudioTranscriptions                // /v1/audio/transcriptions
-	APIAudioTranslations                  // /v1/audio/translations
-	APIAudioSpeech                        // /v1/audio/speech
-	APIEmbeddings                         // /v1/embeddings
-	APIModels                             // /v1/models
-	APIFiles                              // /v1/files
-	APIFineTuning                         // /v1/fine_tuning/jobs
-	APIModerations                        // /v1/moderations
+	APIChatCompletions             APIType = iota // /v1/chat/completions
+	APICompletions                                // /v1/completions
+	APIResponses                                  // /v1/responses
+	APIImagesGenerations                          // /v1/images/generations
+	APIImagesEdits                                // /v1/images/edits
+	APIImagesVariations                           // /v1/images/variations
+	APIAudioTranscriptions                        // /v1/audio/transcriptions
+	APIAudioTranslations                          // /v1/audio/translations
+	APIAudioSpeech                                // /v1/audio/speech
+	APIEmbeddings                                 // /v1/embeddings
+	APIModels                                     // /v1/models
+	APIFiles                                      // /v1/files
+	APIFineTuning                                 // /v1/fine_tuning/jobs
+	APIModerations                                // /v1/moderations
+	APIGeminiGenerateContent                      // /v1/models/{model}:generateContent
+	APIGeminiStreamGenerateContent                // /v1/models/{model}:streamGenerateContent
+	APIGeminiCountTokens                          // /v1/models/{model}:countTokens
+	APIGeminiEmbedContent                         // /v1/models/{model}:embedContent
+	APIGeminiBatchEmbedContents                   // /v1/models/{model}:batchEmbedContents
+	APIAnthropicMessages                          // /v1/messages
+	APIAnthropicCountTokens                       // /v1/messages/count_tokens
 )
 
 // Usage 用量统计 (OpenAI 标准格式)。

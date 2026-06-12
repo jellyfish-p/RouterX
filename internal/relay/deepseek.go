@@ -20,30 +20,21 @@ func (a *DeepSeekAdapter) GetChannelType() int {
 }
 
 func (a *DeepSeekAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
-	// TODO: Phase 7 实现
-	// DeepSeek 完全兼容 OpenAI 格式，透传即可
-	return body, nil
+	return (&OpenAIAdapter{}).ConvertRequest(apiType, body)
 }
 
 func (a *DeepSeekAdapter) GetAPIEndpoint(apiType APIType, model string) string {
-	// TODO: Phase 7 实现
-	// 标准 OpenAI 路径: /v1/chat/completions
-	return ""
+	return (&OpenAIAdapter{}).GetAPIEndpoint(apiType, model)
 }
 
 func (a *DeepSeekAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey string, body []byte) (*http.Response, error) {
-	// TODO: Phase 7 实现
-	// Authorization: Bearer {apiKey}
-	return nil, nil
+	return (&OpenAIAdapter{}).DoRequest(ctx, baseURL, endpoint, apiKey, body)
 }
 
 func (a *DeepSeekAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
-	// TODO: Phase 7 实现
-	return nil, nil, nil
+	return (&OpenAIAdapter{}).ConvertResponse(apiType, body)
 }
 
 func (a *DeepSeekAdapter) GetModelList(ctx context.Context, baseURL string, apiKey string) ([]string, error) {
-	// TODO: Phase 7 实现
-	// GET /v1/models
-	return nil, nil
+	return (&OpenAIAdapter{}).GetModelList(ctx, baseURL, apiKey)
 }

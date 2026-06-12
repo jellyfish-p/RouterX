@@ -4,10 +4,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"routerx/internal/common"
 	"routerx/internal/middleware"
+	"routerx/internal/relay"
 	"routerx/internal/service"
 )
 
@@ -21,17 +23,26 @@ func NewRelayHandler(svc *service.RelayService) *RelayHandler {
 
 // POST /v1/chat/completions — 对话补全转发
 func (h *RelayHandler) ChatCompletions(c *gin.Context) {
+	h.relayOpenAI(c, relay.APIChatCompletions)
+}
+
+// POST /v1/responses — Responses API 转发
+func (h *RelayHandler) Responses(c *gin.Context) {
+	h.relayOpenAI(c, relay.APIResponses)
+}
+
+func (h *RelayHandler) relayOpenAI(c *gin.Context, apiType relay.APIType) {
 	token, ok := middleware.CurrentAPIToken(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, common.OpenAIError("invalid api key", "authentication_error", "invalid_api_key"))
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 10<<20))
+	body, err := readRelayBody(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
 		return
 	}
-	resp, _, err := h.svc.RelayChatCompletion(c.Request.Context(), token, body, c.ClientIP())
+	resp, _, err := h.svc.Relay(c.Request.Context(), token, apiType, body, c.ClientIP())
 	if err != nil {
 		writeRelayError(c, err)
 		return
@@ -41,37 +52,139 @@ func (h *RelayHandler) ChatCompletions(c *gin.Context) {
 
 // POST /v1/completions — 文本补全转发 (Legacy)
 func (h *RelayHandler) Completions(c *gin.Context) {
-	writeUnsupported(c)
+	h.relayOpenAI(c, relay.APICompletions)
 }
 
 // POST /v1/embeddings — 向量嵌入转发
 func (h *RelayHandler) Embeddings(c *gin.Context) {
-	writeUnsupported(c)
+	h.relayOpenAI(c, relay.APIEmbeddings)
 }
 
 // POST /v1/images/generations — 图像生成转发
 func (h *RelayHandler) ImageGenerations(c *gin.Context) {
-	writeUnsupported(c)
+	h.relayOpenAI(c, relay.APIImagesGenerations)
+}
+
+func (h *RelayHandler) ImageEdits(c *gin.Context) {
+	h.relayOpenAI(c, relay.APIImagesEdits)
+}
+
+func (h *RelayHandler) ImageVariations(c *gin.Context) {
+	h.relayOpenAI(c, relay.APIImagesVariations)
 }
 
 // POST /v1/audio/transcriptions — 语音转文字转发
 func (h *RelayHandler) AudioTranscriptions(c *gin.Context) {
-	writeUnsupported(c)
+	h.relayOpenAI(c, relay.APIAudioTranscriptions)
+}
+
+func (h *RelayHandler) AudioTranslations(c *gin.Context) {
+	h.relayOpenAI(c, relay.APIAudioTranslations)
 }
 
 // POST /v1/audio/speech — 文字转语音转发
 func (h *RelayHandler) AudioSpeech(c *gin.Context) {
-	writeUnsupported(c)
+	h.relayOpenAI(c, relay.APIAudioSpeech)
+}
+
+func (h *RelayHandler) Moderations(c *gin.Context) {
+	h.relayOpenAI(c, relay.APIModerations)
 }
 
 // GET /v1/models — 模型列表
 func (h *RelayHandler) ListModels(c *gin.Context) {
-	body, err := h.svc.ListModels()
+	body, err := h.listModelsForRequest(c)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, common.OpenAIError("failed to list models", "server_error", "model_list_failed"))
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", body)
+}
+
+func (h *RelayHandler) ModelDetail(c *gin.Context) {
+	body, err := h.svc.ModelDetail(c.Param("model"))
+	if err != nil {
+		writeRelayError(c, err)
+		return
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", body)
+}
+
+func (h *RelayHandler) AnthropicMessages(c *gin.Context) {
+	token, ok := middleware.CurrentAPIToken(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, common.OpenAIError("invalid api key", "authentication_error", "invalid_api_key"))
+		return
+	}
+	body, err := readRelayBody(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
+		return
+	}
+	resp, _, err := h.svc.RelayAnthropicMessages(c.Request.Context(), token, body, c.ClientIP())
+	if err != nil {
+		writeRelayError(c, err)
+		return
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", resp)
+}
+
+func (h *RelayHandler) AnthropicCountTokens(c *gin.Context) {
+	body, err := readRelayBody(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
+		return
+	}
+	resp, err := h.svc.AnthropicCountTokens(body)
+	if err != nil {
+		writeRelayError(c, err)
+		return
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", resp)
+}
+
+func (h *RelayHandler) GeminiModelAction(c *gin.Context) {
+	modelName, action := splitGeminiModelAction(c.Param("model"))
+	body, err := readRelayBody(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
+		return
+	}
+	switch action {
+	case "generateContent", "streamGenerateContent":
+		token, ok := middleware.CurrentAPIToken(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, common.OpenAIError("invalid api key", "authentication_error", "invalid_api_key"))
+			return
+		}
+		resp, _, err := h.svc.RelayGeminiGenerateContent(c.Request.Context(), token, modelName, body, action == "streamGenerateContent", c.ClientIP())
+		if err != nil {
+			writeRelayError(c, err)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", resp)
+	case "countTokens":
+		resp, err := h.svc.GeminiCountTokens(body)
+		if err != nil {
+			writeRelayError(c, err)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", resp)
+	default:
+		writeUnsupported(c)
+	}
+}
+
+func (h *RelayHandler) listModelsForRequest(c *gin.Context) ([]byte, error) {
+	format := strings.ToLower(strings.TrimSpace(c.Query("format")))
+	switch {
+	case format == "gemini" || format == "google":
+		return h.svc.ListGeminiModels()
+	case format == "anthropic" || strings.TrimSpace(c.GetHeader("anthropic-version")) != "":
+		return h.svc.ListAnthropicModels()
+	default:
+		return h.svc.ListModels()
+	}
 }
 
 func writeRelayError(c *gin.Context, err error) {
@@ -85,4 +198,17 @@ func writeRelayError(c *gin.Context, err error) {
 
 func writeUnsupported(c *gin.Context) {
 	c.JSON(http.StatusNotFound, common.OpenAIError("unsupported api", "invalid_request_error", "unsupported_api"))
+}
+
+func readRelayBody(c *gin.Context) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(c.Request.Body, 20<<20))
+}
+
+func splitGeminiModelAction(value string) (string, string) {
+	value = strings.TrimPrefix(strings.TrimSpace(value), "/")
+	idx := strings.LastIndex(value, ":")
+	if idx < 0 {
+		return value, ""
+	}
+	return value[:idx], value[idx+1:]
 }

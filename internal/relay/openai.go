@@ -20,6 +20,8 @@ type OpenAIAdapter struct{}
 func init() {
 	Register(common.ChannelTypeOpenAI, func() Adapter { return &OpenAIAdapter{} })
 	Register(common.ChannelTypeOpenAICompat, func() Adapter { return &OpenAIAdapter{} })
+	Register(common.ChannelTypeXAI, func() Adapter { return &OpenAIAdapter{} })
+	Register(common.ChannelTypeRouterX, func() Adapter { return &OpenAIAdapter{} })
 }
 
 func (a *OpenAIAdapter) GetChannelType() int {
@@ -40,6 +42,8 @@ func (a *OpenAIAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, er
 
 func (a *OpenAIAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 	switch apiType {
+	case APIResponses:
+		return "/v1/responses"
 	case APIChatCompletions:
 		return "/v1/chat/completions"
 	case APICompletions:
@@ -48,10 +52,18 @@ func (a *OpenAIAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 		return "/v1/embeddings"
 	case APIImagesGenerations:
 		return "/v1/images/generations"
+	case APIImagesEdits:
+		return "/v1/images/edits"
+	case APIImagesVariations:
+		return "/v1/images/variations"
 	case APIAudioTranscriptions:
 		return "/v1/audio/transcriptions"
+	case APIAudioTranslations:
+		return "/v1/audio/translations"
 	case APIAudioSpeech:
 		return "/v1/audio/speech"
+	case APIModerations:
+		return "/v1/moderations"
 	case APIModels:
 		return "/v1/models"
 	default:

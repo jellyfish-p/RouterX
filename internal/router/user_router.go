@@ -52,12 +52,21 @@ func setupV1Routes(
 	v1.Use(middleware.ApiKeyAuthRequired())
 	v1.Use(middleware.RateLimit())
 	{
+		v1.POST("/responses", relayH.Responses)
 		v1.POST("/chat/completions", relayH.ChatCompletions)
 		v1.POST("/completions", relayH.Completions)
 		v1.POST("/embeddings", relayH.Embeddings)
 		v1.POST("/images/generations", relayH.ImageGenerations)
+		v1.POST("/images/edits", relayH.ImageEdits)
+		v1.POST("/images/variations", relayH.ImageVariations)
 		v1.POST("/audio/transcriptions", relayH.AudioTranscriptions)
+		v1.POST("/audio/translations", relayH.AudioTranslations)
 		v1.POST("/audio/speech", relayH.AudioSpeech)
+		v1.POST("/moderations", relayH.Moderations)
+		v1.POST("/messages", relayH.AnthropicMessages)
+		v1.POST("/messages/count_tokens", relayH.AnthropicCountTokens)
 		v1.GET("/models", relayH.ListModels)
+		v1.GET("/models/:model", relayH.ModelDetail)
+		v1.POST("/models/:model", relayH.GeminiModelAction)
 	}
 }

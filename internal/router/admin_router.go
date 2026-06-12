@@ -46,7 +46,10 @@ func setupAdminRoutes(
 			authRequired.POST("/channel", channelH.Create)
 			authRequired.PUT("/channel/:id", channelH.Update)
 			authRequired.DELETE("/channel/:id", channelH.Delete)
+			authRequired.PATCH("/channel/:id/disable", channelH.Disable)
+			authRequired.PATCH("/channel/:id/enable", channelH.Enable)
 			authRequired.POST("/channel/:id/test", channelH.Test)
+			authRequired.GET("/channel/:id/models", channelH.FetchModels)
 
 			authRequired.GET("/log", logH.AdminList)
 			authRequired.DELETE("/log", logH.AdminClear)

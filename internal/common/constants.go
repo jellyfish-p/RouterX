@@ -27,6 +27,8 @@ const (
 	ChannelTypeGemini       = 4
 	ChannelTypeQwen         = 5
 	ChannelTypeDeepSeek     = 6
+	ChannelTypeXAI          = 7
+	ChannelTypeRouterX      = 8
 	ChannelTypeOpenAICompat = 100 // OpenAI-compatible 通用类型
 )
 

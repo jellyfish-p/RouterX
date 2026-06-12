@@ -2,40 +2,112 @@ package service
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/json"
 	"errors"
+	"math/big"
+	"sort"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
 	"routerx/internal/relay"
-	"sort"
-	"strings"
-	"time"
+)
+
+const (
+	keySelectionRoundRobin = "round_robin"
+	keySelectionRandom     = "random"
 )
 
 type ChannelService struct{}
+
+type ChannelUpstreamTarget struct {
+	BaseURL string
+	APIKey  string
+}
+
+type channelUpstreamConfig struct {
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+}
 
 func NewChannelService() *ChannelService {
 	return &ChannelService{}
 }
 
-// SelectChannel 根据模型名 + 优先级 + 权重 + 健康状态选择最优下游通道。
-// 排除: status!=1, error_count>=threshold, balance=0
-// 排序: 优先级降序 + 权重随机 + 响应时间加权
-// 详见 DESIGN.md 5.5 节。
+// SelectChannel 根据模型名 + 优先级 + 权重 + 健康状态选择最优上游通道。
 func (s *ChannelService) SelectChannel(modelName string) (*model.Channel, error) {
 	modelName = strings.TrimSpace(modelName)
 	var channels []model.Channel
 	if err := internal.DB.Where("status = ? AND error_count < ?", common.ChannelStatusEnabled, 10).
-		Order("priority DESC, error_count ASC, response_ms ASC, id ASC").
+		Order("priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC").
 		Find(&channels).Error; err != nil {
 		return nil, err
 	}
+	candidates := make([]model.Channel, 0, len(channels))
+	bestPriority := 0
+	hasPriority := false
 	for _, channel := range channels {
-		if channelSupportsModel(channel.Models, modelName) {
-			return &channel, nil
+		if !channelSupportsModel(channel.Models, modelName) {
+			continue
+		}
+		if !hasPriority || channel.Priority > bestPriority {
+			candidates = candidates[:0]
+			bestPriority = channel.Priority
+			hasPriority = true
+		}
+		if channel.Priority == bestPriority {
+			candidates = append(candidates, channel)
 		}
 	}
-	return nil, errors.New("no available channel")
+	if len(candidates) == 0 {
+		return nil, errors.New("no available channel")
+	}
+	return weightedPick(candidates), nil
+}
+
+// ResolveUpstream 解析某个通道本次请求应该使用的 base_url/api_key。
+func (s *ChannelService) ResolveUpstream(channel *model.Channel) (*ChannelUpstreamTarget, error) {
+	if channel == nil {
+		return nil, errors.New("channel is required")
+	}
+	if upstreams := decodeUpstreamConfigs(channel.Upstreams); len(upstreams) > 0 {
+		upstream := upstreams[randomIndex(len(upstreams))]
+		apiKey, err := common.DecryptSecret(upstream.APIKey)
+		if err != nil {
+			return nil, err
+		}
+		return &ChannelUpstreamTarget{
+			BaseURL: normalizeBaseURL(upstream.BaseURL, channel.Type),
+			APIKey:  strings.TrimSpace(apiKey),
+		}, nil
+	}
+
+	keys := decodeStringSlice(channel.APIKeys)
+	if strings.TrimSpace(channel.APIKey) != "" {
+		keys = append([]string{channel.APIKey}, keys...)
+	}
+	if len(keys) == 0 {
+		return nil, errors.New("channel api key is required")
+	}
+	selectedKey := s.selectAPIKey(channel, keys)
+	apiKey, err := common.DecryptSecret(selectedKey)
+	if err != nil {
+		return nil, err
+	}
+	baseURLs := decodeStringSlice(channel.BaseURLs)
+	baseURL := channel.BaseURL
+	if len(baseURLs) > 0 {
+		baseURL = baseURLs[randomIndex(len(baseURLs))]
+	}
+	return &ChannelUpstreamTarget{
+		BaseURL: normalizeBaseURL(baseURL, channel.Type),
+		APIKey:  strings.TrimSpace(apiKey),
+	}, nil
 }
 
 // List 通道分页列表。
@@ -53,7 +125,7 @@ func (s *ChannelService) List(page, pageSize int, channelType, status *int) ([]m
 		return nil, 0, err
 	}
 	var channels []model.Channel
-	err := query.Order("priority DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&channels).Error
+	err := query.Order("idx ASC, priority DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&channels).Error
 	return channels, total, err
 }
 
@@ -71,59 +143,48 @@ func (s *ChannelService) Create(channel *model.Channel) error {
 	if channel == nil {
 		return errors.New("channel is required")
 	}
-	channel.Name = strings.TrimSpace(channel.Name)
-	channel.Models = normalizeModels(channel.Models)
-	channel.BaseURL = normalizeBaseURL(channel.BaseURL, channel.Type)
-	if channel.Name == "" || channel.Models == "" || strings.TrimSpace(channel.APIKey) == "" {
-		return errors.New("name, models and api_key are required")
-	}
-	if channel.Weight <= 0 {
-		channel.Weight = 1
-	}
-	if channel.Status == 0 {
-		channel.Status = common.ChannelStatusEnabled
-	}
-	encrypted, err := common.EncryptSecret(strings.TrimSpace(channel.APIKey))
-	if err != nil {
+	if err := normalizeChannel(channel, true); err != nil {
 		return err
 	}
-	channel.APIKey = encrypted
+	if err := encryptChannelSecrets(channel); err != nil {
+		return err
+	}
 	return internal.DB.Create(channel).Error
 }
 
 // Update 编辑通道。
 func (s *ChannelService) Update(id uint, updates map[string]interface{}) error {
-	allowed := filterUpdates(updates, "name", "models", "base_url", "api_key", "priority", "weight", "status")
+	allowed := filterUpdates(
+		updates,
+		"idx", "type", "name", "models", "base_url", "base_urls", "api_key", "api_keys",
+		"key_selection_mode", "upstreams", "model_rewrites", "channel_group", "upstream_options",
+		"priority", "weight", "status",
+	)
 	if len(allowed) == 0 {
 		return nil
 	}
-	if v, ok := allowed["models"].(string); ok {
-		allowed["models"] = normalizeModels(v)
-	}
-	if v, ok := allowed["base_url"].(string); ok {
-		allowed["base_url"] = strings.TrimRight(strings.TrimSpace(v), "/")
-	}
-	if v, ok := allowed["api_key"].(string); ok {
-		v = strings.TrimSpace(v)
-		if v == "" {
-			delete(allowed, "api_key")
-		} else {
-			encrypted, err := common.EncryptSecret(v)
-			if err != nil {
-				return err
-			}
-			allowed["api_key"] = encrypted
-		}
-	}
-	if v, ok := allowed["weight"].(int); ok && v <= 0 {
-		allowed["weight"] = 1
+	if err := normalizeUpdateValues(allowed); err != nil {
+		return err
 	}
 	return internal.DB.Model(&model.Channel{}).Where("id = ?", id).Updates(allowed).Error
 }
 
-// Delete 软删除通道。
+// Delete 完全删除通道。历史日志保留，但解除 channel_id 引用。
 func (s *ChannelService) Delete(id uint) error {
-	return internal.DB.Delete(&model.Channel{}, id).Error
+	return internal.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Log{}).Where("channel_id = ?", id).Update("channel_id", nil).Error; err != nil {
+			return err
+		}
+		return tx.Unscoped().Delete(&model.Channel{}, id).Error
+	})
+}
+
+func (s *ChannelService) Disable(id uint) error {
+	return internal.DB.Model(&model.Channel{}).Where("id = ?", id).Update("status", common.ChannelStatusDisabled).Error
+}
+
+func (s *ChannelService) Enable(id uint) error {
+	return internal.DB.Model(&model.Channel{}).Where("id = ?", id).Update("status", common.ChannelStatusEnabled).Error
 }
 
 // Test 测试通道连通性：向厂商 API 发探测请求, 记录 response_ms + model_count。
@@ -132,18 +193,8 @@ func (s *ChannelService) Test(channelID uint) (bool, int64, int, error) {
 	if err != nil {
 		return false, 0, 0, err
 	}
-	adapter, ok := relay.GetAdapter(channel.Type)
-	if !ok {
-		return false, 0, 0, errors.New("unsupported channel type")
-	}
-	apiKey, err := common.DecryptSecret(channel.APIKey)
-	if err != nil {
-		return false, 0, 0, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 	start := time.Now()
-	models, err := adapter.GetModelList(ctx, channel.BaseURL, apiKey)
+	models, err := s.FetchUpstreamModels(channelID)
 	responseMs := time.Since(start).Milliseconds()
 	if err != nil {
 		_ = internal.DB.Model(channel).Updates(map[string]interface{}{
@@ -159,9 +210,30 @@ func (s *ChannelService) Test(channelID uint) (bool, int64, int, error) {
 	return true, responseMs, len(models), nil
 }
 
+func (s *ChannelService) FetchUpstreamModels(channelID uint) ([]string, error) {
+	channel, err := s.GetByID(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if len(decodeUpstreamConfigs(channel.Upstreams)) > 0 || len(decodeStringSlice(channel.BaseURLs)) > 1 {
+		return nil, errors.New("model list fetch is supported only for single upstream url channels")
+	}
+	adapter, ok := relay.GetAdapter(channel.Type)
+	if !ok {
+		return nil, errors.New("unsupported channel type")
+	}
+	target, err := s.ResolveUpstream(channel)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return adapter.GetModelList(ctx, target.BaseURL, target.APIKey)
+}
+
 func (s *ChannelService) ListModels() ([]string, error) {
 	var channels []model.Channel
-	if err := internal.DB.Where("status = ?", common.ChannelStatusEnabled).Find(&channels).Error; err != nil {
+	if err := internal.DB.Where("status = ?", common.ChannelStatusEnabled).Order("idx ASC, priority DESC, id ASC").Find(&channels).Error; err != nil {
 		return nil, err
 	}
 	seen := map[string]struct{}{}
@@ -178,6 +250,164 @@ func (s *ChannelService) ListModels() ([]string, error) {
 	}
 	sort.Strings(models)
 	return models, nil
+}
+
+func (s *ChannelService) ApplyModelRewrite(channel *model.Channel, modelName string) string {
+	modelName = strings.TrimSpace(modelName)
+	if channel == nil || len(channel.ModelRewrites) == 0 || modelName == "" {
+		return modelName
+	}
+	var rewrites map[string]string
+	if err := json.Unmarshal(channel.ModelRewrites, &rewrites); err != nil {
+		return modelName
+	}
+	if rewritten := strings.TrimSpace(rewrites[modelName]); rewritten != "" {
+		return rewritten
+	}
+	return modelName
+}
+
+func (s *ChannelService) selectAPIKey(channel *model.Channel, keys []string) string {
+	if len(keys) == 1 {
+		return keys[0]
+	}
+	if channel.KeySelectionMode == keySelectionRandom {
+		return keys[randomIndex(len(keys))]
+	}
+	idx := channel.KeyCursor % len(keys)
+	if idx < 0 {
+		idx = 0
+	}
+	_ = internal.DB.Model(channel).UpdateColumn("key_cursor", gorm.Expr("key_cursor + ?", 1)).Error
+	return keys[idx]
+}
+
+func normalizeChannel(channel *model.Channel, creating bool) error {
+	channel.Name = strings.TrimSpace(channel.Name)
+	channel.Models = normalizeModels(channel.Models)
+	channel.BaseURL = normalizeBaseURL(channel.BaseURL, channel.Type)
+	channel.KeySelectionMode = normalizeKeySelectionMode(channel.KeySelectionMode)
+	channel.ChannelGroup = strings.TrimSpace(channel.ChannelGroup)
+	channel.BaseURLs = normalizeStringSliceJSON(channel.BaseURLs, true)
+	channel.APIKeys = normalizeStringSliceJSON(channel.APIKeys, false)
+	channel.Upstreams = normalizeUpstreamsJSON(channel.Upstreams)
+	channel.ModelRewrites = normalizeJSONObject(channel.ModelRewrites)
+	channel.UpstreamOptions = normalizeJSONObject(channel.UpstreamOptions)
+	if channel.Name == "" || channel.Models == "" {
+		return errors.New("name and models are required")
+	}
+	if channel.Weight <= 0 {
+		channel.Weight = 1
+	}
+	if creating && channel.Status == 0 {
+		channel.Status = common.ChannelStatusEnabled
+	}
+	if !hasAnyChannelKey(channel) {
+		return errors.New("api_key, api_keys or upstreams.api_key is required")
+	}
+	return nil
+}
+
+func normalizeUpdateValues(updates map[string]interface{}) error {
+	if v, ok := updates["name"].(string); ok {
+		updates["name"] = strings.TrimSpace(v)
+	}
+	if v, ok := updates["models"].(string); ok {
+		updates["models"] = normalizeModels(v)
+	}
+	if v, ok := updates["type"].(int); ok && v <= 0 {
+		return errors.New("invalid channel type")
+	}
+	if v, ok := updates["base_url"].(string); ok {
+		channelType := 0
+		if t, ok := updates["type"].(int); ok {
+			channelType = t
+		}
+		updates["base_url"] = normalizeBaseURL(v, channelType)
+	}
+	if v, ok := updates["base_urls"].(model.JSONValue); ok {
+		updates["base_urls"] = normalizeStringSliceJSON(v, true)
+	}
+	if v, ok := updates["api_key"].(string); ok {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			delete(updates, "api_key")
+		} else {
+			encrypted, err := common.EncryptSecret(v)
+			if err != nil {
+				return err
+			}
+			updates["api_key"] = encrypted
+		}
+	}
+	if v, ok := updates["api_keys"].(model.JSONValue); ok {
+		encrypted, err := encryptAPIKeysJSON(normalizeStringSliceJSON(v, false))
+		if err != nil {
+			return err
+		}
+		updates["api_keys"] = encrypted
+	}
+	if v, ok := updates["key_selection_mode"].(string); ok {
+		updates["key_selection_mode"] = normalizeKeySelectionMode(v)
+	}
+	if v, ok := updates["upstreams"].(model.JSONValue); ok {
+		encrypted, err := encryptUpstreamsJSON(normalizeUpstreamsJSON(v))
+		if err != nil {
+			return err
+		}
+		updates["upstreams"] = encrypted
+	}
+	if v, ok := updates["model_rewrites"].(model.JSONValue); ok {
+		updates["model_rewrites"] = normalizeJSONObject(v)
+	}
+	if v, ok := updates["channel_group"].(string); ok {
+		updates["channel_group"] = strings.TrimSpace(v)
+	}
+	if v, ok := updates["upstream_options"].(model.JSONValue); ok {
+		updates["upstream_options"] = normalizeJSONObject(v)
+	}
+	if v, ok := updates["weight"].(int); ok && v <= 0 {
+		updates["weight"] = 1
+	}
+	return nil
+}
+
+func encryptChannelSecrets(channel *model.Channel) error {
+	if strings.TrimSpace(channel.APIKey) != "" {
+		encrypted, err := common.EncryptSecret(strings.TrimSpace(channel.APIKey))
+		if err != nil {
+			return err
+		}
+		channel.APIKey = encrypted
+	}
+	encryptedKeys, err := encryptAPIKeysJSON(channel.APIKeys)
+	if err != nil {
+		return err
+	}
+	channel.APIKeys = encryptedKeys
+	encryptedUpstreams, err := encryptUpstreamsJSON(channel.Upstreams)
+	if err != nil {
+		return err
+	}
+	channel.Upstreams = encryptedUpstreams
+	return nil
+}
+
+func hasAnyChannelKey(channel *model.Channel) bool {
+	if strings.TrimSpace(channel.APIKey) != "" {
+		return true
+	}
+	for _, key := range decodeStringSlice(channel.APIKeys) {
+		if strings.TrimSpace(key) != "" {
+			return true
+		}
+	}
+	for _, upstream := range decodeUpstreamConfigs(channel.Upstreams) {
+		if strings.TrimSpace(upstream.APIKey) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func channelSupportsModel(models, modelName string) bool {
@@ -216,17 +446,181 @@ func splitModels(models string) []string {
 
 func normalizeBaseURL(baseURL string, channelType int) string {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if baseURL != "" {
+	if baseURL != "" || channelType == 0 {
 		return baseURL
 	}
 	switch channelType {
 	case common.ChannelTypeOpenAI, common.ChannelTypeOpenAICompat:
 		return "https://api.openai.com"
+	case common.ChannelTypeClaude:
+		return "https://api.anthropic.com"
+	case common.ChannelTypeGemini:
+		return "https://generativelanguage.googleapis.com"
 	case common.ChannelTypeDeepSeek:
 		return "https://api.deepseek.com"
 	case common.ChannelTypeQwen:
 		return "https://dashscope.aliyuncs.com/compatible-mode"
+	case common.ChannelTypeXAI:
+		return "https://api.x.ai"
 	default:
 		return baseURL
 	}
+}
+
+func normalizeKeySelectionMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == keySelectionRandom {
+		return keySelectionRandom
+	}
+	return keySelectionRoundRobin
+}
+
+func normalizeStringSliceJSON(raw model.JSONValue, normalizeURL bool) model.JSONValue {
+	values := decodeStringSlice(raw)
+	result := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if normalizeURL {
+			value = strings.TrimRight(value, "/")
+		}
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return model.NewJSONValue(result)
+}
+
+func normalizeUpstreamsJSON(raw model.JSONValue) model.JSONValue {
+	upstreams := decodeUpstreamConfigs(raw)
+	result := make([]channelUpstreamConfig, 0, len(upstreams))
+	for _, upstream := range upstreams {
+		upstream.BaseURL = strings.TrimRight(strings.TrimSpace(upstream.BaseURL), "/")
+		upstream.APIKey = strings.TrimSpace(upstream.APIKey)
+		if upstream.BaseURL == "" && upstream.APIKey == "" {
+			continue
+		}
+		result = append(result, upstream)
+	}
+	return model.NewJSONValue(result)
+}
+
+func normalizeJSONObject(raw model.JSONValue) model.JSONValue {
+	if len(raw) == 0 || string(raw) == "null" {
+		return model.NewJSONValue(map[string]interface{}{})
+	}
+	var value map[string]interface{}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return model.NewJSONValue(map[string]interface{}{})
+	}
+	return model.NewJSONValue(value)
+}
+
+func encryptAPIKeysJSON(raw model.JSONValue) (model.JSONValue, error) {
+	keys := decodeStringSlice(raw)
+	encrypted := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		value, err := common.EncryptSecret(key)
+		if err != nil {
+			return nil, err
+		}
+		encrypted = append(encrypted, value)
+	}
+	return model.NewJSONValue(encrypted), nil
+}
+
+func encryptUpstreamsJSON(raw model.JSONValue) (model.JSONValue, error) {
+	upstreams := decodeUpstreamConfigs(raw)
+	encrypted := make([]channelUpstreamConfig, 0, len(upstreams))
+	for _, upstream := range upstreams {
+		upstream.BaseURL = strings.TrimRight(strings.TrimSpace(upstream.BaseURL), "/")
+		upstream.APIKey = strings.TrimSpace(upstream.APIKey)
+		if upstream.BaseURL == "" && upstream.APIKey == "" {
+			continue
+		}
+		if upstream.APIKey != "" {
+			value, err := common.EncryptSecret(upstream.APIKey)
+			if err != nil {
+				return nil, err
+			}
+			upstream.APIKey = value
+		}
+		encrypted = append(encrypted, upstream)
+	}
+	return model.NewJSONValue(encrypted), nil
+}
+
+func decodeStringSlice(raw model.JSONValue) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil
+	}
+	return values
+}
+
+func decodeUpstreamConfigs(raw model.JSONValue) []channelUpstreamConfig {
+	if len(raw) == 0 {
+		return nil
+	}
+	var upstreams []channelUpstreamConfig
+	if err := json.Unmarshal(raw, &upstreams); err != nil {
+		return nil
+	}
+	return upstreams
+}
+
+func weightedPick(channels []model.Channel) *model.Channel {
+	if len(channels) == 1 {
+		channel := channels[0]
+		return &channel
+	}
+	total := 0
+	for _, channel := range channels {
+		weight := channel.Weight
+		if weight <= 0 {
+			weight = 1
+		}
+		total += weight
+	}
+	if total <= 0 {
+		channel := channels[0]
+		return &channel
+	}
+	offset := randomIndex(total)
+	for _, channel := range channels {
+		weight := channel.Weight
+		if weight <= 0 {
+			weight = 1
+		}
+		if offset < weight {
+			selected := channel
+			return &selected
+		}
+		offset -= weight
+	}
+	channel := channels[0]
+	return &channel
+}
+
+func randomIndex(max int) int {
+	if max <= 1 {
+		return 0
+	}
+	n, err := crand.Int(crand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0
+	}
+	return int(n.Int64())
 }
