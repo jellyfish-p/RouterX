@@ -36,10 +36,10 @@
 | `TestChatCompletionUpstreamErrorStatusMapping` | 下游 401/403/429/5xx 错误映射、失败日志、通道错误计数和不扣费 |
 | `TestChatCompletionUpstreamTimeoutMapping` | 下游超时错误映射、失败日志、通道错误计数和不扣费 |
 | `TestRelayPrecheckRejectsBeforeUpstream` | 无效 Key、禁用 Key、额度不足、禁用通道不调用下游 |
+| `TestRouterXRoutePreferenceFiltersChannels` | `routerx.route` 被接受、未知字段忽略、非法结构拒绝和筛选后无候选 |
 
 仍需优先补齐：
 
-- `routerx.route` 合法、忽略、拒绝和无候选路径。
 - Anthropic/Gemini 成功和字段降级矩阵。
 
 ## 测试原则

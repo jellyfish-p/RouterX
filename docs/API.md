@@ -609,7 +609,10 @@ P0 明确失败：
 | 非法 JSON | 400 | `invalid_json` |
 | 缺少 `model` | 400 | `model_required` |
 | `stream=true` | 400 | `unsupported_stream` |
+| `routerx` 结构非法 | 400 | `invalid_routerx_options` |
+| `routerx.route` 字段类型非法 | 400 | `invalid_routerx_route` |
 | 无可用通道 | 502 | `no_available_channel` |
+| `routerx.route` 筛选后无可用通道 | 502 | `no_available_channel` |
 | 下游密钥不可解密或缺失 | 502 | `upstream_secret_error` |
 | 余额不足 | 429 | `insufficient_quota` |
 

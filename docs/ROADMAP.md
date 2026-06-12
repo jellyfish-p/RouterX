@@ -194,7 +194,7 @@ P2 验收标准：
 | WP0-5 OpenAI-compatible 非流式闭环 | P0 | relay handler/service、OpenAI adapter、logs、quota | `/v1/models` 和 Chat 非流式可用；无可用通道、余额不足、无效 Key 返回 SDK 兼容错误；成功调用写日志并扣费 | 已有 Chat 成功、本地请求错误、下游 400/401/403/429/5xx/超时、预检拒绝测试 |
 | WP0-6 基础日志与账单 | P0 | logs、billing stats、dashboard | 用户只看自己的日志；管理员可筛选全局日志；账单聚合来自日志事实 | 已覆盖多次成功/失败混合一致性：`TestUserBillingMatchesLogs` |
 | WP1-1 流式和取消 | P1 | relay stream、adapter stream、context cancel | SSE 不缓存完整响应；客户端断开取消下游；流式 usage 可结算或估算 | 新增流式集成测试 |
-| WP1-2 路由决策快照 | P1 | channel selection、route policy、logs、POLICIES | 记录候选过滤、`routerx.route` 处理、最终通道、模型重写和重试结果 | 新增路由策略单元/集成测试 |
+| WP1-2 路由决策快照 | P1 | channel selection、route policy、logs、POLICIES | 记录候选过滤、`routerx.route` 处理、最终通道、模型重写和重试结果 | `routerx.route` 边界已由 `TestRouterXRoutePreferenceFiltersChannels` 覆盖；结构化决策快照仍属 P1 |
 | WP1-3 多协议与多上游 | P1 | translator、adapter、error mapper、PROTOCOLS | OpenAI/Anthropic/Gemini 入口与主要上游组合可用；不支持字段明确失败；能力等级与 `docs/PROTOCOLS.md` 一致 | 新增协议矩阵测试 |
 | WP1-4 计费规则和访问控制 | P1 | model_prices、channel_model_prices、settings、logs、POLICIES | 价格表达式、倍率、访问控制、计费快照和账单聚合一致 | 新增计费事实链测试 |
 | WP1-5 可靠性 | P1 | retry、circuit breaker、rate limit、Redis | 非流式可安全重试；流式不跨通道重试；熔断、恢复和限流可解释 | 新增故障注入测试 |
@@ -223,7 +223,7 @@ P2 验收标准：
 | 4 | settings 注册表、类型校验、缓存刷新和生产 readiness | 已覆盖：`TestSetupBootstrapAdminQuotaAndSettingsDefaults`、`TestSettingsValidationAndReadiness`、`TestSettingCacheRefreshesStaleRedisValues` | 证明配置不是散落字符串，关键配置错误能阻止生产实例接流量。 |
 | 5 | 多 key、多 base URL、`upstreams` 优先级和模型重写 | 已覆盖：`TestChannelRoutingConfigResolution` | 证明通道高级配置不会产生不可解释的随机行为。 |
 | 6 | 日志、usage、扣费和用户账单聚合一致 | 已覆盖：`TestUserBillingMatchesLogs` | 证明账单不是从多个互相矛盾的事实源拼出来。 |
-| 7 | `routerx.route` 合法、忽略、拒绝和无候选路径 | 待补 | 证明用户偏好不能绕过管理员策略。 |
+| 7 | `routerx.route` 合法、忽略、拒绝和无候选路径 | 已覆盖：`TestRouterXRoutePreferenceFiltersChannels` | 证明用户偏好不能绕过管理员策略。 |
 | 8 | SSE 流式、客户端断开和流式 usage 结算 | P1 待补 | 进入 P1 前补齐最容易出现资源泄漏和账单偏差的路径。 |
 | 9 | Anthropic/Gemini 入口错误格式和字段降级 | 部分覆盖：API Key 错误外形已覆盖；仍需成功和字段降级矩阵 | 证明多入口协议不是只注册路由，而是 SDK 可用。 |
 

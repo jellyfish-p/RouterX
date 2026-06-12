@@ -806,7 +806,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: OpenAI Chat Completions 非流式转发
-      description: P0 稳定闭环；stream=true 在当前阶段返回 unsupported_stream。
+      description: P0 稳定闭环；stream=true 在当前阶段返回 unsupported_stream；routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
       security:
         - ApiKeyBearer: []
       requestBody:
@@ -823,13 +823,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/ChatCompletionResponse"
         "400":
-          $ref: "#/components/responses/OpenAIError"
+          description: 请求体或 routerx 扩展非法；常见 code 包括 invalid_json、model_required、unsupported_stream、invalid_routerx_options、invalid_routerx_route。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorEnvelope"
         "401":
           $ref: "#/components/responses/OpenAIError"
         "429":
           $ref: "#/components/responses/OpenAIError"
         "502":
-          $ref: "#/components/responses/OpenAIError"
+          description: 无可用通道或上游错误；routerx.route 筛选后无候选时返回 no_available_channel。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorEnvelope"
+        "504":
+          description: 上游调用超时，code 为 upstream_timeout。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorEnvelope"
   /v1/completions:
     post:
       tags: [OpenAI Compatible]
@@ -1673,8 +1687,31 @@ components:
         user: { type: string }
         routerx:
           type: object
-          additionalProperties: true
           description: RouterX 私有扩展字段；普通 OpenAI-compatible 上游不会透传。
+          properties:
+            route:
+              $ref: "#/components/schemas/RouterXRoutePreference"
+          additionalProperties: true
+    RouterXRoutePreference:
+      type: object
+      description: 请求级路由偏好，只会在管理员已允许的候选通道内继续收窄，未知字段会被忽略。
+      properties:
+        channel_group: { type: string, description: 按通道分组收窄候选。 }
+        group: { type: string, description: channel_group 的兼容别名。 }
+        channel_id:
+          oneOf:
+            - { type: integer, format: uint64 }
+            - { type: string }
+          description: 指定目标通道 ID。
+        channel: { type: string, description: 指定目标通道名称。 }
+        channel_name: { type: string, description: channel 的兼容别名。 }
+        provider: { type: string, description: 指定上游 provider，例如 openai、openai-compatible、anthropic、gemini、qwen、deepseek、xai、routerx。 }
+        upstream_provider: { type: string, description: provider 的兼容别名。 }
+        disabled_providers:
+          type: array
+          items: { type: string }
+          description: 从候选集中排除指定 provider。
+      additionalProperties: true
     ChatMessage:
       type: object
       required: [role, content]

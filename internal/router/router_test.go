@@ -915,6 +915,123 @@ func TestChannelRoutingConfigResolution(t *testing.T) {
 	}
 }
 
+func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	freeCalls := 0
+	paidCalls := 0
+	upstreamHandler := func(label string, calls *int) http.HandlerFunc {
+		return func(w http.ResponseWriter, req *http.Request) {
+			*calls++
+			var body map[string]interface{}
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				t.Errorf("%s upstream received invalid JSON: %v", label, err)
+			}
+			if _, ok := body["routerx"]; ok {
+				t.Errorf("%s upstream received private routerx field: %#v", label, body["routerx"])
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-` + label + `","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"` + label + `"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":1}}`))
+		}
+	}
+	freeUpstream := httptest.NewServer(upstreamHandler("free", &freeCalls))
+	defer freeUpstream.Close()
+	paidUpstream := httptest.NewServer(upstreamHandler("paid", &paidCalls))
+	defer paidUpstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "route",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	createChannel := func(name, group, baseURL string, priority int) {
+		t.Helper()
+		resp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+			"type":     common.ChannelTypeOpenAICompat,
+			"name":     name,
+			"models":   "gpt-test",
+			"base_url": baseURL,
+			"api_key":  "upstream-secret-" + name,
+			"group":    group,
+			"priority": priority,
+		})
+		if resp.Code != http.StatusOK {
+			t.Fatalf("create %s channel failed: %d %s", name, resp.Code, resp.Body.String())
+		}
+	}
+	createChannel("paid", "paid", paidUpstream.URL, 1)
+	createChannel("free", "free", freeUpstream.URL, 50)
+
+	chat := func(routerx interface{}) *httptest.ResponseRecorder {
+		body := map[string]interface{}{
+			"model": "gpt-test",
+			"messages": []map[string]string{
+				{"role": "user", "content": "hello"},
+			},
+		}
+		if routerx != nil {
+			body["routerx"] = routerx
+		}
+		return performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	}
+
+	paidResp := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": "paid"}})
+	if paidResp.Code != http.StatusOK || !strings.Contains(paidResp.Body.String(), "paid") {
+		t.Fatalf("paid route should select paid channel, got %d %s", paidResp.Code, paidResp.Body.String())
+	}
+	if paidCalls != 1 || freeCalls != 0 {
+		t.Fatalf("paid route should not fall back to higher-priority free channel, paid=%d free=%d", paidCalls, freeCalls)
+	}
+
+	ignoredResp := chat(map[string]interface{}{"route": map[string]interface{}{"unknown": "keep-compatible"}})
+	if ignoredResp.Code != http.StatusOK || !strings.Contains(ignoredResp.Body.String(), "free") {
+		t.Fatalf("unknown route keys should be ignored, got %d %s", ignoredResp.Code, ignoredResp.Body.String())
+	}
+	if paidCalls != 1 || freeCalls != 1 {
+		t.Fatalf("ignored route should use normal priority selection, paid=%d free=%d", paidCalls, freeCalls)
+	}
+
+	invalidOptions := chat("not-an-object")
+	if invalidOptions.Code != http.StatusBadRequest || !strings.Contains(invalidOptions.Body.String(), `"code":"invalid_routerx_options"`) {
+		t.Fatalf("invalid routerx options should return 400, got %d %s", invalidOptions.Code, invalidOptions.Body.String())
+	}
+	invalidRoute := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": 123}})
+	if invalidRoute.Code != http.StatusBadRequest || !strings.Contains(invalidRoute.Body.String(), `"code":"invalid_routerx_route"`) {
+		t.Fatalf("invalid routerx route should return 400, got %d %s", invalidRoute.Code, invalidRoute.Body.String())
+	}
+	noCandidate := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": "internal"}})
+	if noCandidate.Code != http.StatusBadGateway || !strings.Contains(noCandidate.Body.String(), `"code":"no_available_channel"`) {
+		t.Fatalf("route with no candidates should return no_available_channel, got %d %s", noCandidate.Code, noCandidate.Body.String())
+	}
+	if paidCalls != 1 || freeCalls != 1 {
+		t.Fatalf("invalid or empty route results must not call upstream, paid=%d free=%d", paidCalls, freeCalls)
+	}
+}
+
 func TestUserBillingMatchesLogs(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -1126,6 +1243,7 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 		"models":   "gpt-test",
 		"base_url": upstream.URL,
 		"api_key":  "upstream-secret",
+		"group":    "paid",
 	})
 	if channelResp.Code != http.StatusOK {
 		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())

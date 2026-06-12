@@ -30,6 +30,15 @@ type ChannelUpstreamTarget struct {
 	APIKey  string
 }
 
+// RoutePreference describes request-level routerx.route filters after policy checks.
+type RoutePreference struct {
+	ChannelGroup     string
+	ChannelID        uint
+	ChannelName      string
+	Provider         string
+	DisabledProvider []string
+}
+
 type channelUpstreamConfig struct {
 	BaseURL string `json:"base_url"`
 	APIKey  string `json:"api_key"`
@@ -41,6 +50,11 @@ func NewChannelService() *ChannelService {
 
 // SelectChannel 根据模型名 + 优先级 + 权重 + 健康状态选择最优上游通道。
 func (s *ChannelService) SelectChannel(modelName string) (*model.Channel, error) {
+	return s.SelectChannelWithRoute(modelName, RoutePreference{})
+}
+
+// SelectChannelWithRoute 在管理员允许的候选集中应用请求级 routerx.route 偏好。
+func (s *ChannelService) SelectChannelWithRoute(modelName string, route RoutePreference) (*model.Channel, error) {
 	modelName = strings.TrimSpace(modelName)
 	var channels []model.Channel
 	if err := internal.DB.Where("status = ? AND error_count < ?", common.ChannelStatusEnabled, 10).
@@ -53,6 +67,9 @@ func (s *ChannelService) SelectChannel(modelName string) (*model.Channel, error)
 	hasPriority := false
 	for _, channel := range channels {
 		if !channelSupportsModel(channel.Models, modelName) {
+			continue
+		}
+		if !channelMatchesRoute(channel, route) {
 			continue
 		}
 		if !hasPriority || channel.Priority > bestPriority {
@@ -420,6 +437,52 @@ func channelSupportsModel(models, modelName string) bool {
 		}
 	}
 	return false
+}
+
+func channelMatchesRoute(channel model.Channel, route RoutePreference) bool {
+	if route.ChannelGroup != "" && channel.ChannelGroup != route.ChannelGroup {
+		return false
+	}
+	if route.ChannelID != 0 && channel.ID != route.ChannelID {
+		return false
+	}
+	if route.ChannelName != "" && channel.Name != route.ChannelName {
+		return false
+	}
+	if route.Provider != "" && !channelMatchesProvider(channel.Type, route.Provider) {
+		return false
+	}
+	for _, provider := range route.DisabledProvider {
+		if channelMatchesProvider(channel.Type, provider) {
+			return false
+		}
+	}
+	return true
+}
+
+func channelMatchesProvider(channelType int, provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return channelType == common.ChannelTypeOpenAI
+	case "openai-compatible", "openai_compatible", "openai-compat", "openai_compat", "compat":
+		return channelType == common.ChannelTypeOpenAICompat
+	case "azure", "azure-openai", "azure_openai":
+		return channelType == common.ChannelTypeAzure
+	case "anthropic", "claude":
+		return channelType == common.ChannelTypeClaude
+	case "gemini", "google":
+		return channelType == common.ChannelTypeGemini
+	case "qwen", "dashscope":
+		return channelType == common.ChannelTypeQwen
+	case "deepseek":
+		return channelType == common.ChannelTypeDeepSeek
+	case "xai", "grok":
+		return channelType == common.ChannelTypeXAI
+	case "routerx", "routerx-compatible", "routerx_compatible":
+		return channelType == common.ChannelTypeRouterX
+	default:
+		return false
+	}
 }
 
 func normalizeModels(models string) string {

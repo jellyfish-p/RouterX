@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,8 +35,10 @@ type HTTPError struct {
 }
 
 var (
-	errInvalidJSONBody = errors.New("invalid json body")
-	errModelRequired   = errors.New("model is required")
+	errInvalidJSONBody       = errors.New("invalid json body")
+	errModelRequired         = errors.New("model is required")
+	errInvalidRouterXOptions = errors.New("invalid routerx options")
+	errInvalidRouterXRoute   = errors.New("invalid routerx route")
 )
 
 func (e *HTTPError) Error() string {
@@ -132,7 +135,7 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 		return nil, nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 
-	channel, err := s.channelService.SelectChannel(reqInfo.Model)
+	channel, err := s.channelService.SelectChannelWithRoute(reqInfo.Model, reqInfo.Route)
 	if err != nil {
 		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
@@ -287,6 +290,7 @@ func (s *RelayService) ListAnthropicModels() ([]byte, error) {
 type relayRequestInfo struct {
 	Model  string
 	Stream bool
+	Route  RoutePreference
 }
 
 func parseRelayRequest(apiType relay.APIType, body []byte) (relayRequestInfo, error) {
@@ -294,17 +298,22 @@ func parseRelayRequest(apiType relay.APIType, body []byte) (relayRequestInfo, er
 		return relayRequestInfo{}, nil
 	}
 	var payload struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
+		Model   string          `json:"model"`
+		Stream  bool            `json:"stream"`
+		RouterX json.RawMessage `json:"routerx"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return relayRequestInfo{}, errInvalidJSONBody
+	}
+	route, err := parseRouterXRoute(payload.RouterX)
+	if err != nil {
+		return relayRequestInfo{}, err
 	}
 	payload.Model = strings.TrimSpace(payload.Model)
 	if payload.Model == "" {
 		return relayRequestInfo{}, errModelRequired
 	}
-	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream}, nil
+	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream, Route: route}, nil
 }
 
 func relayRequestErrorCode(err error) string {
@@ -313,9 +322,104 @@ func relayRequestErrorCode(err error) string {
 		return "invalid_json"
 	case errors.Is(err, errModelRequired):
 		return "model_required"
+	case errors.Is(err, errInvalidRouterXOptions):
+		return "invalid_routerx_options"
+	case errors.Is(err, errInvalidRouterXRoute):
+		return "invalid_routerx_route"
 	default:
 		return "invalid_request"
 	}
+}
+
+func parseRouterXRoute(raw json.RawMessage) (RoutePreference, error) {
+	if len(raw) == 0 || isJSONNull(raw) {
+		return RoutePreference{}, nil
+	}
+	var options map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &options); err != nil {
+		return RoutePreference{}, errInvalidRouterXOptions
+	}
+	routeRaw, ok := options["route"]
+	if !ok || isJSONNull(routeRaw) {
+		return RoutePreference{}, nil
+	}
+	var route map[string]json.RawMessage
+	if err := json.Unmarshal(routeRaw, &route); err != nil {
+		return RoutePreference{}, errInvalidRouterXRoute
+	}
+	preference := RoutePreference{}
+	for key, value := range route {
+		switch key {
+		case "channel_group", "group":
+			v, err := routeStringValue(value)
+			if err != nil {
+				return RoutePreference{}, errInvalidRouterXRoute
+			}
+			preference.ChannelGroup = v
+		case "channel_id":
+			v, err := routeUintValue(value)
+			if err != nil {
+				return RoutePreference{}, errInvalidRouterXRoute
+			}
+			preference.ChannelID = v
+		case "channel", "channel_name":
+			v, err := routeStringValue(value)
+			if err != nil {
+				return RoutePreference{}, errInvalidRouterXRoute
+			}
+			preference.ChannelName = v
+		case "provider", "upstream_provider":
+			v, err := routeStringValue(value)
+			if err != nil {
+				return RoutePreference{}, errInvalidRouterXRoute
+			}
+			preference.Provider = v
+		case "disabled_providers", "exclude_providers":
+			v, err := routeStringSliceValue(value)
+			if err != nil {
+				return RoutePreference{}, errInvalidRouterXRoute
+			}
+			preference.DisabledProvider = v
+		}
+	}
+	return preference, nil
+}
+
+func routeStringValue(raw json.RawMessage) (string, error) {
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(value), nil
+}
+
+func routeStringSliceValue(raw json.RawMessage) ([]string, error) {
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			result = append(result, value)
+		}
+	}
+	return result, nil
+}
+
+func routeUintValue(raw json.RawMessage) (uint, error) {
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil {
+		parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+		return uint(parsed), err
+	}
+	parsed, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
+	return uint(parsed), err
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	return strings.EqualFold(strings.TrimSpace(string(raw)), "null")
 }
 
 func replaceRequestModel(body []byte, modelName string) ([]byte, error) {
