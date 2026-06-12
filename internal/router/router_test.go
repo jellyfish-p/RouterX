@@ -795,6 +795,126 @@ func TestChatCompletionInvalidRequestDoesNotCallUpstream(t *testing.T) {
 	}
 }
 
+func TestChannelRoutingConfigResolution(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamAuth := ""
+	var upstreamBody map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamAuth = req.Header.Get("Authorization")
+		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "chatcmpl-routing",
+			"object": "chat.completion",
+			"model": "upstream-model",
+			"choices": [
+				{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+			],
+			"usage": {"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4}
+		}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":               common.ChannelTypeOpenAICompat,
+		"name":               "routing",
+		"models":             "client-model",
+		"base_url":           "http://127.0.0.1:1",
+		"base_urls":          []string{"http://127.0.0.1:2/"},
+		"api_key":            "outer-secret-a",
+		"api_keys":           []string{"outer-secret-b"},
+		"key_selection_mode": "mystery",
+		"upstreams": []map[string]string{
+			{"base_url": upstream.URL + "/", "api_key": "upstream-secret"},
+		},
+		"model_rewrites": map[string]string{"client-model": "upstream-model"},
+	})
+	var channelPayload struct {
+		Data struct {
+			ID               uint   `json:"id"`
+			KeySelectionMode string `json:"key_selection_mode"`
+			APIKeyCount      int    `json:"api_key_count"`
+			Upstreams        []struct {
+				BaseURL   string `json:"base_url"`
+				HasAPIKey bool   `json:"has_api_key"`
+			} `json:"upstreams"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(channelResp.Body.Bytes(), &channelPayload); err != nil {
+		t.Fatal(err)
+	}
+	if channelResp.Code != http.StatusOK || channelPayload.Data.ID == 0 {
+		t.Fatalf("create routing channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+	if channelPayload.Data.KeySelectionMode != "round_robin" || channelPayload.Data.APIKeyCount != 3 {
+		t.Fatalf("unexpected normalized channel payload: %s", channelResp.Body.String())
+	}
+	if len(channelPayload.Data.Upstreams) != 1 || channelPayload.Data.Upstreams[0].BaseURL != upstream.URL || !channelPayload.Data.Upstreams[0].HasAPIKey {
+		t.Fatalf("upstream public payload should be normalized and secret-free: %s", channelResp.Body.String())
+	}
+	if strings.Contains(channelResp.Body.String(), "outer-secret") || strings.Contains(channelResp.Body.String(), "upstream-secret") {
+		t.Fatalf("channel response leaked secret: %s", channelResp.Body.String())
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "routing",
+		"remain_quota": 10,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "client-model",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	})
+	if chatResp.Code != http.StatusOK {
+		t.Fatalf("chat through routing channel failed: %d %s", chatResp.Code, chatResp.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("expected one upstream call, got %d", upstreamCalls)
+	}
+	if upstreamAuth != "Bearer upstream-secret" {
+		t.Fatalf("upstreams.api_key should take priority over outer keys, got %q", upstreamAuth)
+	}
+	if upstreamBody["model"] != "upstream-model" {
+		t.Fatalf("model rewrite should be applied before upstream call, got %#v", upstreamBody["model"])
+	}
+	if strings.Contains(chatResp.Body.String(), "outer-secret") || strings.Contains(chatResp.Body.String(), "upstream-secret") {
+		t.Fatalf("chat response leaked channel secret: %s", chatResp.Body.String())
+	}
+}
+
 func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

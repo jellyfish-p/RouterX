@@ -28,6 +28,7 @@
 | `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |
 | `TestAPIKeyAuthErrorsUseEntryProtocolShape` | Anthropic/Gemini 入口 API Key 鉴权错误外形 |
 | `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model、`stream=true` 在本地失败且不污染通道和账单 |
+| `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
 | `TestChatCompletionSuccessLogsAndDeductsQuota` | Chat 非流式成功调用、日志、用户额度、Key 预算和账单聚合 |
 | `TestChatCompletionUpstreamBadRequestMapping` | 下游 400 错误映射、失败日志和密钥不泄露 |
 | `TestRelayPrecheckRejectsBeforeUpstream` | 无效 Key、禁用 Key、额度不足、禁用通道不调用下游 |
@@ -36,7 +37,6 @@
 
 - 下游 401/403/429/5xx/超时错误映射。
 - 多次成功和失败混合后的日志与用户账单聚合一致。
-- `upstreams` 优先级和模型重写在真实 Relay 请求中的效果。
 - settings 缓存刷新和运行时生效边界。
 
 ## 测试原则
