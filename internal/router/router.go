@@ -2,6 +2,8 @@ package router
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"routerx/internal"
@@ -63,11 +65,45 @@ func readyHandler(c *gin.Context) {
 		return
 	}
 	if internal.IsInitialized() {
-		var setting model.Setting
-		if err := internal.DB.Where("key = ?", "jwt.secret").First(&setting).Error; err != nil || setting.Value == "" {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "jwt": "missing"})
+		if problem := readinessSettingProblem(); problem != "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "setting": problem})
 			return
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ready"})
+}
+
+func readinessSettingProblem() string {
+	jwtSecret, ok := settingValue("jwt.secret")
+	if !ok || len(strings.TrimSpace(jwtSecret)) < 32 {
+		return "jwt.secret"
+	}
+	strict := true
+	if raw, ok := settingValue("ready.production_strict"); ok {
+		value, err := strconv.ParseBool(strings.TrimSpace(raw))
+		if err != nil {
+			return "ready.production_strict"
+		}
+		strict = value
+	}
+	if !strict {
+		return ""
+	}
+	relayTimeout, ok := settingValue("relay.timeout")
+	if !ok {
+		return "relay.timeout"
+	}
+	timeout, err := strconv.Atoi(strings.TrimSpace(relayTimeout))
+	if err != nil || timeout <= 0 {
+		return "relay.timeout"
+	}
+	return ""
+}
+
+func settingValue(key string) (string, bool) {
+	var setting model.Setting
+	if err := internal.DB.Where("key = ?", key).First(&setting).Error; err != nil {
+		return "", false
+	}
+	return setting.Value, true
 }

@@ -428,6 +428,43 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 	}
 }
 
+func TestSettingsValidationAndReadiness(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	badUpdate := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"relay.timeout": "0",
+	})
+	if badUpdate.Code != http.StatusBadRequest {
+		t.Fatalf("invalid relay.timeout should be rejected, got %d %s", badUpdate.Code, badUpdate.Body.String())
+	}
+	var relayTimeout model.Setting
+	if err := internal.DB.Where("key = ?", "relay.timeout").First(&relayTimeout).Error; err != nil {
+		t.Fatal(err)
+	}
+	if relayTimeout.Value != "120" {
+		t.Fatalf("invalid setting update should not be persisted, got %q", relayTimeout.Value)
+	}
+
+	if err := internal.DB.Model(&model.Setting{}).Where("key = ?", "relay.timeout").Update("value", "0").Error; err != nil {
+		t.Fatal(err)
+	}
+	notReady := performJSON(r, http.MethodGet, "/ready", "", nil)
+	if notReady.Code != http.StatusServiceUnavailable || !strings.Contains(notReady.Body.String(), "relay.timeout") {
+		t.Fatalf("invalid relay.timeout should make ready fail, got %d %s", notReady.Code, notReady.Body.String())
+	}
+}
+
 func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

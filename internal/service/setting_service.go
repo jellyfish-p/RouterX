@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -87,8 +88,12 @@ func (s *SettingService) GetAll(category string) ([]model.Setting, error) {
 
 // Set 写入单个配置项, 写 DB 后刷新 Redis 缓存。
 func (s *SettingService) Set(key, value string) error {
+	key = strings.TrimSpace(key)
 	if key == "" {
 		return errors.New("setting key is required")
+	}
+	if err := validateSettingValue(key, value); err != nil {
+		return err
 	}
 	err := internal.DB.Transaction(func(tx *gorm.DB) error {
 		var setting model.Setting
@@ -118,11 +123,19 @@ func (s *SettingService) Set(key, value string) error {
 
 // BatchSet 批量更新配置项。
 func (s *SettingService) BatchSet(settings map[string]string) error {
+	normalized := make(map[string]string, len(settings))
+	for key, value := range settings {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if err := validateSettingValue(key, value); err != nil {
+			return err
+		}
+		normalized[key] = value
+	}
 	return internal.DB.Transaction(func(tx *gorm.DB) error {
-		for key, value := range settings {
-			if key == "" {
-				continue
-			}
+		for key, value := range normalized {
 			var setting model.Setting
 			err := tx.Where("key = ?", key).First(&setting).Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -144,7 +157,7 @@ func (s *SettingService) BatchSet(settings map[string]string) error {
 		if internal.RDB != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			for key, value := range settings {
+			for key, value := range normalized {
 				_ = internal.RDB.HSet(ctx, "settings", key, value).Err()
 			}
 		}
@@ -171,6 +184,48 @@ func (s *SettingService) LoadCache() error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	return internal.RDB.HSet(ctx, "settings", values).Err()
+}
+
+func validateSettingValue(key, value string) error {
+	value = strings.TrimSpace(value)
+	switch key {
+	case "jwt.secret":
+		if len(value) < 32 {
+			return errors.New("jwt.secret must be at least 32 characters")
+		}
+	case "server.port", "jwt.admin_expire_hours", "jwt.user_expire_hours",
+		"rate_limit.global_per_min", "rate_limit.per_token_per_min", "rate_limit.per_ip_per_min",
+		"relay.timeout", "relay.error_ban_threshold":
+		return validatePositiveIntSetting(key, value)
+	case "relay.retry_count", "relay.log_body_max_bytes", "log.body_max_bytes", "billing.bootstrap_admin_quota":
+		return validateNonNegativeIntSetting(key, value)
+	case "rate_limit.enabled", "relay.error_auto_ban", "log.request_body_enabled", "log.response_body_enabled", "ready.production_strict":
+		if _, err := strconv.ParseBool(value); err != nil {
+			return errors.New(key + " must be a boolean")
+		}
+	case "billing.default_ratio":
+		ratio, err := strconv.ParseFloat(value, 64)
+		if err != nil || ratio <= 0 {
+			return errors.New("billing.default_ratio must be a positive number")
+		}
+	}
+	return nil
+}
+
+func validatePositiveIntSetting(key, value string) error {
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return errors.New(key + " must be a positive integer")
+	}
+	return nil
+}
+
+func validateNonNegativeIntSetting(key, value string) error {
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 0 {
+		return errors.New(key + " must be a non-negative integer")
+	}
+	return nil
 }
 
 func categoryFromKey(key string) string {
