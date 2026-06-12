@@ -23,15 +23,20 @@
 | `TestP0BackendFlow` | 初始化、登录、API Key 创建、用户禁止编辑 Key 额度、通道创建、模型列表、密钥脱敏、无效 Key、空额度 Key、禁用用户 |
 | `TestAdminPrivilegeBoundaries` | 管理员和超级管理员权限边界、设置脱敏、管理员不能越权管理同级或自己 |
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
+| `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
+| `TestSettingsValidationAndReadiness` | settings 类型校验、JWT/生产 readiness 和关键配置缺失 |
+| `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |
+| `TestAPIKeyAuthErrorsUseEntryProtocolShape` | Anthropic/Gemini 入口 API Key 鉴权错误外形 |
+| `TestChatCompletionSuccessLogsAndDeductsQuota` | Chat 非流式成功调用、日志、用户额度、Key 预算和账单聚合 |
+| `TestChatCompletionUpstreamBadRequestMapping` | 下游 400 错误映射、失败日志和密钥不泄露 |
+| `TestRelayPrecheckRejectsBeforeUpstream` | 无效 Key、禁用 Key、额度不足、禁用通道不调用下游 |
 
 仍需优先补齐：
 
-- Chat 非流式成功调用、日志和扣费。
-- Chat 下游错误映射。
-- 预检拒绝时不调用下游。
-- 日志与用户账单聚合一致。
+- Chat 本地请求错误，以及下游 401/403/429/5xx/超时错误映射。
+- 多次成功和失败混合后的日志与用户账单聚合一致。
 - `upstreams` 优先级和模型重写在真实 Relay 请求中的效果。
-- settings 注册表默认值、类型校验、缓存刷新和生产 readiness。
+- settings 缓存刷新和运行时生效边界。
 
 ## 测试原则
 

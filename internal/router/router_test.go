@@ -537,6 +537,157 @@ func TestAPIKeyAuthErrorsUseEntryProtocolShape(t *testing.T) {
 	}
 }
 
+func TestRelayPrecheckRejectsBeforeUpstream(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "precheck",
+		"models":   "gpt-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	var channelPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(channelResp.Body.Bytes(), &channelPayload); err != nil {
+		t.Fatal(err)
+	}
+	if channelResp.Code != http.StatusOK || channelPayload.Data.ID == 0 {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	createToken := func(name string, remainQuota int64) (uint, string) {
+		t.Helper()
+		tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+			"name":         name,
+			"remain_quota": remainQuota,
+		})
+		var tokenPayload struct {
+			Data struct {
+				ID  uint   `json:"id"`
+				Key string `json:"key"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+			t.Fatal(err)
+		}
+		if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 || tokenPayload.Data.Key == "" {
+			t.Fatalf("create token %q failed: %d %s", name, tokenResp.Code, tokenResp.Body.String())
+		}
+		return tokenPayload.Data.ID, tokenPayload.Data.Key
+	}
+	chat := func(key string) *httptest.ResponseRecorder {
+		t.Helper()
+		return performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+key, map[string]interface{}{
+			"model": "gpt-test",
+			"messages": []map[string]string{
+				{"role": "user", "content": "hello"},
+			},
+		})
+	}
+
+	invalidKeyResp := chat("sk-invalid")
+	if invalidKeyResp.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid key should be rejected before upstream, got %d %s", invalidKeyResp.Code, invalidKeyResp.Body.String())
+	}
+
+	_, exhaustedKey := createToken("exhausted", 0)
+	exhaustedResp := chat(exhaustedKey)
+	if exhaustedResp.Code != http.StatusTooManyRequests {
+		t.Fatalf("exhausted key should be rejected before upstream, got %d %s", exhaustedResp.Code, exhaustedResp.Body.String())
+	}
+
+	disabledTokenID, disabledKey := createToken("disabled", 10)
+	disableTokenResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(disabledTokenID), rootJWT, map[string]interface{}{
+		"status": common.TokenStatusDisabled,
+	})
+	if disableTokenResp.Code != http.StatusOK {
+		t.Fatalf("disable token failed: %d %s", disableTokenResp.Code, disableTokenResp.Body.String())
+	}
+	disabledTokenResp := chat(disabledKey)
+	if disabledTokenResp.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled key should be rejected before upstream, got %d %s", disabledTokenResp.Code, disabledTokenResp.Body.String())
+	}
+
+	zeroUserTokenID, zeroUserKey := createToken("zero-user", 10)
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	zeroUserResp := chat(zeroUserKey)
+	if zeroUserResp.Code != http.StatusTooManyRequests {
+		t.Fatalf("zero user quota should be rejected before upstream, got %d %s", zeroUserResp.Code, zeroUserResp.Body.String())
+	}
+	var zeroUserToken model.Token
+	if err := internal.DB.First(&zeroUserToken, zeroUserTokenID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if zeroUserToken.RemainQuota != 10 {
+		t.Fatalf("zero user quota precheck should not deduct token budget, got %d", zeroUserToken.RemainQuota)
+	}
+
+	noChannelTokenID, noChannelKey := createToken("no-channel", 10)
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	disableChannelResp := performJSON(r, http.MethodPatch, "/v0/admin/channel/"+uintString(channelPayload.Data.ID)+"/disable", rootJWT, nil)
+	if disableChannelResp.Code != http.StatusOK {
+		t.Fatalf("disable channel failed: %d %s", disableChannelResp.Code, disableChannelResp.Body.String())
+	}
+	noChannelResp := chat(noChannelKey)
+	if noChannelResp.Code != http.StatusBadGateway || !strings.Contains(noChannelResp.Body.String(), `"code":"no_available_channel"`) {
+		t.Fatalf("disabled channel should fail before upstream, got %d %s", noChannelResp.Code, noChannelResp.Body.String())
+	}
+
+	if upstreamCalls != 0 {
+		t.Fatalf("precheck failures must not call upstream, got %d calls", upstreamCalls)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("precheck failures should not deduct user quota, got %d", root.Quota)
+	}
+	var noChannelToken model.Token
+	if err := internal.DB.First(&noChannelToken, noChannelTokenID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if noChannelToken.RemainQuota != 10 {
+		t.Fatalf("channel precheck should not deduct token budget, got %d", noChannelToken.RemainQuota)
+	}
+	var failedLogs int64
+	if err := internal.DB.Model(&model.Log{}).Where("status = ?", common.LogStatusFailed).Count(&failedLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedLogs != 1 {
+		t.Fatalf("relay precheck should write one failed log for the routed no-channel rejection, got %d", failedLogs)
+	}
+}
+
 func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
