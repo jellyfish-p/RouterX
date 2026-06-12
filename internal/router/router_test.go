@@ -915,6 +915,145 @@ func TestChannelRoutingConfigResolution(t *testing.T) {
 	}
 }
 
+func TestUserBillingMatchesLogs(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		if upstreamCalls == 2 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"bad upstream request","type":"invalid_request_error","code":"bad_request"}}`))
+			return
+		}
+		totalTokens := 5
+		if upstreamCalls == 3 {
+			totalTokens = 7
+		}
+		_, _ = w.Write([]byte(`{
+			"id": "chatcmpl-billing",
+			"object": "chat.completion",
+			"model": "gpt-test",
+			"choices": [
+				{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+			],
+			"usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": ` + strconv.Itoa(totalTokens) + `}
+		}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "billing",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "billing",
+		"models":   "gpt-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	chatBody := map[string]interface{}{
+		"model": "gpt-test",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	first := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, chatBody)
+	failed := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, chatBody)
+	second := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, chatBody)
+	if first.Code != http.StatusOK || failed.Code != http.StatusBadRequest || second.Code != http.StatusOK {
+		t.Fatalf("unexpected mixed chat statuses: first=%d failed=%d second=%d failed_body=%s", first.Code, failed.Code, second.Code, failed.Body.String())
+	}
+	if upstreamCalls != 3 {
+		t.Fatalf("expected three upstream calls, got %d", upstreamCalls)
+	}
+
+	otherName := "other"
+	other := model.User{Username: &otherName, DisplayName: "Other", Role: common.RoleUser, Status: common.UserStatusEnabled, Quota: 100}
+	if err := internal.DB.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.Log{UserID: other.ID, Model: "other-model", Status: common.LogStatusSuccess, QuotaUsed: 99, TotalTokens: 99}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var successLogs, failedLogs int64
+	if err := internal.DB.Model(&model.Log{}).Where("user_id <> ? AND status = ?", other.ID, common.LogStatusSuccess).Count(&successLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Model(&model.Log{}).Where("user_id <> ? AND status = ?", other.ID, common.LogStatusFailed).Count(&failedLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if successLogs != 2 || failedLogs != 1 {
+		t.Fatalf("unexpected current user log counts: success=%d failed=%d", successLogs, failedLogs)
+	}
+	var quotaSum, tokenSum int64
+	if err := internal.DB.Model(&model.Log{}).
+		Where("user_id <> ? AND status = ?", other.ID, common.LogStatusSuccess).
+		Select("COALESCE(SUM(quota_used), 0), COALESCE(SUM(total_tokens), 0)").
+		Row().Scan(&quotaSum, &tokenSum); err != nil {
+		t.Fatal(err)
+	}
+	if quotaSum != 12 || tokenSum != 12 {
+		t.Fatalf("successful logs should sum to 12 quota/tokens, got quota=%d tokens=%d", quotaSum, tokenSum)
+	}
+
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 38 {
+		t.Fatalf("token budget should only deduct successful usage, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 88 {
+		t.Fatalf("user quota should only deduct successful usage, got %d", root.Quota)
+	}
+
+	billingResp := performJSON(r, http.MethodGet, "/v0/user/billing", rootJWT, nil)
+	if billingResp.Code != http.StatusOK || !strings.Contains(billingResp.Body.String(), `"call_count":2`) || !strings.Contains(billingResp.Body.String(), `"total_quota":12`) || !strings.Contains(billingResp.Body.String(), `"total_tokens":12`) {
+		t.Fatalf("billing should aggregate only current user's successful logs, got %d %s", billingResp.Code, billingResp.Body.String())
+	}
+	logResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
+	if logResp.Code != http.StatusOK || !strings.Contains(logResp.Body.String(), `"total":3`) || strings.Contains(logResp.Body.String(), "other-model") {
+		t.Fatalf("user logs should include only current user's three calls, got %d %s", logResp.Code, logResp.Body.String())
+	}
+}
+
 func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
