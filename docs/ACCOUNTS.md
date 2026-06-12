@@ -19,6 +19,16 @@
 
 账号系统的核心设计仍然是“用户资料”和“登录身份”分离，但业务层强制每个用户至少拥有一个 `username/local` 登录身份和一个有效密码。
 
+## 当前实现边界
+
+当前代码已经具备用户名密码注册、统一登录、User JWT、管理员角色校验、API Key 鉴权所需的基础账号能力。本文档中的邮箱/手机号验证码、OAuth/OIDC、注销保留账号和恢复账号属于目标设计，需要按阶段继续实现。
+
+阶段边界：
+
+- P0 收口用户名密码注册登录、User JWT、管理员权限、API Key 鉴权和基础账号安全。
+- P1 增加邮箱/手机号身份、验证码、账号注销保留、恢复账号和登录审计。
+- P2 增加 OAuth/OIDC、企业 SSO、第三方身份绑定和企业级风险控制。
+
 ## 登录方式
 
 | 登录方式 | method | provider | 是否强制 | 说明 |
@@ -47,12 +57,13 @@
 | `role` | 用户角色 |
 | `quota` | 用户额度 |
 | `status` | 用户状态 |
-| `group_id` | 所属分组 |
+| `group_id` | 所属分组；新用户默认归入 `default` 分组 |
 
 说明：
 
 - `users.username` 在当前模型上可以为空是为了迁移兼容，但业务层创建账户时必须写入用户名。
 - `users` 不保存密码，不负责登录唯一性。
+- 如果实现使用数字 `group_id`，初始化或迁移必须保证存在 code 为 `default` 的用户分组；如果暂未建分组表，策略层必须把空分组归一为 `default`。
 - 用户注销时不删除 `users` 记录，不软删除核心账号，不创建可绕过去重的新账号。
 - 注销账号建议通过状态字段表达，当前模型可先复用禁用状态，后续可增加 `canceled` 或 `closed` 状态。
 
@@ -123,15 +134,15 @@ password_hash = bcrypt hash
 
 | key | 默认 | 说明 |
 |-----|------|------|
-| `auth.register.enabled` | `true` | 是否开放用户自助注册 |
-| `auth.register.username.enabled` | `true` | 是否允许用户名自助注册 |
+| `auth.register.enabled` | `false` | 是否开放用户自助注册；自部署商业级默认关闭，由管理员按运营需要开启 |
+| `auth.register.username.enabled` | `true` | 开启自助注册后，是否允许用户名自助注册 |
 | `auth.register.email.enabled` | `false` | 是否允许邮箱自助注册 |
 | `auth.register.phone.enabled` | `false` | 是否允许手机号自助注册 |
 | `auth.register.oauth.enabled` | `false` | 是否允许 OAuth 首次登录自动进入注册流程 |
 | `auth.register.oidc.enabled` | `false` | 是否允许 OIDC 首次登录自动进入注册流程 |
 | `auth.register.captcha.required` | `true` | 强制为 true，注册必须校验验证码 |
 | `auth.register.default_quota` | `0` | 注册默认额度 |
-| `auth.register.default_group_id` | 空 | 注册默认分组 |
+| `auth.register.default_group_id` | `default` | 注册默认分组 |
 
 ### 验证码配置
 
@@ -151,6 +162,7 @@ password_hash = bcrypt hash
 - 可以开启手机号登录但关闭手机号注册，此时只有已绑定手机号的用户可以用手机号登录。
 - 关闭某种登录方式不删除已绑定身份，只禁止继续使用该方式登录。
 - 管理员创建账户不受自助注册开关限制，但仍必须设置用户名和密码。
+- 默认关闭自助注册不影响用户名密码登录，也不影响管理员创建用户或后续邀请用户。
 
 ## 注册设计
 
@@ -550,6 +562,21 @@ Discovery issuer
 - `/v0/admin/*` 在 User JWT 基础上校验管理员或超级管理员角色。
 - API 调用使用 API Key，不使用 User JWT。
 
+角色能力边界：
+
+| 能力 | 普通用户 | 管理员 | 超级管理员 |
+|------|----------|--------|------------|
+| 查看和修改自己的资料 | 是 | 是 | 是 |
+| 创建、禁用、删除自己的 API Key | 是 | 是 | 是 |
+| 调整自己的额度或 API Key 无限额度 | 否 | 通过管理接口调整普通用户 | 可调整并审计 |
+| 管理普通用户 | 否 | 是 | 是 |
+| 管理通道 | 否 | 是 | 是 |
+| 查看全局日志和看板 | 否 | 是 | 是 |
+| 修改 settings | 否 | 否 | 是 |
+| 管理管理员账号 | 否 | 否 | 是 |
+
+API Key 只代表模型调用凭据，不继承 User JWT 的管理能力。即使 API Key 属于管理员或超级管理员，也不能调用 `/v0/admin/*` 或 `/v0/user/*`。
+
 ## 会话设计
 
 ### 管理端会话
@@ -640,16 +667,16 @@ API Key 用于 `/v1/*`，不等同于登录态。
 | OIDC 重放 | nonce 校验 |
 | JWT 泄露 | 短有效期、禁用后失效、前端安全存储策略 |
 | 密码泄露 | bcrypt 哈希，不保存明文 |
-| API Key 泄露 | 明文只返回一次，目标设计保存哈希 |
+| API Key 泄露 | 明文只返回一次，数据库保存 SHA256 哈希，缓存键也不使用明文 |
 | Provider 接管 | 不因相同 email 自动绑定第三方身份，必须先完成账户登录或补齐注册流程 |
 
 ## 实施阶段
 
 | 阶段 | 内容 |
 |------|------|
-| P0 | 用户名密码强制注册和登录、注册验证码、注销保留账号、恢复账号、User JWT、API Key 鉴权 |
-| P1 | 邮箱身份、邮箱注册开关、邮箱密码登录、邮箱验证码登录 |
-| P1 | 手机号身份、手机注册开关、手机号密码登录、短信验证码登录 |
+| P0 | 用户名密码强制注册和登录、User JWT、管理员权限校验、API Key 鉴权 |
+| P1 | 注册验证码、邮箱身份、邮箱注册开关、邮箱密码登录、邮箱验证码登录 |
+| P1 | 手机号身份、手机注册开关、手机号密码登录、短信验证码登录、注销保留账号和恢复账号 |
 | P2 | OAuth Provider 配置、登录、绑定、补齐密码注册流程、OAuth identity 去重恢复 |
 | P2 | OIDC Discovery、Authorization Code Flow、企业 SSO、补齐密码注册流程、OIDC subject 去重恢复 |
 | P3 | MFA、多会话管理、登录审计和风险检测 |

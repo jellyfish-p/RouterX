@@ -2,7 +2,9 @@
 
 ## 目标
 
-Relay 模块是 RouterX 的核心。它接收 OpenAI、Anthropic、Gemini 等不同入口协议的完整请求格式，按路由和通道配置转换为具体上游厂商请求，处理响应、日志和计费。
+Relay 模块是 RouterX 的核心。它接收 OpenAI、Anthropic、Gemini 等不同入口协议的完整请求格式，按路由和通道配置转换为具体上游厂商请求，处理响应、日志和计费。调用方接入体验、SDK 行为和迁移边界以 `docs/DEVELOPER_EXPERIENCE.md` 为准；入口协议、APIType、上游厂商和能力等级以 `docs/PROTOCOLS.md` 为准。
+
+Relay 的产品取舍是：默认路径先保证一个 OpenAI-compatible 调用稳定闭环，进阶路径再展开完整多协议和多上游矩阵。多协议和多上游是同等核心目标，但不能让矩阵复杂度阻塞第一次可用。
 
 目标能力：
 
@@ -23,17 +25,22 @@ Relay 模块是 RouterX 的核心。它接收 OpenAI、Anthropic、Gemini 等不
 
 - `internal/relay/adapter.go` 定义 Adapter 接口和注册表。
 - 各厂商适配器文件已存在并在 `init()` 中注册。
-- `internal/router/user_router.go` 已注册部分 `/v1` 路由。
+- `internal/router/user_router.go` 已注册 OpenAI、Anthropic、Gemini 相关 `/v1` 路由。
 - `internal/model/channel.go` 已定义通道模型。
 - `internal/model/log.go` 已定义调用日志模型。
 - `internal/model/token.go` 已定义 API Key 和额度字段。
+- `ApiKeyAuthRequired` 已接入真实 API Key 校验，并写入 `current_user` 和 `current_token`。
+- `RelayHandler` 已接入 OpenAI-compatible、Anthropic Messages、Gemini generateContent/countTokens 和模型列表等入口。
+- `RelayService` 已有通道选择、上游解析、非流式转发、模型重写、usage 提取、扣费和日志基础链路。
+- `ChannelService` 已支持多 base URL、多 key、key 选择模式、模型重写、通道分组和扩展配置。
 
 当前缺口：
 
-- API Key 中间件仍是占位实现。
-- Relay Handler 返回 `not implemented`。
-- Relay Service 未实现通道选择、转发、转换、计费和日志。
-- 适配器多数方法为 TODO。
+- 流式响应仍需要完整 SSE 转发、chunk 转换、客户端断开取消和流式 usage 结算。
+- 多协议入口与多上游之间的完整语义转换实现仍需要按 `docs/PROTOCOLS.md` 的能力矩阵补齐。
+- Adapter 接口需要扩展以支持 headers、query、provider-specific 参数、流式 chunk 和更细粒度错误。
+- 重试、熔断、限流、计费快照和可观测指标仍需要生产级实现。
+- Images、Audio、Moderations、Responses 等高级接口已注册或纳入设计，但仍需逐接口补齐适配能力。
 
 ## 核心流程
 
@@ -124,12 +131,22 @@ JSON 请求示例：
 
 规则：
 
-- `routerx.route` 只表达 RouterX 路由偏好，如目标渠道、渠道分组、上游 provider、禁用某些 provider 等。
+- `routerx.route` 只表达 RouterX 路由偏好，如目标通道、通道分组、上游 provider、禁用某些 provider 等。
+- `routerx.route` 不能绕过管理员策略、安全策略和系统健康判断；它只能在已允许的候选通道集合内进一步收窄范围。
 - `routerx.upstream.headers`、`routerx.upstream.query`、`routerx.upstream.body` 用于传递上游调用所需的额外 header、query 和 body 字段。
 - `routerx.provider.<provider>` 用于传递只对某个上游 provider 生效的额外参数。
 - Adapter 调用真实厂商前必须移除 `routerx` 字段，除非上游通道类型是 `routerx`。
 - 禁止透传敏感 header，如 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`，这些必须来自通道配置。
 - multipart 或非 JSON 请求可使用 `routerx` 表单字段传递 JSON 字符串，或使用 `X-RouterX-Options` header 传递 base64url JSON。
+
+冲突规则：
+
+- 跨模块访问控制、分组、限流、预算和策略快照以 `docs/POLICIES.md` 为准；本节只描述 Relay 如何应用这些策略。
+- 管理员配置、用户/API Key 状态、用户余额、Key 预算、访问控制、通道状态、熔断状态和密钥安全策略优先级最高。
+- `routerx.route` 指定的 provider、通道分组或通道偏好不存在、不可用或不可访问时，不自动降级到越权通道。
+- 请求携带非法 `routerx` 结构时返回当前入口协议兼容的 400 错误，例如 `invalid_routerx_options` 或 `invalid_routerx_route`。
+- 路由偏好合法但筛选后无通道时返回当前入口协议兼容的无可用通道错误；如果原因是访问策略禁止，应返回 403。
+- 被接受、忽略或拒绝的路由偏好必须进入日志摘要，P1/P2 进一步进入结构化路由决策快照。
 
 ## 多层 RouterX 兼容
 
@@ -192,6 +209,8 @@ type Adapter interface {
 
 ## APIType 映射
 
+APIType、入口协议、路由状态和能力等级的权威矩阵见 `docs/PROTOCOLS.md`。本节只保留 Relay 视角的路径映射，避免把“路由已注册”误解为“协议完整兼容”。
+
 | 入口协议 | APIType | 路径 | P 阶段 |
 |----------|---------|------|--------|
 | OpenAI | `APIResponses` | `/v1/responses` | P1 |
@@ -213,9 +232,88 @@ type Adapter interface {
 | Gemini | `APIGeminiBatchEmbedContents` | `/v1/models/{model}:batchEmbedContents` | P1 |
 | Gemini | `APIGeminiModels` | `/v1/models` | P1 |
 
-路径冲突处理：`/v1/models` 同时服务 OpenAI、Anthropic、Gemini 模型列表。默认返回 OpenAI `models` 结构；如请求带有 `x-goog-api-client`、Gemini query 风格、`?routerx_protocol=gemini` 或 `X-RouterX-Protocol: gemini`，返回 Gemini 结构；如请求带有 `anthropic-version`、`?routerx_protocol=anthropic` 或 `X-RouterX-Protocol: anthropic`，返回 Anthropic 结构。
+路径冲突处理：`/v1/models` 同时服务 OpenAI、Anthropic、Gemini 模型列表。当前实现默认返回 OpenAI `models` 结构，可用 `?format=gemini` 或 `?format=anthropic` 请求特定格式，并可通过 `anthropic-version` header 识别 Anthropic 格式。目标设计可继续扩展 `?routerx_protocol=` 或 `X-RouterX-Protocol`，但必须保持向后兼容。
+
+## 阶段矩阵
+
+多协议和多上游是 RouterX 的同等核心目标，但实现必须分阶段交付。阶段等级、字段降级、路径冲突和新增 provider 准入清单以 `docs/PROTOCOLS.md` 为准。
+
+| 阶段 | 入口协议 | 上游范围 | 关键验收 |
+|------|----------|----------|----------|
+| P0 | OpenAI-compatible Chat/Models 为主，Anthropic/Gemini 基础路由存在 | OpenAI/OpenAI-Compatible 优先，兼容 xAI/Qwen/DeepSeek 的 OpenAI 形态 | 非流式闭环、API Key、通道选择、日志、扣费 |
+| P1 | OpenAI、Anthropic、Gemini 基础非流式和流式 | OpenAI-Compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek、RouterX-Compatible | 主流 SDK 可用，字段降级清晰，流式可计费 |
+| P2 | 高级 OpenAI API、多模态、企业路由 | 多区域、多层 RouterX、企业上游和高级 provider 参数 | 高级 API 可观测、可审计、可限流、可回滚 |
+
+阶段约束：
+
+- P0 不要求每个协议和上游组合都可用，但要求失败边界明确，不能静默误转。
+- P1 每新增一个入口协议或上游 provider，都必须同时补齐错误映射、usage 提取、密钥过滤、日志字段和对应 Runbook。
+- P2 才扩展高级 API 和企业路由，避免高级能力挤占基础闭环可靠性。
+
+## 错误语义
+
+Relay 错误需要同时服务三类读者：客户端 SDK、普通用户和管理员。客户端看到入口协议兼容错误；用户看到是否需要充值、换模型或检查 API Key；管理员能从日志判断是通道、密钥、上游还是系统配置问题。
+
+完整错误 code 目录、当前代码事实和目标收敛规则以 `docs/ERRORS.md` 为准。本文保留 Relay 视角的来源、重试、扣费和排障原则。
+
+错误来源分类：
+
+| 来源 | 示例 code | HTTP | 是否重试 | 是否扣费 | 处理人 |
+|------|-----------|------|----------|----------|--------|
+| 请求格式 | `invalid_json`、`model_required`、`unsupported_api` | 400/404 | 否 | 否 | 调用方 |
+| 鉴权状态 | `invalid_api_key`、`expired_api_key`、`user_disabled` | 401/403 | 否 | 否 | 用户或管理员 |
+| 额度和限流 | `insufficient_quota`、`rate_limit_exceeded` | 429 | 否 | 否 | 用户或管理员 |
+| 路由策略 | `route_forbidden`、`no_available_channel`、`unsupported_channel` | 403/502 | 否或换候选通道 | 否 | 管理员 |
+| 通道配置 | `upstream_secret_error`、`unsupported_channel` | 502 | 否 | 否 | 管理员 |
+| 下游临时故障 | `upstream_request_failed`、`upstream_502`、`upstream_503`、`upstream_timeout` | 502/504 | 非流式可重试 | 否，除非已有有效 usage | 管理员或自动恢复 |
+| 下游请求不兼容 | `upstream_400`、`upstream_conversion_failed` | 400/502 | 否 | 否 | 调用方或适配器实现者 |
+| 计费结算 | `billing_failed`、`insufficient_quota_after_usage` | 429/500 | 否 | 按事务结果 | 管理员 |
+
+排障动作：
+
+| code 类型 | 客户端动作 | 管理员动作 | 日志必须包含 |
+|-----------|------------|------------|--------------|
+| `invalid_*`、`model_required` | 修正请求体、模型名或 `routerx` 扩展 | 不需要介入，除非大量出现 | request_id、入口协议、解析失败字段 |
+| `invalid_api_key`、`expired_api_key` | 更换或重新创建 API Key | 检查用户和 API Key 状态 | user_id、token_id、失败原因摘要 |
+| `insufficient_quota`、`rate_limit_exceeded` | 充值、降低并发或等待窗口 | 调整用户额度、Key 预算或限流配置 | user quota、key budget、限流 key |
+| `route_forbidden` | 移除越权路由偏好或联系管理员 | 检查通道分组、用户分组和访问策略 | `routerx.route` 摘要、拒绝原因 |
+| `no_available_channel` | 换模型或联系管理员 | 检查通道启用、模型匹配、熔断和 provider adapter | 候选过滤摘要 |
+| `upstream_secret_error` | 联系管理员 | 检查 `ENCRYPTION_KEY`、通道密钥和密钥格式 | channel_id、provider、解密错误摘要 |
+| `upstream_timeout`、`upstream_5xx` | 稍后重试 | 检查下游可用性、重试和熔断状态 | 下游状态、耗时、重试次数 |
+
+错误映射规则：
+
+- 入口协议决定错误外形，不能返回 RouterX `{success,data,message}` 包装。
+- OpenAI-compatible 入口使用 `{ "error": { "message", "type", "code" } }`。
+- Anthropic 入口使用 `{ "type": "error", "error": { "type", "message" } }`。
+- Gemini 入口使用 `{ "error": { "code", "message", "status" } }`。
+- 下游 401/403 通常表示通道密钥或账号权限问题，不对其他通道无限重试，避免扩大错误和触发风控。
+- 下游 429/5xx/网络超时可在非流式且未向客户端写出时重试其他候选通道。
+- 流式响应一旦写出 chunk，不再切换通道；错误只能结束流并写失败摘要。
+- Adapter 转换失败必须区分“请求字段不支持”和“实现缺陷”，不能用模糊 500 掩盖。
 
 ## 通道选择
+
+### 路由决策优先级
+
+路由决策必须先做不可绕过的系统过滤，再应用用户偏好，最后才进入优先级和权重选择。推荐顺序如下：
+完整策略语义见 `docs/POLICIES.md`。
+
+```text
+1. 解析入口协议、API 类型、请求模型、stream 和 routerx 扩展参数
+2. 校验用户、API Key、用户余额、Key 预算、限流和基础请求大小
+3. 读取或构建通道候选缓存：按模型、APIType、用户分组、通道分组和路由版本预加载
+4. 过滤不可用通道：禁用、软删除、无 Adapter、模型不匹配、熔断、余额不足
+5. 应用访问控制：用户分组、Token 策略、通道分组和模型权限
+6. 应用 routerx.route 偏好，只在已允许候选集中继续收窄
+7. 选择最高 priority 的候选组
+8. 在同 priority 组内按 weight 加权随机
+9. 应用模型重写，得到上游真实模型名
+10. 解析通道上游：upstreams 优先，其次 api_keys/base_urls，再其次单 api_key/base_url
+11. 构造上游请求，剥离 RouterX 私有字段并注入安全来源的鉴权信息
+```
+
+这个顺序是商业级默认体验的核心约束：小白用户不需要理解它也能稳定调用，技术用户可以通过日志解释每一次通道命中，管理员可以确信请求参数不能越过后台策略。
 
 通道候选条件：
 
@@ -229,12 +327,51 @@ type Adapter interface {
 选择策略：
 
 ```text
-1. 查询所有候选通道
+1. 读取预加载的候选通道索引，缓存缺失或版本落后时回源加载
 2. 按 priority 分组，选择最高 priority 组
 3. 在同组内按 weight 加权随机
 4. 如果开启 latency 优化，可将 response_ms 作为降权因子
 5. 返回选中的通道
 ```
+
+候选缓存规则：
+
+- 单机 SQLite 模式可以使用进程内缓存和短 TTL。
+- DB+Redis 或集群模式必须使用 Redis 保存 `routing.channel_cache.version`、失效标记或共享候选快照。
+- 管理员修改通道、模型、通道分组、用户分组访问控制、价格规则或相关 settings 后，必须递增路由版本并广播失效。
+- API Key scope 和 `routerx.route` 这类请求级收窄规则在缓存候选集之后应用，避免生成高基数缓存。
+- 缓存不可绕过数据库最终事实；版本不一致时不得长期使用旧候选集。
+
+当前代码事实：
+
+- 当前通道查询已经按 `priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC` 排序。
+- 当前候选集会保留最高 `priority` 的通道，再按 `weight` 加权随机；`weight <= 0` 按 `1` 处理。
+- 当前多 key 选择支持 `round_robin` 和 `random`；未知值会归一为 `round_robin`。
+- 当前多 `base_urls` 在解析上游时随机选择；后续如增加顺序、权重或健康优先策略，必须进入通道路由快照。
+
+可解释性要求：
+
+- 每次请求应能记录候选通道过滤原因、最终选中通道、模型重写结果和是否发生重试。
+- 如果请求带有 `routerx.route` 偏好，日志应记录该偏好是否被接受、忽略或拒绝。
+- 熔断排除、余额排除、模型不匹配、provider 不支持等原因必须能用于排障和审计。
+- P0 可先记录摘要，P1/P2 再扩展为结构化路由决策快照。
+
+### 通道内部上游解析
+
+同一个通道内部可能同时配置单 key、多 key、多个 base URL 或完整上游数组。为避免不可解释的随机行为，解析优先级固定如下：
+
+| 优先级 | 配置 | 说明 |
+|--------|------|------|
+| 1 | `upstreams` | 完整上游对象数组，base URL 与 API Key 作为一组绑定；适合多节点或多账号精确配对。 |
+| 2 | `api_key`/`api_keys` + `base_url`/`base_urls` | 单字段和数组字段组合；API Key 按 key 选择策略选择，base URL 当前随机选择。 |
+| 3 | provider 默认 Base URL + API Key | 只适合明确存在 provider 默认地址的适配器。 |
+
+解析约束：
+
+- `upstreams` 非空时优先使用，不再把其 key 与外层 `base_urls` 任意交叉组合。
+- 单 `api_key` 与 `api_keys` 同时存在时，服务层可以把单 key 作为兼容存量并放入候选 key 集，但日志和管理端应提示配置来源。
+- 上游 API Key 只能来自通道配置或安全密钥管理，不接受用户请求覆盖。
+- 如果无法解析出有效 API Key，应返回兼容格式错误并标记为通道配置问题。
 
 加权随机示例：
 
@@ -397,6 +534,39 @@ Endpoint 示例：
 
 ## 非流式响应
 
+### P0 Chat 非流式合同
+
+P0 的 Chat 非流式处理只要求 OpenAI-compatible 主链路稳定，但链路上的失败必须可解释。
+
+成功路径：
+
+```text
+parse model/stream
+    -> stream 必须为 false 或空
+    -> HasAvailableQuota(user quota + key budget)
+    -> SelectChannel(model)
+    -> ResolveUpstream(channel)
+    -> ApplyModelRewrite
+    -> adapter.ConvertRequest
+    -> adapter.DoRequest
+    -> adapter.ConvertResponse + usage
+    -> quotaFromUsage 或最低计费
+    -> TokenService.DeductQuota(user quota + key budget)
+    -> markChannelSuccess
+    -> LogService.Record(success)
+    -> return OpenAI-compatible response
+```
+
+失败路径要求：
+
+- `stream=true` 在 P0 返回 `unsupported_stream`，不调用下游。
+- 额度预检失败不选择通道、不调用下游，并写失败日志。
+- 无可用通道返回 `no_available_channel`，失败日志中 `channel_id` 可为空。
+- 上游密钥解析失败返回 `upstream_secret_error`，不泄露密钥明文。
+- 下游 400/401/403 不作为可安全重试错误；401/403 应帮助管理员定位通道配置问题。
+- 下游 5xx、网络错误和超时在非流式且未向客户端写出时可以按配置重试候选通道。
+- 扣费失败必须写失败日志；如果响应尚未返回客户端，应返回 429。
+
 非流式处理流程：
 
 ```text
@@ -459,7 +629,7 @@ Usage 来源优先级：
 
 ```text
 usage -> price rule -> group ratio -> quota_used
-    -> if token.remain_quota != -1 then deduct token quota first
+    -> if token has budget cap then deduct user quota and key budget atomically
     -> remaining cost deduct user quota
     -> if insufficient, return 429 before sending non-stream request
 ```
@@ -532,14 +702,14 @@ usage -> price rule -> group ratio -> quota_used
 | key | 默认 | 说明 |
 |-----|------|------|
 | `relay.timeout` | `120` | 下游请求超时秒数 |
-| `relay.retry_count` | `2` | 非流式请求重试次数 |
+| `relay.retry_count` | `0` | 当前默认不自动重试；开启后只对可安全重试错误生效 |
 | `relay.error_auto_ban` | `true` | 是否自动熔断失败通道 |
 | `relay.error_ban_threshold` | `10` | 连续失败阈值 |
-| `relay.log_request_body` | `false` | 是否记录请求体 |
-| `relay.log_response_body` | `false` | 是否记录响应体 |
-| `relay.log_body_max_bytes` | `4096` | 日志体最大长度 |
+| `relay.log_body_max_bytes` | `0` | Relay 日志体最大长度，`0` 表示默认不记录 body |
 | `relay.stream_usage_strategy` | `provider_or_estimate` | 流式 usage 策略 |
 | `billing.default_ratio` | `1.0` | 默认计费倍率 |
+
+完整 settings 注册表、当前默认值和目标配置以 `docs/SETTINGS.md` 为准。
 
 ## 安全要求
 
@@ -551,15 +721,30 @@ usage -> price rule -> group ratio -> quota_used
 - 对图片、音频、文件类接口设置上传大小限制。
 - 对下游响应体设置最大读取大小。
 
+## Relay 验证矩阵
+
+Relay 每新增一个入口协议、上游 provider 或 APIType，都必须先同步 `docs/PROTOCOLS.md` 的能力等级和降级规则，再补齐同等范围的验证，并同步 `docs/RUNBOOKS.md` 中的排查路径。
+
+| 验证维度 | P0 最小要求 | P1/P2 扩展要求 |
+|----------|-------------|----------------|
+| 鉴权和额度 | 无效 Key、禁用用户、禁用 API Key、余额不足均在调用下游前失败 | Key 预算、用户限额、预留额度和流式超额策略可解释 |
+| 通道选择 | 模型匹配、启用状态、优先级、权重和无可用通道可测 | `routerx.route`、访问控制、熔断排除、路由快照可测 |
+| 上游解析 | 单 `base_url + api_key`、多 key、多 base URL、`upstreams` 优先级可测 | 区域、健康优先、加权 base URL 或 KMS 解密可测 |
+| 请求转换 | OpenAI-compatible Chat 非流式字段不被无故丢弃 | OpenAI/Anthropic/Gemini 多入口语义转换矩阵可测 |
+| 响应转换 | 成功响应保留入口协议格式，usage 能提取 | 流式 chunk、tool calling、vision、reasoning 和降级原因可测 |
+| 错误映射 | OpenAI-compatible 错误格式、状态码和 code 正确 | Anthropic/Gemini 错误格式、下游错误脱敏和 SDK 行为可测 |
+| 计费日志 | 成功调用写日志并扣额度，失败调用不误扣 | usage 来源、价格快照、重试结果和账单聚合一致 |
+| 重试熔断 | 非流式 5xx/超时可重试，400/401/403 不重试 | 半开恢复、限流、故障注入和流式不可切换通道可测 |
+| 安全过滤 | `routerx` 私有字段真实厂商前剥离，敏感 header 不透传 | 多层 RouterX hop、provider-specific 参数和审计摘要可测 |
+
 ## 实施顺序
 
-1. 实现 API Key 中间件和 TokenService 校验。
-2. 实现 OpenAI 入口 Chat Completions 和 OpenAI-Compatible 上游的非流式闭环。
-3. 实现 `routerx` 扩展参数解析、真实上游剥离和 RouterX-Compatible 上游透传。
-4. 实现 ChannelService 模型匹配和优先级选择。
-5. 实现 RelayService 非流式闭环。
-6. 接入 LogService 和 TokenService 扣费事务。
-7. 实现 SSE 流式转发。
-8. 扩展 Anthropic、Gemini、xAI、Azure、DeepSeek、Qwen 等上游适配。
-9. 实现 OpenAI、Anthropic、Gemini 三类入口协议之间的请求/响应转换。
-10. 增加熔断、限流、模型价格和统计看板。
+1. 收口现有 OpenAI-compatible 非流式 Chat/Models 闭环，补齐错误格式、请求限制和测试。
+2. 完善 `routerx` 扩展参数解析、真实上游剥离和 RouterX-Compatible 上游透传。
+3. 完善 LogService、TokenService 扣费事务和计费规则快照。
+4. 实现 SSE 流式转发、客户端断开取消和流式 usage 策略。
+5. 增加重试、限流、熔断、自动恢复和可观测指标。
+6. 扩展 Anthropic、Gemini、xAI、Azure、DeepSeek、Qwen 等上游适配。
+7. 实现 OpenAI、Anthropic、Gemini 三类入口协议之间的请求/响应转换。
+8. 扩展 Responses、Images、Audio、Moderations 等高级 API。
+9. 增加模型价格、访问控制、统计看板和管理审计。

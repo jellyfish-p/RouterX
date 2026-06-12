@@ -30,7 +30,6 @@ func SetupRouter(
 	// 全局中间件
 	r.Use(middleware.Recovery())
 	r.Use(middleware.Logger())
-	r.Use(middleware.CORS())
 
 	// 健康检查 (无需初始化)
 	r.GET("/health", func(c *gin.Context) {

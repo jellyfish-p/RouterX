@@ -4,12 +4,64 @@
 
 RouterX 对外提供三类 API。
 
+API 设计遵循“默认简单、扩展明确”的原则。初始化、账号、通道、API Key、日志和基础模型调用构成开箱路径；支付、多协议高级接口、企业账号等能力作为目标扩展分阶段接入。模型转发 API 必须优先兼容调用方 SDK，不能为了统一管理端响应而破坏 OpenAI、Gemini 或 Anthropic 的错误格式。
+
+开箱路径所需接口必须优先稳定：
+
+```text
+/v0/setup/status
+/v0/setup/init
+/v0/user/login
+/v0/admin/channel
+/v0/user/token
+/v1/models
+/v1/chat/completions
+/v0/user/log
+/v0/user/billing
+```
+
+这些接口的权限、状态码、错误响应和敏感信息脱敏规则必须优先于目标扩展接口收口。
+
+调用方接入、SDK 兼容、API Key 使用和迁移体验以 `docs/DEVELOPER_EXPERIENCE.md` 为准。API Key 生命周期、轮换、泄露处理、作用域和高级管理以 `docs/API_KEYS.md` 为准。策略决策、访问控制、限流、分组和路由偏好冲突规则以 `docs/POLICIES.md` 为准。入口协议、APIType、上游厂商和能力等级以 `docs/PROTOCOLS.md` 为准。错误 code、HTTP 状态、协议外形、重试、扣费和日志语义以 `docs/ERRORS.md` 为准。本文只保留接口层最常用的错误格式和状态码说明。
+
+开箱 API 验收矩阵：
+
+| 步骤 | 接口 | 成功证据 | 失败证据 |
+|------|------|----------|----------|
+| 初始化状态 | `GET /v0/setup/status` | 返回 `initialized=false/true` | DB 不可用时返回明确错误 |
+| 首次初始化 | `POST /v0/setup/init` | 创建超级管理员、本地身份和默认 `settings` | 已初始化、弱密码、重复用户名返回冲突或参数错误 |
+| 登录 | `POST /v0/user/login` | 返回 User JWT 和用户摘要 | 账号或凭据错误不泄露账号存在性 |
+| 创建 API Key | `POST /v0/user/token` | 返回一次性 `sk-` 明文，后续列表不再展示明文 | 用户禁用、额度不足或参数错误时不创建 Key |
+| 创建通道 | `POST /v0/admin/channel` | 通道启用，密钥已加密或响应已脱敏 | 密钥缺失、类型不支持、模型配置非法时失败 |
+| 模型列表 | `GET /v1/models` | 有效 API Key 返回兼容模型列表 | 无效 Key 返回 401，余额不足返回 429，无通道返回兼容错误 |
+| 非流式调用 | `POST /v1/chat/completions` | 返回 SDK 兼容响应，写日志并扣额度 | 请求非法、无通道、上游失败和余额不足均返回协议兼容错误 |
+| 日志账单 | `GET /v0/user/log`、`GET /v0/user/billing` | 用户能看到自己的调用和额度变化 | 普通用户不能查看他人日志 |
+
 | 类型 | 前缀 | 受众 | 响应格式 |
 |------|------|------|----------|
 | 系统初始化 | `/v0/setup` | 初始化页面 | RouterX 统一响应 |
 | 管理端 API | `/v0/admin` | 管理员后台 | RouterX 统一响应 |
 | 用户端 API | `/v0/user` | 用户控制台 | RouterX 统一响应 |
 | 模型转发 API | `/v1` | OpenAI、Gemini、Anthropic SDK 和外部调用方 | 对应兼容格式响应 |
+
+入口鉴权边界：
+
+| 入口 | 凭据 | 允许 | 禁止 |
+|------|------|------|------|
+| `/v0/setup/*` | 无，受初始化状态限制 | 查询初始化状态；未初始化时创建第一个超级管理员 | 已初始化后重复初始化 |
+| `/v0/user/*` | User JWT，注册/登录除外 | 普通用户管理自己的资料、API Key、日志和账单 | 查看他人数据、调整自身额度或无限 Key |
+| `/v0/admin/*` | User JWT + 管理员角色 | 管理用户、通道、日志、看板；超级管理员管理 settings 和管理员账号 | 使用 API Key 调用；普通管理员执行超级管理员操作 |
+| `/v1/*` | API Key | 模型调用和模型列表 | 使用 User JWT；修改任何 `/v0` 资源；绕过用户/API Key/通道/额度策略 |
+| `/v0/payment/*/webhook` | Provider 签名或 provider 规则 | 处理可信支付回调并幂等入账 | 信任客户端额度、跳过金额和订单校验 |
+
+接口状态说明：
+
+| 状态 | 含义 |
+|------|------|
+| 已实现 | 当前代码已有可用实现和路由注册 |
+| 基础实现 | 当前代码已有最小闭环，但仍需补齐商业级边界或兼容细节 |
+| 已注册 | 路由已注册，具体协议能力随 adapter 和 service 阶段完善 |
+| 目标扩展 | 产品设计需要，但当前代码尚未形成完整接口闭环 |
 
 ## 通用响应
 
@@ -51,13 +103,74 @@ RouterX 对外提供三类 API。
 | 502 | 下游厂商错误 |
 | 504 | 下游厂商超时 |
 
+## 模型转发错误格式
+
+`/v1/*` 错误不能返回 RouterX 管理端统一响应，必须按入口协议返回兼容错误。内部错误可以统一归类，但外部结构由入口协议决定。
+
+OpenAI-compatible 错误示例：
+
+```json
+{
+  "error": {
+    "message": "no available upstream channel",
+    "type": "upstream_error",
+    "code": "no_available_channel"
+  }
+}
+```
+
+Anthropic-compatible 错误示例：
+
+```json
+{
+  "type": "error",
+  "error": {
+    "type": "upstream_error",
+    "message": "no available upstream channel"
+  }
+}
+```
+
+Gemini-compatible 错误示例：
+
+```json
+{
+  "error": {
+    "code": 502,
+    "message": "no available upstream channel",
+    "status": "UNAVAILABLE"
+  }
+}
+```
+
+错误分类：
+
+| HTTP 状态 | 内部 code 示例 | type/status 示例 | 调用方含义 |
+|-----------|----------------|------------------|------------|
+| 400 | `invalid_json`、`model_required`、`invalid_routerx_options`、`unsupported_api` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数或换用已支持接口 |
+| 401 | `invalid_api_key`、`expired_api_key` | `authentication_error` / `UNAUTHENTICATED` | 更换或重新创建 API Key |
+| 403 | `user_disabled`、`token_forbidden`、`model_not_allowed`、`route_forbidden` | `permission_error` / `PERMISSION_DENIED` | 联系管理员调整权限或通道分组 |
+| 404 | `model_not_found`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名或资源 ID |
+| 429 | `insufficient_quota`、`rate_limit_exceeded` | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 充值、降低并发或等待限流窗口 |
+| 502 | `no_available_channel`、`unsupported_channel`、`upstream_request_failed`、`upstream_secret_error`、`upstream_conversion_failed` | `upstream_error` / `UNAVAILABLE` | 管理员检查通道、密钥或上游状态 |
+| 504 | `upstream_timeout` | `upstream_error` / `DEADLINE_EXCEEDED` | 重试或检查下游耗时 |
+
+错误响应要求：
+
+- 错误 message 面向调用方可理解，但不得泄露下游 API Key、数据库 DSN、支付密钥或内部堆栈。
+- 401/403 必须区分认证失败和权限不足；但登录场景可继续使用模糊提示防止账号枚举。
+- 余额不足、访问控制不通过、没有可用通道时必须在日志中记录可排障原因。
+- 下游原始错误可保存脱敏摘要；对客户端返回时必须转换为当前入口协议兼容格式。
+- 当前实现可以先以 OpenAI-compatible 错误为主，P1 补齐 Anthropic/Gemini 的精确错误映射。
+
 ## 公共接口
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/health` | 已注册 | 健康检查 |
+| GET | `/ready` | 已实现 | 就绪检查，检查数据库和初始化后的 JWT 配置 |
 | GET | `/v0/setup/status` | 已实现 | 查询系统是否初始化 |
-| POST | `/v0/setup/init` | 占位 | 首次初始化超级管理员和默认设置 |
+| POST | `/v0/setup/init` | 已实现 | 首次初始化超级管理员和默认设置 |
 
 ### `GET /v0/setup/status`
 
@@ -108,11 +221,11 @@ RouterX 对外提供三类 API。
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
-| GET | `/v0/admin/user` | 占位 | 用户列表 |
-| POST | `/v0/admin/user` | 占位 | 创建用户 |
-| PUT | `/v0/admin/user/:id` | 占位 | 编辑用户 |
-| DELETE | `/v0/admin/user/:id` | 占位 | 删除用户 |
-| PATCH | `/v0/admin/user/:id/quota` | 占位 | 调整用户额度 |
+| GET | `/v0/admin/user` | 已实现 | 用户列表 |
+| POST | `/v0/admin/user` | 已实现 | 创建普通用户 |
+| PUT | `/v0/admin/user/:id` | 已实现 | 编辑普通用户 |
+| DELETE | `/v0/admin/user/:id` | 已实现 | 删除普通用户 |
+| PATCH | `/v0/admin/user/:id/quota` | 已实现 | 调整用户额度 |
 
 列表查询参数：
 
@@ -143,10 +256,10 @@ RouterX 对外提供三类 API。
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
-| GET | `/v0/admin/admin` | 占位 | 管理员列表 |
-| POST | `/v0/admin/admin` | 占位 | 创建管理员 |
-| PUT | `/v0/admin/admin/:id` | 占位 | 编辑管理员 |
-| DELETE | `/v0/admin/admin/:id` | 占位 | 删除管理员 |
+| GET | `/v0/admin/admin` | 已实现 | 管理员列表，管理员及以上可查看 |
+| POST | `/v0/admin/admin` | 已实现 | 创建管理员，仅超级管理员 |
+| PUT | `/v0/admin/admin/:id` | 已实现 | 编辑管理员，仅超级管理员 |
+| DELETE | `/v0/admin/admin/:id` | 已实现 | 删除管理员，仅超级管理员 |
 
 权限规则：
 
@@ -159,11 +272,14 @@ RouterX 对外提供三类 API。
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
-| GET | `/v0/admin/channel` | 占位 | 通道列表 |
-| POST | `/v0/admin/channel` | 占位 | 创建通道 |
-| PUT | `/v0/admin/channel/:id` | 占位 | 编辑通道 |
-| DELETE | `/v0/admin/channel/:id` | 占位 | 删除通道 |
-| POST | `/v0/admin/channel/:id/test` | 占位 | 测试通道连通性 |
+| GET | `/v0/admin/channel` | 已实现 | 通道列表 |
+| POST | `/v0/admin/channel` | 已实现 | 创建通道 |
+| PUT | `/v0/admin/channel/:id` | 已实现 | 编辑通道 |
+| DELETE | `/v0/admin/channel/:id` | 已实现 | 删除通道 |
+| PATCH | `/v0/admin/channel/:id/disable` | 已实现 | 禁用通道 |
+| PATCH | `/v0/admin/channel/:id/enable` | 已实现 | 启用通道 |
+| POST | `/v0/admin/channel/:id/test` | 基础实现 | 测试通道连通性 |
+| GET | `/v0/admin/channel/:id/models` | 基础实现 | 从上游拉取模型列表 |
 
 创建通道目标请求：
 
@@ -174,6 +290,14 @@ RouterX 对外提供三类 API。
   "models": "gpt-4o,gpt-4o-mini",
   "base_url": "https://api.openai.com",
   "api_key": "sk-...",
+  "base_urls": ["https://api.openai.com"],
+  "api_keys": ["sk-..."],
+  "key_selection_mode": "round_robin",
+  "model_rewrites": {
+    "gpt-4o-mini": "upstream-model"
+  },
+  "group": "default",
+  "upstream_options": {},
   "priority": 100,
   "weight": 10,
   "status": 1
@@ -198,11 +322,11 @@ RouterX 对外提供三类 API。
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
-| GET | `/v0/admin/log` | 占位 | 调用日志列表 |
-| DELETE | `/v0/admin/log` | 占位 | 清理日志 |
-| GET | `/v0/admin/dashboard` | 占位 | 仪表盘统计 |
-| GET | `/v0/admin/setting` | 占位 | 获取系统设置 |
-| PUT | `/v0/admin/setting` | 占位 | 批量更新系统设置 |
+| GET | `/v0/admin/log` | 已实现 | 调用日志列表 |
+| DELETE | `/v0/admin/log` | 基础实现 | 清理日志 |
+| GET | `/v0/admin/dashboard` | 基础实现 | 仪表盘统计 |
+| GET | `/v0/admin/setting` | 已实现 | 获取系统设置，仅超级管理员 |
+| PUT | `/v0/admin/setting` | 已实现 | 批量更新系统设置，仅超级管理员 |
 
 日志查询参数：
 
@@ -231,17 +355,19 @@ RouterX 对外提供三类 API。
 鉴权：
 
 - 注册和登录不需要 User JWT，但需要系统已初始化。
+- 自部署商业级目标默认关闭公开自助注册；`POST /v0/user/register` 只有在注册开关开启时可用。
+- 管理员创建用户不受自助注册开关影响。
 - 个人信息、日志和账单需要 User JWT。
 
 ### 认证和个人信息
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
-| POST | `/v0/user/register` | 占位 | 用户注册 |
-| POST | `/v0/user/login` | 占位 | 用户登录 |
-| GET | `/v0/user/self` | 占位 | 获取个人信息 |
-| PUT | `/v0/user/self` | 占位 | 修改个人信息 |
-| POST | `/v0/user/self/password` | 占位 | 修改密码 |
+| POST | `/v0/user/register` | 基础实现 | 用户名密码注册 |
+| POST | `/v0/user/login` | 已实现 | 用户统一登录 |
+| GET | `/v0/user/self` | 已实现 | 获取个人信息 |
+| PUT | `/v0/user/self` | 已实现 | 修改个人信息 |
+| POST | `/v0/user/self/password` | 已实现 | 修改密码 |
 
 注册目标请求：
 
@@ -275,12 +401,26 @@ RouterX 对外提供三类 API。
 }
 ```
 
+### API Key
+
+API Key 用于 `/v1/*` 模型转发鉴权。
+完整生命周期、轮换、泄露处置、作用域、缓存和审计契约以 `docs/API_KEYS.md` 为准；本节只列当前接口和接口层边界。
+
+| 方法 | 路径 | 当前状态 | 说明 |
+|------|------|----------|------|
+| GET | `/v0/user/token` | 已实现 | 当前用户 API Key 列表 |
+| POST | `/v0/user/token` | 已实现 | 创建 API Key，明文只返回一次 |
+| PUT | `/v0/user/token/:id` | 已实现 | 编辑 API Key 名称、状态、过期时间 |
+| DELETE | `/v0/user/token/:id` | 已实现 | 删除 API Key |
+
+用户端 API Key 不允许直接编辑最大消耗额度和无限额度标记，避免普通用户绕过预算策略。
+
 ### 用量和账单
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
-| GET | `/v0/user/log` | 占位 | 当前用户调用日志 |
-| GET | `/v0/user/billing` | 占位 | 当前用户账单统计 |
+| GET | `/v0/user/log` | 已实现 | 当前用户调用日志 |
+| GET | `/v0/user/billing` | 基础实现 | 当前用户账单统计 |
 
 ### 目标扩展接口
 
@@ -288,10 +428,6 @@ RouterX 对外提供三类 API。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/v0/user/token` | API Key 列表 |
-| POST | `/v0/user/token` | 创建 API Key |
-| PUT | `/v0/user/token/:id` | 编辑 API Key |
-| DELETE | `/v0/user/token/:id` | 删除 API Key |
 | POST | `/v0/user/redem` | 使用充值码 |
 | GET | `/v0/user/payment/products` | 充值商品列表 |
 | POST | `/v0/user/payment/orders` | 创建支付订单 |
@@ -301,7 +437,7 @@ RouterX 对外提供三类 API。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。当前目标支持 Stripe 和易支付。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前目标支持 Stripe 和易支付。
 
 用户鉴权接口：
 
@@ -413,6 +549,8 @@ Stripe Webhook 要求：
 
 前缀：`/v1`。
 
+协议兼容矩阵、当前等级、路径冲突、流式阶段和新增 provider 准入清单见 `docs/PROTOCOLS.md`。本文只列接口外形、鉴权边界和常用错误示例。
+
 鉴权：
 
 ```http
@@ -427,40 +565,72 @@ Authorization: Bearer sk-xxxxxxxx
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/v1/responses` | Responses API |
-| POST | `/v1/chat/completions` | Chat Completions |
-| POST | `/v1/completions` | Legacy Completions |
-| POST | `/v1/embeddings` | Embeddings |
-| POST | `/v1/images/generations` | 图像生成 |
-| POST | `/v1/images/edits` | 图像编辑 |
-| POST | `/v1/images/variations` | 图像变体 |
-| POST | `/v1/audio/transcriptions` | 语音转文本 |
-| POST | `/v1/audio/translations` | 语音翻译 |
-| POST | `/v1/audio/speech` | 文本转语音 |
-| GET | `/v1/models` | 模型列表 |
-| GET | `/v1/models/:model` | 模型详情 |
-| POST | `/v1/moderations` | 内容审核 |
+| POST | `/v1/responses` | 已注册，Responses API |
+| POST | `/v1/chat/completions` | 基础实现，Chat Completions |
+| POST | `/v1/completions` | 已注册，Legacy Completions |
+| POST | `/v1/embeddings` | 已注册，Embeddings |
+| POST | `/v1/images/generations` | 已注册，图像生成 |
+| POST | `/v1/images/edits` | 已注册，图像编辑 |
+| POST | `/v1/images/variations` | 已注册，图像变体 |
+| POST | `/v1/audio/transcriptions` | 已注册，语音转文本 |
+| POST | `/v1/audio/translations` | 已注册，语音翻译 |
+| POST | `/v1/audio/speech` | 已注册，文本转语音 |
+| GET | `/v1/models` | 基础实现，模型列表 |
+| GET | `/v1/models/:model` | 基础实现，模型详情 |
+| POST | `/v1/moderations` | 已注册，内容审核 |
+
+#### P0 Chat Completions 契约
+
+P0 优先保证 OpenAI-compatible Chat 非流式闭环。目标请求最小格式：
+
+```json
+{
+  "model": "gpt-test",
+  "messages": [
+    { "role": "user", "content": "hello" }
+  ],
+  "stream": false
+}
+```
+
+成功要求：
+
+- 返回 OpenAI-compatible Chat Completions 响应。
+- 保留下游返回的 `usage`，或按 P0 最低规则估算。
+- 写入 `logs`，包含 user、token、channel、model、prompt/completion/total tokens、`quota_used` 和 status。
+- 扣减 API Key 或用户额度，扣费失败时返回 429 并写失败日志。
+
+P0 明确失败：
+
+| 场景 | HTTP | code |
+|------|------|------|
+| 非法 JSON | 400 | `invalid_json` |
+| 缺少 `model` | 400 | `model_required` |
+| `stream=true` | 400 | `unsupported_stream` |
+| 无可用通道 | 502 | `no_available_channel` |
+| 下游密钥不可解密或缺失 | 502 | `upstream_secret_error` |
+| 余额不足 | 429 | `insufficient_quota` |
 
 ### Gemini 格式
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/v1/models` | 模型列表 |
-| GET | `/v1/models/{model}` | 模型详情 |
-| POST | `/v1/models/{model}:generateContent` | 内容生成 |
-| POST | `/v1/models/{model}:streamGenerateContent` | 流式内容生成 |
-| POST | `/v1/models/{model}:countTokens` | Token 计数 |
-| POST | `/v1/models/{model}:embedContent` | 单条 Embedding |
-| POST | `/v1/models/{model}:batchEmbedContents` | 批量 Embedding |
+| GET | `/v1/models` | 基础实现，模型列表 |
+| GET | `/v1/models/{model}` | 基础实现，模型详情 |
+| POST | `/v1/models/{model}:generateContent` | 基础实现，内容生成 |
+| POST | `/v1/models/{model}:streamGenerateContent` | 已注册，流式内容生成 |
+| POST | `/v1/models/{model}:countTokens` | 基础实现，Token 计数 |
+| POST | `/v1/models/{model}:embedContent` | 目标扩展，单条 Embedding |
+| POST | `/v1/models/{model}:batchEmbedContents` | 目标扩展，批量 Embedding |
 
 ### Anthropic 格式
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/v1/messages` | Messages |
-| POST | `/v1/messages/count_tokens` | Token 计数 |
-| GET | `/v1/models` | 模型列表 |
-| GET | `/v1/models/:model` | 模型详情 |
+| POST | `/v1/messages` | 基础实现，Messages |
+| POST | `/v1/messages/count_tokens` | 基础实现，Token 计数 |
+| GET | `/v1/models` | 基础实现，模型列表 |
+| GET | `/v1/models/:model` | 基础实现，模型详情 |
 
 ### 额外参数
 
@@ -492,11 +662,30 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 
 规则：
 
+- 策略决策顺序、访问控制、限流、分组和冲突规则以 `docs/POLICIES.md` 为准。
 - `routerx.route` 用于路由偏好，不参与模型原生请求。
+- `routerx.route` 只能收窄管理员策略允许的候选通道，不能启用已禁用通道、绕过额度、绕过通道分组访问控制或强制使用无权限 provider。
 - `routerx.upstream` 用于补充上游 header、query 和 body 参数，但敏感鉴权 header 必须来自通道配置，不能由用户请求覆盖。
 - `routerx.provider.<provider>` 仅在选中对应上游 provider 时生效。
 - multipart 或非 JSON 请求可通过 `routerx` 表单字段传递 JSON 字符串，或通过 `X-RouterX-Options` header 传递 base64url JSON。
-- 对 `GET /v1/models` 这类无 JSON body 的冲突路径，可使用 `?routerx_protocol=gemini` 或 `X-RouterX-Protocol: anthropic` 显式指定返回协议。
+- 对 `GET /v1/models` 这类无 JSON body 的冲突路径，当前可使用 `?format=gemini` 或 `?format=anthropic`，并可通过 `anthropic-version` header 识别 Anthropic 格式；目标设计可扩展 `?routerx_protocol=` 或 `X-RouterX-Protocol`。
+
+路由偏好处理：
+
+| 场景 | 目标行为 |
+|------|----------|
+| 偏好合法且候选通道可用 | 进入正常通道选择，并在日志中记录偏好被接受 |
+| 偏好字段未知但不影响安全 | 忽略未知字段，在日志中记录被忽略 |
+| 偏好格式非法 | 返回当前入口协议兼容的 400 错误 |
+| 偏好要求无权限通道或 provider | 返回当前入口协议兼容的 403 错误 |
+| 偏好合法但筛选后无可用通道 | 返回当前入口协议兼容的无可用通道错误 |
+
+安全边界：
+
+- 客户端不能通过 `routerx.upstream.headers` 覆盖 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`、`api-key` 等敏感鉴权字段。
+- 客户端不能通过 `routerx.upstream.body` 覆盖 RouterX 已经完成安全决策的内部字段。
+- RouterX-Compatible 上游可以继续接收 `routerx` 扩展，但真实厂商上游必须在请求发出前移除该私有字段。
+- 所有路由偏好、是否命中、是否被拒绝和最终通道应进入日志或后续路由决策快照。
 
 ### 多层 RouterX
 
@@ -509,6 +698,8 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 
 ## API Key 生命周期
 
+本节是接口层摘要。更完整的产品语义、数据字段、轮换、泄露处置、作用域和阶段验收见 `docs/API_KEYS.md`。
+
 目标流程：
 
 ```text
@@ -516,7 +707,7 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
     -> POST /v0/user/token
     -> 生成 sk- API Key
     -> 明文只返回一次
-    -> DB 保存哈希或密文
+    -> DB 保存 SHA256 哈希
     -> Redis 缓存校验结果
     -> 调用 /v1/* 时通过 Authorization Bearer 使用
 ```
@@ -524,10 +715,17 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 API Key 校验规则：
 
 - 格式必须以 `sk-` 开头。
-- Token 不存在、禁用、软删除、过期均返回 401。
+- API Key 不存在、禁用、软删除、过期均返回 401；数据库兼容早期明文存量，验证成功后迁移为 SHA256 哈希。
 - 所属用户禁用或软删除返回 403。
 - 额度不足返回 429。
 - 鉴权成功后写入 `current_user` 和 `current_token` 上下文。
+
+额度规则：
+
+- 创建带最大消耗额度的 API Key 时，不扣减或冻结用户余额；该额度只是 Key 的预算上限。
+- 有限额度 API Key 调用成功后同时扣减用户余额，并消耗 Key 剩余预算或累计已用额度。
+- `unlimited=true` 或 `remain_quota=-1` 的 API Key 调用成功后只扣减用户额度。
+- 普通用户不能通过编辑 API Key 接口调整最大消耗额度或无限标记，预算调整只能由管理员或后续策略流程完成。
 
 ## 分页规范
 
@@ -557,6 +755,7 @@ API Key 校验规则：
 
 - `/v1` 路由不应返回 RouterX 的 `{success,data,message}` 包装。
 - `/v1` 错误应尽量兼容当前路由对应格式的错误对象。
+- 能力状态以 `docs/PROTOCOLS.md` 为准；已注册路由不能在产品文案中写成完整协议兼容。
 - 对未知兼容格式字段默认透传，不应无故拒绝。
 - 对不支持的接口返回明确的 `404` 或当前格式兼容的 `unsupported_api` 错误。
 - 管理端和用户端 API 使用 `/v0` 版本前缀，后续破坏性变更使用 `/v1/admin` 或 `/v1/user`，不与模型 API 混淆。

@@ -163,10 +163,6 @@ func buildDefaultSettings() map[string]map[string]string {
 			"relay.error_ban_threshold": "10",
 			"relay.log_body_max_bytes":  "0",
 		},
-		"cors": {
-			"cors.allowed_origins":   `["http://localhost:5173","http://localhost:5174"]`,
-			"cors.allow_credentials": "true",
-		},
 		"billing": {
 			"billing.default_ratio": "1.0",
 		},
