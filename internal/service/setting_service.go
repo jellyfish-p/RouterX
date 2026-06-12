@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"routerx/internal"
 	"routerx/internal/model"
@@ -84,6 +85,32 @@ func (s *SettingService) GetAll(category string) ([]model.Setting, error) {
 		return nil, err
 	}
 	return settings, nil
+}
+
+// EnsureDefaults 补齐当前阶段默认 settings。
+// 它只插入缺失 key，不覆盖管理员已经修改过的配置值。
+func (s *SettingService) EnsureDefaults() error {
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		for category, values := range buildDefaultSettings() {
+			for key, value := range values {
+				if err := validateSettingValue(key, value); err != nil {
+					return err
+				}
+				setting := model.Setting{Key: key, Value: value, Category: category}
+				if err := tx.Clauses(clause.OnConflict{
+					Columns:   []clause.Column{{Name: "key"}},
+					DoNothing: true,
+				}).Create(&setting).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return s.LoadCache()
 }
 
 // Set 写入单个配置项, 写 DB 后刷新 Redis 缓存。

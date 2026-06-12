@@ -31,7 +31,9 @@ func main() {
 	logSvc := service.NewLogService()
 	setupSvc := service.NewSetupService(userSvc, settingSvc)
 	relaySvc := service.NewRelayService(channelSvc, tokenSvc, logSvc, settingSvc)
-	_ = settingSvc.LoadCache()
+	if err := settingSvc.EnsureDefaults(); err != nil {
+		log.Fatalf("[FATAL] settings defaults failed: %v", err)
+	}
 
 	// 4. 依赖注入: Handler 层
 	adminH := handler.NewAdminHandler(adminSvc)

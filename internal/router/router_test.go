@@ -465,6 +465,45 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	}
 }
 
+func TestSettingDefaultsBackfillPreservesExistingValues(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	if err := internal.DB.Model(&model.Setting{}).Where("key = ?", "relay.timeout").Update("value", "30").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Where("key = ?", "ready.production_strict").Delete(&model.Setting{}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.NewSettingService().EnsureDefaults(); err != nil {
+		t.Fatal(err)
+	}
+
+	var relayTimeout model.Setting
+	if err := internal.DB.Where("key = ?", "relay.timeout").First(&relayTimeout).Error; err != nil {
+		t.Fatal(err)
+	}
+	if relayTimeout.Value != "30" {
+		t.Fatalf("backfill must preserve existing setting values, got %q", relayTimeout.Value)
+	}
+	var restored model.Setting
+	if err := internal.DB.Where("key = ?", "ready.production_strict").First(&restored).Error; err != nil {
+		t.Fatalf("missing default setting should be restored: %v", err)
+	}
+	if restored.Value != "true" {
+		t.Fatalf("restored setting should use registry default, got %q", restored.Value)
+	}
+}
+
 func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
