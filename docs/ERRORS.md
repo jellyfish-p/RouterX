@@ -118,7 +118,7 @@
 
 ## 当前代码事实和目标收敛
 
-当前代码已经使用 `service.HTTPError` 表达 `/v1` 错误，并通过 `common.OpenAIError` 输出 OpenAI-compatible 结构。以下差异需要在后续收敛时保持兼容：
+当前代码已经使用 `service.HTTPError` 表达 `/v1` 主链路错误；API Key 鉴权、用户禁用和配额预检查会按入口协议输出 OpenAI-compatible、Anthropic 或 Gemini 错误结构。以下差异需要在后续收敛时保持兼容：
 
 | 当前事实 | 目标口径 |
 |----------|----------|

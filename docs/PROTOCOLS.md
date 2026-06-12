@@ -196,8 +196,8 @@ P1 目标：
 
 当前缺口：
 
-- 当前基础链路可以先以 OpenAI-compatible 错误为主。
-- Anthropic/Gemini 入口需要在 P1 补齐精确错误外形、status 映射和 SDK 行为测试。
+- API Key 鉴权、用户禁用和配额预检查已经按入口协议返回 OpenAI-compatible、Anthropic 或 Gemini 错误外形。
+- Anthropic/Gemini 转发、转换和上游错误仍需要在 P1 补齐精确错误外形、status 映射和 SDK 行为测试。
 - 下游错误摘要必须脱敏，不能泄露下游密钥、数据库 DSN、支付密钥或内部堆栈。
 
 ## 新增协议或上游的准入清单

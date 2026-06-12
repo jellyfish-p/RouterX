@@ -504,6 +504,39 @@ func TestSettingDefaultsBackfillPreservesExistingValues(t *testing.T) {
 	}
 }
 
+func TestAPIKeyAuthErrorsUseEntryProtocolShape(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+
+	anthropicResp := performJSON(r, http.MethodPost, "/v1/messages", "Bearer sk-invalid", map[string]interface{}{
+		"model": "claude-test",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	})
+	if anthropicResp.Code != http.StatusUnauthorized || !strings.Contains(anthropicResp.Body.String(), `"type":"error"`) || !strings.Contains(anthropicResp.Body.String(), `"type":"authentication_error"`) {
+		t.Fatalf("anthropic auth error should use Anthropic shape, got %d %s", anthropicResp.Code, anthropicResp.Body.String())
+	}
+
+	geminiResp := performJSON(r, http.MethodPost, "/v1/models/gemini-test:generateContent", "Bearer sk-invalid", map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{"role": "user", "parts": []map[string]string{{"text": "hello"}}},
+		},
+	})
+	if geminiResp.Code != http.StatusUnauthorized || !strings.Contains(geminiResp.Body.String(), `"code":401`) || !strings.Contains(geminiResp.Body.String(), `"status":"UNAUTHENTICATED"`) {
+		t.Fatalf("gemini auth error should use Gemini shape, got %d %s", geminiResp.Code, geminiResp.Body.String())
+	}
+}
+
 func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

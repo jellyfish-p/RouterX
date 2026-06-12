@@ -48,3 +48,25 @@ func FailWithStatus(c *gin.Context, httpStatus int, message string) {
 		Message: message,
 	})
 }
+
+// AnthropicError wraps an error in the Anthropic Messages error envelope.
+func AnthropicError(message, typ string) gin.H {
+	return gin.H{
+		"type": "error",
+		"error": gin.H{
+			"type":    typ,
+			"message": message,
+		},
+	}
+}
+
+// GeminiError wraps an error in the Google/Gemini error envelope.
+func GeminiError(status int, message, statusText string) gin.H {
+	return gin.H{
+		"error": gin.H{
+			"code":    status,
+			"message": message,
+			"status":  statusText,
+		},
+	}
+}

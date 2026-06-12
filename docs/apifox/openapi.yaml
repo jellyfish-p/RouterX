@@ -1039,14 +1039,16 @@ paths:
               schema:
                 $ref: "#/components/schemas/AnthropicMessageResponse"
         "4XX":
-          $ref: "#/components/responses/OpenAIError"
+          $ref: "#/components/responses/AnthropicError"
         "5XX":
-          $ref: "#/components/responses/OpenAIError"
+          $ref: "#/components/responses/AnthropicError"
   /v1/messages/count_tokens:
     post:
       tags: [Anthropic Compatible]
       summary: Anthropic Token 计数
       description: 当前为近似计数。
+      security:
+        - ApiKeyBearer: []
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -1059,6 +1061,10 @@ paths:
                 properties:
                   input_tokens:
                     type: integer
+        "4XX":
+          $ref: "#/components/responses/AnthropicError"
+        "5XX":
+          $ref: "#/components/responses/AnthropicError"
   /v1/models/{model}:generateContent:
     post:
       tags: [Gemini Compatible]
@@ -1085,9 +1091,9 @@ paths:
                 type: object
                 additionalProperties: true
         "4XX":
-          $ref: "#/components/responses/OpenAIError"
+          $ref: "#/components/responses/GeminiError"
         "5XX":
-          $ref: "#/components/responses/OpenAIError"
+          $ref: "#/components/responses/GeminiError"
   /v1/models/{model}:streamGenerateContent:
     post:
       tags: [Gemini Compatible]
@@ -1111,9 +1117,9 @@ paths:
                 type: object
                 additionalProperties: true
         "400":
-          $ref: "#/components/responses/OpenAIError"
+          $ref: "#/components/responses/GeminiError"
         "5XX":
-          $ref: "#/components/responses/OpenAIError"
+          $ref: "#/components/responses/GeminiError"
   /v1/models/{model}:countTokens:
     post:
       tags: [Gemini Compatible]
@@ -1138,6 +1144,10 @@ paths:
                 properties:
                   totalTokens:
                     type: integer
+        "4XX":
+          $ref: "#/components/responses/GeminiError"
+        "5XX":
+          $ref: "#/components/responses/GeminiError"
 components:
   securitySchemes:
     UserJWT:
@@ -1249,6 +1259,18 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/OpenAIErrorEnvelope"
+    AnthropicError:
+      description: Anthropic-compatible 错误。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AnthropicErrorEnvelope"
+    GeminiError:
+      description: Gemini-compatible 错误。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GeminiErrorEnvelope"
     GenericJSON:
       description: JSON response.
       content:
@@ -1700,6 +1722,36 @@ components:
             message: { type: string }
             type: { type: string }
             code: { type: string }
+    AnthropicErrorEnvelope:
+      type: object
+      properties:
+        type:
+          type: string
+          example: error
+        error:
+          type: object
+          properties:
+            type:
+              type: string
+              example: authentication_error
+            message:
+              type: string
+              example: invalid api key
+    GeminiErrorEnvelope:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+              example: 401
+            message:
+              type: string
+              example: invalid api key
+            status:
+              type: string
+              example: UNAUTHENTICATED
     OpenAIModelList:
       type: object
       properties:

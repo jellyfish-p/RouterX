@@ -64,21 +64,21 @@ func authenticateAPIKey(c *gin.Context) bool {
 		ok = key != ""
 	}
 	if !ok {
-		writeOpenAIAuthError(c, http.StatusUnauthorized, "invalid api key", "authentication_error", "invalid_api_key")
+		writeProtocolAuthError(c, http.StatusUnauthorized, "invalid api key", "authentication_error", "invalid_api_key")
 		return false
 	}
 	tokenSvc := service.NewTokenService()
 	token, err := tokenSvc.ValidateAndGetToken(key)
 	if err != nil {
 		if errors.Is(err, service.ErrAPIUserDisabled) {
-			writeOpenAIAuthError(c, http.StatusForbidden, "user is disabled", "permission_error", "user_disabled")
+			writeProtocolAuthError(c, http.StatusForbidden, "user is disabled", "permission_error", "user_disabled")
 			return false
 		}
-		writeOpenAIAuthError(c, http.StatusUnauthorized, "invalid api key", "authentication_error", "invalid_api_key")
+		writeProtocolAuthError(c, http.StatusUnauthorized, "invalid api key", "authentication_error", "invalid_api_key")
 		return false
 	}
 	if !tokenSvc.HasAvailableQuota(token) {
-		writeOpenAIAuthError(c, http.StatusTooManyRequests, "insufficient quota", "insufficient_quota", "insufficient_quota")
+		writeProtocolAuthError(c, http.StatusTooManyRequests, "insufficient quota", "insufficient_quota", "insufficient_quota")
 		return false
 	}
 	c.Set("current_token", token)
@@ -90,8 +90,48 @@ func authenticateAPIKey(c *gin.Context) bool {
 	return true
 }
 
-func writeOpenAIAuthError(c *gin.Context, status int, message, typ, code string) {
-	c.JSON(status, common.OpenAIError(message, typ, code))
+func writeProtocolAuthError(c *gin.Context, status int, message, typ, code string) {
+	switch entryProtocol(c) {
+	case "anthropic":
+		c.JSON(status, common.AnthropicError(message, typ))
+	case "gemini":
+		c.JSON(status, common.GeminiError(status, message, geminiStatusText(status)))
+	default:
+		c.JSON(status, common.OpenAIError(message, typ, code))
+	}
+}
+
+// entryProtocol resolves the client-facing protocol before the relay handler runs.
+func entryProtocol(c *gin.Context) string {
+	path := c.Request.URL.Path
+	format := strings.ToLower(strings.TrimSpace(c.Query("format")))
+	switch {
+	case strings.HasPrefix(path, "/v1/messages"):
+		return "anthropic"
+	case strings.TrimSpace(c.GetHeader("anthropic-version")) != "" || format == "anthropic":
+		return "anthropic"
+	case strings.Contains(path, ":generateContent") || strings.Contains(path, ":streamGenerateContent") || strings.Contains(path, ":countTokens"):
+		return "gemini"
+	case format == "gemini" || format == "google":
+		return "gemini"
+	default:
+		return "openai"
+	}
+}
+
+func geminiStatusText(status int) string {
+	switch status {
+	case http.StatusUnauthorized:
+		return "UNAUTHENTICATED"
+	case http.StatusForbidden:
+		return "PERMISSION_DENIED"
+	case http.StatusTooManyRequests:
+		return "RESOURCE_EXHAUSTED"
+	case http.StatusBadRequest:
+		return "INVALID_ARGUMENT"
+	default:
+		return "INTERNAL"
+	}
 }
 
 func CurrentAPIToken(c *gin.Context) (*model.Token, bool) {
