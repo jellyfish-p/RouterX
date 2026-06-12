@@ -369,6 +369,65 @@ func TestChannelExtendedManagement(t *testing.T) {
 	}
 }
 
+func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
+	jwtSecret := "test-jwt-secret-with-at-least-32-bytes"
+	t.Setenv("JWT_SECRET", jwtSecret)
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	var quotaSetting model.Setting
+	if err := internal.DB.Where("key = ?", "billing.bootstrap_admin_quota").First(&quotaSetting).Error; err != nil {
+		t.Fatalf("bootstrap quota setting missing: %v", err)
+	}
+	bootstrapQuota, err := strconv.ParseInt(quotaSetting.Value, 10, 64)
+	if err != nil || bootstrapQuota <= 0 {
+		t.Fatalf("bootstrap quota should be a positive integer, got value=%q err=%v", quotaSetting.Value, err)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != bootstrapQuota {
+		t.Fatalf("root quota should equal bootstrap quota, got user=%d setting=%d", root.Quota, bootstrapQuota)
+	}
+
+	for _, key := range []string{
+		"jwt.secret",
+		"relay.timeout",
+		"relay.retry_count",
+		"relay.log_body_max_bytes",
+		"log.body_max_bytes",
+		"log.request_body_enabled",
+		"log.response_body_enabled",
+		"ready.production_strict",
+		"billing.bootstrap_admin_quota",
+	} {
+		var count int64
+		if err := internal.DB.Model(&model.Setting{}).Where("key = ?", key).Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("expected setting %s to be initialized once, got %d", key, count)
+		}
+	}
+
+	rootJWT := loginBearer(t, r, "root", "password123")
+	settingsResp := performJSON(r, http.MethodGet, "/v0/admin/setting", rootJWT, nil)
+	if settingsResp.Code != http.StatusOK {
+		t.Fatalf("settings list failed: %d %s", settingsResp.Code, settingsResp.Body.String())
+	}
+	if strings.Contains(settingsResp.Body.String(), jwtSecret) {
+		t.Fatalf("settings response leaked jwt secret: %s", settingsResp.Body.String())
+	}
+}
+
 func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -119,6 +120,16 @@ func (s *SetupService) Init(username, password, displayName, email string) (*mod
 				}
 			}
 		}
+		bootstrapQuota, err := bootstrapAdminQuota(tx)
+		if err != nil {
+			return err
+		}
+		if bootstrapQuota > 0 {
+			if err := tx.Model(user).Update("quota", bootstrapQuota).Error; err != nil {
+				return err
+			}
+			user.Quota = bootstrapQuota
+		}
 
 		created = user
 		return nil
@@ -164,10 +175,28 @@ func buildDefaultSettings() map[string]map[string]string {
 			"relay.log_body_max_bytes":  "0",
 		},
 		"billing": {
-			"billing.default_ratio": "1.0",
+			"billing.default_ratio":         "1.0",
+			"billing.bootstrap_admin_quota": "100000000",
 		},
 		"log": {
-			"log.body_max_bytes": "0",
+			"log.body_max_bytes":        "0",
+			"log.request_body_enabled":  "false",
+			"log.response_body_enabled": "false",
+		},
+		"ready": {
+			"ready.production_strict": "true",
 		},
 	}
+}
+
+func bootstrapAdminQuota(tx *gorm.DB) (int64, error) {
+	var setting model.Setting
+	if err := tx.Where("key = ?", "billing.bootstrap_admin_quota").First(&setting).Error; err != nil {
+		return 0, err
+	}
+	quota, err := strconv.ParseInt(strings.TrimSpace(setting.Value), 10, 64)
+	if err != nil || quota < 0 {
+		return 0, errors.New("billing.bootstrap_admin_quota must be a non-negative integer")
+	}
+	return quota, nil
 }
