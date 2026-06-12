@@ -26,6 +26,7 @@
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、JWT/生产 readiness 和关键配置缺失 |
 | `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |
+| `TestSettingCacheRefreshesStaleRedisValues` | settings 读取缓存、单项更新和批量更新后的 Redis 刷新边界 |
 | `TestAPIKeyAuthErrorsUseEntryProtocolShape` | Anthropic/Gemini 入口 API Key 鉴权错误外形 |
 | `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model、`stream=true` 在本地失败且不污染通道和账单 |
 | `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
@@ -38,7 +39,8 @@
 
 仍需优先补齐：
 
-- settings 缓存刷新和运行时生效边界。
+- `routerx.route` 合法、忽略、拒绝和无候选路径。
+- Anthropic/Gemini 成功和字段降级矩阵。
 
 ## 测试原则
 
@@ -191,7 +193,7 @@ Gemini-compatible 最小断言：
 - 如果配置 `billing.bootstrap_admin_quota > 0`，用户额度等于或大于该值。
 - 如果配置为 0，接口或文档必须给出明确额度调整路径。
 
-### `TestSettingsRegistryAndReadiness`
+### Settings registry/readiness/cache tests
 
 目的：证明 settings 不是散落字符串，而是有默认值、类型校验、缓存刷新和生产就绪边界的配置系统。
 
