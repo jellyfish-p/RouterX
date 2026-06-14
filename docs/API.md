@@ -571,7 +571,7 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/chat/completions` | 基础实现，Chat Completions；支持非流式和 OpenAI-compatible SSE 流式 |
 | POST | `/v1/completions` | 基础实现，Legacy Completions；支持非流式和 OpenAI-compatible SSE 流式 |
 | POST | `/v1/embeddings` | 基础实现，OpenAI-compatible Embeddings JSON 透传、`routerx` 剥离和 usage 扣费 |
-| POST | `/v1/images/generations` | 已注册，图像生成 |
+| POST | `/v1/images/generations` | 基础实现，OpenAI-compatible 图像生成 JSON 透传；无 usage 时按 P0 最低计费 |
 | POST | `/v1/images/edits` | 已注册，图像编辑 |
 | POST | `/v1/images/variations` | 已注册，图像变体 |
 | POST | `/v1/audio/transcriptions` | 已注册，语音转文本 |

@@ -109,7 +109,7 @@ P0 代码落点清单：
 |------|----------|----------|
 | `SetupService` | 初始化默认 settings、启动额度、重复初始化保护 | 空库初始化测试通过，管理员能获得首次验证所需额度或明确提示 |
 | setup/ready 路由和中间件 | 未初始化拦截、协议兼容错误、生产就绪状态 | `/v0/setup/status`、`/ready` 和未初始化 `/v1` 请求都有断言 |
-| `RelayHandler` / `RelayService` | 非流式 Chat 主链路、Responses/Embeddings/Moderations 基础透传、请求校验、错误映射、usage 提取 | 本地上游桩成功、400、401/403、429、5xx、超时路径都有测试；Responses/Embeddings usage 映射和 Moderations 最低计费已有测试 |
+| `RelayHandler` / `RelayService` | 非流式 Chat 主链路、Responses/Embeddings/Moderations/Image Generations 基础透传、请求校验、错误映射、usage 提取 | 本地上游桩成功、400、401/403、429、5xx、超时路径都有测试；Responses/Embeddings usage 映射和 Moderations/Image Generations 最低计费已有测试 |
 | Provider adapter | OpenAI-compatible 请求/响应转换和错误透传边界 | 下游收到正确模型名、Authorization 和 body；响应不泄露内部错误 |
 | `ChannelService` | 优先级、权重、多 key、多 base URL、`upstreams` 和模型重写 | 通道选择与上游解析测试稳定，不依赖人工观察随机结果 |
 | `TokenService` / `LogService` | 额度预检、条件扣费、日志账单一致性 | 成功调用扣费，失败调用不误扣，日志聚合与账单接口一致 |
@@ -226,9 +226,10 @@ P2 验收标准：
 | 7 | Responses 基础 JSON 透传和 usage 映射 | 已覆盖：`TestResponsesPassthroughExtractsUsageAndDeductsQuota` | 先保证 OpenAI-compatible Responses 调用事实可计费。 |
 | 8 | Embeddings 基础 JSON 透传和 usage 映射 | 已覆盖：`TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota` | 证明 Embeddings 不是只注册路由，而是能上游转发、剥离私有字段并扣费。 |
 | 9 | Moderations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明内容审核不是只注册路由，且 P0 最低计费边界可解释。 |
-| 10 | `routerx.route` 合法、忽略、拒绝和无候选路径 | 已覆盖：`TestRouterXRoutePreferenceFiltersChannels` | 证明用户偏好不能绕过管理员策略。 |
-| 11 | SSE 流式、客户端断开和流式 usage 结算 | 部分覆盖：OpenAI Chat/Completions 基础 SSE、usage 扣费和非 OpenAI SSE 通道拒绝已覆盖；仍需客户端断开和多协议流式 | 进入 P1 前补齐最容易出现资源泄漏和账单偏差的路径。 |
-| 12 | Anthropic/Gemini 入口错误格式和字段降级 | 部分覆盖：API Key 错误外形、非流式成功、字段降级和基础下游错误外形已覆盖；仍需流式、原生字段保真和完整 SDK 行为矩阵 | 证明多入口协议不是只注册路由，而是 SDK 可用。 |
+| 10 | Image Generations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明图像生成 JSON 入口不是只注册路由，且无 usage 响应有明确最低计费。 |
+| 11 | `routerx.route` 合法、忽略、拒绝和无候选路径 | 已覆盖：`TestRouterXRoutePreferenceFiltersChannels` | 证明用户偏好不能绕过管理员策略。 |
+| 12 | SSE 流式、客户端断开和流式 usage 结算 | 部分覆盖：OpenAI Chat/Completions 基础 SSE、usage 扣费和非 OpenAI SSE 通道拒绝已覆盖；仍需客户端断开和多协议流式 | 进入 P1 前补齐最容易出现资源泄漏和账单偏差的路径。 |
+| 13 | Anthropic/Gemini 入口错误格式和字段降级 | 部分覆盖：API Key 错误外形、非流式成功、字段降级和基础下游错误外形已覆盖；仍需流式、原生字段保真和完整 SDK 行为矩阵 | 证明多入口协议不是只注册路由，而是 SDK 可用。 |
 
 ## 推荐顺序
 
