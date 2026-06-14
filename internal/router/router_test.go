@@ -391,6 +391,84 @@ func TestAdminAccountManagementAuditLogs(t *testing.T) {
 	}
 }
 
+func TestAdminUserManagementAuditLogs(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	group := model.Group{Name: "audit-users", Ratio: 1}
+	if err := internal.DB.Create(&group).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "audit-user",
+		"password":     "password123",
+		"display_name": "Audit User",
+		"email":        "audit-user@example.com",
+		"role":         common.RoleUser,
+		"quota":        20,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create audited user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+
+	updateResp := performJSON(r, http.MethodPut, "/v0/admin/user/"+uintString(payload.Data.ID), rootJWT, map[string]interface{}{
+		"display_name": "Audit User Updated",
+		"group_id":     group.ID,
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update audited user failed: %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	deniedResp := performJSON(r, http.MethodPut, "/v0/admin/user/"+uintString(payload.Data.ID), rootJWT, map[string]interface{}{
+		"role": common.RoleAdmin,
+	})
+	if deniedResp.Code != http.StatusForbidden {
+		t.Fatalf("role change through user management should be denied, got %d %s", deniedResp.Code, deniedResp.Body.String())
+	}
+	disableResp := performJSON(r, http.MethodPut, "/v0/admin/user/"+uintString(payload.Data.ID), rootJWT, map[string]interface{}{
+		"status": common.UserStatusDisabled,
+	})
+	if disableResp.Code != http.StatusOK {
+		t.Fatalf("disable audited user failed: %d %s", disableResp.Code, disableResp.Body.String())
+	}
+	deleteResp := performJSON(r, http.MethodDelete, "/v0/admin/user/"+uintString(payload.Data.ID), rootJWT, nil)
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("delete audited user failed: %d %s", deleteResp.Code, deleteResp.Body.String())
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=user&resource_id="+uintString(payload.Data.ID), rootJWT, nil)
+	body := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(body, `"action":"user.create"`) ||
+		!strings.Contains(body, `"action":"user.update"`) ||
+		!strings.Contains(body, `"action":"user.denied"`) ||
+		!strings.Contains(body, `"action":"user.disable"`) ||
+		!strings.Contains(body, `"action":"user.delete"`) {
+		t.Fatalf("admin user management should write audit logs, got %d %s", auditResp.Code, body)
+	}
+	if strings.Contains(body, "password123") {
+		t.Fatalf("admin user audit should not expose passwords: %s", body)
+	}
+}
+
 func TestUserRedeemsRedemCodeOnce(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

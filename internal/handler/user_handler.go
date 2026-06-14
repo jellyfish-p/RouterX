@@ -68,6 +68,10 @@ func (h *UserHandler) Create(c *gin.Context) {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
+	if err := h.recordAdminAudit(c, operator, "user.create", "user", user.ID, nil, userAuditSummary(user)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
 	common.Success(c, dto.UserBriefFromModel(user))
 }
 
@@ -87,6 +91,11 @@ func (h *UserHandler) Update(c *gin.Context) {
 		common.FailWithStatus(c, 400, "编辑用户参数无效")
 		return
 	}
+	before, err := h.svc.GetByID(id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
 	updates := map[string]interface{}{}
 	if req.DisplayName != "" {
 		updates["display_name"] = req.DisplayName
@@ -95,6 +104,10 @@ func (h *UserHandler) Update(c *gin.Context) {
 		updates["email"] = req.Email
 	}
 	if req.Role != nil {
+		_ = h.recordAdminAuditResult(c, operator, "user.denied", "user", id, userAuditSummary(before), map[string]interface{}{
+			"requested_role": *req.Role,
+			"reason":         "user_management_role_change_forbidden",
+		}, "denied", "role_change_forbidden")
 		common.FailWithStatus(c, 403, "用户管理接口不能变更角色")
 		return
 	}
@@ -106,6 +119,19 @@ func (h *UserHandler) Update(c *gin.Context) {
 	}
 	if err := h.svc.UpdateByAdmin(operator.ID, operator.Role, id, updates); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	after, err := h.svc.GetByID(id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	action := "user.update"
+	if status, ok := updates["status"].(int); ok && status == common.UserStatusDisabled {
+		action = "user.disable"
+	}
+	if err := h.recordAdminAudit(c, operator, action, "user", id, userAuditSummary(before), userAuditSummary(after)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
 		return
 	}
 	common.SuccessMsg(c, "用户已更新")
@@ -122,8 +148,17 @@ func (h *UserHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
+	before, err := h.svc.GetByID(id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
 	if err := h.svc.DeleteByAdmin(operator.ID, operator.Role, id); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAudit(c, operator, "user.delete", "user", id, userAuditSummary(before), nil); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
 		return
 	}
 	common.SuccessMsg(c, "用户已删除")
@@ -416,6 +451,10 @@ func paymentProductFromRequest(req dto.UpsertPaymentProductRequest, enabled bool
 }
 
 func (h *UserHandler) recordAdminAudit(c *gin.Context, operator *model.User, action, resourceType string, resourceID uint, before, after interface{}) error {
+	return h.recordAdminAuditResult(c, operator, action, resourceType, resourceID, before, after, "success", "")
+}
+
+func (h *UserHandler) recordAdminAuditResult(c *gin.Context, operator *model.User, action, resourceType string, resourceID uint, before, after interface{}, result, errorCode string) error {
 	return h.svc.RecordAdminAuditLog(service.AdminAuditRecordInput{
 		RequestID:     c.GetString("request_id"),
 		ActorUserID:   operator.ID,
@@ -425,7 +464,8 @@ func (h *UserHandler) recordAdminAudit(c *gin.Context, operator *model.User, act
 		ResourceID:    strconv.FormatUint(uint64(resourceID), 10),
 		BeforeSummary: auditSummary(before),
 		AfterSummary:  auditSummary(after),
-		Result:        "success",
+		Result:        result,
+		ErrorCode:     errorCode,
 		IP:            c.ClientIP(),
 		UserAgent:     c.GetHeader("User-Agent"),
 	})
@@ -455,6 +495,23 @@ func paymentProductAuditSummary(product *model.PaymentProduct) map[string]interf
 		"quota":       product.Quota,
 		"bonus_quota": product.BonusQuota,
 		"enabled":     product.Enabled,
+	}
+}
+
+func userAuditSummary(user *model.User) map[string]interface{} {
+	if user == nil {
+		return nil
+	}
+	brief := dto.UserBriefFromModel(user)
+	return map[string]interface{}{
+		"id":           brief.ID,
+		"username":     brief.Username,
+		"display_name": brief.DisplayName,
+		"email":        brief.Email,
+		"role":         brief.Role,
+		"quota":        brief.Quota,
+		"status":       brief.Status,
+		"group_id":     brief.GroupID,
 	}
 }
 

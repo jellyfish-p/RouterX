@@ -224,9 +224,9 @@ Gemini-compatible 错误示例：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/v0/admin/user` | 已实现 | 用户列表 |
-| POST | `/v0/admin/user` | 已实现 | 创建普通用户 |
-| PUT | `/v0/admin/user/:id` | 已实现 | 编辑普通用户 |
-| DELETE | `/v0/admin/user/:id` | 已实现 | 删除普通用户 |
+| POST | `/v0/admin/user` | 已实现 | 创建普通用户，成功后写 `user.create` 管理审计 |
+| PUT | `/v0/admin/user/:id` | 已实现 | 编辑普通用户，成功后写 `user.update`；禁用写 `user.disable`；拒绝角色变更写 `user.denied` |
+| DELETE | `/v0/admin/user/:id` | 已实现 | 删除普通用户，成功后写 `user.delete` 管理审计 |
 | PATCH | `/v0/admin/user/:id/quota` | 已实现 | 调整用户额度并写入 `quota_transactions` 与管理审计，可选 `reason` |
 
 列表查询参数：
@@ -328,6 +328,11 @@ Gemini-compatible 错误示例：
 | `payment_product.enable` | `PATCH /v0/admin/payment/products/:id/enable` |
 | `setting.create` | `PUT /v0/admin/setting` 新增 key |
 | `setting.update` | `PUT /v0/admin/setting` 修改已有 key |
+| `user.create` | `POST /v0/admin/user` |
+| `user.update` | `PUT /v0/admin/user/:id` |
+| `user.disable` | `PUT /v0/admin/user/:id` 将用户状态改为禁用 |
+| `user.delete` | `DELETE /v0/admin/user/:id` |
+| `user.denied` | 用户管理接口拒绝角色变更 |
 | `user.quota_update` | `PATCH /v0/admin/user/:id/quota` |
 | `redem_code.create` | `POST /v0/admin/redem` |
 | `redem_code.disable` | `PATCH /v0/admin/redem/:id/disable` |
