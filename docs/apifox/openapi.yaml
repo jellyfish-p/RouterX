@@ -856,13 +856,23 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: Legacy Completions 转发
+      description: 支持 OpenAI-compatible JSON 响应；stream=true 且命中 OpenAI SSE 形态通道时转发 text/event-stream，并按 SSE chunk 中的 usage 写日志和扣费。
       security:
         - ApiKeyBearer: []
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
         "200":
-          $ref: "#/components/responses/GenericJSON"
+          description: Legacy Completions 响应；stream=true 时为 OpenAI-compatible SSE。
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/event-stream:
+              schema:
+                type: string
+                description: "OpenAI-compatible SSE data chunks ending with data: [DONE]."
         "4XX":
           $ref: "#/components/responses/OpenAIError"
         "5XX":

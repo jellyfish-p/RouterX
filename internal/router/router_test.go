@@ -1856,6 +1856,117 @@ func TestChatCompletionStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 	}
 }
 
+func TestCompletionsStreamForwardsSSEAndDeductsUsage(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamAuth := ""
+	upstreamPath := ""
+	var upstreamBody map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamAuth = req.Header.Get("Authorization")
+		upstreamPath = req.URL.Path
+		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
+			t.Errorf("upstream received invalid JSON: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"id\":\"cmpl-stream\",\"object\":\"text_completion\",\"choices\":[{\"index\":0,\"text\":\"he\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\"cmpl-stream\",\"object\":\"text_completion\",\"choices\":[{\"index\":0,\"text\":\"llo\",\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"total_tokens\":7}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "completion-stream",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "completion-stream",
+		"models":   "gpt-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	completionResp := performJSON(r, http.MethodPost, "/v1/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model":  "gpt-test",
+		"prompt": "hello",
+		"stream": true,
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"provider": "openai-compatible"},
+		},
+	})
+	if completionResp.Code != http.StatusOK || completionResp.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("stream completion should return SSE, got %d headers=%v body=%s", completionResp.Code, completionResp.Header(), completionResp.Body.String())
+	}
+	body := completionResp.Body.String()
+	if !strings.Contains(body, "data: {\"id\":\"cmpl-stream\"") || !strings.Contains(body, "data: [DONE]") || strings.Contains(body, `"success"`) {
+		t.Fatalf("completion stream body should forward OpenAI SSE chunks without RouterX wrapper: %s", body)
+	}
+	if upstreamCalls != 1 || upstreamAuth != "Bearer upstream-secret" || upstreamPath != "/v1/completions" {
+		t.Fatalf("stream should call completions upstream once with channel secret, calls=%d auth=%q path=%q", upstreamCalls, upstreamAuth, upstreamPath)
+	}
+	if upstreamBody["stream"] != true || upstreamBody["model"] != "gpt-test" || upstreamBody["prompt"] != "hello" {
+		t.Fatalf("stream request should preserve stream=true, model and prompt, got %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx private field leaked to upstream: %#v", upstreamBody)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 43 {
+		t.Fatalf("completion stream usage should deduct token budget by 7, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 93 {
+		t.Fatalf("completion stream usage should deduct user quota by 7, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 7 || callLog.TotalTokens != 7 || callLog.PromptTokens != 3 || callLog.CompletionTokens != 4 {
+		t.Fatalf("unexpected completion stream success log: %+v", callLog)
+	}
+}
+
 func TestChatCompletionStreamRejectsNonOpenAISSEUpstream(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

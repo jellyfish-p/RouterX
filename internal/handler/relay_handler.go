@@ -43,7 +43,7 @@ func (h *RelayHandler) relayOpenAI(c *gin.Context, apiType relay.APIType) {
 		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
 		return
 	}
-	if apiType == relay.APIChatCompletions && requestWantsStream(body) {
+	if openAIAPIAllowsStream(apiType) && requestWantsStream(body) {
 		result, err := h.svc.RelayStream(c.Request.Context(), token, apiType, body, c.ClientIP())
 		if err != nil {
 			writeRelayError(c, err)
@@ -268,6 +268,10 @@ func requestWantsStream(body []byte) bool {
 	}
 	_ = json.Unmarshal(body, &payload)
 	return payload.Stream
+}
+
+func openAIAPIAllowsStream(apiType relay.APIType) bool {
+	return apiType == relay.APIChatCompletions || apiType == relay.APICompletions
 }
 
 func splitGeminiModelAction(value string) (string, string) {
