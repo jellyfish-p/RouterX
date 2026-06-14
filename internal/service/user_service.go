@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
@@ -149,22 +150,30 @@ func (s *UserService) DeleteByAdmin(operatorID uint, operatorRole int, targetID 
 }
 
 // UpdateQuota 调整用户余额。
-func (s *UserService) UpdateQuotaByAdmin(operatorID uint, operatorRole int, targetID uint, delta int64) error {
+func (s *UserService) UpdateQuotaByAdmin(operatorID uint, operatorRole int, targetID uint, delta int64, reason, requestID string) error {
 	if err := s.ensureNormalUserTarget(operatorID, operatorRole, targetID); err != nil {
 		return err
 	}
-	query := internal.DB.Model(&model.User{}).Where("id = ? AND role = ?", targetID, common.RoleUser)
-	if delta < 0 {
-		query = query.Where("quota >= ?", -delta)
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "admin quota adjustment"
 	}
-	res := query.Update("quota", gorm.Expr("quota + ?", delta))
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return errors.New("insufficient user quota")
-	}
-	return nil
+	actorID := operatorID
+	sourceID := fmt.Sprintf("admin:%d:user:%d:%d", operatorID, targetID, time.Now().UnixNano())
+	return internal.DB.Transaction(func(tx *gorm.DB) error {
+		_, _, err := applyQuotaChange(tx, quotaChange{
+			UserID:         targetID,
+			Amount:         delta,
+			Type:           common.QuotaTransactionTypeAdminAdjust,
+			SourceType:     common.QuotaSourceTypeAdminAction,
+			SourceID:       sourceID,
+			IdempotencyKey: sourceID,
+			Reason:         reason,
+			ActorUserID:    &actorID,
+			RequestID:      requestID,
+		})
+		return err
+	})
 }
 
 // UpdateSelf 用户自助修改个人信息。
@@ -183,9 +192,9 @@ func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
 	return internal.DB.Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
 }
 
-// RedeemCode 将未使用的充值码兑换到当前用户余额。当前阶段尚未落库 quota_transactions，
-// 因此必须让状态更新和余额增加在同一事务内完成，避免重复兑换。
-func (s *UserService) RedeemCode(userID uint, code string) (int64, int64, error) {
+// RedeemCode 将未使用的充值码兑换到当前用户余额。
+// 充值码状态、用户余额和额度流水必须在同一事务内完成，避免重复兑换或账实不一致。
+func (s *UserService) RedeemCode(userID uint, code string, requestID string) (int64, int64, error) {
 	code = strings.TrimSpace(code)
 	if userID == 0 || code == "" {
 		return 0, 0, errors.New("redem code is required")
@@ -215,15 +224,21 @@ func (s *UserService) RedeemCode(userID uint, code string) (int64, int64, error)
 		if res.RowsAffected == 0 {
 			return errors.New("redem code is invalid or already used")
 		}
-		if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("quota", gorm.Expr("quota + ?", redem.Quota)).Error; err != nil {
-			return err
-		}
-		var user model.User
-		if err := tx.Select("quota").First(&user, userID).Error; err != nil {
+		_, balanceAfter, err := applyQuotaChange(tx, quotaChange{
+			UserID:         userID,
+			Amount:         redem.Quota,
+			Type:           common.QuotaTransactionTypeRedemRedeem,
+			SourceType:     common.QuotaSourceTypeRedemCode,
+			SourceID:       fmt.Sprint(redem.ID),
+			IdempotencyKey: fmt.Sprintf("redem_code:%d", redem.ID),
+			Reason:         "redem code redeem",
+			RequestID:      requestID,
+		})
+		if err != nil {
 			return err
 		}
 		redeemedQuota = redem.Quota
-		finalQuota = user.Quota
+		finalQuota = balanceAfter
 		return nil
 	})
 	return redeemedQuota, finalQuota, err

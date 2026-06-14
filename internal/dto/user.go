@@ -32,7 +32,8 @@ type UpdateUserRequest struct {
 
 // UpdateQuotaRequest 调整用户余额
 type UpdateQuotaRequest struct {
-	Quota int64 `json:"quota" binding:"required"`
+	Quota  int64  `json:"quota" binding:"required"`
+	Reason string `json:"reason"`
 }
 
 // UpdateSelfRequest 用户自助修改个人信息

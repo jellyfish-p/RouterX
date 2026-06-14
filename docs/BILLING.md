@@ -58,7 +58,7 @@ QuotaPerUnit = 100000000
 | `payment_orders` | `status` | 支付订单状态，如 `pending`、`paid`、`failed`、`closed`、`refunded` |
 | `payment_orders` | `quota` | 支付成功后应增加的基础额度单位 |
 | `payment_events` | `provider_event_id` | 支付渠道事件 ID，用于幂等处理 |
-| `quota_transactions` | `amount`、`idempotency_key` | 支付入账、充值码、退款、人工调整的额度流水目标字段 |
+| `quota_transactions` | `amount`、`idempotency_key` | 支付入账、充值码、退款、人工调整的额度流水核心字段 |
 | `settings` | `billing.user_group_ratios` | 用户分组倍率 JSON 配置 |
 | `model_prices` | `price_expression` | 系统模型价格表达式，返回倍率前的 `base_quota` |
 | `model_prices` | `variables_json` | 系统模型价格变量默认值 |
@@ -390,7 +390,7 @@ ceil(duration_seconds * second_price)
 
 在线支付用于购买用户额度。支付金额、货币、赠送额度和最终入账额度必须由服务端商品配置决定，客户端不能直接提交要增加的 `quota`。支付 provider、充值码、退款、人工补账和额度流水的完整契约以 `docs/PAYMENTS.md` 为准；本文保留计费事实和入账口径摘要。
 
-支付模块是可选插件式能力。未启用支付时，系统仍应能通过管理员额度调整、API Key 预算控制和后续充值码完成基础运营；启用支付后必须满足签名校验、金额校验、幂等入账和审计要求。
+支付模块是可选插件式能力。未启用支付时，系统仍应能通过管理员额度调整、API Key 预算控制和充值码完成基础运营；启用支付后必须满足签名校验、金额校验、幂等入账和审计要求。
 
 支持渠道：
 

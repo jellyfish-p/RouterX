@@ -141,7 +141,7 @@ func (h *UserHandler) UpdateQuota(c *gin.Context) {
 		common.FailWithStatus(c, 400, "额度参数无效")
 		return
 	}
-	if err := h.svc.UpdateQuotaByAdmin(operator.ID, operator.Role, id, req.Quota); err != nil {
+	if err := h.svc.UpdateQuotaByAdmin(operator.ID, operator.Role, id, req.Quota, req.Reason, c.GetString("request_id")); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
@@ -194,7 +194,7 @@ func (h *UserHandler) RedeemCode(c *gin.Context) {
 		common.FailWithStatus(c, 400, "充值码参数无效")
 		return
 	}
-	redeemedQuota, quota, err := h.svc.RedeemCode(user.ID, req.Code)
+	redeemedQuota, quota, err := h.svc.RedeemCode(user.ID, req.Code, c.GetString("request_id"))
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return

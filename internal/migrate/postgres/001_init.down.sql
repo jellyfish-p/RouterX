@@ -1,4 +1,5 @@
 DROP TABLE IF EXISTS settings;
+DROP TABLE IF EXISTS quota_transactions;
 DROP TABLE IF EXISTS redem_codes;
 DROP TABLE IF EXISTS logs;
 DROP TABLE IF EXISTS channels;

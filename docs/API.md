@@ -227,7 +227,7 @@ Gemini-compatible 错误示例：
 | POST | `/v0/admin/user` | 已实现 | 创建普通用户 |
 | PUT | `/v0/admin/user/:id` | 已实现 | 编辑普通用户 |
 | DELETE | `/v0/admin/user/:id` | 已实现 | 删除普通用户 |
-| PATCH | `/v0/admin/user/:id/quota` | 已实现 | 调整用户额度 |
+| PATCH | `/v0/admin/user/:id/quota` | 已实现 | 调整用户额度并写入 `quota_transactions`，可选 `reason` |
 
 列表查询参数：
 
@@ -423,7 +423,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 |------|------|----------|------|
 | GET | `/v0/user/log` | 已实现 | 当前用户调用日志 |
 | GET | `/v0/user/billing` | 基础实现 | 当前用户账单统计 |
-| POST | `/v0/user/redem` | 基础实现 | 使用未兑换充值码给当前用户增加额度；当前阶段不写 `quota_transactions` |
+| POST | `/v0/user/redem` | 基础实现 | 使用未兑换充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水 |
 
 ### 目标扩展接口
 

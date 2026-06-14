@@ -344,6 +344,16 @@ func TestUserRedeemsRedemCodeOnce(t *testing.T) {
 	if storedCode.Status != common.RedemCodeStatusUsed || storedCode.UsedBy == nil || *storedCode.UsedBy != root.ID || storedCode.UsedAt == nil {
 		t.Fatalf("redeem should mark code used by current user: %+v", storedCode)
 	}
+	var quotaTx model.QuotaTransaction
+	if err := internal.DB.Where("source_type = ? AND source_id = ?", common.QuotaSourceTypeRedemCode, fmt.Sprint(code.ID)).First(&quotaTx).Error; err != nil {
+		t.Fatalf("redeem should write quota transaction: %v", err)
+	}
+	if quotaTx.UserID != root.ID || quotaTx.Type != common.QuotaTransactionTypeRedemRedeem || quotaTx.Amount != 25 || quotaTx.BalanceBefore != 10 || quotaTx.BalanceAfter != 35 {
+		t.Fatalf("unexpected redeem quota transaction: %+v", quotaTx)
+	}
+	if quotaTx.IdempotencyKey != fmt.Sprintf("redem_code:%d", code.ID) {
+		t.Fatalf("redeem quota transaction should use stable idempotency key, got %q", quotaTx.IdempotencyKey)
+	}
 
 	second := performJSON(r, http.MethodPost, "/v0/user/redem", rootJWT, map[string]interface{}{
 		"code": "OFFLINE-CREDIT-1",
@@ -356,6 +366,68 @@ func TestUserRedeemsRedemCodeOnce(t *testing.T) {
 	}
 	if root.Quota != 35 {
 		t.Fatalf("used redem code must not add quota again, got %d", root.Quota)
+	}
+	var txCount int64
+	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("source_type = ? AND source_id = ?", common.QuotaSourceTypeRedemCode, fmt.Sprint(code.ID)).Count(&txCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if txCount != 1 {
+		t.Fatalf("used redem code must not write duplicate quota transactions, got %d", txCount)
+	}
+}
+
+func TestAdminQuotaAdjustmentWritesTransaction(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username": "alice",
+		"password": "password123",
+		"quota":    10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	var alice model.User
+	if err := internal.DB.Where("username = ?", "alice").First(&alice).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	adjustResp := performJSON(r, http.MethodPatch, "/v0/admin/user/"+uintString(alice.ID)+"/quota", rootJWT, map[string]interface{}{
+		"quota":  25,
+		"reason": "support credit",
+	})
+	if adjustResp.Code != http.StatusOK {
+		t.Fatalf("quota adjust failed: %d %s", adjustResp.Code, adjustResp.Body.String())
+	}
+	if err := internal.DB.First(&alice, alice.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if alice.Quota != 35 {
+		t.Fatalf("admin quota adjustment should update balance, got %d", alice.Quota)
+	}
+	var quotaTx model.QuotaTransaction
+	if err := internal.DB.Where("user_id = ? AND type = ?", alice.ID, common.QuotaTransactionTypeAdminAdjust).First(&quotaTx).Error; err != nil {
+		t.Fatalf("admin quota adjustment should write quota transaction: %v", err)
+	}
+	if quotaTx.Amount != 25 || quotaTx.BalanceBefore != 10 || quotaTx.BalanceAfter != 35 || quotaTx.SourceType != common.QuotaSourceTypeAdminAction {
+		t.Fatalf("unexpected admin quota transaction: %+v", quotaTx)
+	}
+	if quotaTx.ActorUserID == nil || *quotaTx.ActorUserID != root.ID || quotaTx.Reason != "support credit" || quotaTx.IdempotencyKey == "" {
+		t.Fatalf("admin quota transaction should include actor, reason and idempotency key: %+v", quotaTx)
 	}
 }
 
@@ -4321,6 +4393,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		&model.Channel{},
 		&model.Log{},
 		&model.RedemCode{},
+		&model.QuotaTransaction{},
 		&model.Setting{},
 	); err != nil {
 		t.Fatal(err)

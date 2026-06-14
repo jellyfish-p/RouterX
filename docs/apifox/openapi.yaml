@@ -351,7 +351,7 @@ paths:
     post:
       tags: [User Usage]
       summary: 使用充值码
-      description: 基础实现；兑换未使用充值码，事务内标记 redem_codes used/used_by/used_at 并增加当前用户 quota。当前阶段尚未写 quota_transactions 或审计日志，完整账务流水以 docs/PAYMENTS.md 为准。
+      description: 基础实现；兑换未使用充值码，事务内标记 redem_codes used/used_by/used_at、增加当前用户 quota，并写入 quota_transactions 幂等流水。审计日志和充值码管理端仍以 docs/PAYMENTS.md 后续契约为准。
       security:
         - UserJWT: []
       requestBody:
@@ -461,7 +461,7 @@ paths:
     patch:
       tags: [Admin Users]
       summary: 调整用户额度
-      description: quota 为增量；负数表示扣减，扣减时要求余额足够。
+      description: quota 为增量；负数表示扣减，扣减时要求余额足够。成功后写入 quota_transactions，reason 会作为人工调整原因保存。
       security:
         - UserJWT: []
       parameters:
@@ -1643,6 +1643,9 @@ components:
           type: integer
           format: int64
           description: 额度增量；负数表示扣减。
+        reason:
+          type: string
+          description: 人工调额原因；为空时使用默认原因。
     PaginatedResult:
       type: object
       properties:

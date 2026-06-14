@@ -22,7 +22,8 @@
 |------|--------|
 | `TestP0BackendFlow` | 初始化、登录、API Key 创建、用户禁止编辑 Key 额度、通道创建、模型列表、密钥脱敏、无效 Key、空额度 Key、禁用用户 |
 | `TestAdminPrivilegeBoundaries` | 管理员和超级管理员权限边界、设置脱敏、管理员不能越权管理同级或自己 |
-| `TestUserRedeemsRedemCodeOnce` | 用户兑换未使用充值码、额度增加、充值码标记 used/used_by/used_at，重复兑换不再入账 |
+| `TestUserRedeemsRedemCodeOnce` | 用户兑换未使用充值码、额度增加、充值码标记 used/used_by/used_at，写入幂等额度流水，重复兑换不再入账 |
+| `TestAdminQuotaAdjustmentWritesTransaction` | 管理员调整用户额度时写入额度流水，记录 actor、reason、变更前后余额和幂等键 |
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、限流阈值 `0` 禁用语义、JWT/生产 readiness 和关键配置缺失 |

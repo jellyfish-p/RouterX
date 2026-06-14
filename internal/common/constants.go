@@ -52,6 +52,25 @@ const (
 	RedemCodeStatusUsed   = 1
 )
 
+// 额度流水类型
+const (
+	QuotaTransactionTypePaymentGrant = "payment_grant"
+	QuotaTransactionTypeRedemRedeem  = "redem_redeem"
+	QuotaTransactionTypeAdminAdjust  = "admin_adjust"
+	QuotaTransactionTypeRefundDeduct = "refund_deduct"
+	QuotaTransactionTypeManualCredit = "manual_credit"
+	QuotaTransactionTypeManualDebit  = "manual_debit"
+)
+
+// 额度流水来源类型
+const (
+	QuotaSourceTypePaymentOrder = "payment_order"
+	QuotaSourceTypePaymentEvent = "payment_event"
+	QuotaSourceTypeRedemCode    = "redem_code"
+	QuotaSourceTypeAdminAction  = "admin_action"
+	QuotaSourceTypeRefund       = "refund"
+)
+
 // 未限制额度标记
 const QuotaUnlimited = -1
 

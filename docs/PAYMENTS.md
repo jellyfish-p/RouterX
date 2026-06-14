@@ -306,9 +306,10 @@ user submits code
 当前实现：
 
 - 用户可通过 `POST /v0/user/redem` 兑换未使用充值码。
-- 兑换在同一数据库事务内完成 `redem_codes.status/used_by/used_at` 更新和 `users.quota` 增加。
-- 同一个充值码只能成功兑换一次；已使用或不存在的充值码返回统一失败。
-- `quota_transactions` 和管理审计仍属于后续增强，不能把当前实现误写成完整账务流水闭环。
+- 兑换在同一数据库事务内完成 `redem_codes.status/used_by/used_at` 更新、`users.quota` 增加和 `quota_transactions` 写入。
+- 同一个充值码只能成功兑换一次；已使用或不存在的充值码返回统一失败，重复兑换不会写重复流水。
+- 管理员额度调整已写入 `quota_transactions`，记录 `actor_user_id`、`reason`、变更前后余额和幂等键。
+- 管理审计、充值码管理端和在线支付订单/事件仍属于后续增强，不能把当前实现误写成完整支付闭环。
 
 要求：
 

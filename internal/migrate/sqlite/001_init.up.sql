@@ -90,6 +90,24 @@ CREATE TABLE IF NOT EXISTS redem_codes (
     used_at DATETIME
 );
 
+CREATE TABLE IF NOT EXISTS quota_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    type TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    balance_before INTEGER NOT NULL,
+    balance_after INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    reason TEXT NOT NULL DEFAULT '',
+    actor_user_id INTEGER REFERENCES users(id),
+    request_id TEXT,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_quota_transactions_user_id_created_at ON quota_transactions(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_quota_transactions_source ON quota_transactions(source_type, source_id);
+
 CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT NOT NULL UNIQUE,

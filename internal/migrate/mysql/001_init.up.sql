@@ -99,6 +99,27 @@ CREATE TABLE IF NOT EXISTS redem_codes (
     FOREIGN KEY (used_by) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS quota_transactions (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id INT UNSIGNED NOT NULL,
+    type VARCHAR(32) NOT NULL,
+    amount BIGINT NOT NULL,
+    balance_before BIGINT NOT NULL,
+    balance_after BIGINT NOT NULL,
+    source_type VARCHAR(64) NOT NULL,
+    source_id VARCHAR(128) NOT NULL,
+    idempotency_key VARCHAR(191) NOT NULL,
+    reason TEXT NOT NULL,
+    actor_user_id INT UNSIGNED,
+    request_id VARCHAR(128),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE INDEX idx_quota_transactions_idempotency_key (idempotency_key),
+    INDEX idx_quota_transactions_user_id_created_at (user_id, created_at),
+    INDEX idx_quota_transactions_source (source_type, source_id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (actor_user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS settings (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     `key` VARCHAR(128) NOT NULL,
