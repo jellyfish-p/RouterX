@@ -759,7 +759,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖支付商品创建、更新、启用、禁用，settings 更新，用户调额，充值码管理，以及通道创建、编辑、启用、禁用、删除、测试和拉取模型成功审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖支付商品创建、更新、启用、禁用，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，以及管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝审计。
       security:
         - UserJWT: []
       parameters:
@@ -769,12 +769,12 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 payment_product.create 或 channel.update。
+          description: 动作过滤，例如 payment_product.create、channel.update 或 admin.denied。
         - name: resource_type
           in: query
           required: false
           schema: { type: string }
-          description: 资源类型过滤，例如 payment_product 或 channel。
+          description: 资源类型过滤，例如 payment_product、channel 或 admin。
         - name: resource_id
           in: query
           required: false
@@ -935,7 +935,7 @@ paths:
     post:
       tags: [Admin Accounts]
       summary: 创建管理员
-      description: 仅超级管理员可创建管理员账号。
+      description: 仅超级管理员可创建管理员账号；成功后写入 admin.create 管理审计，普通管理员越权访问会写 admin.denied。
       security:
         - UserJWT: []
       requestBody:
@@ -957,7 +957,7 @@ paths:
     put:
       tags: [Admin Accounts]
       summary: 编辑管理员
-      description: 仅超级管理员；禁止越权编辑同级或破坏最后一个超级管理员。
+      description: 仅超级管理员；禁止越权编辑同级或破坏最后一个超级管理员。成功后写入 admin.update，禁用管理员时写入 admin.disable。
       security:
         - UserJWT: []
       parameters:
@@ -976,7 +976,7 @@ paths:
     delete:
       tags: [Admin Accounts]
       summary: 删除管理员
-      description: 仅超级管理员；删除时保护最后一个超级管理员。
+      description: 仅超级管理员；删除时保护最后一个超级管理员。成功后写入 admin.delete 管理审计。
       security:
         - UserJWT: []
       parameters:

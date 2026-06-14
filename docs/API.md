@@ -331,6 +331,11 @@ Gemini-compatible 错误示例：
 | `user.quota_update` | `PATCH /v0/admin/user/:id/quota` |
 | `redem_code.create` | `POST /v0/admin/redem` |
 | `redem_code.disable` | `PATCH /v0/admin/redem/:id/disable` |
+| `admin.create` | `POST /v0/admin/admin` |
+| `admin.update` | `PUT /v0/admin/admin/:id` |
+| `admin.disable` | `PUT /v0/admin/admin/:id` 将管理员状态改为禁用 |
+| `admin.delete` | `DELETE /v0/admin/admin/:id` |
+| `admin.denied` | 普通管理员访问超级管理员管理接口被拒绝 |
 | `channel.create` | `POST /v0/admin/channel` |
 | `channel.update` | `PUT /v0/admin/channel/:id` |
 | `channel.delete` | `DELETE /v0/admin/channel/:id` |
@@ -346,9 +351,9 @@ Gemini-compatible 错误示例：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/v0/admin/admin` | 已实现 | 管理员列表，管理员及以上可查看 |
-| POST | `/v0/admin/admin` | 已实现 | 创建管理员，仅超级管理员 |
-| PUT | `/v0/admin/admin/:id` | 已实现 | 编辑管理员，仅超级管理员 |
-| DELETE | `/v0/admin/admin/:id` | 已实现 | 删除管理员，仅超级管理员 |
+| POST | `/v0/admin/admin` | 已实现 | 创建管理员，仅超级管理员；成功后写 `admin.create`，越权拒绝写 `admin.denied` |
+| PUT | `/v0/admin/admin/:id` | 已实现 | 编辑管理员，仅超级管理员；成功后写 `admin.update`，禁用写 `admin.disable` |
+| DELETE | `/v0/admin/admin/:id` | 已实现 | 删除管理员，仅超级管理员；成功后写 `admin.delete` |
 
 权限规则：
 
