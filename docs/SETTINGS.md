@@ -150,6 +150,10 @@ P0 补齐这些配置时，应同时补测试：
 |-----|------|-------|------|
 | `payment.stripe.enabled` | `false` | P2 | 是否启用 Stripe |
 | `payment.epay.enabled` | `false` | P2 | 是否启用易支付 |
+| `payment.epay.gateway` | `` | P2 | 易支付收银台网关地址 |
+| `payment.epay.pid` | `` | P2 | 易支付商户 ID |
+| `payment.epay.notify_url` | `` | P2 | 易支付异步通知地址 |
+| `payment.epay.return_url` | `` | P2 | 易支付同步返回地址 |
 | `payment.currency` | `usd` | P2 | 默认币种 |
 | `payment.order_expire_minutes` | `30` | P2 | 支付订单过期时间 |
 

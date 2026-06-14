@@ -181,6 +181,10 @@ func buildDefaultSettings() map[string]map[string]string {
 		"payment": {
 			"payment.stripe.enabled":       "false",
 			"payment.epay.enabled":         "false",
+			"payment.epay.gateway":         "",
+			"payment.epay.pid":             "",
+			"payment.epay.notify_url":      "",
+			"payment.epay.return_url":      "",
 			"payment.currency":             "usd",
 			"payment.order_expire_minutes": "30",
 		},

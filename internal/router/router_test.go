@@ -712,6 +712,84 @@ func TestAdminManagesPaymentProducts(t *testing.T) {
 	}
 }
 
+func TestEpayOrderBuildsSignedCheckoutURL(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_EPAY_KEY", "epay-checkout-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_epay",
+		Name:      "Epay quota",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.epay.enabled":    "true",
+		"payment.epay.gateway":    "https://pay.example.com/submit.php",
+		"payment.epay.pid":        "merchant-1",
+		"payment.epay.notify_url": "https://api.example.com/v0/payment/epay/notify",
+		"payment.epay.return_url": "https://app.example.com/payment/return",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "epay",
+		"product_id": "quota_epay",
+		"pay_type":   "alipay",
+	})
+	var payload struct {
+		Data struct {
+			OrderNo     string  `json:"order_no"`
+			CheckoutURL *string `json:"checkout_url"`
+		} `json:"data"`
+	}
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create epay order failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data.CheckoutURL == nil {
+		t.Fatalf("epay order should return checkout_url: %s", createResp.Body.String())
+	}
+	parsed, err := url.Parse(*payload.Data.CheckoutURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := parsed.Query()
+	if parsed.Scheme+"://"+parsed.Host+parsed.Path != "https://pay.example.com/submit.php" ||
+		values.Get("pid") != "merchant-1" ||
+		values.Get("type") != "alipay" ||
+		values.Get("out_trade_no") != payload.Data.OrderNo ||
+		values.Get("money") != "9.99" ||
+		values.Get("name") != "Epay quota" ||
+		values.Get("notify_url") != "https://api.example.com/v0/payment/epay/notify" ||
+		values.Get("return_url") != "https://app.example.com/payment/return" ||
+		values.Get("sign_type") != "MD5" {
+		t.Fatalf("unexpected epay checkout params: %s", *payload.Data.CheckoutURL)
+	}
+	if values.Get("sign") == "" || values.Get("sign") != epaySign(values, "epay-checkout-secret") {
+		t.Fatalf("epay checkout sign mismatch: %s", *payload.Data.CheckoutURL)
+	}
+}
+
 func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -1041,6 +1119,10 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"billing.bootstrap_admin_quota",
 		"payment.stripe.enabled",
 		"payment.epay.enabled",
+		"payment.epay.gateway",
+		"payment.epay.pid",
+		"payment.epay.notify_url",
+		"payment.epay.return_url",
 		"payment.currency",
 		"payment.order_expire_minutes",
 	} {
@@ -1122,6 +1204,12 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badPaymentSwitch.Code != http.StatusBadRequest {
 		t.Fatalf("invalid payment.epay.enabled should be rejected, got %d %s", badPaymentSwitch.Code, badPaymentSwitch.Body.String())
+	}
+	badEpayGateway := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"payment.epay.gateway": "pay.example.com/submit.php",
+	})
+	if badEpayGateway.Code != http.StatusBadRequest {
+		t.Fatalf("invalid payment.epay.gateway should be rejected, got %d %s", badEpayGateway.Code, badEpayGateway.Body.String())
 	}
 
 	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {

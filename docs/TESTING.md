@@ -28,6 +28,7 @@
 | `TestAdminManagesPaymentProducts` | 管理员创建、更新、启用和禁用支付商品；用户侧只展示启用商品，禁用商品不能创建订单 |
 | `TestUserListsAvailableModels` | 用户查看当前启用通道的去重模型列表，禁用通道模型不可见，价格状态明确标记未就绪 |
 | `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品；未启用 provider 拒绝下单，启用后创建本地 pending 订单，订单按 settings 过期且不入账 |
+| `TestEpayOrderBuildsSignedCheckoutURL` | 易支付网关配置齐全时创建订单返回签名收银台 URL，参数和签名可复核 |
 | `TestEpayNotifyPaysOrderIdempotently` | 易支付同步返回只读展示本地状态；异步通知校验签名和金额，成功通知订单 paid 并入账，重复通知不重复增加额度或流水 |
 | `TestStripeWebhookPaysOrderIdempotently` | Stripe webhook 校验原始 body 签名、Checkout Session 金额和 metadata，成功事件 paid 入账且重复事件不重复流水 |
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |

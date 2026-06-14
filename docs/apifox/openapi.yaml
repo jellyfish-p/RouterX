@@ -430,7 +430,7 @@ paths:
     post:
       tags: [User Payment]
       summary: 创建支付订单
-      description: 基础实现；provider 必须已通过 payment.stripe.enabled 或 payment.epay.enabled 启用。创建本地 pending 订单并保存商品快照，按 payment.order_expire_minutes 生成 expires_at，返回安全 checkout 占位链接。真实 provider 会话、签名回调和入账仍按 docs/PAYMENTS.md 后续契约实现。
+      description: 基础实现；provider 必须已通过 payment.stripe.enabled 或 payment.epay.enabled 启用。创建本地 pending 订单并保存商品快照，按 payment.order_expire_minutes 生成 expires_at。易支付网关、商户号、回调 URL 和 PAYMENT_EPAY_KEY 配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接。真实 Stripe Checkout Session 创建仍按 docs/PAYMENTS.md 后续契约实现。
       security:
         - UserJWT: []
       requestBody:
@@ -2124,7 +2124,10 @@ components:
         amount: { type: string }
         currency: { type: string }
         quota: { type: integer, format: int64 }
-        checkout_url: { type: string, nullable: true }
+        checkout_url:
+          type: string
+          nullable: true
+          description: 易支付配置齐全时为签名收银台 URL；否则为本地安全占位链接。
         expires_at:
           type: string
           format: date-time

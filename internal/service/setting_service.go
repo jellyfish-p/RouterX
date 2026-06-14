@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -245,6 +246,8 @@ func validateSettingValue(key, value string) error {
 		if len(value) != 3 {
 			return errors.New("payment.currency must be a 3-letter currency code")
 		}
+	case "payment.epay.gateway", "payment.epay.notify_url", "payment.epay.return_url":
+		return validateOptionalURLSetting(key, value)
 	}
 	return nil
 }
@@ -264,6 +267,17 @@ func validateServerModeSetting(key, value string) error {
 	default:
 		return errors.New(key + " must be debug, test or release")
 	}
+}
+
+func validateOptionalURLSetting(key, value string) error {
+	if value == "" {
+		return nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New(key + " must be an absolute URL")
+	}
+	return nil
 }
 
 func validatePositiveIntSetting(key, value string) error {

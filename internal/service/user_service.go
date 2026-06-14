@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"routerx/internal"
 	"routerx/internal/common"
@@ -464,6 +465,13 @@ func (s *UserService) CreatePaymentOrder(userID uint, provider, productID, payTy
 	expiredAt := now.Add(expireDuration)
 	providerOrderID := "local_" + orderNo
 	checkoutURL := "/v0/user/payment/orders/" + orderNo
+	if provider == common.PaymentProviderEpay {
+		if signedURL, err := epayCheckoutURL(orderNo, product, payType); err != nil {
+			return nil, err
+		} else if signedURL != "" {
+			checkoutURL = signedURL
+		}
+	}
 	order := &model.PaymentOrder{
 		OrderNo:         orderNo,
 		UserID:          userID,
@@ -481,6 +489,66 @@ func (s *UserService) CreatePaymentOrder(userID uint, provider, productID, payTy
 		return nil, err
 	}
 	return order, nil
+}
+
+func epayCheckoutURL(orderNo string, product model.PaymentProduct, payType string) (string, error) {
+	key := strings.TrimSpace(os.Getenv("PAYMENT_EPAY_KEY"))
+	gateway, gatewayOK, err := paymentSetting("payment.epay.gateway")
+	if err != nil {
+		return "", err
+	}
+	pid, pidOK, err := paymentSetting("payment.epay.pid")
+	if err != nil {
+		return "", err
+	}
+	notifyURL, notifyOK, err := paymentSetting("payment.epay.notify_url")
+	if err != nil {
+		return "", err
+	}
+	returnURL, returnOK, err := paymentSetting("payment.epay.return_url")
+	if err != nil {
+		return "", err
+	}
+	if key == "" || !gatewayOK || !pidOK || !notifyOK || !returnOK {
+		return "", nil
+	}
+	payType = strings.TrimSpace(payType)
+	if payType == "" {
+		payType = "alipay"
+	}
+	values := map[string]string{
+		"pid":          pid,
+		"type":         payType,
+		"out_trade_no": orderNo,
+		"notify_url":   notifyURL,
+		"return_url":   returnURL,
+		"name":         product.Name,
+		"money":        product.Amount,
+		"sign_type":    "MD5",
+	}
+	values["sign"] = epaySign(values, key)
+	parsed, err := url.Parse(gateway)
+	if err != nil {
+		return "", err
+	}
+	query := parsed.Query()
+	for name, value := range values {
+		query.Set(name, value)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
+func paymentSetting(key string) (string, bool, error) {
+	value, err := NewSettingService().Get(key)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	value = strings.TrimSpace(value)
+	return value, value != "", nil
 }
 
 func paymentProviderEnabled(provider string) (bool, error) {

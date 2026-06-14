@@ -482,7 +482,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/v0/user/payment/products` | 获取可购买的充值商品 |
-| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并返回安全 checkout 占位链接；provider 必须已在 settings 启用，`expires_at` 来自 `payment.order_expire_minutes` |
+| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单；provider 必须已在 settings 启用，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；`expires_at` 来自 `payment.order_expire_minutes` |
 | GET | `/v0/user/payment/orders` | 查询当前用户支付订单列表 |
 | GET | `/v0/user/payment/orders/:order_no` | 查询当前用户支付订单详情 |
 
