@@ -8,7 +8,7 @@ info:
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message。
-    - 充值码、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、管理端支付商品、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -31,6 +31,8 @@ tags:
     description: 管理员用户管理。
   - name: Admin Redem
     description: 管理员充值码管理。
+  - name: Admin Payment
+    description: 管理员支付商品管理。
   - name: Admin Accounts
     description: 管理员账号管理。
   - name: Admin Channels
@@ -742,6 +744,116 @@ paths:
       tags: [Admin Redem]
       summary: 作废充值码
       description: 仅未使用充值码可以作废；作废后用户兑换会失败。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/payment/products:
+    get:
+      tags: [Admin Payment]
+      summary: 支付商品列表
+      description: 管理员查看所有支付商品，包含已禁用商品；可按 product_id/name 关键字和 enabled 状态过滤。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Keyword"
+        - name: enabled
+          in: query
+          required: false
+          schema: { type: boolean }
+          description: 是否只查看启用或禁用商品。
+      responses:
+        "200":
+          description: 支付商品分页列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentProductAdminPage"
+    post:
+      tags: [Admin Payment]
+      summary: 创建支付商品
+      description: 创建服务端充值商品；客户端下单只能选择 product_id，金额、币种和额度以服务端商品为准。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertPaymentProductRequest"
+      responses:
+        "200":
+          description: 商品创建成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentProductAdminInfo"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/payment/products/{id}:
+    put:
+      tags: [Admin Payment]
+      summary: 更新支付商品
+      description: 更新商品配置；已创建订单继续使用订单快照，不受后续商品修改影响。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertPaymentProductRequest"
+      responses:
+        "200":
+          description: 商品更新成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentProductAdminInfo"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/payment/products/{id}/disable:
+    patch:
+      tags: [Admin Payment]
+      summary: 禁用支付商品
+      description: 禁用后用户侧商品列表不可见，且不能创建新订单；历史订单仍可查询和处理可信回调。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/payment/products/{id}/enable:
+    patch:
+      tags: [Admin Payment]
+      summary: 启用支付商品
       security:
         - UserJWT: []
       parameters:
@@ -1931,6 +2043,61 @@ components:
         quota: { type: integer, format: int64 }
         base_quota: { type: integer, format: int64 }
         bonus_quota: { type: integer, format: int64 }
+    UpsertPaymentProductRequest:
+      type: object
+      required: [product_id, name, amount, currency, quota]
+      properties:
+        product_id:
+          type: string
+          example: quota_100
+        name:
+          type: string
+          example: 100 credits
+        amount:
+          type: string
+          description: 定点金额字符串，当前基础校验按两位小数解析。
+          example: "9.99"
+        currency:
+          type: string
+          example: usd
+        quota:
+          type: integer
+          format: int64
+          description: 基础入账额度。
+        bonus_quota:
+          type: integer
+          format: int64
+          description: 赠送额度。
+        enabled:
+          type: boolean
+          description: 创建时未传默认为 true；更新时未传则保留原状态。
+        provider_config_json:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: provider 限定配置，如 Stripe price id。
+    PaymentProductAdminInfo:
+      allOf:
+        - $ref: "#/components/schemas/PaymentProductInfo"
+        - type: object
+          properties:
+            id: { type: integer, format: int64 }
+            enabled: { type: boolean }
+            provider_config_json:
+              type: object
+              nullable: true
+              additionalProperties: true
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+    PaymentProductAdminPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/PaymentProductAdminInfo"
     CreatePaymentOrderRequest:
       type: object
       required: [provider, product_id]

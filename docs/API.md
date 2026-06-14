@@ -274,6 +274,33 @@ Gemini-compatible 错误示例：
 
 当 `codes` 为空时按 `count` 生成随机充值码，`count` 默认 1，最大 100；当 `codes` 非空时导入指定码。
 
+### 支付商品管理
+
+| 方法 | 路径 | 当前状态 | 说明 |
+|------|------|----------|------|
+| GET | `/v0/admin/payment/products` | 基础实现 | 支付商品列表，支持 `page`、`page_size`、`keyword`、`enabled` |
+| POST | `/v0/admin/payment/products` | 基础实现 | 创建支付商品；金额、币种、额度和 provider 配置均由服务端保存 |
+| PUT | `/v0/admin/payment/products/:id` | 基础实现 | 更新支付商品；已创建订单继续使用订单快照 |
+| PATCH | `/v0/admin/payment/products/:id/disable` | 基础实现 | 禁用商品；禁用后用户侧不可见且不能创建新订单 |
+| PATCH | `/v0/admin/payment/products/:id/enable` | 基础实现 | 启用商品 |
+
+创建/更新支付商品请求：
+
+```json
+{
+  "product_id": "quota_100",
+  "name": "100 credits",
+  "amount": "9.99",
+  "currency": "usd",
+  "quota": 100000000,
+  "bonus_quota": 0,
+  "enabled": true,
+  "provider_config_json": {
+    "stripe_price_id": "price_123"
+  }
+}
+```
+
 ### 管理员管理
 
 | 方法 | 路径 | 当前状态 | 说明 |

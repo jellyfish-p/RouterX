@@ -34,6 +34,11 @@ func setupAdminRoutes(
 			authRequired.GET("/redem", userH.ListRedemCodes)
 			authRequired.POST("/redem", userH.CreateRedemCodes)
 			authRequired.PATCH("/redem/:id/disable", userH.DisableRedemCode)
+			authRequired.GET("/payment/products", userH.ListPaymentProductsAdmin)
+			authRequired.POST("/payment/products", userH.CreatePaymentProduct)
+			authRequired.PUT("/payment/products/:id", userH.UpdatePaymentProduct)
+			authRequired.PATCH("/payment/products/:id/disable", userH.DisablePaymentProduct)
+			authRequired.PATCH("/payment/products/:id/enable", userH.EnablePaymentProduct)
 
 			// 管理员账户查看 (Admin+)；写操作仅 SuperAdmin。
 			authRequired.GET("/admin", adminH.List)

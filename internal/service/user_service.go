@@ -291,6 +291,139 @@ func (s *UserService) ListPaymentProducts(userID uint) ([]model.PaymentProduct, 
 	return products, err
 }
 
+// ListPaymentProductsAdmin 返回管理端充值商品列表，包含禁用商品。
+func (s *UserService) ListPaymentProductsAdmin(operatorRole int, page, pageSize int, keyword string, enabled *bool) ([]model.PaymentProduct, int64, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, 0, errors.New("admin role required")
+	}
+	page, pageSize = normalizePage(page, pageSize)
+	query := internal.DB.Model(&model.PaymentProduct{})
+	if strings.TrimSpace(keyword) != "" {
+		like := "%" + strings.TrimSpace(keyword) + "%"
+		query = query.Where("product_id LIKE ? OR name LIKE ?", like, like)
+	}
+	if enabled != nil {
+		query = query.Where("enabled = ?", *enabled)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var products []model.PaymentProduct
+	err := query.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&products).Error
+	return products, total, err
+}
+
+func (s *UserService) CreatePaymentProduct(operatorRole int, product model.PaymentProduct) (*model.PaymentProduct, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	normalized, err := normalizePaymentProduct(product)
+	if err != nil {
+		return nil, err
+	}
+	var existing int64
+	if err := internal.DB.Model(&model.PaymentProduct{}).Where("product_id = ?", normalized.ProductID).Count(&existing).Error; err != nil {
+		return nil, err
+	}
+	if existing > 0 {
+		return nil, errors.New("payment product already exists")
+	}
+	if err := internal.DB.Create(&normalized).Error; err != nil {
+		return nil, err
+	}
+	return &normalized, nil
+}
+
+func (s *UserService) UpdatePaymentProduct(operatorRole int, id uint, product model.PaymentProduct, enabled *bool) (*model.PaymentProduct, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	if id == 0 {
+		return nil, errors.New("payment product is required")
+	}
+	normalized, err := normalizePaymentProduct(product)
+	if err != nil {
+		return nil, err
+	}
+	var current model.PaymentProduct
+	if err := internal.DB.First(&current, id).Error; err != nil {
+		return nil, err
+	}
+	var duplicate int64
+	if err := internal.DB.Model(&model.PaymentProduct{}).
+		Where("product_id = ? AND id <> ?", normalized.ProductID, id).
+		Count(&duplicate).Error; err != nil {
+		return nil, err
+	}
+	if duplicate > 0 {
+		return nil, errors.New("payment product already exists")
+	}
+	updates := map[string]interface{}{
+		"product_id":           normalized.ProductID,
+		"name":                 normalized.Name,
+		"amount":               normalized.Amount,
+		"currency":             normalized.Currency,
+		"quota":                normalized.Quota,
+		"bonus_quota":          normalized.BonusQuota,
+		"provider_config_json": normalized.ProviderConfigJSON,
+	}
+	if enabled != nil {
+		updates["enabled"] = *enabled
+	}
+	if err := internal.DB.Model(&current).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	if err := internal.DB.First(&current, id).Error; err != nil {
+		return nil, err
+	}
+	return &current, nil
+}
+
+func (s *UserService) SetPaymentProductEnabled(operatorRole int, id uint, enabled bool) error {
+	if operatorRole < common.RoleAdmin {
+		return errors.New("admin role required")
+	}
+	if id == 0 {
+		return errors.New("payment product is required")
+	}
+	res := internal.DB.Model(&model.PaymentProduct{}).Where("id = ?", id).Update("enabled", enabled)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return errors.New("payment product not found")
+	}
+	return nil
+}
+
+func normalizePaymentProduct(product model.PaymentProduct) (model.PaymentProduct, error) {
+	product.ProductID = strings.TrimSpace(product.ProductID)
+	product.Name = strings.TrimSpace(product.Name)
+	product.Amount = strings.TrimSpace(product.Amount)
+	product.Currency = strings.ToLower(strings.TrimSpace(product.Currency))
+	if product.ProductID == "" || product.Name == "" {
+		return model.PaymentProduct{}, errors.New("payment product id and name are required")
+	}
+	amount, err := decimalAmountToMinorUnits(product.Amount)
+	if err != nil || amount <= 0 {
+		return model.PaymentProduct{}, errors.New("payment product amount must be positive")
+	}
+	if len(product.Currency) != 3 {
+		return model.PaymentProduct{}, errors.New("payment product currency must be a 3-letter code")
+	}
+	if product.Quota <= 0 {
+		return model.PaymentProduct{}, errors.New("payment product quota must be positive")
+	}
+	if product.BonusQuota < 0 {
+		return model.PaymentProduct{}, errors.New("payment product bonus quota must be non-negative")
+	}
+	if len(product.ProviderConfigJSON) > 0 && !json.Valid(product.ProviderConfigJSON) {
+		return model.PaymentProduct{}, errors.New("payment product provider config must be valid json")
+	}
+	return product, nil
+}
+
 // CreatePaymentOrder 创建本地 pending 支付订单，保存商品金额、币种和入账额度快照。
 func (s *UserService) CreatePaymentOrder(userID uint, provider, productID, payType, returnURL string) (*model.PaymentOrder, error) {
 	if userID == 0 {

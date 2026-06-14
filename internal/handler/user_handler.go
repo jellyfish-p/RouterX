@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"routerx/internal/common"
 	"routerx/internal/dto"
+	"routerx/internal/model"
 	"routerx/internal/service"
 )
 
@@ -206,6 +207,103 @@ func (h *UserHandler) DisableRedemCode(c *gin.Context) {
 	common.SuccessMsg(c, "充值码已作废")
 }
 
+// GET /v0/admin/payment/products — 支付商品列表
+func (h *UserHandler) ListPaymentProductsAdmin(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.PaymentProductListRequest
+	_ = c.ShouldBindQuery(&req)
+	products, total, err := h.svc.ListPaymentProductsAdmin(operator.Role, req.Page, req.PageSize, req.Keyword, req.Enabled)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	page, pageSize := pageValues(req.Page, req.PageSize)
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.PaymentProductAdminInfosFromModels(products)})
+}
+
+// POST /v0/admin/payment/products — 创建支付商品
+func (h *UserHandler) CreatePaymentProduct(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.UpsertPaymentProductRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "支付商品参数无效")
+		return
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	product, err := h.svc.CreatePaymentProduct(operator.Role, paymentProductFromRequest(req, enabled))
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	common.Success(c, dto.PaymentProductAdminInfoFromModel(product))
+}
+
+// PUT /v0/admin/payment/products/:id — 更新支付商品
+func (h *UserHandler) UpdatePaymentProduct(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	var req dto.UpsertPaymentProductRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "支付商品参数无效")
+		return
+	}
+	product, err := h.svc.UpdatePaymentProduct(operator.Role, id, paymentProductFromRequest(req, false), req.Enabled)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	common.Success(c, dto.PaymentProductAdminInfoFromModel(product))
+}
+
+// PATCH /v0/admin/payment/products/:id/disable — 禁用支付商品
+func (h *UserHandler) DisablePaymentProduct(c *gin.Context) {
+	h.setPaymentProductEnabled(c, false)
+}
+
+// PATCH /v0/admin/payment/products/:id/enable — 启用支付商品
+func (h *UserHandler) EnablePaymentProduct(c *gin.Context) {
+	h.setPaymentProductEnabled(c, true)
+}
+
+func (h *UserHandler) setPaymentProductEnabled(c *gin.Context, enabled bool) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	if err := h.svc.SetPaymentProductEnabled(operator.Role, id, enabled); err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if enabled {
+		common.SuccessMsg(c, "支付商品已启用")
+		return
+	}
+	common.SuccessMsg(c, "支付商品已禁用")
+}
+
 // GET /v0/user/models — 当前用户可用模型列表
 func (h *UserHandler) Models(c *gin.Context) {
 	if _, ok := currentUser(c); !ok {
@@ -218,6 +316,19 @@ func (h *UserHandler) Models(c *gin.Context) {
 		return
 	}
 	common.Success(c, dto.UserModelListResult{Models: dto.UserModelInfosFromNames(models)})
+}
+
+func paymentProductFromRequest(req dto.UpsertPaymentProductRequest, enabled bool) model.PaymentProduct {
+	return model.PaymentProduct{
+		ProductID:          req.ProductID,
+		Name:               req.Name,
+		Amount:             req.Amount,
+		Currency:           req.Currency,
+		Quota:              req.Quota,
+		BonusQuota:         req.BonusQuota,
+		Enabled:            enabled,
+		ProviderConfigJSON: req.ProviderConfigJSON,
+	}
 }
 
 // GET /v0/user/payment/products — 充值商品列表

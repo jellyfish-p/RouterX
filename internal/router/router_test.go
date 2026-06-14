@@ -605,6 +605,100 @@ func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 	}
 }
 
+func TestAdminManagesPaymentProducts(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/payment/products", rootJWT, map[string]interface{}{
+		"product_id":  "quota_50",
+		"name":        "50 credits",
+		"amount":      "5.00",
+		"currency":    "usd",
+		"quota":       50,
+		"bonus_quota": 5,
+		"enabled":     true,
+		"provider_config_json": map[string]interface{}{
+			"stripe_price_id": "price_50",
+		},
+	})
+	var createPayload struct {
+		Data struct {
+			ID        uint   `json:"id"`
+			ProductID string `json:"product_id"`
+			Quota     int64  `json:"quota"`
+			Enabled   bool   `json:"enabled"`
+		} `json:"data"`
+	}
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("admin should create payment product, got %d %s", createResp.Code, createResp.Body.String())
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createPayload); err != nil {
+		t.Fatal(err)
+	}
+	if createPayload.Data.ID == 0 || createPayload.Data.ProductID != "quota_50" || createPayload.Data.Quota != 55 || !createPayload.Data.Enabled {
+		t.Fatalf("admin should create payment product, got %d %s", createResp.Code, createResp.Body.String())
+	}
+
+	updateResp := performJSON(r, http.MethodPut, "/v0/admin/payment/products/"+uintString(createPayload.Data.ID), rootJWT, map[string]interface{}{
+		"product_id":  "quota_50",
+		"name":        "60 credits",
+		"amount":      "6.00",
+		"currency":    "usd",
+		"quota":       60,
+		"bonus_quota": 10,
+		"enabled":     true,
+	})
+	if updateResp.Code != http.StatusOK || !strings.Contains(updateResp.Body.String(), `"quota":70`) || !strings.Contains(updateResp.Body.String(), `"amount":"6.00"`) {
+		t.Fatalf("admin should update payment product, got %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	adminList := performJSON(r, http.MethodGet, "/v0/admin/payment/products?keyword=quota_50", rootJWT, nil)
+	if adminList.Code != http.StatusOK || !strings.Contains(adminList.Body.String(), `"product_id":"quota_50"`) || !strings.Contains(adminList.Body.String(), `"enabled":true`) {
+		t.Fatalf("admin should list payment products, got %d %s", adminList.Code, adminList.Body.String())
+	}
+	userProducts := performJSON(r, http.MethodGet, "/v0/user/payment/products", rootJWT, nil)
+	if userProducts.Code != http.StatusOK || !strings.Contains(userProducts.Body.String(), `"quota":70`) {
+		t.Fatalf("enabled product should be visible to users, got %d %s", userProducts.Code, userProducts.Body.String())
+	}
+
+	disableResp := performJSON(r, http.MethodPatch, "/v0/admin/payment/products/"+uintString(createPayload.Data.ID)+"/disable", rootJWT, nil)
+	if disableResp.Code != http.StatusOK {
+		t.Fatalf("admin should disable payment product, got %d %s", disableResp.Code, disableResp.Body.String())
+	}
+	hiddenProducts := performJSON(r, http.MethodGet, "/v0/user/payment/products", rootJWT, nil)
+	if hiddenProducts.Code != http.StatusOK || strings.Contains(hiddenProducts.Body.String(), `"product_id":"quota_50"`) {
+		t.Fatalf("disabled product should be hidden from users, got %d %s", hiddenProducts.Code, hiddenProducts.Body.String())
+	}
+	blockedOrder := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "epay",
+		"product_id": "quota_50",
+	})
+	if blockedOrder.Code != http.StatusBadRequest {
+		t.Fatalf("disabled product should not create orders, got %d %s", blockedOrder.Code, blockedOrder.Body.String())
+	}
+
+	enableResp := performJSON(r, http.MethodPatch, "/v0/admin/payment/products/"+uintString(createPayload.Data.ID)+"/enable", rootJWT, nil)
+	if enableResp.Code != http.StatusOK {
+		t.Fatalf("admin should enable payment product, got %d %s", enableResp.Code, enableResp.Body.String())
+	}
+	orderResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "epay",
+		"product_id": "quota_50",
+	})
+	if orderResp.Code != http.StatusOK || !strings.Contains(orderResp.Body.String(), `"quota":70`) {
+		t.Fatalf("enabled product should create orders, got %d %s", orderResp.Code, orderResp.Body.String())
+	}
+}
+
 func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
