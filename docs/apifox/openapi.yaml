@@ -673,7 +673,7 @@ paths:
     patch:
       tags: [Admin Users]
       summary: 调整用户额度
-      description: quota 为增量；负数表示扣减，扣减时要求余额足够。成功后写入 quota_transactions，reason 会作为人工调整原因保存。
+      description: quota 为增量；负数表示扣减，扣减时要求余额足够。成功后写入 quota_transactions 和 user.quota_update 管理审计，reason 会作为人工调整原因保存。
       security:
         - UserJWT: []
       parameters:
@@ -759,7 +759,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖支付商品创建、更新、启用、禁用，以及 settings 更新成功审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖支付商品创建、更新、启用、禁用，settings 更新，以及用户调额成功审计。
       security:
         - UserJWT: []
       parameters:

@@ -145,8 +145,22 @@ func (h *UserHandler) UpdateQuota(c *gin.Context) {
 		common.FailWithStatus(c, 400, "额度参数无效")
 		return
 	}
+	before, err := h.svc.GetByID(id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
 	if err := h.svc.UpdateQuotaByAdmin(operator.ID, operator.Role, id, req.Quota, req.Reason, c.GetString("request_id")); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	after, err := h.svc.GetByID(id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAudit(c, operator, "user.quota_update", "user", id, userQuotaAuditSummary(before, req.Reason), userQuotaAuditSummary(after, req.Reason)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
 		return
 	}
 	common.SuccessMsg(c, "额度已更新")
@@ -421,6 +435,19 @@ func paymentProductAuditSummary(product *model.PaymentProduct) map[string]interf
 		"quota":       product.Quota,
 		"bonus_quota": product.BonusQuota,
 		"enabled":     product.Enabled,
+	}
+}
+
+func userQuotaAuditSummary(user *model.User, reason string) map[string]interface{} {
+	if user == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"id":           user.ID,
+		"username":     user.Username,
+		"display_name": user.DisplayName,
+		"quota":        user.Quota,
+		"reason":       reason,
 	}
 }
 

@@ -227,7 +227,7 @@ Gemini-compatible 错误示例：
 | POST | `/v0/admin/user` | 已实现 | 创建普通用户 |
 | PUT | `/v0/admin/user/:id` | 已实现 | 编辑普通用户 |
 | DELETE | `/v0/admin/user/:id` | 已实现 | 删除普通用户 |
-| PATCH | `/v0/admin/user/:id/quota` | 已实现 | 调整用户额度并写入 `quota_transactions`，可选 `reason` |
+| PATCH | `/v0/admin/user/:id/quota` | 已实现 | 调整用户额度并写入 `quota_transactions` 与管理审计，可选 `reason` |
 
 列表查询参数：
 
@@ -328,6 +328,7 @@ Gemini-compatible 错误示例：
 | `payment_product.enable` | `PATCH /v0/admin/payment/products/:id/enable` |
 | `setting.create` | `PUT /v0/admin/setting` 新增 key |
 | `setting.update` | `PUT /v0/admin/setting` 修改已有 key |
+| `user.quota_update` | `PATCH /v0/admin/user/:id/quota` |
 
 审计摘要只保存脱敏后的变更摘要，不保存完整请求体、支付密钥、JWT secret、API Key 或 provider secret。
 

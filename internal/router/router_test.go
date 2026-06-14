@@ -434,6 +434,15 @@ func TestAdminQuotaAdjustmentWritesTransaction(t *testing.T) {
 	if quotaTx.ActorUserID == nil || *quotaTx.ActorUserID != root.ID || quotaTx.Reason != "support credit" || quotaTx.IdempotencyKey == "" {
 		t.Fatalf("admin quota transaction should include actor, reason and idempotency key: %+v", quotaTx)
 	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=user&resource_id="+uintString(alice.ID), rootJWT, nil)
+	body := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(body, `"action":"user.quota_update"`) ||
+		!strings.Contains(body, `"resource_type":"user"`) ||
+		!strings.Contains(body, `"resource_id":"`+uintString(alice.ID)+`"`) ||
+		!strings.Contains(body, "support credit") {
+		t.Fatalf("admin quota adjustment should write audit log, got %d %s", auditResp.Code, body)
+	}
 }
 
 func TestAdminManagesRedemCodes(t *testing.T) {

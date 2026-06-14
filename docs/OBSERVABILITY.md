@@ -24,9 +24,10 @@
 - `GET /v0/admin/audit` 已注册为超级管理员查询接口，支持按 `action`、`resource_type`、`resource_id` 和 `actor_user_id` 过滤。
 - 支付商品创建、更新、启用和禁用会写入 `payment_product.*` 管理审计摘要。
 - `PUT /v0/admin/setting` 批量更新成功后会按 key 写入 `setting.create` 或 `setting.update` 管理审计摘要，敏感值只保存脱敏摘要。
+- `PATCH /v0/admin/user/:id/quota` 调整普通用户额度时会写入 `user.quota_update` 管理审计摘要，并关联调额原因。
 - HTTP Logger 中间件已经记录基础访问日志。
 
-这些能力构成 P0 的可见闭环，并补上了支付商品管理和 settings 变更审计的基础切片。商业级增强需要继续补更完整的审计覆盖、结构化字段、指标、告警、追踪和保留策略。
+这些能力构成 P0 的可见闭环，并补上了支付商品管理、settings 变更和用户调额审计的基础切片。商业级增强需要继续补更完整的审计覆盖、结构化字段、指标、告警、追踪和保留策略。
 
 ## 观测事实分层
 
@@ -247,7 +248,7 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 | 管理日志筛选 | 管理员可按 user、token、channel、model、status、时间筛选。 |
 | 账单一致 | 用户账单聚合等于成功日志事实；启用独立日志库时主库结算最小事实可恢复。 |
 | 脱敏 | 日志和导出不包含 API Key、上游密钥、DSN、支付密钥。 |
-| 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖支付商品管理和 settings 更新成功操作。 |
+| 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖支付商品管理、settings 更新和用户调额成功操作。 |
 | 指标 | `/metrics` 暴露核心指标，不包含高基数或敏感 label。 |
 
 ## 文档同步
