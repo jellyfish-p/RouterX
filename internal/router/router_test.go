@@ -491,6 +491,43 @@ func TestAdminManagesRedemCodes(t *testing.T) {
 	}
 }
 
+func TestUserListsAvailableModels(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Create(&model.Channel{Idx: 1, Type: common.ChannelTypeOpenAICompat, Name: "enabled", Models: "gpt-b,gpt-a,gpt-a", Status: common.ChannelStatusEnabled}).Error; err != nil {
+		t.Fatal(err)
+	}
+	disabled := model.Channel{Idx: 2, Type: common.ChannelTypeOpenAICompat, Name: "disabled", Models: "gpt-hidden", Status: common.ChannelStatusEnabled}
+	if err := internal.DB.Create(&disabled).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Model(&model.Channel{}).Where("id = ?", disabled.ID).Update("status", common.ChannelStatusDisabled).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	resp := performJSON(r, http.MethodGet, "/v0/user/models", rootJWT, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("user models failed: %d %s", resp.Code, resp.Body.String())
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, `"id":"gpt-a"`) || !strings.Contains(body, `"id":"gpt-b"`) || strings.Contains(body, "gpt-hidden") {
+		t.Fatalf("user models should list enabled channel models only, got %s", body)
+	}
+	if !strings.Contains(body, `"pricing_ready":false`) || !strings.Contains(body, `"price_rule":"minimum_usage"`) {
+		t.Fatalf("user models should expose current pricing readiness, got %s", body)
+	}
+}
+
 func TestChannelExtendedManagement(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

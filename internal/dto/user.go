@@ -64,6 +64,30 @@ type RedeemCodeResult struct {
 	Quota         int64 `json:"quota"`
 }
 
+type UserModelInfo struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	PriceRule    string `json:"price_rule"`
+	PricingReady bool   `json:"pricing_ready"`
+}
+
+type UserModelListResult struct {
+	Models []UserModelInfo `json:"models"`
+}
+
+func UserModelInfosFromNames(names []string) []UserModelInfo {
+	items := make([]UserModelInfo, 0, len(names))
+	for _, name := range names {
+		items = append(items, UserModelInfo{
+			ID:           name,
+			Name:         name,
+			PriceRule:    "minimum_usage",
+			PricingReady: false,
+		})
+	}
+	return items
+}
+
 type CreateRedemCodesRequest struct {
 	Quota int64    `json:"quota" binding:"required"`
 	Count int      `json:"count"`

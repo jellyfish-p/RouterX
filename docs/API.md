@@ -444,6 +444,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | GET | `/v0/user/log` | 已实现 | 当前用户调用日志 |
 | GET | `/v0/user/billing` | 基础实现 | 当前用户账单统计 |
 | POST | `/v0/user/redem` | 基础实现 | 使用未兑换充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水 |
+| GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露的可用模型列表；价格表未接入时 `pricing_ready=false` |
 
 ### 目标扩展接口
 
@@ -455,7 +456,6 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | POST | `/v0/user/payment/orders` | 创建支付订单 |
 | GET | `/v0/user/payment/orders` | 当前用户支付订单列表 |
 | GET | `/v0/user/payment/orders/:order_no` | 当前用户支付订单详情 |
-| GET | `/v0/user/models` | 可用模型和价格列表 |
 
 ### 支付接口
 

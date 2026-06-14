@@ -268,6 +268,11 @@ func (s *UserService) DisableRedemCode(operatorRole int, id uint) error {
 	return nil
 }
 
+// ListAvailableModels 返回普通用户当前可见的启用通道模型集合。
+func (s *UserService) ListAvailableModels() ([]string, error) {
+	return NewChannelService().ListModels()
+}
+
 // UpdateSelf 用户自助修改个人信息。
 func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
 	updates := map[string]interface{}{}

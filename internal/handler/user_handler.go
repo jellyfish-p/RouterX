@@ -204,6 +204,20 @@ func (h *UserHandler) DisableRedemCode(c *gin.Context) {
 	common.SuccessMsg(c, "充值码已作废")
 }
 
+// GET /v0/user/models — 当前用户可用模型列表
+func (h *UserHandler) Models(c *gin.Context) {
+	if _, ok := currentUser(c); !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	models, err := h.svc.ListAvailableModels()
+	if err != nil {
+		common.FailWithStatus(c, 500, "查询模型失败")
+		return
+	}
+	common.Success(c, dto.UserModelListResult{Models: dto.UserModelInfosFromNames(models)})
+}
+
 // GET /v0/user/self — 获取个人信息
 func (h *UserHandler) Self(c *gin.Context) {
 	user, ok := currentUser(c)
