@@ -759,7 +759,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖支付商品创建、更新、启用和禁用的成功审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖支付商品创建、更新、启用、禁用，以及 settings 更新成功审计。
       security:
         - UserJWT: []
       parameters:
@@ -1224,7 +1224,7 @@ paths:
     put:
       tags: [Admin Logs]
       summary: 批量更新系统设置
-      description: 仅超级管理员。
+      description: 仅超级管理员；成功后按 key 写入 setting.create 或 setting.update 管理审计，敏感值只保存脱敏摘要。
       security:
         - UserJWT: []
       requestBody:

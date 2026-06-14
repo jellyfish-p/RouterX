@@ -318,7 +318,7 @@ Gemini-compatible 错误示例：
 | `resource_id` | string | 资源 ID 过滤 |
 | `actor_user_id` | uint | 操作人 ID 过滤 |
 
-当前基础实现会记录支付商品管理动作：
+当前基础实现会记录以下管理动作：
 
 | 动作 | 触发接口 |
 |------|----------|
@@ -326,8 +326,10 @@ Gemini-compatible 错误示例：
 | `payment_product.update` | `PUT /v0/admin/payment/products/:id` |
 | `payment_product.disable` | `PATCH /v0/admin/payment/products/:id/disable` |
 | `payment_product.enable` | `PATCH /v0/admin/payment/products/:id/enable` |
+| `setting.create` | `PUT /v0/admin/setting` 新增 key |
+| `setting.update` | `PUT /v0/admin/setting` 修改已有 key |
 
-审计摘要只保存脱敏后的变更摘要，不保存完整请求体、支付密钥或 provider secret。
+审计摘要只保存脱敏后的变更摘要，不保存完整请求体、支付密钥、JWT secret、API Key 或 provider secret。
 
 ### 管理员管理
 
@@ -403,7 +405,7 @@ Gemini-compatible 错误示例：
 | DELETE | `/v0/admin/log` | 基础实现 | 清理日志 |
 | GET | `/v0/admin/dashboard` | 基础实现 | 仪表盘统计 |
 | GET | `/v0/admin/setting` | 已实现 | 获取系统设置，仅超级管理员 |
-| PUT | `/v0/admin/setting` | 已实现 | 批量更新系统设置，仅超级管理员 |
+| PUT | `/v0/admin/setting` | 已实现 | 批量更新系统设置，仅超级管理员，成功后按 key 写管理审计 |
 
 日志查询参数：
 

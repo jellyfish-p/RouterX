@@ -1441,6 +1441,41 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	}
 }
 
+func TestAdminSettingUpdateWritesAuditLog(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	gateway := "https://pay.example.com/submit"
+	updateResp := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"payment.epay.gateway": gateway,
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("setting update failed: %d %s", updateResp.Code, updateResp.Body.String())
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=setting&resource_id=payment.epay.gateway", rootJWT, nil)
+	body := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(body, `"action":"setting.update"`) ||
+		!strings.Contains(body, `"resource_type":"setting"`) ||
+		!strings.Contains(body, `"resource_id":"payment.epay.gateway"`) {
+		t.Fatalf("setting update should write audit log, got %d %s", auditResp.Code, body)
+	}
+	if strings.Contains(body, gateway) {
+		t.Fatalf("setting audit should redact sensitive payment value: %s", body)
+	}
+}
+
 func TestSettingDefaultsBackfillPreservesExistingValues(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

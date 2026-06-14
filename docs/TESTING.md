@@ -37,6 +37,7 @@
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |
+| `TestAdminSettingUpdateWritesAuditLog` | 超级管理员批量更新 settings 后按 key 写 `setting.update` 审计，敏感 payment 配置值不完整泄露 |
 | `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |
 | `TestSettingCacheRefreshesStaleRedisValues` | settings 读取缓存、单项更新和批量更新后的 Redis 刷新边界 |
 | `TestAPIKeyAuthErrorsUseEntryProtocolShape` | Anthropic/Gemini 入口 API Key 鉴权错误外形 |
@@ -394,7 +395,7 @@ Gemini-compatible 最小断言：
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
 | P2 | 高级 API Key 管理 | 轮换、泄露上报、最近使用、作用域拒绝、批量禁用、审计和缓存失效 |
 | P2 | 支付充值 | Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水和人工修正审计 |
-| P2 | 观测审计 | 支付商品管理审计基础测试已覆盖；继续补 Request ID、结构化日志、Prometheus 指标、更多管理审计动作和生产 `/ready` |
+| P2 | 观测审计 | 支付商品管理和 settings 更新审计基础测试已覆盖；继续补 Request ID、结构化日志、Prometheus 指标、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
 

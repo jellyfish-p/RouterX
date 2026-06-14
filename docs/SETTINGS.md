@@ -198,6 +198,7 @@ validate key exists
 
 审计摘要要求：
 
+- 当前基础实现中，`PUT /v0/admin/setting` 成功后会按 key 写入统一管理审计日志，动作是 `setting.create` 或 `setting.update`。
 - 敏感值只记录是否变化，不记录明文。
 - JSON 配置记录结构化 diff 摘要，不记录超大完整 JSON。
 - 高风险配置需要记录 `actor_user_id`、`request_id`、旧值摘要、新值摘要和可选变更原因。
