@@ -87,6 +87,11 @@ func authenticateAPIKey(c *gin.Context) bool {
 		writeProtocolAuthError(c, http.StatusForbidden, "method is not allowed by api key scope", "permission_error", "token_forbidden")
 		return false
 	}
+	if err := tokenSvc.CheckDailyQuotaScope(token); err != nil {
+		tokenSvc.RecordScopeDeniedLog(token, "daily quota exceeded by api key scope", c.ClientIP())
+		writeProtocolAuthError(c, http.StatusTooManyRequests, "daily quota exceeded", "insufficient_quota", "insufficient_quota")
+		return false
+	}
 	if !tokenSvc.HasAvailableQuota(token) {
 		writeProtocolAuthError(c, http.StatusTooManyRequests, "insufficient quota", "insufficient_quota", "insufficient_quota")
 		return false

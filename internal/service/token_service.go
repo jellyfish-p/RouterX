@@ -32,6 +32,7 @@ var (
 	ErrChannelGroupNotAllowed = errors.New("channel group not allowed by api key scope")
 	ErrIPNotAllowed           = errors.New("ip not allowed by api key scope")
 	ErrMethodNotAllowed       = errors.New("method not allowed by api key scope")
+	ErrDailyQuotaExceeded     = errors.New("daily quota exceeded by api key scope")
 )
 
 const (
@@ -48,6 +49,7 @@ type TokenScope struct {
 	ChannelGroups []string `json:"channel_groups,omitempty"` // 通道分组白名单, 空通道分组按 default 处理
 	IPCIDRs       []string `json:"ip_cidrs,omitempty"`       // 来源 IP/CIDR 白名单
 	Methods       []string `json:"methods,omitempty"`        // 请求方法和路径白名单, 如 POST /v1/chat/completions
+	DailyQuota    *int64   `json:"daily_quota,omitempty"`    // 单 Key 每日最大成功消耗额度
 }
 
 type TokenUsageStats struct {
@@ -320,6 +322,9 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 	if len(scope.Methods) > maxTokenScopeMethods {
 		return nil, errors.New("methods exceeds limit")
 	}
+	if scope.DailyQuota != nil && *scope.DailyQuota < 0 {
+		return nil, errors.New("daily_quota cannot be negative")
+	}
 	if err := validateScopeIPCIDRs(scope.IPCIDRs); err != nil {
 		return nil, err
 	}
@@ -460,6 +465,36 @@ func (s *TokenService) CheckMethodScope(token *model.Token, method, path string)
 		}
 	}
 	return ErrMethodNotAllowed
+}
+
+func (s *TokenService) CheckDailyQuotaScope(token *model.Token) error {
+	if token == nil {
+		return ErrInvalidAPIKey
+	}
+	scope, err := ParseTokenScope(token.ScopeJSON)
+	if err != nil {
+		return ErrDailyQuotaExceeded
+	}
+	if scope.DailyQuota == nil {
+		return nil
+	}
+	if *scope.DailyQuota < 0 {
+		return ErrDailyQuotaExceeded
+	}
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	var used int64
+	err = internal.DB.Model(&model.Log{}).
+		Where("token_id = ? AND status = ? AND created_at >= ?", token.ID, common.LogStatusSuccess, startOfDay).
+		Select("COALESCE(SUM(quota_used), 0)").
+		Scan(&used).Error
+	if err != nil {
+		return err
+	}
+	if used >= *scope.DailyQuota {
+		return ErrDailyQuotaExceeded
+	}
+	return nil
 }
 
 func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, clientIP string) {
