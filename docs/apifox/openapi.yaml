@@ -362,7 +362,7 @@ paths:
     post:
       tags: [User Usage]
       summary: 使用充值码
-      description: 基础实现；兑换未使用充值码，事务内标记 redem_codes used/used_by/used_at、增加当前用户 quota，并写入 quota_transactions 幂等流水。审计日志和充值码批次/备注/过期策略仍以 docs/PAYMENTS.md 后续契约为准。
+      description: 基础实现；兑换未使用充值码，事务内标记 redem_codes used/used_by/used_at、增加当前用户 quota，并写入 quota_transactions 幂等流水和 redem_code.redeem 管理审计。审计摘要只保存脱敏兑换码、额度、使用人和兑换后余额；充值码批次/备注/过期策略仍以 docs/PAYMENTS.md 后续契约为准。
       security:
         - UserJWT: []
       requestBody:

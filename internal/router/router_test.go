@@ -643,6 +643,14 @@ func TestUserRedeemsRedemCodeOnce(t *testing.T) {
 	if quotaTx.IdempotencyKey != fmt.Sprintf("redem_code:%d", code.ID) {
 		t.Fatalf("redeem quota transaction should use stable idempotency key, got %q", quotaTx.IdempotencyKey)
 	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=redem_code&resource_id="+uintString(code.ID), rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK || !strings.Contains(auditBody, `"action":"redem_code.redeem"`) {
+		t.Fatalf("redeem should write redem_code.redeem audit log, got %d %s", auditResp.Code, auditBody)
+	}
+	if strings.Contains(auditBody, "OFFLINE-CREDIT-1") {
+		t.Fatalf("redem redeem audit should not expose full code: %s", auditBody)
+	}
 
 	second := performJSON(r, http.MethodPost, "/v0/user/redem", rootJWT, map[string]interface{}{
 		"code": "OFFLINE-CREDIT-1",

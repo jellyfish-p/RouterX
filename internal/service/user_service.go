@@ -296,6 +296,19 @@ func (s *UserService) GetRedemCodeAdmin(operatorRole int, id uint) (*model.Redem
 	return &code, nil
 }
 
+// GetRedemCodeByCode 按兑换码查询当前状态，用于兑换成功后的脱敏审计摘要。
+func (s *UserService) GetRedemCodeByCode(code string) (*model.RedemCode, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return nil, errors.New("redem code is required")
+	}
+	var redem model.RedemCode
+	if err := internal.DB.Where("code = ?", code).First(&redem).Error; err != nil {
+		return nil, err
+	}
+	return &redem, nil
+}
+
 // CreateRedemCodes 生成随机充值码，或导入管理员提供的指定充值码。
 func (s *UserService) CreateRedemCodes(operatorRole int, quota int64, count int, codes []string) ([]model.RedemCode, error) {
 	if operatorRole < common.RoleAdmin {

@@ -707,7 +707,26 @@ func (h *UserHandler) RedeemCode(c *gin.Context) {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
+	code, err := h.svc.GetRedemCodeByCode(req.Code)
+	if err != nil {
+		common.FailWithStatus(c, 500, "查询充值码失败")
+		return
+	}
+	if err := h.recordAdminAudit(c, user, "redem_code.redeem", "redem_code", code.ID, nil, redemCodeRedeemAuditSummary(code, redeemedQuota, quota)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
 	common.Success(c, dto.RedeemCodeResult{RedeemedQuota: redeemedQuota, Quota: quota})
+}
+
+func redemCodeRedeemAuditSummary(code *model.RedemCode, redeemedQuota, balanceAfter int64) map[string]interface{} {
+	summary := redemCodeAuditSummary(code)
+	if summary == nil {
+		return nil
+	}
+	summary["redeemed_quota"] = redeemedQuota
+	summary["balance_after"] = balanceAfter
+	return summary
 }
 
 func parseUintParam(c *gin.Context, name string) (uint, bool) {

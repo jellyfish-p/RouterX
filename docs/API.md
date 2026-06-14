@@ -341,6 +341,7 @@ Gemini-compatible 错误示例：
 | `user.quota_update` | `PATCH /v0/admin/user/:id/quota` |
 | `redem_code.create` | `POST /v0/admin/redem` |
 | `redem_code.disable` | `PATCH /v0/admin/redem/:id/disable` |
+| `redem_code.redeem` | `POST /v0/user/redem` 成功兑换充值码 |
 | `admin.create` | `POST /v0/admin/admin` |
 | `admin.update` | `PUT /v0/admin/admin/:id` |
 | `admin.disable` | `PUT /v0/admin/admin/:id` 将管理员状态改为禁用 |
@@ -526,7 +527,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 |------|------|----------|------|
 | GET | `/v0/user/log` | 已实现 | 当前用户调用日志 |
 | GET | `/v0/user/billing` | 基础实现 | 当前用户账单统计 |
-| POST | `/v0/user/redem` | 基础实现 | 使用未兑换充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水 |
+| POST | `/v0/user/redem` | 基础实现 | 使用未兑换充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水与 `redem_code.redeem` 管理审计 |
 | GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露的可用模型列表；价格表未接入时 `pricing_ready=false` |
 
 ### 支付接口
