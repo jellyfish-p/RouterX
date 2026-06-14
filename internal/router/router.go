@@ -46,7 +46,7 @@ func SetupRouter(
 	setupPublicRoutes(r, setupH)
 
 	// Admin 管理端路由组 (需要 AdminAuth + 系统已初始化)
-	setupAdminRoutes(r, authH, userH, adminH, channelH, relayH, logH, settingH)
+	setupAdminRoutes(r, authH, userH, tokenH, adminH, channelH, relayH, logH, settingH)
 
 	// User Web API (需要 UserJwtAuth + 系统已初始化)
 	setupUserRoutes(r, authH, userH, tokenH, logH)

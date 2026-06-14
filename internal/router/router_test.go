@@ -271,6 +271,249 @@ func TestUserAPIKeyManagementAuditLogs(t *testing.T) {
 	}
 }
 
+func TestUserAPIKeyAdvancedManagement(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	createResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "advanced-key",
+		"remain_quota": int64(100),
+	})
+	var createPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createPayload); err != nil {
+		t.Fatal(err)
+	}
+	if createResp.Code != http.StatusOK || createPayload.Data.ID == 0 || !strings.HasPrefix(createPayload.Data.Key, "sk-") {
+		t.Fatalf("create api key failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+
+	tokenID := createPayload.Data.ID
+	now := time.Now()
+	logs := []model.Log{
+		{
+			UserID:           root.ID,
+			TokenID:          &tokenID,
+			Model:            "gpt-success",
+			PromptTokens:     3,
+			CompletionTokens: 4,
+			TotalTokens:      7,
+			QuotaUsed:        7,
+			Status:           common.LogStatusSuccess,
+			CreatedAt:        now.Add(-time.Minute),
+		},
+		{
+			UserID:      root.ID,
+			TokenID:     &tokenID,
+			Model:       "gpt-failed",
+			TotalTokens: 2,
+			Status:      common.LogStatusFailed,
+			ErrorMsg:    "upstream timeout",
+			CreatedAt:   now,
+		},
+	}
+	if err := internal.DB.Create(&logs).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	usageResp := performJSON(r, http.MethodGet, "/v0/user/token/"+uintString(tokenID)+"/usage", rootJWT, nil)
+	usageBody := usageResp.Body.String()
+	if usageResp.Code != http.StatusOK ||
+		!strings.Contains(usageBody, `"call_count":2`) ||
+		!strings.Contains(usageBody, `"success_count":1`) ||
+		!strings.Contains(usageBody, `"error_count":1`) ||
+		!strings.Contains(usageBody, `"total_quota":7`) ||
+		!strings.Contains(usageBody, `"total_tokens":9`) ||
+		!strings.Contains(usageBody, `"last_model":"gpt-failed"`) {
+		t.Fatalf("api key usage summary mismatch: %d %s", usageResp.Code, usageBody)
+	}
+
+	rotateResp := performJSON(r, http.MethodPost, "/v0/user/token/"+uintString(tokenID)+"/rotate", rootJWT, nil)
+	var rotatePayload struct {
+		Data struct {
+			ID            uint   `json:"id"`
+			Key           string `json:"key"`
+			RotatedFromID *uint  `json:"rotated_from_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rotateResp.Body.Bytes(), &rotatePayload); err != nil {
+		t.Fatal(err)
+	}
+	if rotateResp.Code != http.StatusOK ||
+		rotatePayload.Data.ID == 0 ||
+		rotatePayload.Data.ID == tokenID ||
+		!strings.HasPrefix(rotatePayload.Data.Key, "sk-") ||
+		rotatePayload.Data.RotatedFromID == nil ||
+		*rotatePayload.Data.RotatedFromID != tokenID {
+		t.Fatalf("api key rotate response mismatch: %d %s", rotateResp.Code, rotateResp.Body.String())
+	}
+	if strings.Contains(rotateResp.Body.String(), createPayload.Data.Key) {
+		t.Fatalf("rotate response leaked old plaintext key: %s", rotateResp.Body.String())
+	}
+	var oldRow struct {
+		Status        int
+		RevokedReason string
+	}
+	if err := internal.DB.Table("tokens").Select("status, revoked_reason").Where("id = ?", tokenID).Scan(&oldRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if oldRow.Status != common.TokenStatusDisabled || oldRow.RevokedReason != "rotated" {
+		t.Fatalf("old rotated key should be disabled with reason, got %+v", oldRow)
+	}
+	var newRow struct {
+		Key           string
+		RotatedFromID *uint
+	}
+	if err := internal.DB.Table("tokens").Select("key, rotated_from_id").Where("id = ?", rotatePayload.Data.ID).Scan(&newRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if newRow.Key == rotatePayload.Data.Key || newRow.Key != common.SHA256Hex(rotatePayload.Data.Key) || newRow.RotatedFromID == nil || *newRow.RotatedFromID != tokenID {
+		t.Fatalf("new rotated key should be hashed and linked, got %+v", newRow)
+	}
+
+	leakResp := performJSON(r, http.MethodPost, "/v0/user/token/"+uintString(rotatePayload.Data.ID)+"/report-leak", rootJWT, map[string]interface{}{
+		"reason": "public_repo",
+	})
+	leakBody := leakResp.Body.String()
+	if leakResp.Code != http.StatusOK || !strings.Contains(leakBody, `"replacement_recommended":true`) || strings.Contains(leakBody, rotatePayload.Data.Key) {
+		t.Fatalf("report leak response mismatch or leaked key: %d %s", leakResp.Code, leakBody)
+	}
+	var leakedRow struct {
+		Status        int
+		RevokedReason string
+	}
+	if err := internal.DB.Table("tokens").Select("status, revoked_reason").Where("id = ?", rotatePayload.Data.ID).Scan(&leakedRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if leakedRow.Status != common.TokenStatusDisabled || leakedRow.RevokedReason != "public_repo" {
+		t.Fatalf("leaked key should be disabled with reason, got %+v", leakedRow)
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=api_key", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"api_key.rotated"`) ||
+		!strings.Contains(auditBody, `"action":"api_key.leak_reported"`) {
+		t.Fatalf("advanced api key actions should write audit logs, got %d %s", auditResp.Code, auditBody)
+	}
+	if strings.Contains(auditBody, createPayload.Data.Key) || strings.Contains(auditBody, rotatePayload.Data.Key) || strings.Contains(auditBody, "sk-") {
+		t.Fatalf("advanced api key audit should not expose plaintext keys: %s", auditBody)
+	}
+}
+
+func TestAdminAPIKeyQueryAndBatchDisable(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createAlice := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "alice",
+		"password":     "password123",
+		"display_name": "Alice",
+		"quota":        int64(100),
+	})
+	if createAlice.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createAlice.Code, createAlice.Body.String())
+	}
+	var alice model.User
+	if err := internal.DB.Where("username = ?", "alice").First(&alice).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	rootTokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "root-admin-list-key",
+		"remain_quota": int64(100),
+	})
+	var rootTokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rootTokenResp.Body.Bytes(), &rootTokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	aliceToken, err := service.NewTokenService().Create(alice.ID, "alice-batch-key", 100, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alicePlainKey := aliceToken.Key
+	aliceToken.Key = ""
+
+	adminListResp := performJSON(r, http.MethodGet, "/v0/admin/token?user_id="+uintString(alice.ID), rootJWT, nil)
+	adminListBody := adminListResp.Body.String()
+	if adminListResp.Code != http.StatusOK ||
+		!strings.Contains(adminListBody, `"name":"alice-batch-key"`) ||
+		strings.Contains(adminListBody, `"name":"root-admin-list-key"`) ||
+		strings.Contains(adminListBody, alicePlainKey) ||
+		strings.Contains(adminListBody, rootTokenPayload.Data.Key) {
+		t.Fatalf("admin token list should filter and avoid plaintext keys, got %d %s", adminListResp.Code, adminListBody)
+	}
+
+	noFilterResp := performJSON(r, http.MethodPost, "/v0/admin/token/batch-disable", rootJWT, map[string]interface{}{})
+	if noFilterResp.Code != http.StatusBadRequest {
+		t.Fatalf("batch disable without filters should be rejected, got %d %s", noFilterResp.Code, noFilterResp.Body.String())
+	}
+	batchResp := performJSON(r, http.MethodPost, "/v0/admin/token/batch-disable", rootJWT, map[string]interface{}{
+		"user_id": alice.ID,
+		"reason":  "risk_review",
+	})
+	batchBody := batchResp.Body.String()
+	if batchResp.Code != http.StatusOK || !strings.Contains(batchBody, `"disabled_count":1`) || !strings.Contains(batchBody, `"matched_count":1`) {
+		t.Fatalf("batch disable response mismatch: %d %s", batchResp.Code, batchBody)
+	}
+	var aliceRow struct {
+		Status        int
+		RevokedReason string
+	}
+	if err := internal.DB.Table("tokens").Select("status, revoked_reason").Where("id = ?", aliceToken.ID).Scan(&aliceRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if aliceRow.Status != common.TokenStatusDisabled || aliceRow.RevokedReason != "risk_review" {
+		t.Fatalf("alice key should be batch disabled with reason, got %+v", aliceRow)
+	}
+	var rootRow struct {
+		Status int
+	}
+	if err := internal.DB.Table("tokens").Select("status").Where("id = ?", rootTokenPayload.Data.ID).Scan(&rootRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rootRow.Status != common.TokenStatusEnabled {
+		t.Fatalf("batch disable should not affect other users, got %+v", rootRow)
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=api_key&resource_id=batch", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK || !strings.Contains(auditBody, `"action":"api_key.batch_disabled"`) || strings.Contains(auditBody, alicePlainKey) || strings.Contains(auditBody, "sk-") {
+		t.Fatalf("batch disable audit mismatch or leaked key: %d %s", auditResp.Code, auditBody)
+	}
+}
+
 func TestAdminPrivilegeBoundaries(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

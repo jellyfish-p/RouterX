@@ -13,6 +13,7 @@ func setupAdminRoutes(
 	r *gin.Engine,
 	authH *handler.AuthHandler,
 	userH *handler.UserHandler,
+	tokenH *handler.TokenHandler,
 	adminH *handler.AdminHandler,
 	channelH *handler.ChannelHandler,
 	relayH *handler.RelayHandler,
@@ -40,6 +41,8 @@ func setupAdminRoutes(
 			authRequired.PUT("/payment/products/:id", userH.UpdatePaymentProduct)
 			authRequired.PATCH("/payment/products/:id/disable", userH.DisablePaymentProduct)
 			authRequired.PATCH("/payment/products/:id/enable", userH.EnablePaymentProduct)
+			authRequired.GET("/token", tokenH.AdminList)
+			authRequired.POST("/token/batch-disable", tokenH.BatchDisable)
 
 			// 管理员账户查看 (Admin+)；写操作仅 SuperAdmin。
 			authRequired.GET("/admin", adminH.List)

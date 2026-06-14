@@ -34,6 +34,10 @@ func setupUserRoutes(
 			jwtRequired.POST("/token", tokenH.Create)
 			jwtRequired.PUT("/token/:id", tokenH.Update)
 			jwtRequired.DELETE("/token/:id", tokenH.Delete)
+			jwtRequired.POST("/token/:id/disable", tokenH.Disable)
+			jwtRequired.POST("/token/:id/rotate", tokenH.Rotate)
+			jwtRequired.POST("/token/:id/report-leak", tokenH.ReportLeak)
+			jwtRequired.GET("/token/:id/usage", tokenH.Usage)
 
 			jwtRequired.GET("/log", logH.UserList)
 			jwtRequired.GET("/billing", logH.UserBilling)

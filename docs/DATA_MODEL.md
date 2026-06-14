@@ -211,6 +211,8 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `expired_at` | nullable time | 过期时间，空表示不过期 |
 | `remain_quota` | int64 | 当前字段；目标语义为 Key 剩余预算上限，`-1` 表示无限制 |
 | `unlimited` | bool | 是否无限制 |
+| `rotated_from_id` | nullable uint | 轮换来源 Token ID |
+| `revoked_reason` | string | 禁用原因，例如 `rotated`、`reported_leak`、`admin_batch_disable` |
 | `created_at` | time | 创建时间 |
 | `updated_at` | time | 更新时间 |
 | `deleted_at` | nullable time | 软删除 |
@@ -220,7 +222,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 - API Key 明文只在创建时返回一次。
 - 数据库长期保存 SHA256 哈希，不保存 API Key 明文。
 - Redis 缓存使用 `SHA256(key)` 作为缓存键，避免明文出现在 Redis key。
-- 创建、编辑、禁用、删除和用户端额度/无限标记编辑拒绝会写入 `admin_audit_logs`，审计摘要只包含 `tokens` 的公开字段，不保存完整 Key 明文或哈希。
+- 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用和用户端额度/无限标记编辑拒绝会写入 `admin_audit_logs`，审计摘要只包含 `tokens` 的公开字段，不保存完整 Key 明文或哈希。
 
 额度语义：
 
@@ -244,8 +246,6 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `last_error_code` | 最近失败 code。 |
 | `scope_json` | 模型、通道分组、协议入口、请求类型、IP 范围和预算限制等收窄策略。 |
 | `metadata_json` | 环境、应用、团队、标签和外部关联 ID 等非安全元数据。 |
-| `rotated_from_id` | 轮换来源 Token。 |
-| `revoked_reason` | 禁用或删除原因。 |
 | `created_by_user_id` | 创建操作者。 |
 | `updated_by_user_id` | 最近管理操作者。 |
 

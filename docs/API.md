@@ -334,8 +334,11 @@ Gemini-compatible 错误示例：
 | `payment_order.create` | `POST /v0/user/payment/orders` |
 | `api_key.created` | `POST /v0/user/token` |
 | `api_key.updated` | `PUT /v0/user/token/:id` 编辑名称或过期时间 |
-| `api_key.disabled` | `PUT /v0/user/token/:id` 将 Key 状态改为禁用 |
+| `api_key.disabled` | `PUT /v0/user/token/:id` 将 Key 状态改为禁用，或 `POST /v0/user/token/:id/disable` |
 | `api_key.deleted` | `DELETE /v0/user/token/:id` |
+| `api_key.rotated` | `POST /v0/user/token/:id/rotate` |
+| `api_key.leak_reported` | `POST /v0/user/token/:id/report-leak` |
+| `api_key.batch_disabled` | `POST /v0/admin/token/batch-disable` |
 | `api_key.quota_limit_denied` | 用户端尝试通过 `PUT /v0/user/token/:id` 修改额度或无限标记被拒绝 |
 | `setting.create` | `PUT /v0/admin/setting` 新增 key |
 | `setting.update` | `PUT /v0/admin/setting` 修改已有 key |
@@ -524,6 +527,12 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | POST | `/v0/user/token` | 已实现 | 创建 API Key，明文只返回一次，成功后写 `api_key.created` 审计 |
 | PUT | `/v0/user/token/:id` | 已实现 | 编辑 API Key 名称、状态、过期时间；普通编辑写 `api_key.updated`，禁用写 `api_key.disabled`，额度/无限标记编辑拒绝写 `api_key.quota_limit_denied` |
 | DELETE | `/v0/user/token/:id` | 已实现 | 删除 API Key，成功后写 `api_key.deleted` 审计 |
+| POST | `/v0/user/token/:id/disable` | 已实现 | 禁用自己的 API Key，可记录禁用原因，成功后写 `api_key.disabled` 审计 |
+| POST | `/v0/user/token/:id/rotate` | 已实现 | 创建替换 Key、返回新明文一次、写入 `rotated_from_id` 并禁用旧 Key，成功后写 `api_key.rotated` 审计 |
+| POST | `/v0/user/token/:id/report-leak` | 已实现 | 上报泄露并立即禁用 Key，返回替换建议，成功后写 `api_key.leak_reported` 审计 |
+| GET | `/v0/user/token/:id/usage` | 已实现 | 返回该 Key 的调用数、成功/失败数、额度消耗、总 tokens 和最近调用摘要 |
+| GET | `/v0/admin/token` | 已实现 | 管理员跨用户查询脱敏 API Key 摘要，可按 `user_id` 和 `status` 过滤 |
+| POST | `/v0/admin/token/batch-disable` | 已实现 | 管理员按 `token_ids` 或 `user_id` 批量禁用 Key，必须提供筛选条件，成功后写 `api_key.batch_disabled` 审计 |
 
 用户端 API Key 不允许直接编辑最大消耗额度和无限额度标记，避免普通用户绕过预算策略；拒绝记录会写入管理审计，审计摘要不包含完整 API Key 明文或哈希。
 

@@ -155,18 +155,195 @@ func (h *TokenHandler) Delete(c *gin.Context) {
 	common.SuccessMsg(c, "API Key 已删除")
 }
 
+func (h *TokenHandler) Rotate(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	before, err := h.svc.GetByIDForUser(id, user.ID)
+	if err != nil {
+		common.FailWithStatus(c, 404, "API Key 不存在")
+		return
+	}
+	oldAfter, newToken, err := h.svc.RotateForUser(id, user.ID)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	plainKey := newToken.Key
+	newToken.Key = ""
+	after := map[string]interface{}{
+		"rotated":     tokenAuditSummary(oldAfter),
+		"replacement": tokenAuditSummary(newToken),
+	}
+	if err := h.recordAPIKeyAudit(c, user, "api_key.rotated", id, tokenAuditSummary(before), after); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.CreateTokenResponse{
+		TokenResponse: dto.TokenFromModel(*newToken),
+		Key:           plainKey,
+	})
+}
+
+func (h *TokenHandler) Disable(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	var req dto.ReportTokenLeakRequest
+	_ = c.ShouldBindJSON(&req)
+	before, err := h.svc.GetByIDForUser(id, user.ID)
+	if err != nil {
+		common.FailWithStatus(c, 404, "API Key 不存在")
+		return
+	}
+	after, err := h.svc.DisableForUser(id, user.ID, req.Reason)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAPIKeyAudit(c, user, "api_key.disabled", id, tokenAuditSummary(before), tokenAuditSummary(after)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.TokenFromModel(*after))
+}
+
+func (h *TokenHandler) ReportLeak(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	var req dto.ReportTokenLeakRequest
+	_ = c.ShouldBindJSON(&req)
+	before, err := h.svc.GetByIDForUser(id, user.ID)
+	if err != nil {
+		common.FailWithStatus(c, 404, "API Key 不存在")
+		return
+	}
+	after, err := h.svc.ReportLeakForUser(id, user.ID, req.Reason)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	auditAfter := map[string]interface{}{
+		"token":                   tokenAuditSummary(after),
+		"replacement_recommended": true,
+	}
+	if err := h.recordAPIKeyAudit(c, user, "api_key.leak_reported", id, tokenAuditSummary(before), auditAfter); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.ReportTokenLeakResponse{
+		ID:                     after.ID,
+		Status:                 after.Status,
+		RevokedReason:          after.RevokedReason,
+		ReplacementRecommended: true,
+	})
+}
+
+func (h *TokenHandler) Usage(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	stats, err := h.svc.GetUsageForUser(id, user.ID)
+	if err != nil {
+		common.FailWithStatus(c, 404, "API Key 不存在")
+		return
+	}
+	common.Success(c, tokenUsageResponse(stats))
+}
+
+func (h *TokenHandler) AdminList(c *gin.Context) {
+	userID := queryUintPtr(c, "user_id")
+	status := queryIntPtr(c, "status")
+	page := queryInt(c, "page", 1)
+	pageSize := queryInt(c, "page_size", 20)
+	tokens, total, err := h.svc.ListFiltered(userID, status, page, pageSize)
+	if err != nil {
+		common.FailWithStatus(c, 500, "查询 API Key 失败")
+		return
+	}
+	data := make([]dto.TokenResponse, 0, len(tokens))
+	for _, token := range tokens {
+		data = append(data, dto.TokenFromModel(token))
+	}
+	page, pageSize = pageValues(page, pageSize)
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: data})
+}
+
+func (h *TokenHandler) BatchDisable(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.BatchDisableTokensRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "批量禁用 API Key 参数无效")
+		return
+	}
+	result, matched, err := h.svc.BatchDisable(service.BatchDisableTokensInput{
+		TokenIDs: req.TokenIDs,
+		UserID:   req.UserID,
+		Reason:   req.Reason,
+	})
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	resp := dto.BatchDisableTokensResponse{
+		MatchedCount:  result.MatchedCount,
+		DisabledCount: result.DisabledCount,
+		Reason:        result.Reason,
+		TokenIDs:      result.TokenIDs,
+	}
+	after := tokenBatchDisableAuditSummary(req, resp, matched)
+	if err := h.recordAPIKeyAuditResource(c, operator, "api_key.batch_disabled", "batch", nil, after, "success", ""); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, resp)
+}
+
 func (h *TokenHandler) recordAPIKeyAudit(c *gin.Context, operator *model.User, action string, id uint, before, after interface{}) error {
 	return h.recordAPIKeyAuditResult(c, operator, action, id, before, after, "success", "")
 }
 
 func (h *TokenHandler) recordAPIKeyAuditResult(c *gin.Context, operator *model.User, action string, id uint, before, after interface{}, result, errorCode string) error {
+	return h.recordAPIKeyAuditResource(c, operator, action, strconv.FormatUint(uint64(id), 10), before, after, result, errorCode)
+}
+
+func (h *TokenHandler) recordAPIKeyAuditResource(c *gin.Context, operator *model.User, action string, resourceID string, before, after interface{}, result, errorCode string) error {
 	return h.auditSvc.RecordAdminAuditLog(service.AdminAuditRecordInput{
 		RequestID:     c.GetString("request_id"),
 		ActorUserID:   operator.ID,
 		ActorRole:     operator.Role,
 		Action:        action,
 		ResourceType:  "api_key",
-		ResourceID:    strconv.FormatUint(uint64(id), 10),
+		ResourceID:    resourceID,
 		BeforeSummary: auditSummary(before),
 		AfterSummary:  auditSummary(after),
 		Result:        result,
@@ -176,6 +353,21 @@ func (h *TokenHandler) recordAPIKeyAuditResult(c *gin.Context, operator *model.U
 	})
 }
 
+func tokenUsageResponse(stats service.TokenUsageStats) dto.TokenUsageResponse {
+	return dto.TokenUsageResponse{
+		TokenID:      stats.TokenID,
+		CallCount:    stats.CallCount,
+		SuccessCount: stats.SuccessCount,
+		ErrorCount:   stats.ErrorCount,
+		TotalQuota:   stats.TotalQuota,
+		TotalTokens:  stats.TotalTokens,
+		LastUsedAt:   stats.LastUsedAt,
+		LastModel:    stats.LastModel,
+		LastStatus:   stats.LastStatus,
+		LastErrorMsg: stats.LastErrorMsg,
+	}
+}
+
 // tokenAuditSummary 使用公开 DTO 字段白名单，避免把哈希或一次性明文 Key 写入审计。
 func tokenAuditSummary(token *model.Token) map[string]interface{} {
 	if token == nil {
@@ -183,15 +375,17 @@ func tokenAuditSummary(token *model.Token) map[string]interface{} {
 	}
 	info := dto.TokenFromModel(*token)
 	return map[string]interface{}{
-		"id":           info.ID,
-		"user_id":      info.UserID,
-		"name":         info.Name,
-		"status":       info.Status,
-		"expired_at":   info.ExpiredAt,
-		"remain_quota": info.RemainQuota,
-		"unlimited":    info.Unlimited,
-		"created_at":   info.CreatedAt,
-		"updated_at":   info.UpdatedAt,
+		"id":              info.ID,
+		"user_id":         info.UserID,
+		"name":            info.Name,
+		"status":          info.Status,
+		"expired_at":      info.ExpiredAt,
+		"remain_quota":    info.RemainQuota,
+		"unlimited":       info.Unlimited,
+		"rotated_from_id": info.RotatedFromID,
+		"revoked_reason":  info.RevokedReason,
+		"created_at":      info.CreatedAt,
+		"updated_at":      info.UpdatedAt,
 	}
 }
 
@@ -207,4 +401,19 @@ func tokenQuotaDeniedAuditSummary(token *model.Token, req dto.UpdateTokenRequest
 		summary["requested_unlimited"] = *req.Unlimited
 	}
 	return summary
+}
+
+func tokenBatchDisableAuditSummary(req dto.BatchDisableTokensRequest, resp dto.BatchDisableTokensResponse, matched []model.Token) map[string]interface{} {
+	tokens := make([]map[string]interface{}, 0, len(matched))
+	for i := range matched {
+		tokens = append(tokens, tokenAuditSummary(&matched[i]))
+	}
+	return map[string]interface{}{
+		"filters": map[string]interface{}{
+			"token_ids": req.TokenIDs,
+			"user_id":   req.UserID,
+		},
+		"result": resp,
+		"tokens": tokens,
+	}
 }

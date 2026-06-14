@@ -24,7 +24,34 @@ var (
 	ErrAPIUserDisabled        = errors.New("user is disabled")
 	ErrInsufficientUserQuota  = errors.New("insufficient user quota")
 	ErrInsufficientTokenQuota = errors.New("insufficient token quota")
+	ErrBatchDisableNoFilter   = errors.New("batch disable requires token_ids or user_id")
 )
+
+type TokenUsageStats struct {
+	TokenID      uint
+	CallCount    int64
+	SuccessCount int64
+	ErrorCount   int64
+	TotalQuota   int64
+	TotalTokens  int64
+	LastUsedAt   *time.Time
+	LastModel    string
+	LastStatus   int
+	LastErrorMsg string
+}
+
+type BatchDisableTokensInput struct {
+	TokenIDs []uint
+	UserID   *uint
+	Reason   string
+}
+
+type BatchDisableTokensResult struct {
+	MatchedCount  int64
+	DisabledCount int64
+	Reason        string
+	TokenIDs      []uint
+}
 
 // ValidateAndGetToken 验证 API Key 有效性：
 // 1. 查 tokens 表匹配 key
@@ -65,10 +92,21 @@ func (s *TokenService) ValidateAndGetToken(key string) (*model.Token, error) {
 
 // List 令牌列表 (管理员看全量, 用户看自己的)。
 func (s *TokenService) List(userID uint, page, pageSize int) ([]model.Token, int64, error) {
+	var userIDPtr *uint
+	if userID > 0 {
+		userIDPtr = &userID
+	}
+	return s.ListFiltered(userIDPtr, nil, page, pageSize)
+}
+
+func (s *TokenService) ListFiltered(userID *uint, status *int, page, pageSize int) ([]model.Token, int64, error) {
 	page, pageSize = normalizePage(page, pageSize)
 	query := internal.DB.Model(&model.Token{})
-	if userID > 0 {
-		query = query.Where("user_id = ?", userID)
+	if userID != nil {
+		query = query.Where("user_id = ?", *userID)
+	}
+	if status != nil {
+		query = query.Where("status = ?", *status)
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -114,31 +152,20 @@ func (s *TokenService) Create(userID uint, name string, remainQuota int64, unlim
 		if user.Status != common.UserStatusEnabled {
 			return ErrAPIUserDisabled
 		}
-		for i := 0; i < 3; i++ {
-			plain, err := common.GenerateTokenKey()
-			if err != nil {
-				return err
-			}
-			token := &model.Token{
-				UserID:      userID,
-				Name:        name,
-				Key:         common.SHA256Hex(plain),
-				Status:      common.TokenStatusEnabled,
-				ExpiredAt:   expires,
-				RemainQuota: remainQuota,
-				Unlimited:   unlimited,
-			}
-			if err := tx.Create(token).Error; err != nil {
-				if i < 2 {
-					continue
-				}
-				return err
-			}
-			plainKey = plain
-			created = token
-			return nil
+		token, plain, err := createTokenWithPlain(tx, model.Token{
+			UserID:      userID,
+			Name:        name,
+			Status:      common.TokenStatusEnabled,
+			ExpiredAt:   expires,
+			RemainQuota: remainQuota,
+			Unlimited:   unlimited,
+		})
+		if err != nil {
+			return err
 		}
-		return errors.New("failed to generate api key")
+		plainKey = plain
+		created = token
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -147,11 +174,224 @@ func (s *TokenService) Create(userID uint, name string, remainQuota int64, unlim
 	return created, nil
 }
 
+func createTokenWithPlain(tx *gorm.DB, base model.Token) (*model.Token, string, error) {
+	for i := 0; i < 3; i++ {
+		plain, err := common.GenerateTokenKey()
+		if err != nil {
+			return nil, "", err
+		}
+		token := base
+		token.Key = common.SHA256Hex(plain)
+		if err := tx.Create(&token).Error; err != nil {
+			if i < 2 {
+				continue
+			}
+			return nil, "", err
+		}
+		return &token, plain, nil
+	}
+	return nil, "", errors.New("failed to generate api key")
+}
+
+func (s *TokenService) RotateForUser(id, userID uint) (*model.Token, *model.Token, error) {
+	var oldAfter *model.Token
+	var created *model.Token
+	var plainKey string
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		var old model.Token
+		if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&old).Error; err != nil {
+			return err
+		}
+		if old.Status != common.TokenStatusEnabled {
+			return ErrAPIKeyDisabled
+		}
+		if err := tx.Model(&model.Token{}).
+			Where("id = ? AND user_id = ?", id, userID).
+			Updates(map[string]interface{}{
+				"status":         common.TokenStatusDisabled,
+				"revoked_reason": "rotated",
+			}).Error; err != nil {
+			return err
+		}
+
+		rotatedFromID := old.ID
+		var expires *time.Time
+		if old.ExpiredAt != nil {
+			t := *old.ExpiredAt
+			expires = &t
+		}
+		token, plain, err := createTokenWithPlain(tx, model.Token{
+			UserID:        old.UserID,
+			Name:          old.Name,
+			Status:        common.TokenStatusEnabled,
+			ExpiredAt:     expires,
+			RemainQuota:   old.RemainQuota,
+			Unlimited:     old.Unlimited,
+			RotatedFromID: &rotatedFromID,
+		})
+		if err != nil {
+			return err
+		}
+		old.Status = common.TokenStatusDisabled
+		old.RevokedReason = "rotated"
+		oldAfter = &old
+		created = token
+		plainKey = plain
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	created.Key = plainKey
+	return oldAfter, created, nil
+}
+
+func (s *TokenService) DisableForUser(id, userID uint, reason string) (*model.Token, error) {
+	reason = normalizeRevokedReason(reason, "user_disabled")
+	var token model.Token
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&token).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Token{}).
+			Where("id = ? AND user_id = ?", id, userID).
+			Updates(map[string]interface{}{
+				"status":         common.TokenStatusDisabled,
+				"revoked_reason": reason,
+			}).Error; err != nil {
+			return err
+		}
+		token.Status = common.TokenStatusDisabled
+		token.RevokedReason = reason
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &token, nil
+}
+
+func (s *TokenService) ReportLeakForUser(id, userID uint, reason string) (*model.Token, error) {
+	return s.DisableForUser(id, userID, normalizeRevokedReason(reason, "reported_leak"))
+}
+
+func (s *TokenService) GetUsageForUser(id, userID uint) (TokenUsageStats, error) {
+	if _, err := s.GetByIDForUser(id, userID); err != nil {
+		return TokenUsageStats{}, err
+	}
+	type aggregate struct {
+		CallCount    int64
+		SuccessCount int64
+		ErrorCount   int64
+		TotalQuota   int64
+		TotalTokens  int64
+	}
+	var agg aggregate
+	err := internal.DB.Model(&model.Log{}).
+		Where("user_id = ? AND token_id = ?", userID, id).
+		Select(
+			"COUNT(*) AS call_count, "+
+				"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS success_count, "+
+				"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS error_count, "+
+				"COALESCE(SUM(quota_used), 0) AS total_quota, "+
+				"COALESCE(SUM(total_tokens), 0) AS total_tokens",
+			common.LogStatusSuccess,
+			common.LogStatusFailed,
+		).
+		Scan(&agg).Error
+	if err != nil {
+		return TokenUsageStats{}, err
+	}
+	stats := TokenUsageStats{
+		TokenID:      id,
+		CallCount:    agg.CallCount,
+		SuccessCount: agg.SuccessCount,
+		ErrorCount:   agg.ErrorCount,
+		TotalQuota:   agg.TotalQuota,
+		TotalTokens:  agg.TotalTokens,
+	}
+	if agg.CallCount == 0 {
+		return stats, nil
+	}
+	var last model.Log
+	err = internal.DB.
+		Where("user_id = ? AND token_id = ?", userID, id).
+		Order("created_at DESC, id DESC").
+		First(&last).Error
+	if err != nil {
+		return TokenUsageStats{}, err
+	}
+	lastUsedAt := last.CreatedAt
+	stats.LastUsedAt = &lastUsedAt
+	stats.LastModel = last.Model
+	stats.LastStatus = last.Status
+	stats.LastErrorMsg = last.ErrorMsg
+	return stats, nil
+}
+
+func (s *TokenService) BatchDisable(input BatchDisableTokensInput) (BatchDisableTokensResult, []model.Token, error) {
+	tokenIDs := uniquePositiveUint(input.TokenIDs)
+	if len(tokenIDs) == 0 && input.UserID == nil {
+		return BatchDisableTokensResult{}, nil, ErrBatchDisableNoFilter
+	}
+	reason := normalizeRevokedReason(input.Reason, "admin_batch_disable")
+	var matched []model.Token
+	var disabledIDs []uint
+	var disabledCount int64
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		query := tx.Model(&model.Token{})
+		if len(tokenIDs) > 0 {
+			query = query.Where("id IN ?", tokenIDs)
+		}
+		if input.UserID != nil {
+			query = query.Where("user_id = ?", *input.UserID)
+		}
+		if err := query.Order("id ASC").Find(&matched).Error; err != nil {
+			return err
+		}
+		for _, token := range matched {
+			if token.Status == common.TokenStatusEnabled {
+				disabledIDs = append(disabledIDs, token.ID)
+			}
+		}
+		if len(disabledIDs) == 0 {
+			return nil
+		}
+		res := tx.Model(&model.Token{}).
+			Where("id IN ?", disabledIDs).
+			Updates(map[string]interface{}{
+				"status":         common.TokenStatusDisabled,
+				"revoked_reason": reason,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		disabledCount = res.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return BatchDisableTokensResult{}, nil, err
+	}
+	return BatchDisableTokensResult{
+		MatchedCount:  int64(len(matched)),
+		DisabledCount: disabledCount,
+		Reason:        reason,
+		TokenIDs:      disabledIDs,
+	}, matched, nil
+}
+
 // Update 编辑 Token。
 func (s *TokenService) Update(id uint, updates map[string]interface{}) error {
 	allowed := filterUpdates(updates, "name", "status", "expired_at")
-	if status, ok := allowed["status"].(int); ok && status != common.TokenStatusDisabled && status != common.TokenStatusEnabled {
-		return errors.New("invalid token status")
+	if status, ok := allowed["status"].(int); ok {
+		if status != common.TokenStatusDisabled && status != common.TokenStatusEnabled {
+			return errors.New("invalid token status")
+		}
+		if status == common.TokenStatusDisabled {
+			allowed["revoked_reason"] = normalizeRevokedReason("", "user_disabled")
+		} else {
+			allowed["revoked_reason"] = ""
+		}
 	}
 	if len(allowed) == 0 {
 		return nil
@@ -234,4 +474,41 @@ func (s *TokenService) HasAvailableQuota(token *model.Token) bool {
 		token.User = &user
 	}
 	return token.User.Status == common.UserStatusEnabled && token.User.Quota > 0
+}
+
+func normalizeRevokedReason(reason, fallback string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = fallback
+	}
+	reason = strings.Map(func(r rune) rune {
+		if r < 32 {
+			return -1
+		}
+		return r
+	}, reason)
+	if reason == "" {
+		reason = fallback
+	}
+	runes := []rune(reason)
+	if len(runes) > 128 {
+		reason = string(runes[:128])
+	}
+	return reason
+}
+
+func uniquePositiveUint(values []uint) []uint {
+	seen := make(map[uint]struct{}, len(values))
+	result := make([]uint, 0, len(values))
+	for _, value := range values {
+		if value == 0 {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }

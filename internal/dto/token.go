@@ -26,16 +26,28 @@ type UpdateTokenRequest struct {
 	ExpiredAt   *int64  `json:"expired_at"`
 }
 
+type ReportTokenLeakRequest struct {
+	Reason string `json:"reason"`
+}
+
+type BatchDisableTokensRequest struct {
+	TokenIDs []uint `json:"token_ids"`
+	UserID   *uint  `json:"user_id"`
+	Reason   string `json:"reason"`
+}
+
 type TokenResponse struct {
-	ID          uint       `json:"id"`
-	UserID      uint       `json:"user_id"`
-	Name        string     `json:"name"`
-	Status      int        `json:"status"`
-	ExpiredAt   *time.Time `json:"expired_at,omitempty"`
-	RemainQuota int64      `json:"remain_quota"`
-	Unlimited   bool       `json:"unlimited"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID            uint       `json:"id"`
+	UserID        uint       `json:"user_id"`
+	Name          string     `json:"name"`
+	Status        int        `json:"status"`
+	ExpiredAt     *time.Time `json:"expired_at,omitempty"`
+	RemainQuota   int64      `json:"remain_quota"`
+	Unlimited     bool       `json:"unlimited"`
+	RotatedFromID *uint      `json:"rotated_from_id,omitempty"`
+	RevokedReason string     `json:"revoked_reason,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 type CreateTokenResponse struct {
@@ -43,16 +55,45 @@ type CreateTokenResponse struct {
 	Key string `json:"key"`
 }
 
+type TokenUsageResponse struct {
+	TokenID      uint       `json:"token_id"`
+	CallCount    int64      `json:"call_count"`
+	SuccessCount int64      `json:"success_count"`
+	ErrorCount   int64      `json:"error_count"`
+	TotalQuota   int64      `json:"total_quota"`
+	TotalTokens  int64      `json:"total_tokens"`
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+	LastModel    string     `json:"last_model,omitempty"`
+	LastStatus   int        `json:"last_status,omitempty"`
+	LastErrorMsg string     `json:"last_error_msg,omitempty"`
+}
+
+type ReportTokenLeakResponse struct {
+	ID                     uint   `json:"id"`
+	Status                 int    `json:"status"`
+	RevokedReason          string `json:"revoked_reason"`
+	ReplacementRecommended bool   `json:"replacement_recommended"`
+}
+
+type BatchDisableTokensResponse struct {
+	MatchedCount  int64  `json:"matched_count"`
+	DisabledCount int64  `json:"disabled_count"`
+	Reason        string `json:"reason"`
+	TokenIDs      []uint `json:"token_ids"`
+}
+
 func TokenFromModel(token model.Token) TokenResponse {
 	return TokenResponse{
-		ID:          token.ID,
-		UserID:      token.UserID,
-		Name:        token.Name,
-		Status:      token.Status,
-		ExpiredAt:   token.ExpiredAt,
-		RemainQuota: token.RemainQuota,
-		Unlimited:   token.Unlimited,
-		CreatedAt:   token.CreatedAt,
-		UpdatedAt:   token.UpdatedAt,
+		ID:            token.ID,
+		UserID:        token.UserID,
+		Name:          token.Name,
+		Status:        token.Status,
+		ExpiredAt:     token.ExpiredAt,
+		RemainQuota:   token.RemainQuota,
+		Unlimited:     token.Unlimited,
+		RotatedFromID: token.RotatedFromID,
+		RevokedReason: token.RevokedReason,
+		CreatedAt:     token.CreatedAt,
+		UpdatedAt:     token.UpdatedAt,
 	}
 }

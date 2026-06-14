@@ -327,6 +327,112 @@ paths:
           $ref: "#/components/responses/StandardOK"
         "404":
           $ref: "#/components/responses/StandardNotFound"
+  /v0/user/token/{id}/disable:
+    post:
+      tags: [User API Key]
+      summary: 禁用 API Key
+      description: 显式禁用当前用户自己的 API Key，可选记录禁用原因；成功后写 api_key.disabled 管理审计。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportTokenLeakRequest"
+      responses:
+        "200":
+          description: 禁用成功，返回脱敏 Token 摘要。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Token"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
+  /v0/user/token/{id}/rotate:
+    post:
+      tags: [User API Key]
+      summary: 轮换 API Key
+      description: 创建替换 Key，复制名称、过期时间和预算语义，写入 rotated_from_id，禁用旧 Key；新 key 明文只在本次响应展示，成功后写 api_key.rotated 管理审计。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: 轮换成功，返回新 Key 摘要和一次性明文。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CreateTokenResponse"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
+  /v0/user/token/{id}/report-leak:
+    post:
+      tags: [User API Key]
+      summary: 上报 API Key 泄露
+      description: 立即禁用当前用户自己的 API Key，记录 revoked_reason，返回替换建议；成功后写 api_key.leak_reported 管理审计，审计不包含明文 Key。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportTokenLeakRequest"
+      responses:
+        "200":
+          description: 泄露上报成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ReportTokenLeakResponse"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
+  /v0/user/token/{id}/usage:
+    get:
+      tags: [User API Key]
+      summary: API Key 用量摘要
+      description: 返回当前用户指定 Key 的调用数、成功/失败数、额度消耗、总 tokens 和最近调用摘要。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: 单 Key 用量摘要。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenUsage"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
   /v0/user/log:
     get:
       tags: [User Usage]
@@ -711,6 +817,67 @@ paths:
           $ref: "#/components/responses/StandardOK"
         "400":
           $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/token:
+    get:
+      tags: [Admin API Key]
+      summary: 管理员 API Key 列表
+      description: 管理员跨用户查询脱敏 API Key 摘要；不会返回完整明文 Key 或哈希。当前支持按 user_id 和 status 过滤。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: user_id
+          in: query
+          required: false
+          schema: { type: integer, format: uint64 }
+          description: 按所属用户过滤。
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: 0=禁用，1=启用。
+      responses:
+        "200":
+          description: API Key 分页列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenPage"
+  /v0/admin/token/batch-disable:
+    post:
+      tags: [Admin API Key]
+      summary: 批量禁用 API Key
+      description: 管理员按 token_ids 或 user_id 批量禁用 API Key；必须至少提供一个筛选条件，成功后写 api_key.batch_disabled 管理审计。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchDisableTokensRequest"
+      responses:
+        "200":
+          description: 批量禁用结果。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/BatchDisableTokensResponse"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/redem:
     get:
       tags: [Admin Redem]
@@ -781,7 +948,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
       security:
         - UserJWT: []
       parameters:
@@ -2476,6 +2643,32 @@ components:
           nullable: true
           deprecated: true
           description: 用户编辑接口不允许修改无限标记；传入会返回 403。
+    ReportTokenLeakRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 128
+          description: 禁用或泄露上报原因；为空时服务端使用默认原因。
+          example: public_repo
+    BatchDisableTokensRequest:
+      type: object
+      properties:
+        token_ids:
+          type: array
+          items: { type: integer, format: uint64 }
+          description: 指定要禁用的 API Key ID 列表。
+        user_id:
+          type: integer
+          format: uint64
+          nullable: true
+          description: 按所属用户批量禁用；可与 token_ids 组合取交集。
+        reason:
+          type: string
+          maxLength: 128
+          description: 批量禁用原因；为空时使用 admin_batch_disable。
+          example: risk_review
+      description: token_ids 和 user_id 至少提供一个，避免误禁用全部 Key。
     Token:
       type: object
       properties:
@@ -2486,6 +2679,14 @@ components:
         expired_at: { type: string, format: date-time, nullable: true }
         remain_quota: { type: integer, format: int64 }
         unlimited: { type: boolean }
+        rotated_from_id:
+          type: integer
+          format: uint64
+          nullable: true
+          description: 轮换来源 API Key ID。
+        revoked_reason:
+          type: string
+          description: 禁用原因；启用 Key 通常为空。
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     CreateTokenResponse:
@@ -2497,6 +2698,43 @@ components:
               type: string
               example: sk-xxxxxxxx
               description: 只在创建响应出现一次。
+    TokenUsage:
+      type: object
+      properties:
+        token_id: { type: integer, format: uint64 }
+        call_count: { type: integer, format: int64 }
+        success_count: { type: integer, format: int64 }
+        error_count: { type: integer, format: int64 }
+        total_quota: { type: integer, format: int64 }
+        total_tokens: { type: integer, format: int64 }
+        last_used_at: { type: string, format: date-time, nullable: true }
+        last_model: { type: string }
+        last_status:
+          type: integer
+          description: 最近一条日志状态；1=成功，2=失败。
+        last_error_msg:
+          type: string
+          description: 最近失败摘要；为空表示最近调用无错误或没有日志。
+    ReportTokenLeakResponse:
+      type: object
+      properties:
+        id: { type: integer, format: uint64 }
+        status:
+          type: integer
+          example: 0
+        revoked_reason: { type: string }
+        replacement_recommended:
+          type: boolean
+          example: true
+    BatchDisableTokensResponse:
+      type: object
+      properties:
+        matched_count: { type: integer, format: int64 }
+        disabled_count: { type: integer, format: int64 }
+        reason: { type: string }
+        token_ids:
+          type: array
+          items: { type: integer, format: uint64 }
     TokenPage:
       allOf:
         - $ref: "#/components/schemas/PaginatedResult"
