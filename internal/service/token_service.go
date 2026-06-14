@@ -20,36 +20,39 @@ func NewTokenService() *TokenService {
 }
 
 var (
-	ErrInvalidAPIKey          = errors.New("invalid api key")
-	ErrAPIKeyDisabled         = errors.New("api key is disabled")
-	ErrAPIKeyExpired          = errors.New("api key is expired")
-	ErrAPIUserDisabled        = errors.New("user is disabled")
-	ErrInsufficientUserQuota  = errors.New("insufficient user quota")
-	ErrInsufficientTokenQuota = errors.New("insufficient token quota")
-	ErrBatchDisableNoFilter   = errors.New("batch disable requires token_ids or user_id")
-	ErrModelNotAllowed        = errors.New("model not allowed by api key scope")
-	ErrAPINotAllowed          = errors.New("api type not allowed by api key scope")
-	ErrChannelGroupNotAllowed = errors.New("channel group not allowed by api key scope")
-	ErrIPNotAllowed           = errors.New("ip not allowed by api key scope")
-	ErrMethodNotAllowed       = errors.New("method not allowed by api key scope")
-	ErrDailyQuotaExceeded     = errors.New("daily quota exceeded by api key scope")
+	ErrInvalidAPIKey           = errors.New("invalid api key")
+	ErrAPIKeyDisabled          = errors.New("api key is disabled")
+	ErrAPIKeyExpired           = errors.New("api key is expired")
+	ErrAPIUserDisabled         = errors.New("user is disabled")
+	ErrInsufficientUserQuota   = errors.New("insufficient user quota")
+	ErrInsufficientTokenQuota  = errors.New("insufficient token quota")
+	ErrBatchDisableNoFilter    = errors.New("batch disable requires token_ids or user_id")
+	ErrModelNotAllowed         = errors.New("model not allowed by api key scope")
+	ErrAPINotAllowed           = errors.New("api type not allowed by api key scope")
+	ErrChannelGroupNotAllowed  = errors.New("channel group not allowed by api key scope")
+	ErrEntryProtocolNotAllowed = errors.New("entry protocol not allowed by api key scope")
+	ErrIPNotAllowed            = errors.New("ip not allowed by api key scope")
+	ErrMethodNotAllowed        = errors.New("method not allowed by api key scope")
+	ErrDailyQuotaExceeded      = errors.New("daily quota exceeded by api key scope")
 )
 
 const (
-	maxTokenScopeModels        = 200
-	maxTokenScopeAPITypes      = 64
-	maxTokenScopeChannelGroups = 64
-	maxTokenScopeIPCIDRs       = 64
-	maxTokenScopeMethods       = 128
+	maxTokenScopeModels         = 200
+	maxTokenScopeAPITypes       = 64
+	maxTokenScopeChannelGroups  = 64
+	maxTokenScopeEntryProtocols = 8
+	maxTokenScopeIPCIDRs        = 64
+	maxTokenScopeMethods        = 128
 )
 
 type TokenScope struct {
-	AllowModels   []string `json:"allow_models,omitempty"`
-	APITypes      []string `json:"api_types,omitempty"`      // 入口能力白名单, 如 openai.chat/openai.embeddings
-	ChannelGroups []string `json:"channel_groups,omitempty"` // 通道分组白名单, 空通道分组按 default 处理
-	IPCIDRs       []string `json:"ip_cidrs,omitempty"`       // 来源 IP/CIDR 白名单
-	Methods       []string `json:"methods,omitempty"`        // 请求方法和路径白名单, 如 POST /v1/chat/completions
-	DailyQuota    *int64   `json:"daily_quota,omitempty"`    // 单 Key 每日最大成功消耗额度
+	AllowModels    []string `json:"allow_models,omitempty"`
+	APITypes       []string `json:"api_types,omitempty"`       // 入口能力白名单, 如 openai.chat/openai.embeddings
+	ChannelGroups  []string `json:"channel_groups,omitempty"`  // 通道分组白名单, 空通道分组按 default 处理
+	EntryProtocols []string `json:"entry_protocols,omitempty"` // 客户端入口协议白名单: openai/anthropic/gemini
+	IPCIDRs        []string `json:"ip_cidrs,omitempty"`        // 来源 IP/CIDR 白名单
+	Methods        []string `json:"methods,omitempty"`         // 请求方法和路径白名单, 如 POST /v1/chat/completions
+	DailyQuota     *int64   `json:"daily_quota,omitempty"`     // 单 Key 每日最大成功消耗额度
 }
 
 type TokenUsageStats struct {
@@ -305,6 +308,7 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 	scope.AllowModels = normalizeScopeModels(scope.AllowModels)
 	scope.APITypes = normalizeScopeAPITypes(scope.APITypes)
 	scope.ChannelGroups = normalizeScopeChannelGroups(scope.ChannelGroups)
+	scope.EntryProtocols = normalizeScopeEntryProtocols(scope.EntryProtocols)
 	scope.IPCIDRs = normalizeScopeIPCIDRs(scope.IPCIDRs)
 	scope.Methods = normalizeScopeMethods(scope.Methods)
 	if len(scope.AllowModels) > maxTokenScopeModels {
@@ -316,6 +320,9 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 	if len(scope.ChannelGroups) > maxTokenScopeChannelGroups {
 		return nil, errors.New("channel_groups exceeds limit")
 	}
+	if len(scope.EntryProtocols) > maxTokenScopeEntryProtocols {
+		return nil, errors.New("entry_protocols exceeds limit")
+	}
 	if len(scope.IPCIDRs) > maxTokenScopeIPCIDRs {
 		return nil, errors.New("ip_cidrs exceeds limit")
 	}
@@ -326,6 +333,9 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 		return nil, errors.New("daily_quota cannot be negative")
 	}
 	if err := validateScopeIPCIDRs(scope.IPCIDRs); err != nil {
+		return nil, err
+	}
+	if err := validateScopeEntryProtocols(scope.EntryProtocols); err != nil {
 		return nil, err
 	}
 	if err := validateScopeMethods(scope.Methods); err != nil {
@@ -409,6 +419,27 @@ func (s *TokenService) CheckChannelGroupScope(token *model.Token, channelGroup s
 		}
 	}
 	return ErrChannelGroupNotAllowed
+}
+
+// CheckEntryProtocolScope verifies the client-facing protocol before request parsing and routing.
+func (s *TokenService) CheckEntryProtocolScope(token *model.Token, protocol string) error {
+	if token == nil {
+		return ErrInvalidAPIKey
+	}
+	scope, err := ParseTokenScope(token.ScopeJSON)
+	if err != nil {
+		return ErrEntryProtocolNotAllowed
+	}
+	if len(scope.EntryProtocols) == 0 {
+		return nil
+	}
+	protocol = normalizeScopeEntryProtocol(protocol)
+	for _, allowed := range scope.EntryProtocols {
+		if allowed == "*" || allowed == protocol {
+			return nil
+		}
+	}
+	return ErrEntryProtocolNotAllowed
 }
 
 func (s *TokenService) CheckIPScope(token *model.Token, ip string) error {
@@ -524,6 +555,7 @@ func ParseTokenScope(raw model.JSONValue) (TokenScope, error) {
 	scope.AllowModels = normalizeScopeModels(scope.AllowModels)
 	scope.APITypes = normalizeScopeAPITypes(scope.APITypes)
 	scope.ChannelGroups = normalizeScopeChannelGroups(scope.ChannelGroups)
+	scope.EntryProtocols = normalizeScopeEntryProtocols(scope.EntryProtocols)
 	scope.IPCIDRs = normalizeScopeIPCIDRs(scope.IPCIDRs)
 	scope.Methods = normalizeScopeMethods(scope.Methods)
 	return scope, nil
@@ -828,6 +860,39 @@ func normalizeChannelGroupForScope(group string) string {
 		return "default"
 	}
 	return group
+}
+
+func normalizeScopeEntryProtocols(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = normalizeScopeEntryProtocol(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func normalizeScopeEntryProtocol(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func validateScopeEntryProtocols(values []string) error {
+	for _, value := range values {
+		switch value {
+		case "*", "openai", "anthropic", "gemini":
+			continue
+		default:
+			return errors.New("entry_protocols contains invalid protocol")
+		}
+	}
+	return nil
 }
 
 func normalizeScopeIPCIDRs(values []string) []string {

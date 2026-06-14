@@ -77,6 +77,12 @@ func authenticateAPIKey(c *gin.Context) bool {
 		writeProtocolAuthError(c, http.StatusUnauthorized, "invalid api key", "authentication_error", "invalid_api_key")
 		return false
 	}
+	// 入口协议 scope 在 relay 解析前执行，确保拒绝响应仍保持当前协议的错误外形。
+	if err := tokenSvc.CheckEntryProtocolScope(token, entryProtocol(c)); err != nil {
+		tokenSvc.RecordScopeDeniedLog(token, "entry protocol not allowed by api key scope", c.ClientIP())
+		writeProtocolAuthError(c, http.StatusForbidden, "entry protocol is not allowed by api key scope", "permission_error", "token_forbidden")
+		return false
+	}
 	if err := tokenSvc.CheckIPScope(token, c.ClientIP()); err != nil {
 		tokenSvc.RecordScopeDeniedLog(token, "ip not allowed by api key scope", c.ClientIP())
 		writeProtocolAuthError(c, http.StatusForbidden, "ip is not allowed by api key scope", "permission_error", "token_forbidden")

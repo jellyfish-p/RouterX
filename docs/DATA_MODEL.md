@@ -214,7 +214,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `unlimited` | bool | 是否无限制 |
 | `rotated_from_id` | nullable uint | 轮换来源 Token ID |
 | `revoked_reason` | string | 禁用原因，例如 `rotated`、`reported_leak`、`admin_batch_disable` |
-| `scope_json` | json | API Key 收窄策略；当前支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list 和 `daily_quota` 日预算，后续扩展协议入口、月预算和并发限制 |
+| `scope_json` | json | API Key 收窄策略；当前支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`entry_protocols` 入口协议 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list 和 `daily_quota` 日预算，后续扩展月预算和并发限制 |
 | `created_at` | time | 创建时间 |
 | `updated_at` | time | 更新时间 |
 | `deleted_at` | nullable time | 软删除 |

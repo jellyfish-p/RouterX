@@ -27,7 +27,7 @@
 - API Key 校验包含格式、哈希、状态、过期、软删除、所属用户状态和额度预检。
 - 普通用户不能通过用户端 API Key 编辑接口修改 `remain_quota` 或 `unlimited`。
 - Relay 会在调用上游前检查用户余额和 API Key 预算。
-- API Key scope 已支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list 和 `daily_quota` 日预算，未命中或达到上限时在上游调用前返回 `model_not_allowed`、`token_forbidden`、`route_forbidden` 或 `insufficient_quota` 并写失败日志。
+- API Key scope 已支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`entry_protocols` 入口协议 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list 和 `daily_quota` 日预算，未命中或达到上限时在上游调用前返回 `model_not_allowed`、`token_forbidden`、`route_forbidden` 或 `insufficient_quota` 并写失败日志。
 - 通道选择会过滤禁用通道、模型不匹配通道、错误计数过高通道和不可用 Adapter。
 - 通道候选按 `priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC` 排序，并在最高 priority 组内按 `weight` 加权选择。
 - 通道已具备 `channel_group` 字段，新通道默认写入 `default`；Relay 已按 `billing.default_user_channel_group_access` 和 `billing.user_group_channel_group_access` 在候选阶段过滤用户可访问通道分组。API Key 月预算/并发 scope 和完整策略快照仍属于目标增强。
@@ -44,7 +44,7 @@
 | 系统硬约束 | 认证、用户禁用、API Key 禁用、过期、软删除、额度不足、通道禁用 | P0 | 不可被任何请求参数覆盖。 |
 | settings | `rate_limit.*`、`billing.default_user_channel_group_access`、`billing.user_group_channel_group_access` | P0/P1 | 热更新运行时配置，必须校验类型和敏感级别。 |
 | 用户分组 | `users.group_id`、`groups.ratio` | P1 | 支撑倍率、可用通道分组和运营套餐。 |
-| API Key scope | `tokens.scope_json` | P1/P2 | 当前支持模型 allow-list、APIType allow-list、通道分组 allow-list、IP/CIDR allow-list、方法路径 allow-list 和日预算；后续进一步收窄协议入口、月预算和并发。 |
+| API Key scope | `tokens.scope_json` | P1/P2 | 当前支持模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list 和日预算；后续进一步收窄月预算和并发。 |
 | 通道配置 | `channels.models`、`channel_group`、priority、weight、熔断状态 | P0/P1 | 决定候选通道、模型匹配、分组和可用性。 |
 | 模型价格规则 | `model_prices`、`channel_model_prices` | P1 | 决定基础费用，不直接表达身份权限。 |
 | 调用方偏好 | `routerx.route` | P1 | 只在已允许候选集中继续收窄。 |
@@ -137,6 +137,7 @@ API Key scope 是调用凭据层的收窄策略。
 | `allow_models` | `["gpt-4o-mini", "claude-3-5-sonnet"]` | 当前已落地；只允许这些调用方模型名，`*` 表示不收窄模型。 |
 | `channel_groups` | `["default", "cheap"]` | 当前已落地；只允许这些通道分组，`*` 表示不收窄通道分组。 |
 | `api_types` | `["openai.chat", "openai.embeddings"]` | 当前已落地；只允许这些接口能力，`*` 表示不收窄 APIType。 |
+| `entry_protocols` | `["openai", "anthropic"]` | 当前已落地；只允许这些客户端入口协议，`*` 表示不收窄入口协议。 |
 | `methods` | `["GET /v1/models", "POST /v1/chat/completions"]` | 当前已落地；只允许这些路径和方法，`*` 表示不收窄方法路径。 |
 | `ip_cidrs` | `["203.0.113.0/24"]` | 当前已落地；只允许指定来源网络，`*` 表示不收窄来源 IP。 |
 | `daily_quota` | `100000` | 当前已落地；当日成功日志已消耗额度达到上限后拒绝。 |
@@ -267,7 +268,7 @@ access allowed
 ### P1 验收
 
 - 用户分组和通道分组访问控制已可通过 settings 配置、验证和审计；完整调用快照仍需补齐。
-- API Key scope 已支持模型、APIType、通道分组、IP/CIDR、方法路径和日预算收窄；协议入口、月预算和并发收窄仍需补齐。
+- API Key scope 已支持模型、APIType、通道分组、入口协议、IP/CIDR、方法路径和日预算收窄；月预算和并发收窄仍需补齐。
 - `routerx.route` 合法、忽略、越权和无候选路径都有稳定行为和日志摘要。
 - 计费倍率和访问控制分别快照，历史账单可解释。
 - 限流覆盖用户、Token、模型和通道维度；SQLite 单镜像可进程内降级，外部数据库或集群模式必须依赖 Redis 保持一致性。
@@ -275,7 +276,7 @@ access allowed
 ### P2 验收
 
 - 支持团队、服务账号、环境标签和批量策略管理。
-- 已支持 IP/CIDR allow-list 和日预算；月预算、RPM、TPM、并发限制和异常告警仍待补。
+- 已支持入口协议 allow-list、IP/CIDR allow-list 和日预算；月预算、RPM、TPM、并发限制和异常告警仍待补。
 - 管理审计能追踪策略变更 actor、reason、before/after snapshot 和 request_id。
 - 策略缓存支持版本、失效、回滚和生产 readiness 检查。
 - 报表能按用户分组、API Key、通道分组、模型、provider 和策略结果聚合。
@@ -285,7 +286,7 @@ access allowed
 | 场景 | 断言 |
 |------|------|
 | 默认开箱 | 不配置高级策略也能完成首次调用。 |
-| API Key scope 收窄 | 允许模型/APIType/通道分组/IP/方法路径和未达日预算请求成功；未允许模型、APIType、通道分组、IP、方法路径或达到日预算时拒绝且不调用上游。 |
+| API Key scope 收窄 | 允许模型/APIType/通道分组/入口协议/IP/方法路径和未达日预算请求成功；未允许模型、APIType、通道分组、入口协议、IP、方法路径或达到日预算时拒绝且不调用上游。 |
 | 用户分组访问 | `TestUserGroupChannelGroupAccessFiltersRelayCandidates` 覆盖默认用户只能访问允许的通道分组，越权路由偏好不调用上游。 |
 | deny 优先 | 同时命中 allow 和 deny 时拒绝。 |
 | `routerx.route` 合法 | 在允许候选集中继续收窄。 |
