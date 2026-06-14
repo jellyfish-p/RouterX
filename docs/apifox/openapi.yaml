@@ -806,7 +806,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: OpenAI Chat Completions 转发
-      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。非流式在 relay.retry_count > 0 时会对 429、5xx、网络错误、超时和响应读取失败换候选通道；400/401/403 不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
+      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。本地限流读取 rate_limit.*，覆盖全局、IP 和 Token 分钟窗口，命中时返回 rate_limit_exceeded 且不调用上游。非流式在 relay.retry_count > 0 时会对上游 429、5xx、网络错误、超时和响应读取失败换候选通道；400/401/403 不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
       security:
         - ApiKeyBearer: []
       requestBody:
@@ -835,7 +835,11 @@ paths:
         "401":
           $ref: "#/components/responses/OpenAIError"
         "429":
-          $ref: "#/components/responses/OpenAIError"
+          description: 余额不足、本地限流或上游限流。常见 code 包括 insufficient_quota、rate_limit_exceeded、upstream_429。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorEnvelope"
         "502":
           description: 无可用通道或上游错误；routerx.route 筛选后无候选时返回 no_available_channel，非流式可重试错误在 relay.retry_count 耗尽后返回最后一次上游错误，stream=true 命中非 OpenAI SSE 通道时返回 unsupported_stream_channel。
           content:
@@ -1044,7 +1048,7 @@ paths:
       description: |
         当前实现会转换到 OpenAI-compatible Chat 主链路，再返回 Anthropic-compatible message response。
         文本 content 保留；非文本 content blocks 会以 compact JSON 文本降级，stream=true 当前返回 unsupported_stream。
-        API Key、配额、路由和基础下游错误均返回 Anthropic-compatible error envelope。
+        API Key、配额、本地限流、路由和基础下游错误均返回 Anthropic-compatible error envelope；本地限流 type 为 rate_limit_error。
       security:
         - ApiKeyBearer: []
       requestBody:
@@ -1096,7 +1100,7 @@ paths:
         当前实现会转换到 OpenAI-compatible Chat 主链路，再返回 Gemini-compatible response。
         contents/systemInstruction 中的 text part 保留；非文本 parts 会以 compact JSON 文本降级。
         generationConfig.maxOutputTokens、temperature、topP、stopSequences 会映射到 OpenAI-compatible 字段。
-        API Key、配额、路由和基础下游错误均返回 Gemini-compatible error envelope。
+        API Key、配额、本地限流、路由和基础下游错误均返回 Gemini-compatible error envelope；本地限流 status 为 RESOURCE_EXHAUSTED。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -1279,19 +1283,19 @@ components:
           schema:
             $ref: "#/components/schemas/StandardResponse"
     OpenAIError:
-      description: /v1 入口协议兼容错误。
+      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded。
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/OpenAIErrorEnvelope"
     AnthropicError:
-      description: Anthropic-compatible 错误。
+      description: Anthropic-compatible 错误。本地限流返回 type=rate_limit_error。
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/AnthropicErrorEnvelope"
     GeminiError:
-      description: Gemini-compatible 错误。
+      description: Gemini-compatible 错误。本地限流返回 status=RESOURCE_EXHAUSTED。
       content:
         application/json:
           schema:

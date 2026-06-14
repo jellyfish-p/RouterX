@@ -24,11 +24,12 @@
 | `TestAdminPrivilegeBoundaries` | 管理员和超级管理员权限边界、设置脱敏、管理员不能越权管理同级或自己 |
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
-| `TestSettingsValidationAndReadiness` | settings 类型校验、JWT/生产 readiness 和关键配置缺失 |
+| `TestSettingsValidationAndReadiness` | settings 类型校验、限流阈值 `0` 禁用语义、JWT/生产 readiness 和关键配置缺失 |
 | `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |
 | `TestSettingCacheRefreshesStaleRedisValues` | settings 读取缓存、单项更新和批量更新后的 Redis 刷新边界 |
 | `TestAPIKeyAuthErrorsUseEntryProtocolShape` | Anthropic/Gemini 入口 API Key 鉴权错误外形 |
 | `TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields` | Anthropic/Gemini 非流式成功响应、usage、扣费和非文本 content/parts 降级 |
+| `TestRateLimitUsesSettingsAndEntryProtocolErrorShape` | Redis Token 限流读取 `rate_limit.*`，本地 429 不调用上游，并返回入口协议兼容错误 |
 | `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model 在本地失败且不污染通道和账单 |
 | `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
 | `TestUserBillingMatchesLogs` | 多次成功/失败混合后，用户账单、日志、余额和 Key 预算一致 |
@@ -358,7 +359,7 @@ Gemini-compatible 最小断言：
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
 | P1 | 调用事实快照 | request、policy、route、usage、billing、error 快照脱敏且能解释历史调用 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |
-| P1 | 可靠性 | 已覆盖非流式安全重试；继续补熔断、半开恢复、Redis 限流 fail-open/fail-closed |
+| P1 | 可靠性 | 已覆盖非流式安全重试和 Redis 全局/IP/Token 基础限流；继续补熔断、半开恢复、更多限流维度和生产 fail-open/fail-closed 策略 |
 | P1 | 运行模式 | SQLite 单镜像无 Redis 可运行；外部数据库无 Redis 不就绪或启动失败 |
 | P1 | 通道候选缓存 | 预加载、缓存命中、管理员修改后版本失效、集群实例回源一致 |
 | P1 | 独立日志数据库 | `LOG_SQL_DSN` 写入、日志库故障降级、主库结算最小事实可恢复 |

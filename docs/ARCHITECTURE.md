@@ -252,7 +252,7 @@ POST /v0/setup/init
 |------|----------------|----------|
 | API Key 校验 | `token:{sha256(key)}` | Token 更新、禁用、删除时删除缓存 |
 | settings | `settings` hash | 设置变更后刷新 hash |
-| 限流计数 | `rl:token:{id}:{minute}` | TTL 按窗口自动过期 |
+| 限流计数 | `rl:global:{minute}`、`rl:ip:{ip}:{minute}`、`rl:token:{id}:{minute}` | TTL 按窗口自动过期 |
 | 通道候选快照 | `route:candidates:{api_type}:{model}:{user_group}:{version}` | 通道、分组、价格、settings 或策略更新后递增版本并删除旧缓存 |
 | Admin Session | `session:admin:{id}` | 登录生成，退出删除，到期过期 |
 | OAuth State | `oauth:state:{state}` | 短 TTL，一次性消费 |

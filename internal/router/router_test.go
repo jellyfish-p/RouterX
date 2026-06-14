@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -456,6 +457,20 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 		t.Fatalf("invalid setting update should not be persisted, got %q", relayTimeout.Value)
 	}
 
+	disabledTokenRateLimit := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"rate_limit.per_token_per_min": "0",
+	})
+	if disabledTokenRateLimit.Code != http.StatusOK {
+		t.Fatalf("rate_limit.per_token_per_min=0 should be accepted to disable the dimension, got %d %s", disabledTokenRateLimit.Code, disabledTokenRateLimit.Body.String())
+	}
+	var tokenLimit model.Setting
+	if err := internal.DB.Where("key = ?", "rate_limit.per_token_per_min").First(&tokenLimit).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tokenLimit.Value != "0" {
+		t.Fatalf("rate_limit.per_token_per_min=0 should be persisted, got %q", tokenLimit.Value)
+	}
+
 	if err := internal.DB.Model(&model.Setting{}).Where("key = ?", "relay.timeout").Update("value", "0").Error; err != nil {
 		t.Fatal(err)
 	}
@@ -749,6 +764,97 @@ func TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol(t *testin
 	}
 	if storedToken.RemainQuota != 50 {
 		t.Fatalf("protocol upstream errors should not deduct token budget, got %d", storedToken.RemainQuota)
+	}
+}
+
+func TestRateLimitUsesSettingsAndEntryProtocolErrorShape(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-rate-limit","object":"chat.completion","model":"claude-test","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = nil
+	})
+	if err := service.NewSettingService().Set("rate_limit.per_token_per_min", "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "limited",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "limited",
+		"models":   "claude-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	body := map[string]interface{}{
+		"model":      "claude-test",
+		"max_tokens": 16,
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	first := performJSON(r, http.MethodPost, "/v1/messages", "Bearer "+tokenPayload.Data.Key, body)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first request should pass before token limit is exceeded, got %d %s", first.Code, first.Body.String())
+	}
+	second := performJSON(r, http.MethodPost, "/v1/messages", "Bearer "+tokenPayload.Data.Key, body)
+	secondBody := second.Body.String()
+	if second.Code != http.StatusTooManyRequests || !strings.Contains(secondBody, `"type":"error"`) || !strings.Contains(secondBody, `"type":"rate_limit_error"`) || strings.Contains(secondBody, `"code":"rate_limit_exceeded"`) {
+		t.Fatalf("rate limit should use Anthropic error shape, got %d %s", second.Code, secondBody)
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("limited request should be rejected before upstream, got %d upstream calls", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 48 {
+		t.Fatalf("only the successful request should deduct quota, got %d", storedToken.RemainQuota)
 	}
 }
 

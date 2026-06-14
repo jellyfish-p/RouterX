@@ -83,9 +83,9 @@ rediss://:password@redis.example.com:6379/0
 | `jwt.admin_expire_hours` | `24` | 管理员 JWT 过期小时数 |
 | `jwt.user_expire_hours` | `168` | User JWT 过期小时数，管理端和用户端共用 |
 | `rate_limit.enabled` | `true` | 是否启用限流 |
-| `rate_limit.global_per_min` | `1000` | 全局每分钟限制 |
-| `rate_limit.per_token_per_min` | `60` | Token 每分钟限制 |
-| `rate_limit.per_ip_per_min` | `30` | IP 每分钟限制 |
+| `rate_limit.global_per_min` | `1000` | 全局每分钟限制；`0` 表示关闭该维度 |
+| `rate_limit.per_token_per_min` | `60` | Token 每分钟限制；`0` 表示关闭该维度 |
+| `rate_limit.per_ip_per_min` | `30` | IP 每分钟限制；`0` 表示关闭该维度 |
 | `relay.timeout` | `120` | 下游超时秒数 |
 | `relay.retry_count` | `0` | 默认不自动重试；大于 0 时非流式仅对可安全重试错误换候选 |
 | `relay.error_auto_ban` | `true` | 自动熔断 |

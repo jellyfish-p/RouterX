@@ -30,7 +30,7 @@
 - 通道选择会过滤禁用通道、模型不匹配通道、错误计数过高通道和不可用 Adapter。
 - 通道候选按 `priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC` 排序，并在最高 priority 组内按 `weight` 加权选择。
 - 通道已具备 `channel_group` 字段，但完整的用户分组访问控制、API Key scope 和策略快照仍属于目标增强。
-- Redis 限流已有全局、Token 和 IP 维度的基础设置。
+- Redis 限流已有全局、Token 和 IP 维度的基础设置与执行路径；阈值来自 `rate_limit.*`，`0` 表示关闭对应维度。
 
 因此，本文档中的 P1/P2 策略能力是对现有 P0 闭环的增强，不应破坏当前开箱路径。
 
@@ -220,6 +220,8 @@ access allowed
 | 熔断 | channel/provider error rate | P1 | 故障通道临时排除候选。 |
 
 限流或预算拒绝必须返回稳定 code，并写入限流维度和 key 摘要。指标标签不得包含完整 API Key、prompt、响应正文或高基数长尾模型名。
+
+当前 P0 已实现全局、IP、API Key 三个 Redis 固定窗口维度。本地命中限流时不调用上游，并按入口协议返回兼容 429：OpenAI 为 `rate_limit_exceeded`，Anthropic 为 `rate_limit_error`，Gemini 为 `RESOURCE_EXHAUSTED`。用户、模型、通道维度以及结构化限流快照仍属于后续增强。
 
 ## 11. 快照和审计
 

@@ -4,33 +4,47 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"routerx/internal"
 	"routerx/internal/common"
+	"routerx/internal/service"
 )
 
-// RateLimit Gin 中间件：多维限流。
-// 支持全局 / 每令牌 / 每 IP 三级限流，
-// 限流计数存储在 Redis (Sliding Window / Token Bucket)。
+type rateLimitConfig struct {
+	enabled        bool
+	globalPerMin   int64
+	perTokenPerMin int64
+	perIPPerMin    int64
+}
+
+// RateLimit Gin 中间件：基于 Redis 的分钟级多维限流。
+// rate_limit.* 从 settings 热读取；任一维度配置为 0 时跳过该维度。
 func RateLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if internal.RDB == nil {
 			c.Next()
 			return
 		}
+		cfg := loadRateLimitConfig()
+		if !cfg.enabled {
+			c.Next()
+			return
+		}
 		now := time.Now().Unix() / 60
-		ipKey := fmt.Sprintf("rl:ip:%s:%d", c.ClientIP(), now)
-		if exceeded(ipKey, 120) {
+		if cfg.globalPerMin > 0 && exceeded(fmt.Sprintf("rl:global:%d", now), cfg.globalPerMin) {
+			writeRateLimitError(c)
+			c.Abort()
+			return
+		}
+		if cfg.perIPPerMin > 0 && exceeded(fmt.Sprintf("rl:ip:%s:%d", c.ClientIP(), now), cfg.perIPPerMin) {
 			writeRateLimitError(c)
 			c.Abort()
 			return
 		}
 		if token, ok := CurrentAPIToken(c); ok {
-			tokenKey := fmt.Sprintf("rl:token:%d:%d", token.ID, now)
-			if exceeded(tokenKey, 60) {
+			if cfg.perTokenPerMin > 0 && exceeded(fmt.Sprintf("rl:token:%d:%d", token.ID, now), cfg.perTokenPerMin) {
 				writeRateLimitError(c)
 				c.Abort()
 				return
@@ -40,13 +54,43 @@ func RateLimit() gin.HandlerFunc {
 	}
 }
 
-func writeRateLimitError(c *gin.Context) {
-	path := c.Request.URL.Path
-	if strings.HasPrefix(path, "/v1/") || path == "/v1" {
-		c.JSON(http.StatusTooManyRequests, common.OpenAIError("rate limit exceeded", "rate_limit_error", "rate_limit_exceeded"))
-		return
+func loadRateLimitConfig() rateLimitConfig {
+	cfg := rateLimitConfig{
+		enabled:        true,
+		globalPerMin:   1000,
+		perTokenPerMin: 60,
+		perIPPerMin:    30,
 	}
-	common.FailWithStatus(c, http.StatusTooManyRequests, "请求过于频繁")
+	if internal.DB == nil {
+		return cfg
+	}
+	settingSvc := service.NewSettingService()
+	if enabled, err := settingSvc.GetBool("rate_limit.enabled"); err == nil {
+		cfg.enabled = enabled
+	}
+	if limit, err := settingSvc.GetInt("rate_limit.global_per_min"); err == nil && limit >= 0 {
+		cfg.globalPerMin = int64(limit)
+	}
+	if limit, err := settingSvc.GetInt("rate_limit.per_token_per_min"); err == nil && limit >= 0 {
+		cfg.perTokenPerMin = int64(limit)
+	}
+	if limit, err := settingSvc.GetInt("rate_limit.per_ip_per_min"); err == nil && limit >= 0 {
+		cfg.perIPPerMin = int64(limit)
+	}
+	return cfg
+}
+
+func writeRateLimitError(c *gin.Context) {
+	switch entryProtocol(c) {
+	case "anthropic":
+		c.JSON(http.StatusTooManyRequests, common.AnthropicError("rate limit exceeded", "rate_limit_error"))
+	case "gemini":
+		c.JSON(http.StatusTooManyRequests, common.GeminiError(http.StatusTooManyRequests, "rate limit exceeded", geminiStatusText(http.StatusTooManyRequests)))
+	case "openai":
+		c.JSON(http.StatusTooManyRequests, common.OpenAIError("rate limit exceeded", "rate_limit_error", "rate_limit_exceeded"))
+	default:
+		common.FailWithStatus(c, http.StatusTooManyRequests, "请求过于频繁")
+	}
 }
 
 func exceeded(key string, limit int64) bool {
