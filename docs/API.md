@@ -259,8 +259,8 @@ Gemini-compatible 错误示例：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/v0/admin/redem` | 基础实现 | 充值码列表，支持 `page`、`page_size`、`status`、`keyword` |
-| POST | `/v0/admin/redem` | 基础实现 | 生成随机充值码，或通过 `codes` 导入指定充值码 |
-| PATCH | `/v0/admin/redem/:id/disable` | 基础实现 | 作废未使用充值码；作废后用户不可兑换 |
+| POST | `/v0/admin/redem` | 基础实现 | 生成随机充值码，或通过 `codes` 导入指定充值码，成功后按码写管理审计 |
+| PATCH | `/v0/admin/redem/:id/disable` | 基础实现 | 作废未使用充值码；作废后用户不可兑换，成功后写管理审计 |
 
 创建/导入充值码请求：
 
@@ -329,6 +329,8 @@ Gemini-compatible 错误示例：
 | `setting.create` | `PUT /v0/admin/setting` 新增 key |
 | `setting.update` | `PUT /v0/admin/setting` 修改已有 key |
 | `user.quota_update` | `PATCH /v0/admin/user/:id/quota` |
+| `redem_code.create` | `POST /v0/admin/redem` |
+| `redem_code.disable` | `PATCH /v0/admin/redem/:id/disable` |
 
 审计摘要只保存脱敏后的变更摘要，不保存完整请求体、支付密钥、JWT secret、API Key 或 provider secret。
 

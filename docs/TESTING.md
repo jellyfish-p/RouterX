@@ -24,7 +24,7 @@
 | `TestAdminPrivilegeBoundaries` | 管理员和超级管理员权限边界、设置脱敏、管理员不能越权管理同级或自己 |
 | `TestUserRedeemsRedemCodeOnce` | 用户兑换未使用充值码、额度增加、充值码标记 used/used_by/used_at，写入幂等额度流水，重复兑换不再入账 |
 | `TestAdminQuotaAdjustmentWritesTransaction` | 管理员调整用户额度时写入额度流水和 `user.quota_update` 管理审计，记录 actor、reason、变更前后余额和幂等键 |
-| `TestAdminManagesRedemCodes` | 管理员生成随机充值码、导入指定充值码、列表查询、作废未使用码，作废码不可兑换 |
+| `TestAdminManagesRedemCodes` | 管理员生成随机充值码、导入指定充值码、列表查询、作废未使用码，作废码不可兑换，并写入 `redem_code.*` 管理审计 |
 | `TestAdminManagesPaymentProducts` | 管理员创建、更新、启用和禁用支付商品；用户侧只展示启用商品，禁用商品不能创建订单 |
 | `TestAdminPaymentProductAuditLogs` | 支付商品创建、更新和禁用成功后写入 `admin_audit_logs`，超级管理员可按资源类型查询 |
 | `TestAdminAuditRequiresSuperAdmin` | 普通管理员不能查询管理审计日志，超级管理员边界由路由层拦截 |
@@ -395,7 +395,7 @@ Gemini-compatible 最小断言：
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
 | P2 | 高级 API Key 管理 | 轮换、泄露上报、最近使用、作用域拒绝、批量禁用、审计和缓存失效 |
 | P2 | 支付充值 | Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水和人工修正审计 |
-| P2 | 观测审计 | 支付商品管理、settings 更新和用户调额审计基础测试已覆盖；继续补 Request ID、结构化日志、Prometheus 指标、更多管理审计动作和生产 `/ready` |
+| P2 | 观测审计 | 支付商品管理、settings 更新、用户调额和充值码管理审计基础测试已覆盖；继续补 Request ID、结构化日志、Prometheus 指标、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
 

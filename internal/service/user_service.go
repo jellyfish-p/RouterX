@@ -282,6 +282,20 @@ func (s *UserService) ListRedemCodes(operatorRole int, page, pageSize int, statu
 	return codes, total, err
 }
 
+func (s *UserService) GetRedemCodeAdmin(operatorRole int, id uint) (*model.RedemCode, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	if id == 0 {
+		return nil, errors.New("redem code is required")
+	}
+	var code model.RedemCode
+	if err := internal.DB.First(&code, id).Error; err != nil {
+		return nil, err
+	}
+	return &code, nil
+}
+
 // CreateRedemCodes 生成随机充值码，或导入管理员提供的指定充值码。
 func (s *UserService) CreateRedemCodes(operatorRole int, quota int64, count int, codes []string) ([]model.RedemCode, error) {
 	if operatorRole < common.RoleAdmin {

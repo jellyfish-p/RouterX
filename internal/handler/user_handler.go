@@ -201,6 +201,12 @@ func (h *UserHandler) CreateRedemCodes(c *gin.Context) {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
+	for i := range codes {
+		if err := h.recordAdminAudit(c, operator, "redem_code.create", "redem_code", codes[i].ID, nil, redemCodeAuditSummary(&codes[i])); err != nil {
+			common.FailWithStatus(c, 500, "写入审计日志失败")
+			return
+		}
+	}
 	common.Success(c, dto.RedemCodeInfosFromModels(codes))
 }
 
@@ -215,8 +221,22 @@ func (h *UserHandler) DisableRedemCode(c *gin.Context) {
 	if !ok {
 		return
 	}
+	before, err := h.svc.GetRedemCodeAdmin(operator.Role, id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
 	if err := h.svc.DisableRedemCode(operator.Role, id); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	after, err := h.svc.GetRedemCodeAdmin(operator.Role, id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAudit(c, operator, "redem_code.disable", "redem_code", id, redemCodeAuditSummary(before), redemCodeAuditSummary(after)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
 		return
 	}
 	common.SuccessMsg(c, "充值码已作废")
@@ -448,6 +468,19 @@ func userQuotaAuditSummary(user *model.User, reason string) map[string]interface
 		"display_name": user.DisplayName,
 		"quota":        user.Quota,
 		"reason":       reason,
+	}
+}
+
+func redemCodeAuditSummary(code *model.RedemCode) map[string]interface{} {
+	if code == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"id":      code.ID,
+		"code":    common.RedactSecret(code.Code),
+		"quota":   code.Quota,
+		"status":  code.Status,
+		"used_by": code.UsedBy,
 	}
 }
 

@@ -497,6 +497,14 @@ func TestAdminManagesRedemCodes(t *testing.T) {
 	if disabled.Status != common.RedemCodeStatusDisabled {
 		t.Fatalf("disabled redem code should be marked disabled, got %+v", disabled)
 	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=redem_code", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"redem_code.create"`) ||
+		!strings.Contains(auditBody, `"action":"redem_code.disable"`) ||
+		!strings.Contains(auditBody, `"resource_id":"`+uintString(disabled.ID)+`"`) {
+		t.Fatalf("admin redem management should write audit logs, got %d %s", auditResp.Code, auditBody)
+	}
 	redeemDisabled := performJSON(r, http.MethodPost, "/v0/user/redem", rootJWT, map[string]interface{}{
 		"code": codes[0].Code,
 	})

@@ -716,7 +716,7 @@ paths:
     post:
       tags: [Admin Redem]
       summary: 生成或导入充值码
-      description: codes 为空时按 count 生成随机充值码；codes 非空时导入指定充值码。count 默认 1，单次最多 100。
+      description: codes 为空时按 count 生成随机充值码；codes 非空时导入指定充值码。count 默认 1，单次最多 100。成功后按每个充值码写入 redem_code.create 管理审计。
       security:
         - UserJWT: []
       requestBody:
@@ -745,7 +745,7 @@ paths:
     patch:
       tags: [Admin Redem]
       summary: 作废充值码
-      description: 仅未使用充值码可以作废；作废后用户兑换会失败。
+      description: 仅未使用充值码可以作废；作废后用户兑换会失败。成功后写入 redem_code.disable 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -759,7 +759,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖支付商品创建、更新、启用、禁用，settings 更新，以及用户调额成功审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖支付商品创建、更新、启用、禁用，settings 更新，用户调额，以及充值码管理成功审计。
       security:
         - UserJWT: []
       parameters:
