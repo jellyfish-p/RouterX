@@ -326,6 +326,7 @@ Gemini-compatible 错误示例：
 | `payment_product.update` | `PUT /v0/admin/payment/products/:id` |
 | `payment_product.disable` | `PATCH /v0/admin/payment/products/:id/disable` |
 | `payment_product.enable` | `PATCH /v0/admin/payment/products/:id/enable` |
+| `payment_order.create` | `POST /v0/user/payment/orders` |
 | `api_key.created` | `POST /v0/user/token` |
 | `api_key.updated` | `PUT /v0/user/token/:id` 编辑名称或过期时间 |
 | `api_key.disabled` | `PUT /v0/user/token/:id` 将 Key 状态改为禁用 |
@@ -539,7 +540,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/v0/user/payment/products` | 获取可购买的充值商品 |
-| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单；provider 必须已在 settings 启用，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；`expires_at` 来自 `payment.order_expire_minutes` |
+| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并写 `payment_order.create` 管理审计；provider 必须已在 settings 启用，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；`expires_at` 来自 `payment.order_expire_minutes` |
 | GET | `/v0/user/payment/orders` | 查询当前用户支付订单列表 |
 | GET | `/v0/user/payment/orders/:order_no` | 查询当前用户支付订单详情 |
 

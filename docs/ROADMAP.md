@@ -202,7 +202,7 @@ P2 验收标准：
 | WP1-7 独立日志数据库 | P1 | LogService、OBSERVABILITY、BILLING、DATA_MODEL | `LOG_SQL_DSN` 可写独立日志库，主库保留结算最小事实或 outbox | 新增日志库降级和账单恢复测试 |
 | WP2-1 企业账号 | P2 | OAuth/OIDC、captcha、session、audit | OAuth/OIDC 不因 email 自动接管；注销恢复保留历史事实；登录审计可查 | 新增账号风险测试 |
 | WP2-2 生产观测和审计 | P2 | structured logs、metrics、audit、ready | API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理和日志清理审计基础可查；后续补 `/metrics`、Request ID、更多审计动作和生产 `/ready` 完整可用 | 新增 readiness/metrics 和更多审计动作测试 |
-| WP2-3 支付和充值 | P2 | payment products/orders/events、quota_transactions、webhook | 支付商品管理及审计、充值码生成/导入/作废/兑换审计、本地 pending 订单、Stripe webhook、Stripe 全额退款基础处理、易支付异步通知和同步返回已覆盖；后续补部分退款、争议和人工修正流水审计 | 新增部分退款、争议和人工修正测试 |
+| WP2-3 支付和充值 | P2 | payment products/orders/events、quota_transactions、webhook | 支付商品管理及审计、支付订单创建审计、充值码生成/导入/作废/兑换审计、本地 pending 订单、Stripe webhook、Stripe 全额退款基础处理、易支付异步通知和同步返回已覆盖；后续补部分退款、争议和人工修正流水审计 | 新增部分退款、争议和人工修正测试 |
 
 验收证据优先级：
 

@@ -28,6 +28,7 @@
 - `PUT /v0/admin/setting` 批量更新成功后会按 key 写入 `setting.create` 或 `setting.update` 管理审计摘要，敏感值只保存脱敏摘要。
 - `PATCH /v0/admin/user/:id/quota` 调整普通用户额度时会写入 `user.quota_update` 管理审计摘要，并关联调额原因。
 - 充值码生成、导入、作废和兑换会写入 `redem_code.*` 管理审计摘要，完整兑换码不会明文写入审计摘要。
+- 支付订单创建会写入 `payment_order.create` 管理审计摘要，checkout URL 不会写入审计摘要。
 - 通道创建、编辑、启用、禁用、删除、测试和拉取模型会写入 `channel.*` 管理审计摘要，下游密钥只记录数量或是否配置。
 - 管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝会写入 `admin.*` 管理审计摘要，密码不会写入审计摘要。
 - 管理员按 `before` 清理调用日志会写入 `log.clear` 管理审计摘要，记录清理截止时间。

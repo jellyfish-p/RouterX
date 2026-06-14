@@ -914,6 +914,14 @@ func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 	if root.Quota != 0 {
 		t.Fatalf("pending payment order must not grant quota, got %d", root.Quota)
 	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+uintString(order.ID), rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK || !strings.Contains(auditBody, `"action":"payment_order.create"`) || !strings.Contains(auditBody, order.OrderNo) {
+		t.Fatalf("payment order creation should write audit log, got %d %s", auditResp.Code, auditBody)
+	}
+	if strings.Contains(auditBody, "checkout_url") {
+		t.Fatalf("payment order audit should not store checkout URL: %s", auditBody)
+	}
 	listResp := performJSON(r, http.MethodGet, "/v0/user/payment/orders", rootJWT, nil)
 	if listResp.Code != http.StatusOK || !strings.Contains(listResp.Body.String(), order.OrderNo) {
 		t.Fatalf("user should list own payment orders, got %d %s", listResp.Code, listResp.Body.String())

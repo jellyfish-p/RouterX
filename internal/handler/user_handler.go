@@ -498,6 +498,25 @@ func paymentProductAuditSummary(product *model.PaymentProduct) map[string]interf
 	}
 }
 
+func paymentOrderAuditSummary(order *model.PaymentOrder) map[string]interface{} {
+	if order == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"id":         order.ID,
+		"order_no":   order.OrderNo,
+		"user_id":    order.UserID,
+		"product_id": order.ProductID,
+		"provider":   order.Provider,
+		"amount":     order.Amount,
+		"currency":   order.Currency,
+		"quota":      order.Quota,
+		"status":     order.Status,
+		"expires_at": order.ExpiredAt,
+		"created_at": order.CreatedAt,
+	}
+}
+
 func userAuditSummary(user *model.User) map[string]interface{} {
 	if user == nil {
 		return nil
@@ -571,6 +590,10 @@ func (h *UserHandler) CreatePaymentOrder(c *gin.Context) {
 	order, err := h.svc.CreatePaymentOrder(user.ID, req.Provider, req.ProductID, req.PayType, req.ReturnURL)
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAudit(c, user, "payment_order.create", "payment_order", order.ID, nil, paymentOrderAuditSummary(order)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
 		return
 	}
 	common.Success(c, dto.PaymentOrderInfoFromModel(order))
