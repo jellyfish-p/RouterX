@@ -110,7 +110,7 @@
 | `upstream_400` | 502 或 400 | `upstream_error` / `INVALID_ARGUMENT` | 上游认为请求错误 | 是 | 否 | 否 | 上游状态、脱敏摘要 | 检查转换和请求参数 |
 | `upstream_401` | 502 | `upstream_error` / `UNAVAILABLE` | 上游认证失败 | 是 | 否 | 否 | channel_id、provider | 检查上游密钥 |
 | `upstream_403` | 502 | `upstream_error` / `UNAVAILABLE` | 上游权限不足 | 是 | 否 | 否 | channel_id、provider | 检查上游账号权限 |
-| `upstream_429` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 上游限流 | 是 | P1 可换候选通道 | 否，除非已有 usage | channel_id、provider、上游状态 | 降低并发或切换通道 |
+| `upstream_429` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 上游限流 | 是 | 非流式可按 `relay.retry_count` 换候选通道 | 否，除非已有 usage | channel_id、provider、上游状态 | 降低并发或切换通道 |
 | `upstream_5xx` | 502 | `upstream_error` / `UNAVAILABLE` | 上游临时故障 | 是 | 非流式可重试 | 否，除非已有 usage | status、channel_id、重试次数 | 检查上游健康和熔断 |
 | `billing_failed` | 500 | `server_error` / `INTERNAL` | 扣费事务或日志事实异常 | 可能已调用 | 否 | 按事务结果 | quota_used、事务错误 | 人工核对账单 |
 | `insufficient_quota_after_usage` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 实际 usage 超过可扣额度 | 是 | 否 | 按事务结果 | usage、quota_used、余额 | 调整预留和并发策略 |
@@ -153,8 +153,8 @@
 | 限流 | 可延迟重试 | 可按策略换候选通道 | 需要保留 Retry-After 或日志摘要。 |
 | 上游 400 | 否 | 否 | 多数是转换或参数问题。 |
 | 上游 401/403 | 否 | 否 | 通道密钥或权限问题，不应放大请求。 |
-| 上游 429 | 可延迟重试 | P1 可换候选通道 | 注意供应商风控。 |
-| 上游 5xx/网络错误/超时 | 可重试 | 非流式未输出前可重试 | 流式输出后不能切换通道。 |
+| 上游 429 | 可延迟重试 | 非流式可按 `relay.retry_count` 换候选通道 | 注意供应商风控。 |
+| 上游 5xx/网络错误/超时 | 可重试 | 非流式未输出前可按 `relay.retry_count` 重试 | 流式输出后不能切换通道。 |
 | 计费失败 | 否 | 否 | 需要保护账单事实。 |
 
 ## 日志字段要求
@@ -170,7 +170,7 @@
 | `error_code` | 目标字段，用于结构化统计。 |
 | `error_source` | request、auth、quota、route、channel、upstream、billing、system。 |
 | `upstream_status` | 上游已返回 HTTP 时记录。 |
-| `retry_count` | 发生重试时记录。 |
+| `retry_count` | 发生重试时记录；当前基础实现以多条失败/成功日志表示每次尝试。 |
 | `quota_used` | 失败默认 0；已有 usage 或补偿扣费时必须可解释。 |
 | `error_msg` | 脱敏摘要，不包含密钥、DSN、完整 prompt 或完整响应。 |
 

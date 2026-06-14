@@ -20,7 +20,7 @@ P0 的交付目标是：
 | API Key 存储 | 明文只返回一次，数据库保存 SHA256 哈希，兼容早期明文存量迁移。 |
 | 有限 API Key 预算 | 创建时只设置最大消耗额度，不扣 `users.quota`；调用成功同时扣用户余额并消耗 Key 预算。 |
 | 无限 API Key 预算 | `unlimited=true` 或 `remain_quota=-1` 时，调用成功只扣用户 `quota`。 |
-| P0 Relay 重试 | `relay.retry_count=0`，先保证无重试闭环稳定；P1 再开启可配置安全重试。 |
+| Relay 重试 | `relay.retry_count=0` 默认单次调用；大于 0 时仅非流式可对安全错误换候选通道。 |
 | P0 body 日志 | `log.body_max_bytes=0`、`relay.log_body_max_bytes=0`，默认不记录请求/响应 body。 |
 | `/v1` 错误 | 必须返回入口协议兼容错误，不返回 RouterX `{success,data,message}` 包装。 |
 | 用户路由偏好 | `routerx.route` 只能收窄管理员允许的候选集，不能绕过策略。 |
@@ -126,7 +126,7 @@ P0 的交付目标是：
 2. API Key 无效返回 401，用户或 Token 禁用返回 403，余额不足返回 429。
 3. OpenAI Chat `stream=true` 命中非 OpenAI SSE 通道时返回 502 `unsupported_stream_channel`，不调用下游、不扣费。
 4. 无可用通道返回 502 `no_available_channel`，不调用下游。
-5. 下游 400 不重试；401/403 归因通道配置；429/5xx/超时在 P0 默认不自动重试。
+5. 下游 400 不重试；401/403 归因通道配置；429/5xx/网络错误/超时在非流式且 `relay.retry_count > 0` 时可换候选通道。
 6. 错误日志记录可排障摘要，不记录完整敏感响应体。
 
 验收：
@@ -173,7 +173,7 @@ P0 的交付目标是：
 P0 通过后再进入 P1：
 
 1. 客户端断开取消、Anthropic/Gemini 流式转换和更完整的流式 usage 兜底策略。
-2. 非流式安全重试、熔断、半开恢复和更细路由决策快照。
+2. 熔断、半开恢复、限流和更细路由决策快照。
 3. Anthropic/Gemini 入口协议的成功和错误格式精确映射。
 4. 多上游转换矩阵按 `docs/PROTOCOLS.md` 分级推进：OpenAI-Compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek、RouterX-Compatible。
 5. `model_prices`、`channel_model_prices`、倍率、访问控制和计费快照。

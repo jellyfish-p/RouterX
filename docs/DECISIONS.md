@@ -37,7 +37,7 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 | RXD-008 | 下游通道密钥使用 `ENCRYPTION_KEY` 或 KMS 加密 | Active | 已定 | `DATA_MODEL`、`OPERATIONS` |
 | RXD-009 | 有最大消耗额度的 API Key 是预算上限，不在创建时划拨用户余额 | Active | 已定 | `API_KEYS`、`BILLING`、`API`、`TESTING` |
 | RXD-010 | API Key 调用成功后始终扣用户余额；有限 Key 还要同时消耗自身预算上限 | Active | 已定 | `API_KEYS`、`BILLING`、`API`、`TESTING` |
-| RXD-011 | P0 `relay.retry_count=0`，先保证无重试闭环稳定 | Confirm | P0 gate | `SETTINGS`、`RELAY`、`IMPLEMENTATION` |
+| RXD-011 | `relay.retry_count=0` 默认单次调用；大于 0 开启非流式安全重试 | Active | 已定 | `SETTINGS`、`RELAY`、`IMPLEMENTATION` |
 | RXD-012 | P0 默认不记录请求和响应 body | Active | 已定 | `SETTINGS`、`OPERATIONS`、`RELAY` |
 | RXD-013 | `/v1` 必须返回入口协议兼容响应和错误格式 | Active | 已定 | `API`、`PROTOCOLS`、`RELAY`、`TESTING` |
 | RXD-014 | `routerx.route` 只能表达偏好，不能绕过管理员策略 | Active | 已定 | `RELAY`、`API`、`DESIGN` |
@@ -81,24 +81,25 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 - 扣费事务必须同时更新用户余额和 Key 预算计数，保证并发下二者都不透支。
 - 旧的划拨式 `remain_quota` 存量如存在，需要迁移或在文档和代码中标记为 legacy 语义。
 
-### RXD-011：P0 默认不自动重试
+### RXD-011：默认不自动重试
 
 默认设计：
 
 - 当前 `relay.retry_count=0`。
-- P0 只做一次明确的下游调用，先保证错误归因、日志、扣费和排障稳定。
-- P1 再开启可配置重试、熔断和半开恢复。
+- 默认只做一次明确的下游调用，先保证错误归因、日志、扣费和排障稳定。
+- 当前已支持通过 `relay.retry_count > 0` 为非流式请求开启有限候选通道重试。
+- 熔断、限流和半开恢复仍按 P1/P2 继续推进。
 
 为什么这样选：
 
 - P0 更容易证明“是否调用了下游、是否扣费、失败属于谁处理”。
-- 避免重试导致多次下游请求、重复 usage、错误归因和账单解释复杂化。
+- 避免默认重试导致多次下游请求、重复 usage、错误归因和账单解释复杂化。
 - 商业级开箱体验首先需要稳定可解释，而不是一开始追求自动容灾。
 
 代价：
 
-- 单个上游临时故障时，P0 不会自动换通道重试。
-- 管理员需要通过多通道、监控和 P1 重试能力继续增强可用性。
+- 默认配置下，单个上游临时故障不会自动换通道重试。
+- 管理员需要显式设置 `relay.retry_count`，并继续通过多通道、监控、熔断和限流增强可用性。
 
 ### RXD-019：生产 readiness 严格化
 

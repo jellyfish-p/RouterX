@@ -149,30 +149,58 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 		return nil, nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 
-	channel, err := s.channelService.SelectChannelWithRoute(reqInfo.Model, reqInfo.Route)
+	candidates, err := s.channelService.SelectChannelCandidatesWithRoute(reqInfo.Model, reqInfo.Route)
 	if err != nil {
 		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
+	selected, err := s.channelService.SelectChannelWithRoute(reqInfo.Model, reqInfo.Route)
+	if err != nil {
+		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
+		return nil, nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
+	}
+	attemptCandidates := orderRelayAttemptCandidates(candidates, selected)
+	maxAttempts := 1 + s.relayRetryCount()
+	if maxAttempts > len(attemptCandidates) {
+		maxAttempts = len(attemptCandidates)
+	}
+	var lastUsage *relay.Usage
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		channel := attemptCandidates[i]
+		resp, usage, retryable, err := s.relayNonStreamAttempt(ctx, token, apiType, reqInfo, body, clientIP, &channel)
+		if err == nil {
+			return resp, usage, nil
+		}
+		lastUsage = usage
+		lastErr = err
+		if !retryable {
+			return nil, usage, err
+		}
+	}
+	return nil, lastUsage, lastErr
+}
+
+func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.Token, apiType relay.APIType, reqInfo relayRequestInfo, body []byte, clientIP string, channel *model.Channel) ([]byte, *relay.Usage, bool, error) {
 	adapter, err := s.GetAdapter(channel.Type)
 	if err != nil {
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
-		return nil, nil, &HTTPError{Status: 502, Message: "unsupported upstream channel", Type: "upstream_error", Code: "unsupported_channel"}
+		return nil, nil, false, &HTTPError{Status: 502, Message: "unsupported upstream channel", Type: "upstream_error", Code: "unsupported_channel"}
 	}
 	target, err := s.channelService.ResolveUpstream(channel)
 	if err != nil {
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream secret decrypt failed", clientIP)
-		return nil, nil, &HTTPError{Status: 502, Message: "upstream channel secret is not available", Type: "upstream_error", Code: "upstream_secret_error"}
+		return nil, nil, false, &HTTPError{Status: 502, Message: "upstream channel secret is not available", Type: "upstream_error", Code: "upstream_secret_error"}
 	}
 	upstreamModel := s.channelService.ApplyModelRewrite(channel, reqInfo.Model)
 	outInputBody, err := replaceRequestModel(body, upstreamModel)
 	if err != nil {
-		return nil, nil, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
+		return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 	}
 
 	outBody, err := adapter.ConvertRequest(apiType, outInputBody)
 	if err != nil {
-		return nil, nil, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
+		return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 	}
 	endpoint := adapter.GetAPIEndpoint(apiType, upstreamModel)
 	timeout := s.relayTimeout()
@@ -185,10 +213,10 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 		_ = s.markChannelFailure(channel, latencyMs)
 		if errors.Is(err, context.DeadlineExceeded) {
 			_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream timeout", clientIP)
-			return nil, nil, &HTTPError{Status: 504, Message: "upstream request timed out", Type: "upstream_error", Code: "upstream_timeout"}
+			return nil, nil, true, &HTTPError{Status: 504, Message: "upstream request timed out", Type: "upstream_error", Code: "upstream_timeout"}
 		}
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream request failed", clientIP)
-		return nil, nil, &HTTPError{Status: 502, Message: "upstream request failed", Type: "upstream_error", Code: "upstream_request_failed"}
+		return nil, nil, true, &HTTPError{Status: 502, Message: "upstream request failed", Type: "upstream_error", Code: "upstream_request_failed"}
 	}
 	defer resp.Body.Close()
 
@@ -196,13 +224,13 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 	if err != nil {
 		_ = s.markChannelFailure(channel, latencyMs)
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response read failed", clientIP)
-		return nil, nil, &HTTPError{Status: 502, Message: "upstream response read failed", Type: "upstream_error", Code: "upstream_response_failed"}
+		return nil, nil, true, &HTTPError{Status: 502, Message: "upstream response read failed", Type: "upstream_error", Code: "upstream_response_failed"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_ = s.markChannelFailure(channel, latencyMs)
 		message := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, message, clientIP)
-		return nil, nil, &HTTPError{
+		return nil, nil, retryableUpstreamStatus(resp.StatusCode), &HTTPError{
 			Status:  clientStatusFromUpstream(resp.StatusCode),
 			Message: message,
 			Type:    upstreamErrorType(resp.StatusCode),
@@ -214,16 +242,16 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 	if err != nil {
 		_ = s.markChannelFailure(channel, latencyMs)
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response conversion failed", clientIP)
-		return nil, nil, &HTTPError{Status: 502, Message: "upstream response conversion failed", Type: "upstream_error", Code: "upstream_conversion_failed"}
+		return nil, nil, false, &HTTPError{Status: 502, Message: "upstream response conversion failed", Type: "upstream_error", Code: "upstream_conversion_failed"}
 	}
 	quotaUsed := quotaFromUsage(usage)
 	if err := s.tokenService.DeductQuota(token.ID, quotaUsed); err != nil {
 		_ = s.recordLog(token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
-		return nil, usage, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
+		return nil, usage, false, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 	_ = s.markChannelSuccess(channel, latencyMs)
 	_ = s.recordLog(token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
-	return converted, usage, nil
+	return converted, usage, false, nil
 }
 
 func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiType relay.APIType, body []byte, clientIP string) (*RelayStreamResult, error) {
@@ -797,11 +825,37 @@ func (s *RelayService) relayTimeout() time.Duration {
 	return time.Duration(timeoutSeconds) * time.Second
 }
 
+func (s *RelayService) relayRetryCount() int {
+	if s.settingService == nil {
+		return 0
+	}
+	value, err := s.settingService.GetInt("relay.retry_count")
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
+}
+
 func quotaFromUsage(usage *relay.Usage) int64 {
 	if usage == nil || usage.TotalTokens <= 0 {
 		return 1
 	}
 	return int64(usage.TotalTokens)
+}
+
+func orderRelayAttemptCandidates(candidates []model.Channel, selected *model.Channel) []model.Channel {
+	if selected == nil || selected.ID == 0 {
+		return candidates
+	}
+	ordered := make([]model.Channel, 0, len(candidates))
+	ordered = append(ordered, *selected)
+	for _, candidate := range candidates {
+		if candidate.ID == selected.ID {
+			continue
+		}
+		ordered = append(ordered, candidate)
+	}
+	return ordered
 }
 
 func forwardOpenAIStream(r io.Reader, write func([]byte) error, flush func()) (*relay.Usage, error) {
@@ -844,6 +898,10 @@ func usageFromOpenAIStreamLine(line []byte) *relay.Usage {
 	}
 	_ = json.Unmarshal(payload, &envelope)
 	return envelope.Usage
+}
+
+func retryableUpstreamStatus(status int) bool {
+	return status == 429 || status >= 500
 }
 
 func supportsOpenAICompatibleStream(channelType int) bool {

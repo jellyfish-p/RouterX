@@ -806,7 +806,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: OpenAI Chat Completions 转发
-      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
+      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。非流式在 relay.retry_count > 0 时会对 429、5xx、网络错误、超时和响应读取失败换候选通道；400/401/403 不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
       security:
         - ApiKeyBearer: []
       requestBody:
@@ -837,7 +837,7 @@ paths:
         "429":
           $ref: "#/components/responses/OpenAIError"
         "502":
-          description: 无可用通道或上游错误；routerx.route 筛选后无候选时返回 no_available_channel，stream=true 命中非 OpenAI SSE 通道时返回 unsupported_stream_channel。
+          description: 无可用通道或上游错误；routerx.route 筛选后无候选时返回 no_available_channel，非流式可重试错误在 relay.retry_count 耗尽后返回最后一次上游错误，stream=true 命中非 OpenAI SSE 通道时返回 unsupported_stream_channel。
           content:
             application/json:
               schema:

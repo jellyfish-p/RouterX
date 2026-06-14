@@ -87,7 +87,7 @@ rediss://:password@redis.example.com:6379/0
 | `rate_limit.per_token_per_min` | `60` | Token 每分钟限制 |
 | `rate_limit.per_ip_per_min` | `30` | IP 每分钟限制 |
 | `relay.timeout` | `120` | 下游超时秒数 |
-| `relay.retry_count` | `0` | 当前默认不自动重试；开启重试必须补错误分类和测试 |
+| `relay.retry_count` | `0` | 默认不自动重试；大于 0 时非流式仅对可安全重试错误换候选 |
 | `relay.error_auto_ban` | `true` | 自动熔断 |
 | `relay.error_ban_threshold` | `10` | 熔断阈值 |
 | `relay.log_body_max_bytes` | `0` | Relay 请求/响应 body 日志上限，`0` 表示不记录 |

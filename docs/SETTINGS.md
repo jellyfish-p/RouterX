@@ -61,7 +61,7 @@
 说明：
 
 - `jwt.secret` 可以由 `JWT_SECRET` 注入；生产和多实例部署必须显式固定，不能让各实例随机生成不同值。
-- `relay.retry_count` 当前默认是 `0`，表示 P0 默认不做自动重试；后续开启重试时必须补齐错误分类和幂等边界测试。
+- `relay.retry_count` 默认是 `0`，表示不做自动重试；大于 0 时，非流式 Relay 只对 429、5xx、网络错误、超时和响应读取失败进行有限候选通道重试。
 - `relay.log_body_max_bytes` 和 `log.body_max_bytes` 当前默认是 `0`，表示默认不记录请求/响应 body。
 
 ## P0 目标配置

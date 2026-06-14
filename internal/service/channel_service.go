@@ -55,6 +55,23 @@ func (s *ChannelService) SelectChannel(modelName string) (*model.Channel, error)
 
 // SelectChannelWithRoute 在管理员允许的候选集中应用请求级 routerx.route 偏好。
 func (s *ChannelService) SelectChannelWithRoute(modelName string, route RoutePreference) (*model.Channel, error) {
+	candidates, err := s.SelectChannelCandidatesWithRoute(modelName, route)
+	if err != nil {
+		return nil, err
+	}
+	bestPriority := candidates[0].Priority
+	bestPriorityCandidates := make([]model.Channel, 0, len(candidates))
+	for _, channel := range candidates {
+		if channel.Priority != bestPriority {
+			break
+		}
+		bestPriorityCandidates = append(bestPriorityCandidates, channel)
+	}
+	return weightedPick(bestPriorityCandidates), nil
+}
+
+// SelectChannelCandidatesWithRoute 返回经过系统过滤和 routerx.route 收窄后的有序候选通道。
+func (s *ChannelService) SelectChannelCandidatesWithRoute(modelName string, route RoutePreference) ([]model.Channel, error) {
 	modelName = strings.TrimSpace(modelName)
 	var channels []model.Channel
 	if err := internal.DB.Where("status = ? AND error_count < ?", common.ChannelStatusEnabled, 10).
@@ -63,8 +80,6 @@ func (s *ChannelService) SelectChannelWithRoute(modelName string, route RoutePre
 		return nil, err
 	}
 	candidates := make([]model.Channel, 0, len(channels))
-	bestPriority := 0
-	hasPriority := false
 	for _, channel := range channels {
 		if !channelSupportsModel(channel.Models, modelName) {
 			continue
@@ -72,19 +87,12 @@ func (s *ChannelService) SelectChannelWithRoute(modelName string, route RoutePre
 		if !channelMatchesRoute(channel, route) {
 			continue
 		}
-		if !hasPriority || channel.Priority > bestPriority {
-			candidates = candidates[:0]
-			bestPriority = channel.Priority
-			hasPriority = true
-		}
-		if channel.Priority == bestPriority {
-			candidates = append(candidates, channel)
-		}
+		candidates = append(candidates, channel)
 	}
 	if len(candidates) == 0 {
 		return nil, errors.New("no available channel")
 	}
-	return weightedPick(candidates), nil
+	return candidates, nil
 }
 
 // ResolveUpstream 解析某个通道本次请求应该使用的 base_url/api_key。

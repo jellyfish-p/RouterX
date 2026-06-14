@@ -38,6 +38,8 @@
 | `TestChatCompletionUpstreamBadRequestMapping` | 下游 400 错误映射、失败日志和密钥不泄露 |
 | `TestChatCompletionUpstreamErrorStatusMapping` | 下游 401/403/429/5xx 错误映射、失败日志、通道错误计数和不扣费 |
 | `TestChatCompletionUpstreamTimeoutMapping` | 下游超时错误映射、失败日志、通道错误计数和不扣费 |
+| `TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce` | 非流式 5xx 按 `relay.retry_count` 换候选通道，最终只按成功 usage 扣费一次 |
+| `TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus` | 下游 400 不触发候选通道重试 |
 | `TestRelayPrecheckRejectsBeforeUpstream` | 无效 Key、禁用 Key、额度不足、禁用通道不调用下游 |
 | `TestRouterXRoutePreferenceFiltersChannels` | `routerx.route` 被接受、未知字段忽略、非法结构拒绝和筛选后无候选 |
 
@@ -277,8 +279,8 @@ Gemini-compatible 最小断言：
 |----------|------|
 | 400 | 返回兼容 400，不重试 |
 | 401/403 | 返回兼容 502 或配置错误摘要，不重试，增加通道错误计数 |
-| 429 | 可按策略换候选通道或返回兼容上游错误 |
-| 500/502/503/504 | 非流式未写出前可重试候选通道 |
+| 429 | `relay.retry_count > 0` 时非流式可换候选通道，否则返回兼容上游错误 |
+| 500/502/503/504 | `relay.retry_count > 0` 时非流式未写出前可重试候选通道 |
 | 超时 | 返回 504 或上游超时 code |
 | 非法响应 JSON | 返回 `upstream_conversion_failed` |
 
@@ -355,7 +357,7 @@ Gemini-compatible 最小断言：
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
 | P1 | 调用事实快照 | request、policy、route、usage、billing、error 快照脱敏且能解释历史调用 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |
-| P1 | 可靠性 | 重试、熔断、半开恢复、Redis 限流 fail-open/fail-closed |
+| P1 | 可靠性 | 已覆盖非流式安全重试；继续补熔断、半开恢复、Redis 限流 fail-open/fail-closed |
 | P1 | 运行模式 | SQLite 单镜像无 Redis 可运行；外部数据库无 Redis 不就绪或启动失败 |
 | P1 | 通道候选缓存 | 预加载、缓存命中、管理员修改后版本失效、集群实例回源一致 |
 | P1 | 独立日志数据库 | `LOG_SQL_DSN` 写入、日志库故障降级、主库结算最小事实可恢复 |
