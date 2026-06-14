@@ -1212,6 +1212,42 @@ paths:
           $ref: "#/components/responses/GeminiError"
         "5XX":
           $ref: "#/components/responses/GeminiError"
+  /v1/models/{model}:batchEmbedContents:
+    post:
+      tags: [Gemini Compatible]
+      summary: Gemini batchEmbedContents
+      description: 基础实现；Gemini requests[].content.parts 文本会转换为 OpenAI-compatible Embeddings input 数组并调用 /v1/embeddings 上游，OpenAI embedding list 会转换为 Gemini embeddings[].values。usage 写入 RouterX 日志并扣费；批量边界、taskType/title 和 Gemini 原生上游以 docs/PROTOCOLS.md 为准。
+      security:
+        - ApiKeyBearer: []
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        $ref: "#/components/requestBodies/GenericJSON"
+      responses:
+        "200":
+          description: Gemini-compatible batch embedding response.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  embeddings:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        values:
+                          type: array
+                          items:
+                            type: number
+                            format: float
+        "4XX":
+          $ref: "#/components/responses/GeminiError"
+        "5XX":
+          $ref: "#/components/responses/GeminiError"
   /v1/models/{model}:countTokens:
     post:
       tags: [Gemini Compatible]

@@ -627,7 +627,7 @@ P0 明确失败：
 | POST | `/v1/models/{model}:streamGenerateContent` | 基础实现，流式内容生成；当前将 Gemini 请求转 OpenAI-compatible Chat SSE，再输出 Gemini SSE 事件 |
 | POST | `/v1/models/{model}:countTokens` | 基础实现，Token 计数 |
 | POST | `/v1/models/{model}:embedContent` | 基础实现，Gemini embedContent 当前转 OpenAI-compatible Embeddings 上游并返回 Gemini embedding 外形 |
-| POST | `/v1/models/{model}:batchEmbedContents` | 目标扩展，批量 Embedding |
+| POST | `/v1/models/{model}:batchEmbedContents` | 基础实现，Gemini batchEmbedContents 当前转 OpenAI-compatible Embeddings 批量 input 并返回 Gemini embeddings 外形 |
 
 ### Anthropic 格式
 

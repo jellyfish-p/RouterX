@@ -798,6 +798,112 @@ func TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage(t *testing.T)
 	}
 }
 
+func TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamBody := map[string]interface{}{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		raw := new(bytes.Buffer)
+		_, _ = raw.ReadFrom(req.Body)
+		if err := json.Unmarshal(raw.Bytes(), &upstreamBody); err != nil {
+			t.Errorf("upstream body should be json: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]},{"object":"embedding","index":1,"embedding":[0.3,0.4]}],"model":"text-embedding-test","usage":{"prompt_tokens":8,"total_tokens":8}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "gemini-batch-embed",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "gemini-batch-embed",
+		"models":   "text-embedding-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/models/text-embedding-test:batchEmbedContents", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"requests": []map[string]interface{}{
+			{
+				"content": map[string]interface{}{
+					"parts": []map[string]interface{}{{"text": "hello"}},
+				},
+			},
+			{
+				"content": map[string]interface{}{
+					"parts": []map[string]interface{}{{"text": "world"}},
+				},
+			},
+		},
+	})
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"embeddings":[{"values":[0.1,0.2]},{"values":[0.3,0.4]}]`) {
+		t.Fatalf("gemini batchEmbedContents should return Gemini embeddings response, got %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamCalls != 1 || upstreamPath != "/v1/embeddings" {
+		t.Fatalf("gemini batchEmbedContents should call OpenAI embeddings upstream once, calls=%d path=%q", upstreamCalls, upstreamPath)
+	}
+	input, ok := upstreamBody["input"].([]interface{})
+	if !ok || len(input) != 2 || input[0] != "hello" || input[1] != "world" || upstreamBody["model"] != "text-embedding-test" {
+		t.Fatalf("gemini batchEmbedContents should map requests to embeddings input array, got %#v", upstreamBody)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 42 {
+		t.Fatalf("gemini batchEmbedContents usage should deduct token budget by 8, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 92 {
+		t.Fatalf("gemini batchEmbedContents usage should deduct user quota by 8, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 8 || callLog.TotalTokens != 8 || callLog.PromptTokens != 8 || callLog.CompletionTokens != 0 {
+		t.Fatalf("unexpected gemini batchEmbedContents success log: %+v", callLog)
+	}
+}
+
 func TestGeminiStreamGenerateContentConvertsOpenAISSEAndDeductsUsage(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

@@ -169,6 +169,22 @@ func (s *RelayService) RelayGeminiEmbedContent(ctx context.Context, token *model
 	return converted, usage, nil
 }
 
+func (s *RelayService) RelayGeminiBatchEmbedContents(ctx context.Context, token *model.Token, modelName string, body []byte, clientIP string) ([]byte, *relay.Usage, error) {
+	canonical, err := geminiBatchEmbedContentsToOpenAI(modelName, body)
+	if err != nil {
+		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+	}
+	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
+	if err != nil {
+		return nil, usage, err
+	}
+	converted, err := openAIEmbeddingsToGeminiBatch(resp)
+	if err != nil {
+		return nil, usage, &HTTPError{Status: 502, Message: "response conversion failed", Type: "upstream_error", Code: "response_conversion_failed"}
+	}
+	return converted, usage, nil
+}
+
 func (s *RelayService) RelayGeminiGenerateContentStream(ctx context.Context, token *model.Token, modelName string, body []byte, clientIP string) (*RelayStreamResult, error) {
 	canonical, err := geminiGenerateToOpenAI(modelName, body, true)
 	if err != nil {
@@ -982,19 +998,56 @@ func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {
 	if modelName == "" {
 		return nil, errors.New("model is required")
 	}
-	parts := make([]string, 0, len(input.Content.Parts))
-	for _, part := range input.Content.Parts {
-		if text := strings.TrimSpace(relay.TextFromContent(part)); text != "" {
-			parts = append(parts, text)
-		}
-	}
-	if len(parts) == 0 {
+	text := geminiTextFromParts(input.Content.Parts)
+	if text == "" {
 		return nil, errors.New("content is required")
 	}
 	return json.Marshal(map[string]interface{}{
 		"model": modelName,
-		"input": strings.Join(parts, "\n"),
+		"input": text,
 	})
+}
+
+func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, error) {
+	var input struct {
+		Requests []struct {
+			Content struct {
+				Parts []json.RawMessage `json:"parts"`
+			} `json:"content"`
+		} `json:"requests"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, errors.New("invalid json body")
+	}
+	modelName = strings.TrimPrefix(strings.TrimSpace(modelName), "models/")
+	if modelName == "" {
+		return nil, errors.New("model is required")
+	}
+	if len(input.Requests) == 0 {
+		return nil, errors.New("requests are required")
+	}
+	values := make([]string, 0, len(input.Requests))
+	for _, request := range input.Requests {
+		text := geminiTextFromParts(request.Content.Parts)
+		if text == "" {
+			return nil, errors.New("content is required")
+		}
+		values = append(values, text)
+	}
+	return json.Marshal(map[string]interface{}{
+		"model": modelName,
+		"input": values,
+	})
+}
+
+func geminiTextFromParts(parts []json.RawMessage) string {
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if text := strings.TrimSpace(relay.TextFromContent(part)); text != "" {
+			values = append(values, text)
+		}
+	}
+	return strings.Join(values, "\n")
 }
 
 func openAIChatToAnthropic(body []byte) ([]byte, error) {
@@ -1205,6 +1258,25 @@ func openAIEmbeddingsToGemini(body []byte) ([]byte, error) {
 			"values": input.Data[0].Embedding,
 		},
 	})
+}
+
+func openAIEmbeddingsToGeminiBatch(body []byte) ([]byte, error) {
+	var input struct {
+		Data []struct {
+			Embedding []float64 `json:"embedding"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, err
+	}
+	if len(input.Data) == 0 {
+		return nil, errors.New("embedding response is empty")
+	}
+	embeddings := make([]map[string]interface{}, 0, len(input.Data))
+	for _, item := range input.Data {
+		embeddings = append(embeddings, map[string]interface{}{"values": item.Embedding})
+	}
+	return json.Marshal(map[string]interface{}{"embeddings": embeddings})
 }
 
 func openAIStreamChunkToGemini(chunk []byte) ([]byte, bool, error) {
