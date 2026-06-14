@@ -291,7 +291,12 @@ volumes:
 | `/ready` | 就绪检查 | DB、迁移状态、必要配置 |
 | `/metrics` | 指标 | Prometheus metrics |
 
-当前 `/ready` 已检查数据库连通性，以及初始化后 `jwt.secret` 是否可用。目标生产就绪检查应继续补充：
+当前 `/ready` 已检查数据库连通性、初始化后 `jwt.secret`、`relay.timeout`，以及已启用支付 provider 的必需密钥：
+
+- `payment.epay.enabled=true` 时必须存在 `PAYMENT_EPAY_KEY`。
+- `payment.stripe.enabled=true` 时必须存在 `PAYMENT_STRIPE_SECRET_KEY` 和 `PAYMENT_STRIPE_WEBHOOK_SECRET`。
+
+目标生产就绪检查应继续补充：
 
 - 迁移状态不是 dirty。
 - 生产模式下 `JWT_SECRET` 或数据库 `jwt.secret` 可用且跨实例一致。

@@ -804,6 +804,10 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"log.response_body_enabled",
 		"ready.production_strict",
 		"billing.bootstrap_admin_quota",
+		"payment.stripe.enabled",
+		"payment.epay.enabled",
+		"payment.currency",
+		"payment.order_expire_minutes",
 	} {
 		var count int64
 		if err := internal.DB.Model(&model.Setting{}).Where("key = ?", key).Count(&count).Error; err != nil {
@@ -877,6 +881,43 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badMode.Code != http.StatusBadRequest {
 		t.Fatalf("invalid server.mode should be rejected, got %d %s", badMode.Code, badMode.Body.String())
+	}
+	badPaymentSwitch := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"payment.epay.enabled": "sometimes",
+	})
+	if badPaymentSwitch.Code != http.StatusBadRequest {
+		t.Fatalf("invalid payment.epay.enabled should be rejected, got %d %s", badPaymentSwitch.Code, badPaymentSwitch.Body.String())
+	}
+
+	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	epayMissingKey := performJSON(r, http.MethodGet, "/ready", "", nil)
+	if epayMissingKey.Code != http.StatusServiceUnavailable || !strings.Contains(epayMissingKey.Body.String(), "PAYMENT_EPAY_KEY") {
+		t.Fatalf("enabled epay without key should make ready fail, got %d %s", epayMissingKey.Code, epayMissingKey.Body.String())
+	}
+	t.Setenv("PAYMENT_EPAY_KEY", "epay-test-secret")
+	epayReady := performJSON(r, http.MethodGet, "/ready", "", nil)
+	if epayReady.Code != http.StatusOK {
+		t.Fatalf("epay key should restore ready, got %d %s", epayReady.Code, epayReady.Body.String())
+	}
+
+	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	stripeMissingKeys := performJSON(r, http.MethodGet, "/ready", "", nil)
+	if stripeMissingKeys.Code != http.StatusServiceUnavailable || !strings.Contains(stripeMissingKeys.Body.String(), "PAYMENT_STRIPE_SECRET_KEY") {
+		t.Fatalf("enabled stripe without secret key should make ready fail, got %d %s", stripeMissingKeys.Code, stripeMissingKeys.Body.String())
+	}
+	t.Setenv("PAYMENT_STRIPE_SECRET_KEY", "sk_test_routerx")
+	stripeMissingWebhook := performJSON(r, http.MethodGet, "/ready", "", nil)
+	if stripeMissingWebhook.Code != http.StatusServiceUnavailable || !strings.Contains(stripeMissingWebhook.Body.String(), "PAYMENT_STRIPE_WEBHOOK_SECRET") {
+		t.Fatalf("enabled stripe without webhook secret should make ready fail, got %d %s", stripeMissingWebhook.Code, stripeMissingWebhook.Body.String())
+	}
+	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_routerx")
+	stripeReady := performJSON(r, http.MethodGet, "/ready", "", nil)
+	if stripeReady.Code != http.StatusOK {
+		t.Fatalf("stripe keys should restore ready, got %d %s", stripeReady.Code, stripeReady.Body.String())
 	}
 
 	if err := internal.DB.Model(&model.Setting{}).Where("key = ?", "relay.timeout").Update("value", "0").Error; err != nil {

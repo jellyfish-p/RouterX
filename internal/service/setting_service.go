@@ -225,13 +225,14 @@ func validateSettingValue(key, value string) error {
 	case "server.mode":
 		return validateServerModeSetting(key, value)
 	case "jwt.admin_expire_hours", "jwt.user_expire_hours",
-		"relay.timeout", "relay.error_ban_threshold":
+		"relay.timeout", "relay.error_ban_threshold", "payment.order_expire_minutes":
 		return validatePositiveIntSetting(key, value)
 	case "rate_limit.global_per_min", "rate_limit.per_token_per_min", "rate_limit.per_ip_per_min":
 		return validateNonNegativeIntSetting(key, value)
 	case "relay.retry_count", "relay.log_body_max_bytes", "log.body_max_bytes", "billing.bootstrap_admin_quota":
 		return validateNonNegativeIntSetting(key, value)
-	case "rate_limit.enabled", "relay.error_auto_ban", "log.request_body_enabled", "log.response_body_enabled", "ready.production_strict":
+	case "rate_limit.enabled", "relay.error_auto_ban", "log.request_body_enabled", "log.response_body_enabled",
+		"ready.production_strict", "payment.epay.enabled", "payment.stripe.enabled":
 		if _, err := strconv.ParseBool(value); err != nil {
 			return errors.New(key + " must be a boolean")
 		}
@@ -239,6 +240,10 @@ func validateSettingValue(key, value string) error {
 		ratio, err := strconv.ParseFloat(value, 64)
 		if err != nil || ratio <= 0 {
 			return errors.New("billing.default_ratio must be a positive number")
+		}
+	case "payment.currency":
+		if len(value) != 3 {
+			return errors.New("payment.currency must be a 3-letter currency code")
 		}
 	}
 	return nil

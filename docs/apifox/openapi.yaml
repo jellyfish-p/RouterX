@@ -60,7 +60,7 @@ paths:
     get:
       tags: [Health]
       summary: 服务就绪检查
-      description: 检查数据库可用性；初始化后还会检查 JWT 配置。
+      description: 检查数据库可用性；初始化后还会检查 JWT 配置、关键 settings，以及已启用支付 provider 的必需环境密钥。
       responses:
         "200":
           description: Ready

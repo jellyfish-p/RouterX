@@ -206,6 +206,8 @@ validate key exists
 - `relay.timeout <= 0`。
 - `rate_limit.*` 类型非法。
 - `billing.default_ratio <= 0`。
+- `payment.epay.enabled=true` 但 `PAYMENT_EPAY_KEY` 不可用。
+- `payment.stripe.enabled=true` 但 `PAYMENT_STRIPE_SECRET_KEY` 或 `PAYMENT_STRIPE_WEBHOOK_SECRET` 不可用。
 - 迁移状态 dirty 或必要 settings 未加载。
 
 开发/演示模式可以降级启动，但必须给出明确警告，不能让用户误以为该状态适合生产。

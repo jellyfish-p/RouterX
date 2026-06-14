@@ -178,6 +178,12 @@ func buildDefaultSettings() map[string]map[string]string {
 			"billing.default_ratio":         "1.0",
 			"billing.bootstrap_admin_quota": "100000000",
 		},
+		"payment": {
+			"payment.stripe.enabled":       "false",
+			"payment.epay.enabled":         "false",
+			"payment.currency":             "usd",
+			"payment.order_expire_minutes": "30",
+		},
 		"log": {
 			"log.body_max_bytes":        "0",
 			"log.request_body_enabled":  "false",

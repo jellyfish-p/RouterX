@@ -2,6 +2,7 @@ package router
 
 import (
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -100,6 +101,23 @@ func readinessSettingProblem() string {
 	if err != nil || timeout <= 0 {
 		return "relay.timeout"
 	}
+	epayEnabled, problem := readinessBoolSetting("payment.epay.enabled")
+	if problem != "" {
+		return problem
+	}
+	if epayEnabled && strings.TrimSpace(os.Getenv("PAYMENT_EPAY_KEY")) == "" {
+		return "PAYMENT_EPAY_KEY"
+	}
+	stripeEnabled, problem := readinessBoolSetting("payment.stripe.enabled")
+	if problem != "" {
+		return problem
+	}
+	if stripeEnabled && strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_SECRET_KEY")) == "" {
+		return "PAYMENT_STRIPE_SECRET_KEY"
+	}
+	if stripeEnabled && strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_WEBHOOK_SECRET")) == "" {
+		return "PAYMENT_STRIPE_WEBHOOK_SECRET"
+	}
 	return ""
 }
 
@@ -109,4 +127,16 @@ func settingValue(key string) (string, bool) {
 		return "", false
 	}
 	return setting.Value, true
+}
+
+func readinessBoolSetting(key string) (bool, string) {
+	raw, ok := settingValue(key)
+	if !ok {
+		return false, ""
+	}
+	value, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		return false, key
+	}
+	return value, ""
 }
