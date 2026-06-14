@@ -97,6 +97,30 @@ func (s *RelayService) RelayAnthropicMessages(ctx context.Context, token *model.
 	return converted, usage, nil
 }
 
+func (s *RelayService) RelayAnthropicMessagesStream(ctx context.Context, token *model.Token, body []byte, clientIP string) (*RelayStreamResult, error) {
+	canonical, err := anthropicMessagesToOpenAI(body)
+	if err != nil {
+		return nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+	}
+	result, err := s.RelayStream(ctx, token, relay.APIChatCompletions, canonical, clientIP)
+	if err != nil {
+		return nil, err
+	}
+	state := &anthropicStreamState{}
+	return &RelayStreamResult{
+		ContentType: "text/event-stream",
+		forward: func(write func([]byte) error, flush func()) (*relay.Usage, error) {
+			return result.Forward(func(chunk []byte) error {
+				converted, ok, err := openAIStreamChunkToAnthropic(chunk, state)
+				if err != nil || !ok {
+					return err
+				}
+				return write(converted)
+			}, flush)
+		},
+	}, nil
+}
+
 func (s *RelayService) RelayGeminiGenerateContent(ctx context.Context, token *model.Token, modelName string, body []byte, stream bool, clientIP string) ([]byte, *relay.Usage, error) {
 	canonical, err := geminiGenerateToOpenAI(modelName, body, stream)
 	if err != nil {
@@ -764,6 +788,130 @@ func openAIChatToAnthropic(body []byte) ([]byte, error) {
 		"stop_sequence": nil,
 		"usage":         usage,
 	})
+}
+
+type anthropicStreamState struct {
+	started        bool
+	contentStopped bool
+}
+
+func openAIStreamChunkToAnthropic(chunk []byte, state *anthropicStreamState) ([]byte, bool, error) {
+	line := bytes.TrimSpace(chunk)
+	if len(line) == 0 {
+		return nil, false, nil
+	}
+	if !bytes.HasPrefix(line, []byte("data:")) {
+		return chunk, true, nil
+	}
+	payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+	var out bytes.Buffer
+	if bytes.Equal(payload, []byte("[DONE]")) {
+		if state.started && !state.contentStopped {
+			if err := writeAnthropicStreamEvent(&out, "content_block_stop", map[string]interface{}{"type": "content_block_stop", "index": 0}); err != nil {
+				return nil, false, err
+			}
+			state.contentStopped = true
+		}
+		if state.started {
+			if err := writeAnthropicStreamEvent(&out, "message_stop", map[string]interface{}{"type": "message_stop"}); err != nil {
+				return nil, false, err
+			}
+		}
+		return out.Bytes(), out.Len() > 0, nil
+	}
+	if !json.Valid(payload) {
+		return nil, false, errors.New("invalid openai stream chunk")
+	}
+	var input struct {
+		Choices []struct {
+			Delta struct {
+				Content string `json:"content"`
+			} `json:"delta"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage *relay.Usage `json:"usage"`
+	}
+	if err := json.Unmarshal(payload, &input); err != nil {
+		return nil, false, err
+	}
+	if !state.started {
+		if err := writeAnthropicStreamStart(&out); err != nil {
+			return nil, false, err
+		}
+		state.started = true
+	}
+	for _, choice := range input.Choices {
+		if choice.Delta.Content != "" {
+			if err := writeAnthropicStreamEvent(&out, "content_block_delta", map[string]interface{}{
+				"type":  "content_block_delta",
+				"index": 0,
+				"delta": map[string]string{"type": "text_delta", "text": choice.Delta.Content},
+			}); err != nil {
+				return nil, false, err
+			}
+		}
+		if choice.FinishReason != "" || input.Usage != nil {
+			delta := map[string]interface{}{}
+			if choice.FinishReason != "" {
+				delta["stop_reason"] = anthropicStopReason(choice.FinishReason)
+				delta["stop_sequence"] = nil
+			}
+			if err := writeAnthropicStreamEvent(&out, "message_delta", map[string]interface{}{
+				"type":  "message_delta",
+				"delta": delta,
+				"usage": anthropicStreamUsage(input.Usage),
+			}); err != nil {
+				return nil, false, err
+			}
+		}
+	}
+	return out.Bytes(), out.Len() > 0, nil
+}
+
+func writeAnthropicStreamStart(out *bytes.Buffer) error {
+	if err := writeAnthropicStreamEvent(out, "message_start", map[string]interface{}{
+		"type": "message_start",
+		"message": map[string]interface{}{
+			"id":            "msg_routerx_stream",
+			"type":          "message",
+			"role":          "assistant",
+			"content":       []interface{}{},
+			"stop_reason":   nil,
+			"stop_sequence": nil,
+			"usage":         map[string]int{"input_tokens": 0, "output_tokens": 0},
+		},
+	}); err != nil {
+		return err
+	}
+	return writeAnthropicStreamEvent(out, "content_block_start", map[string]interface{}{
+		"type":          "content_block_start",
+		"index":         0,
+		"content_block": map[string]string{"type": "text", "text": ""},
+	})
+}
+
+func writeAnthropicStreamEvent(out *bytes.Buffer, event string, payload interface{}) error {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	out.WriteString("event: ")
+	out.WriteString(event)
+	out.WriteByte('\n')
+	out.WriteString("data: ")
+	out.Write(raw)
+	out.WriteString("\n\n")
+	return nil
+}
+
+func anthropicStreamUsage(usage *relay.Usage) map[string]int {
+	if usage == nil {
+		return map[string]int{}
+	}
+	return map[string]int{
+		"input_tokens":  usage.PromptTokens,
+		"output_tokens": usage.CompletionTokens,
+	}
 }
 
 func openAIChatToGemini(body []byte) ([]byte, error) {

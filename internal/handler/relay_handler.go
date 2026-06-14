@@ -140,6 +140,24 @@ func (h *RelayHandler) AnthropicMessages(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, common.AnthropicError("failed to read request body", "invalid_request_error"))
 		return
 	}
+	if requestWantsStream(body) {
+		result, err := h.svc.RelayAnthropicMessagesStream(c.Request.Context(), token, body, c.ClientIP())
+		if err != nil {
+			writeAnthropicRelayError(c, err)
+			return
+		}
+		c.Header("Content-Type", result.ContentType)
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Status(http.StatusOK)
+		_, _ = result.Forward(func(chunk []byte) error {
+			_, writeErr := c.Writer.Write(chunk)
+			return writeErr
+		}, func() {
+			c.Writer.Flush()
+		})
+		return
+	}
 	resp, _, err := h.svc.RelayAnthropicMessages(c.Request.Context(), token, body, c.ClientIP())
 	if err != nil {
 		writeAnthropicRelayError(c, err)

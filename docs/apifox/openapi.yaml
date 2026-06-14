@@ -1060,7 +1060,7 @@ paths:
       summary: Anthropic Messages
       description: |
         当前实现会转换到 OpenAI-compatible Chat 主链路，再返回 Anthropic-compatible message response。
-        文本 content 保留；非文本 content blocks 会以 compact JSON 文本降级，stream=true 当前返回 unsupported_stream。
+        文本 content 保留；非文本 content blocks 会以 compact JSON 文本降级。stream=true 当前支持 OpenAI-compatible SSE 上游，并将 OpenAI data chunk 转为 Anthropic SSE 事件；Anthropic 原生上游流式、完整字段保真和 usage fallback 以 docs/PROTOCOLS.md 为准。
         API Key、配额、本地限流、路由和基础下游错误均返回 Anthropic-compatible error envelope；本地限流 type 为 rate_limit_error。
       security:
         - ApiKeyBearer: []
@@ -1072,11 +1072,14 @@ paths:
               $ref: "#/components/schemas/AnthropicMessageRequest"
       responses:
         "200":
-          description: Anthropic-compatible message response.
+          description: Anthropic-compatible message response; stream=true 时返回 Anthropic SSE。
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AnthropicMessageResponse"
+            text/event-stream:
+              schema:
+                type: string
         "4XX":
           $ref: "#/components/responses/AnthropicError"
         "5XX":
