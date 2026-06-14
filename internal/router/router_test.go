@@ -1846,6 +1846,107 @@ func TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota(t *testing.T) {
 	}
 }
 
+func TestModerationsPassthroughUsesMinimumChargeWithoutUsage(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamBody := map[string]interface{}{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		raw := new(bytes.Buffer)
+		_, _ = raw.ReadFrom(req.Body)
+		if err := json.Unmarshal(raw.Bytes(), &upstreamBody); err != nil {
+			t.Errorf("upstream body should be json: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"modr-test","model":"omni-moderation-test","results":[{"flagged":false,"categories":{},"category_scores":{}}]}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "moderations",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "moderations",
+		"models":   "omni-moderation-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/moderations", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "omni-moderation-test",
+		"input": "hello",
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"provider": "openai-compatible"},
+		},
+	})
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"id":"modr-test"`) {
+		t.Fatalf("moderations passthrough should return upstream response, got %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamCalls != 1 || upstreamPath != "/v1/moderations" {
+		t.Fatalf("moderations should call upstream endpoint once, calls=%d path=%q", upstreamCalls, upstreamPath)
+	}
+	if upstreamBody["model"] != "omni-moderation-test" || upstreamBody["input"] != "hello" {
+		t.Fatalf("moderations request should preserve model and input, got %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx private field leaked to upstream: %#v", upstreamBody)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 49 {
+		t.Fatalf("moderations without usage should use minimum token budget charge, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 99 {
+		t.Fatalf("moderations without usage should use minimum user quota charge, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 1 || callLog.TotalTokens != 0 || callLog.PromptTokens != 0 || callLog.CompletionTokens != 0 {
+		t.Fatalf("unexpected moderations success log: %+v", callLog)
+	}
+}
+
 func TestChatCompletionStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

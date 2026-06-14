@@ -36,6 +36,7 @@
 | `TestChatCompletionSuccessLogsAndDeductsQuota` | Chat 非流式成功调用、日志、用户额度、Key 预算和账单聚合 |
 | `TestResponsesPassthroughExtractsUsageAndDeductsQuota` | Responses 基础 JSON 透传、`routerx` 剥离、`input_tokens/output_tokens` usage 映射、日志和扣费 |
 | `TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota` | Embeddings 基础 JSON 透传、`routerx` 剥离、`prompt_tokens/total_tokens` usage 映射、日志和扣费 |
+| `TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | Moderations 基础 JSON 透传、`routerx` 剥离、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestChatCompletionStreamForwardsSSEAndDeductsUsage` | OpenAI-compatible Chat SSE chunk 转发、usage 提取、日志和扣费 |
 | `TestCompletionsStreamForwardsSSEAndDeductsUsage` | Legacy Completions SSE chunk 转发、`routerx` 剥离、usage 提取、日志和扣费 |
 | `TestChatCompletionStreamRejectsNonOpenAISSEUpstream` | 非 OpenAI SSE 通道在流式请求中被上游前拒绝 |

@@ -579,7 +579,7 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/audio/speech` | 已注册，文本转语音 |
 | GET | `/v1/models` | 基础实现，模型列表 |
 | GET | `/v1/models/:model` | 基础实现，模型详情 |
-| POST | `/v1/moderations` | 已注册，内容审核 |
+| POST | `/v1/moderations` | 基础实现，OpenAI-compatible Moderations JSON 透传；无 usage 时按 P0 最低计费 |
 
 #### Chat Completions 契约
 
