@@ -94,7 +94,7 @@ P1 可以宣称完成时，必须在 P0 全部通过后再满足：
 | G13 多入口协议 | OpenAI、Anthropic、Gemini 基础入口成功和错误外形分别兼容。 | 基础非流式测试、协议矩阵测试、SDK 行为断言。 |
 | G14 多上游转换 | 主要上游 provider 的请求、响应、usage 和错误映射符合能力等级。 | `docs/PROTOCOLS.md` 对应矩阵测试。 |
 | G15 路由偏好 | `routerx.route` 合法、非法、越权和无候选路径都有稳定行为。 | 路由策略测试、调用事实快照。 |
-| G16 访问控制 | API Key scope、用户分组、通道分组、来源 IP 和模型/APIType 权限只能收窄，不能放大权限。 | `TestAPIKeyModelScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyChannelGroupScopeFiltersRelayCandidates`、`TestAPIKeyIPScopeRejectsBeforeRelay`、访问允许/拒绝测试。 |
+| G16 访问控制 | API Key scope、用户分组、通道分组、来源 IP、方法路径和模型/APIType 权限只能收窄，不能放大权限。 | `TestAPIKeyModelScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyChannelGroupScopeFiltersRelayCandidates`、`TestAPIKeyIPScopeRejectsBeforeRelay`、`TestAPIKeyMethodScopeRejectsBeforeRelay`、访问允许/拒绝测试。 |
 | G17 可靠性 | 非流式安全重试、熔断、限流和半开恢复可解释。 | 故障注入测试、指标和 Runbook。 |
 | G18 计费规则 | 价格表达式、倍率、规则快照和历史账单解释一致。 | 计费事实链和调用事实快照测试。 |
 | G19 运行模式 | SQLite 单镜像可无 Redis；外部数据库或集群模式必须 Redis 可用。 | readiness、启动模式和 Redis 故障测试。 |

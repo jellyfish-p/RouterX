@@ -4282,6 +4282,114 @@ func TestAPIKeyIPScopeRejectsBeforeRelay(t *testing.T) {
 	}
 }
 
+func TestAPIKeyMethodScopeRejectsBeforeRelay(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Path {
+		case "/v1/chat/completions":
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-method-scope","object":"chat.completion","model":"gpt-method-scope","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`))
+		case "/v1/embeddings":
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","embedding":[0.1,0.2],"index":0}],"model":"gpt-method-scope","usage":{"prompt_tokens":7,"total_tokens":7}}`))
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "method-scoped",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 || tokenPayload.Data.Key == "" {
+		t.Fatalf("create scoped token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	scopeResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(tokenPayload.Data.ID)+"/scope", rootJWT, map[string]interface{}{
+		"methods": []string{"POST /v1/chat/completions"},
+	})
+	if scopeResp.Code != http.StatusOK || !strings.Contains(scopeResp.Body.String(), `"methods":["POST /v1/chat/completions"]`) {
+		t.Fatalf("update token method scope failed: %d %s", scopeResp.Code, scopeResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "method-scoped-channel",
+		"models":   "gpt-method-scope",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create scoped channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-method-scope",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	})
+	if chatResp.Code != http.StatusOK {
+		t.Fatalf("allowed method should reach upstream, got %d %s", chatResp.Code, chatResp.Body.String())
+	}
+
+	embeddingResp := performJSON(r, http.MethodPost, "/v1/embeddings", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-method-scope",
+		"input": "hello",
+	})
+	if embeddingResp.Code != http.StatusForbidden || !strings.Contains(embeddingResp.Body.String(), `"code":"token_forbidden"`) {
+		t.Fatalf("disallowed method should be blocked before relay, got %d %s", embeddingResp.Code, embeddingResp.Body.String())
+	}
+	modelsResp := performJSON(r, http.MethodGet, "/v1/models", "Bearer "+tokenPayload.Data.Key, nil)
+	if modelsResp.Code != http.StatusForbidden || !strings.Contains(modelsResp.Body.String(), `"code":"token_forbidden"`) {
+		t.Fatalf("disallowed models method should be blocked, got %d %s", modelsResp.Code, modelsResp.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("method scope rejection must not call upstream, got %d calls", upstreamCalls)
+	}
+
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 45 {
+		t.Fatalf("disallowed method should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%method%scope%").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedLog.QuotaUsed != 0 {
+		t.Fatalf("method scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+}
+
 func TestAzureChatCompletionUsesDeploymentPathAndAPIKey(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

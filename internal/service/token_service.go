@@ -31,6 +31,7 @@ var (
 	ErrAPINotAllowed          = errors.New("api type not allowed by api key scope")
 	ErrChannelGroupNotAllowed = errors.New("channel group not allowed by api key scope")
 	ErrIPNotAllowed           = errors.New("ip not allowed by api key scope")
+	ErrMethodNotAllowed       = errors.New("method not allowed by api key scope")
 )
 
 const (
@@ -38,6 +39,7 @@ const (
 	maxTokenScopeAPITypes      = 64
 	maxTokenScopeChannelGroups = 64
 	maxTokenScopeIPCIDRs       = 64
+	maxTokenScopeMethods       = 128
 )
 
 type TokenScope struct {
@@ -45,6 +47,7 @@ type TokenScope struct {
 	APITypes      []string `json:"api_types,omitempty"`      // 入口能力白名单, 如 openai.chat/openai.embeddings
 	ChannelGroups []string `json:"channel_groups,omitempty"` // 通道分组白名单, 空通道分组按 default 处理
 	IPCIDRs       []string `json:"ip_cidrs,omitempty"`       // 来源 IP/CIDR 白名单
+	Methods       []string `json:"methods,omitempty"`        // 请求方法和路径白名单, 如 POST /v1/chat/completions
 }
 
 type TokenUsageStats struct {
@@ -301,6 +304,7 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 	scope.APITypes = normalizeScopeAPITypes(scope.APITypes)
 	scope.ChannelGroups = normalizeScopeChannelGroups(scope.ChannelGroups)
 	scope.IPCIDRs = normalizeScopeIPCIDRs(scope.IPCIDRs)
+	scope.Methods = normalizeScopeMethods(scope.Methods)
 	if len(scope.AllowModels) > maxTokenScopeModels {
 		return nil, errors.New("allow_models exceeds limit")
 	}
@@ -313,7 +317,13 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 	if len(scope.IPCIDRs) > maxTokenScopeIPCIDRs {
 		return nil, errors.New("ip_cidrs exceeds limit")
 	}
+	if len(scope.Methods) > maxTokenScopeMethods {
+		return nil, errors.New("methods exceeds limit")
+	}
 	if err := validateScopeIPCIDRs(scope.IPCIDRs); err != nil {
+		return nil, err
+	}
+	if err := validateScopeMethods(scope.Methods); err != nil {
 		return nil, err
 	}
 	scopeJSON := model.NewJSONValue(scope)
@@ -429,6 +439,29 @@ func (s *TokenService) CheckIPScope(token *model.Token, ip string) error {
 	return ErrIPNotAllowed
 }
 
+func (s *TokenService) CheckMethodScope(token *model.Token, method, path string) error {
+	if token == nil {
+		return ErrInvalidAPIKey
+	}
+	scope, err := ParseTokenScope(token.ScopeJSON)
+	if err != nil {
+		return ErrMethodNotAllowed
+	}
+	if len(scope.Methods) == 0 {
+		return nil
+	}
+	target := normalizeRequestMethodScope(method, path)
+	if target == "" {
+		return ErrMethodNotAllowed
+	}
+	for _, allowed := range scope.Methods {
+		if allowed == "*" || allowed == target {
+			return nil
+		}
+	}
+	return ErrMethodNotAllowed
+}
+
 func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, clientIP string) {
 	if token == nil {
 		return
@@ -457,6 +490,7 @@ func ParseTokenScope(raw model.JSONValue) (TokenScope, error) {
 	scope.APITypes = normalizeScopeAPITypes(scope.APITypes)
 	scope.ChannelGroups = normalizeScopeChannelGroups(scope.ChannelGroups)
 	scope.IPCIDRs = normalizeScopeIPCIDRs(scope.IPCIDRs)
+	scope.Methods = normalizeScopeMethods(scope.Methods)
 	return scope, nil
 }
 
@@ -791,6 +825,57 @@ func validateScopeIPCIDRs(values []string) error {
 		}
 		if net.ParseIP(value) == nil {
 			return errors.New("ip_cidrs contains invalid ip")
+		}
+	}
+	return nil
+}
+
+func normalizeScopeMethods(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = normalizeScopeMethod(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func normalizeScopeMethod(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "*" {
+		return value
+	}
+	parts := strings.Fields(value)
+	if len(parts) != 2 {
+		return value
+	}
+	return normalizeRequestMethodScope(parts[0], parts[1])
+}
+
+func normalizeRequestMethodScope(method, path string) string {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	path = strings.TrimSpace(path)
+	if method == "" || path == "" {
+		return ""
+	}
+	return method + " " + path
+}
+
+func validateScopeMethods(values []string) error {
+	for _, value := range values {
+		if value == "*" {
+			continue
+		}
+		parts := strings.Fields(value)
+		if len(parts) != 2 || parts[0] == "" || !strings.HasPrefix(parts[1], "/") {
+			return errors.New("methods contains invalid method path")
 		}
 	}
 	return nil

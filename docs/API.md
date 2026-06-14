@@ -543,11 +543,12 @@ API Key 用于 `/v1/*` 模型转发鉴权。
   "allow_models": ["gpt-4o-mini", "gpt-4o"],
   "api_types": ["openai.chat", "openai.embeddings"],
   "channel_groups": ["default", "cheap"],
-  "ip_cidrs": ["203.0.113.10", "198.51.100.0/24"]
+  "ip_cidrs": ["203.0.113.10", "198.51.100.0/24"],
+  "methods": ["POST /v1/chat/completions", "GET /v1/models"]
 }
 ```
 
-`allow_models` 为空或 scope 为空时继承用户和系统策略；非空时只允许列表内模型，拒绝返回 `model_not_allowed` 且不调用上游。`api_types` 为空时不按接口能力额外收窄；非空时只允许列出的 APIType，未命中返回 `token_forbidden` 且不调用上游。`channel_groups` 为空时不按通道分组额外收窄；非空时只允许候选通道落在列表内，未命中返回 `route_forbidden`。`ip_cidrs` 为空时不限制来源 IP；非空时只允许命中的单 IP 或 CIDR，未命中返回 `token_forbidden`。
+`allow_models` 为空或 scope 为空时继承用户和系统策略；非空时只允许列表内模型，拒绝返回 `model_not_allowed` 且不调用上游。`api_types` 为空时不按接口能力额外收窄；非空时只允许列出的 APIType，未命中返回 `token_forbidden` 且不调用上游。`channel_groups` 为空时不按通道分组额外收窄；非空时只允许候选通道落在列表内，未命中返回 `route_forbidden`。`ip_cidrs` 为空时不限制来源 IP；非空时只允许命中的单 IP 或 CIDR，未命中返回 `token_forbidden`。`methods` 为空时不按路径额外收窄；非空时只允许 `METHOD path` 命中，未命中返回 `token_forbidden`。
 
 ### 用量和账单
 
@@ -736,6 +737,7 @@ P0 明确失败：
 | API Key scope 不允许该 APIType | 403 | `token_forbidden` |
 | API Key scope 不允许该通道分组 | 403 | `route_forbidden` |
 | API Key scope 不允许该来源 IP | 403 | `token_forbidden` |
+| API Key scope 不允许该方法路径 | 403 | `token_forbidden` |
 | `stream=true` 但选中通道不是 OpenAI SSE 形态 | 502 | `unsupported_stream_channel` |
 | `routerx` 结构非法 | 400 | `invalid_routerx_options` |
 | `routerx.route` 字段类型非法 | 400 | `invalid_routerx_route` |
