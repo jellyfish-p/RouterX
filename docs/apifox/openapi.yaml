@@ -913,10 +913,11 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 图像编辑转发
+      description: OpenAI-compatible Image Edits 基础实现；multipart/form-data 请求体透传到上游 /v1/images/edits，发出前剥离 routerx 表单字段，并使用其中的 routerx.route 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整文件大小限制、安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       requestBody:
-        $ref: "#/components/requestBodies/GenericJSON"
+        $ref: "#/components/requestBodies/ImageMultipart"
       responses:
         "200":
           $ref: "#/components/responses/GenericJSON"
@@ -928,10 +929,11 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 图像变体转发
+      description: OpenAI-compatible Image Variations 基础实现；multipart/form-data 请求体透传到上游 /v1/images/variations，发出前剥离 routerx 表单字段，并使用其中的 routerx.route 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整文件大小限制、安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       requestBody:
-        $ref: "#/components/requestBodies/GenericJSON"
+        $ref: "#/components/requestBodies/ImageMultipart"
       responses:
         "200":
           $ref: "#/components/responses/GenericJSON"
@@ -1311,6 +1313,43 @@ components:
                 items:
                   type: string
                   enum: [word, segment]
+              routerx:
+                type: string
+                description: RouterX 私有 JSON 字符串，例如 {"route":{"channel_group":"premium"}}；发往真实上游前会被剥离。
+    ImageMultipart:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [model, image]
+            properties:
+              model:
+                type: string
+                description: OpenAI-compatible 图像模型名；RouterX 使用该值选择通道。
+                example: gpt-image-1
+              image:
+                type: string
+                format: binary
+                description: 输入图像文件字段。
+              mask:
+                type: string
+                format: binary
+                description: 图像编辑可选遮罩文件字段；变体接口可忽略。
+              prompt:
+                type: string
+                description: 图像编辑提示词；变体接口可忽略。
+              n:
+                type: integer
+                minimum: 1
+              size:
+                type: string
+                example: 1024x1024
+              response_format:
+                type: string
+                enum: [url, b64_json]
+              user:
+                type: string
               routerx:
                 type: string
                 description: RouterX 私有 JSON 字符串，例如 {"route":{"channel_group":"premium"}}；发往真实上游前会被剥离。

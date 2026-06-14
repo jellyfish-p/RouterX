@@ -335,7 +335,9 @@ func openAIAPIAllowsStream(apiType relay.APIType) bool {
 }
 
 func openAIAPIAllowsMultipart(apiType relay.APIType) bool {
-	return apiType == relay.APIAudioTranscriptions ||
+	return apiType == relay.APIImagesEdits ||
+		apiType == relay.APIImagesVariations ||
+		apiType == relay.APIAudioTranscriptions ||
 		apiType == relay.APIAudioTranslations
 }
 

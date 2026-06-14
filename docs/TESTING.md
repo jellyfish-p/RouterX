@@ -38,6 +38,7 @@
 | `TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota` | Embeddings 基础 JSON 透传、`routerx` 剥离、`prompt_tokens/total_tokens` usage 映射、日志和扣费 |
 | `TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | Moderations 基础 JSON 透传、`routerx` 剥离、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage` | Image Generations 基础 JSON 透传、`routerx` 剥离、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestImageMultipartPassthroughUsesRouteAndMinimumCharge` | Image Edits/Variations multipart 表单透传、`routerx` 表单字段剥离与路由偏好、图像/遮罩文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge` | Audio Speech 基础 JSON 透传、`routerx` 剥离、二进制音频响应和 Content-Type 透传、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge` | Audio Transcriptions multipart 表单透传、`routerx` 表单字段剥离与路由偏好、文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestChatCompletionStreamForwardsSSEAndDeductsUsage` | OpenAI-compatible Chat SSE chunk 转发、usage 提取、日志和扣费 |
