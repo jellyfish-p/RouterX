@@ -780,7 +780,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: OpenAI Responses API 转发
-      description: 已注册；当前按 OpenAI-compatible 请求体转发，能力等级以 docs/PROTOCOLS.md 为准。
+      description: OpenAI-compatible Responses 基础实现；JSON 请求体透传到上游 /v1/responses，发出前剥离 routerx 私有字段，并将 usage.input_tokens/output_tokens/total_tokens 映射到 RouterX 日志与扣费。完整 Responses 原生字段矩阵以 docs/PROTOCOLS.md 为准。
       security:
         - ApiKeyBearer: []
       requestBody:

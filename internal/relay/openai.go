@@ -98,11 +98,40 @@ func (a *OpenAIAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *
 	if !json.Valid(body) {
 		return nil, nil, errors.New("upstream returned invalid json")
 	}
+	return body, extractOpenAIUsage(body), nil
+}
+
+func extractOpenAIUsage(body []byte) *Usage {
 	var envelope struct {
-		Usage *Usage `json:"usage"`
+		Usage json.RawMessage `json:"usage"`
 	}
-	_ = json.Unmarshal(body, &envelope)
-	return body, envelope.Usage, nil
+	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Usage) == 0 || string(envelope.Usage) == "null" {
+		return nil
+	}
+	var usage Usage
+	_ = json.Unmarshal(envelope.Usage, &usage)
+	var responsesUsage struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+		TotalTokens  int `json:"total_tokens"`
+	}
+	_ = json.Unmarshal(envelope.Usage, &responsesUsage)
+	if usage.PromptTokens == 0 {
+		usage.PromptTokens = responsesUsage.InputTokens
+	}
+	if usage.CompletionTokens == 0 {
+		usage.CompletionTokens = responsesUsage.OutputTokens
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = responsesUsage.TotalTokens
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.TotalTokens == 0 {
+		return nil
+	}
+	return &usage
 }
 
 func (a *OpenAIAdapter) GetModelList(ctx context.Context, baseURL string, apiKey string) ([]string, error) {

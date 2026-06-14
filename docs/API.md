@@ -567,7 +567,7 @@ Authorization: Bearer sk-xxxxxxxx
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/v1/responses` | 已注册，Responses API |
+| POST | `/v1/responses` | 基础实现，OpenAI-compatible Responses JSON 透传和 usage 映射 |
 | POST | `/v1/chat/completions` | 基础实现，Chat Completions；支持非流式和 OpenAI-compatible SSE 流式 |
 | POST | `/v1/completions` | 已注册，Legacy Completions |
 | POST | `/v1/embeddings` | 已注册，Embeddings |
