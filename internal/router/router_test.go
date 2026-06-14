@@ -4053,6 +4053,134 @@ func TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream(t *testing.T) {
 	}
 }
 
+func TestAPIKeyChannelGroupScopeFiltersRelayCandidates(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	cheapCalls := 0
+	cheapUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		cheapCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-cheap","object":"chat.completion","model":"gpt-group-scope","choices":[{"index":0,"message":{"role":"assistant","content":"cheap ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}`))
+	}))
+	defer cheapUpstream.Close()
+
+	premiumCalls := 0
+	premiumUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		premiumCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-premium","object":"chat.completion","model":"gpt-group-scope","choices":[{"index":0,"message":{"role":"assistant","content":"premium ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":10,"total_tokens":20}}`))
+	}))
+	defer premiumUpstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "group-scoped",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 || tokenPayload.Data.Key == "" {
+		t.Fatalf("create scoped token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	scopeResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(tokenPayload.Data.ID)+"/scope", rootJWT, map[string]interface{}{
+		"channel_groups": []string{"cheap"},
+	})
+	if scopeResp.Code != http.StatusOK || !strings.Contains(scopeResp.Body.String(), `"channel_groups":["cheap"]`) {
+		t.Fatalf("update token channel group scope failed: %d %s", scopeResp.Code, scopeResp.Body.String())
+	}
+
+	premiumChannel := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "premium-channel",
+		"models":   "gpt-group-scope",
+		"base_url": premiumUpstream.URL,
+		"api_key":  "premium-secret",
+		"group":    "premium",
+		"priority": 10,
+	})
+	if premiumChannel.Code != http.StatusOK {
+		t.Fatalf("create premium channel failed: %d %s", premiumChannel.Code, premiumChannel.Body.String())
+	}
+	cheapChannel := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "cheap-channel",
+		"models":   "gpt-group-scope",
+		"base_url": cheapUpstream.URL,
+		"api_key":  "cheap-secret",
+		"group":    "cheap",
+		"priority": 1,
+	})
+	if cheapChannel.Code != http.StatusOK {
+		t.Fatalf("create cheap channel failed: %d %s", cheapChannel.Code, cheapChannel.Body.String())
+	}
+
+	chatBody := map[string]interface{}{
+		"model": "gpt-group-scope",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	allowedResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, chatBody)
+	if allowedResp.Code != http.StatusOK || !strings.Contains(allowedResp.Body.String(), "cheap ok") {
+		t.Fatalf("allowed channel group should use cheap upstream, got %d %s", allowedResp.Code, allowedResp.Body.String())
+	}
+	if cheapCalls != 1 || premiumCalls != 0 {
+		t.Fatalf("channel group scope should filter higher-priority premium channel, cheap=%d premium=%d", cheapCalls, premiumCalls)
+	}
+
+	deniedResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-group-scope",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"channel_group": "premium"},
+		},
+	})
+	if deniedResp.Code != http.StatusForbidden || !strings.Contains(deniedResp.Body.String(), `"code":"route_forbidden"`) {
+		t.Fatalf("disallowed channel group route should be forbidden, got %d %s", deniedResp.Code, deniedResp.Body.String())
+	}
+	if cheapCalls != 1 || premiumCalls != 0 {
+		t.Fatalf("denied channel group route must not call upstream, cheap=%d premium=%d", cheapCalls, premiumCalls)
+	}
+
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 46 {
+		t.Fatalf("disallowed channel group should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND model = ?", common.LogStatusFailed, "gpt-group-scope").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "channel group") {
+		t.Fatalf("channel group scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+}
+
 func TestAzureChatCompletionUsesDeploymentPathAndAPIKey(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

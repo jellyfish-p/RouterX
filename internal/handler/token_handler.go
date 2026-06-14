@@ -278,7 +278,7 @@ func (h *TokenHandler) UpdateScope(c *gin.Context) {
 		common.FailWithStatus(c, 404, "API Key 不存在")
 		return
 	}
-	after, err := h.svc.UpdateScopeForUser(id, user.ID, service.TokenScope{AllowModels: req.AllowModels, APITypes: req.APITypes})
+	after, err := h.svc.UpdateScopeForUser(id, user.ID, service.TokenScope{AllowModels: req.AllowModels, APITypes: req.APITypes, ChannelGroups: req.ChannelGroups})
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return

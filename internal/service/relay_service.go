@@ -267,6 +267,9 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	if err := s.enforceTokenScope(token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, nil, err
 	}
+	if err := s.enforceTokenRouteChannelGroupScope(token, reqInfo.Route, reqInfo.Model, clientIP); err != nil {
+		return nil, nil, err
+	}
 	if !s.tokenService.HasAvailableQuota(token) {
 		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 		return nil, nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
@@ -277,11 +280,11 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
-	selected, err := s.channelService.SelectChannelWithRoute(reqInfo.Model, reqInfo.Route)
+	candidates, err = s.filterTokenChannelGroupScope(token, candidates, reqInfo.Model, clientIP)
 	if err != nil {
-		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
-		return nil, nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
+		return nil, nil, err
 	}
+	selected := pickRelayChannelCandidate(candidates)
 	attemptCandidates := orderRelayAttemptCandidates(candidates, selected)
 	maxAttempts := 1 + s.relayRetryCount()
 	if maxAttempts > len(attemptCandidates) {
@@ -418,16 +421,24 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if err := s.enforceTokenScope(token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, err
 	}
+	if err := s.enforceTokenRouteChannelGroupScope(token, reqInfo.Route, reqInfo.Model, clientIP); err != nil {
+		return nil, err
+	}
 	if !s.tokenService.HasAvailableQuota(token) {
 		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 		return nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 
-	channel, err := s.channelService.SelectChannelWithRoute(reqInfo.Model, reqInfo.Route)
+	candidates, err := s.channelService.SelectChannelCandidatesWithRoute(reqInfo.Model, reqInfo.Route)
 	if err != nil {
 		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
+	candidates, err = s.filterTokenChannelGroupScope(token, candidates, reqInfo.Model, clientIP)
+	if err != nil {
+		return nil, err
+	}
+	channel := pickRelayChannelCandidate(candidates)
 	if !supportsOpenAICompatibleStream(channel.Type) {
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "streaming is not supported for selected upstream channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "streaming is not supported for selected upstream channel", Type: "upstream_error", Code: "unsupported_stream_channel"}
@@ -1426,6 +1437,44 @@ func (s *RelayService) enforceTokenScope(token *model.Token, apiType relay.APITy
 	return s.enforceTokenModelScope(token, modelName, clientIP)
 }
 
+func (s *RelayService) enforceTokenRouteChannelGroupScope(token *model.Token, route RoutePreference, modelName, clientIP string) error {
+	if strings.TrimSpace(route.ChannelGroup) == "" {
+		return nil
+	}
+	return s.enforceTokenChannelGroupValueScope(token, route.ChannelGroup, modelName, clientIP)
+}
+
+func (s *RelayService) filterTokenChannelGroupScope(token *model.Token, candidates []model.Channel, modelName, clientIP string) ([]model.Channel, error) {
+	if s.tokenService == nil || len(candidates) == 0 {
+		return candidates, nil
+	}
+	filtered := make([]model.Channel, 0, len(candidates))
+	for _, candidate := range candidates {
+		if err := s.tokenService.CheckChannelGroupScope(token, candidate.ChannelGroup); err == nil {
+			filtered = append(filtered, candidate)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, s.channelGroupScopeError(token, modelName, clientIP)
+	}
+	return filtered, nil
+}
+
+func (s *RelayService) enforceTokenChannelGroupValueScope(token *model.Token, channelGroup, modelName, clientIP string) error {
+	if s.tokenService == nil {
+		return nil
+	}
+	if err := s.tokenService.CheckChannelGroupScope(token, channelGroup); err != nil {
+		return s.channelGroupScopeError(token, modelName, clientIP)
+	}
+	return nil
+}
+
+func (s *RelayService) channelGroupScopeError(token *model.Token, modelName, clientIP string) error {
+	_ = s.recordLog(token, nil, modelName, nil, common.LogStatusFailed, 0, "channel group not allowed by api key scope", clientIP)
+	return &HTTPError{Status: 403, Message: "channel group is not allowed by api key scope", Type: "permission_error", Code: "route_forbidden"}
+}
+
 func (s *RelayService) enforceTokenAPIScope(token *model.Token, apiType relay.APIType, modelName, clientIP string) error {
 	if s.tokenService == nil {
 		return nil
@@ -1500,6 +1549,21 @@ func relayAPITypeScopeName(apiType relay.APIType) string {
 	default:
 		return ""
 	}
+}
+
+func pickRelayChannelCandidate(candidates []model.Channel) *model.Channel {
+	if len(candidates) == 0 {
+		return nil
+	}
+	bestPriority := candidates[0].Priority
+	bestPriorityCandidates := make([]model.Channel, 0, len(candidates))
+	for _, channel := range candidates {
+		if channel.Priority != bestPriority {
+			break
+		}
+		bestPriorityCandidates = append(bestPriorityCandidates, channel)
+	}
+	return weightedPick(bestPriorityCandidates)
 }
 
 func quotaFromUsage(usage *relay.Usage) int64 {

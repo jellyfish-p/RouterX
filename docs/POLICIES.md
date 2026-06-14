@@ -27,10 +27,10 @@
 - API Key 校验包含格式、哈希、状态、过期、软删除、所属用户状态和额度预检。
 - 普通用户不能通过用户端 API Key 编辑接口修改 `remain_quota` 或 `unlimited`。
 - Relay 会在调用上游前检查用户余额和 API Key 预算。
-- API Key scope 已支持 `allow_models` 模型 allow-list 和 `api_types` APIType allow-list，未命中时在上游调用前返回 `model_not_allowed` 或 `token_forbidden` 并写失败日志。
+- API Key scope 已支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list 和 `channel_groups` 通道分组 allow-list，未命中时在上游调用前返回 `model_not_allowed`、`token_forbidden` 或 `route_forbidden` 并写失败日志。
 - 通道选择会过滤禁用通道、模型不匹配通道、错误计数过高通道和不可用 Adapter。
 - 通道候选按 `priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC` 排序，并在最高 priority 组内按 `weight` 加权选择。
-- 通道已具备 `channel_group` 字段，但完整的用户分组访问控制、API Key 通道分组/IP/预算 scope 和策略快照仍属于目标增强。
+- 通道已具备 `channel_group` 字段并可被 API Key scope 收窄；完整的用户分组访问控制、API Key IP/预算 scope 和策略快照仍属于目标增强。
 - Redis 限流已有全局、Token 和 IP 维度的基础设置与执行路径；阈值来自 `rate_limit.*`，`0` 表示关闭对应维度。
 
 因此，本文档中的 P1/P2 策略能力是对现有 P0 闭环的增强，不应破坏当前开箱路径。
@@ -44,7 +44,7 @@
 | 系统硬约束 | 认证、用户禁用、API Key 禁用、过期、软删除、额度不足、通道禁用 | P0 | 不可被任何请求参数覆盖。 |
 | settings | `rate_limit.*`、`billing.default_user_channel_group_access`、`billing.user_group_channel_group_access` | P0/P1 | 热更新运行时配置，必须校验类型和敏感级别。 |
 | 用户分组 | `users.group_id`、`groups.ratio` | P1 | 支撑倍率、可用通道分组和运营套餐。 |
-| API Key scope | `tokens.scope_json` | P1/P2 | 当前支持模型 allow-list 和 APIType allow-list；后续进一步收窄通道分组、协议入口、IP 和预算。 |
+| API Key scope | `tokens.scope_json` | P1/P2 | 当前支持模型 allow-list、APIType allow-list 和通道分组 allow-list；后续进一步收窄协议入口、IP 和预算。 |
 | 通道配置 | `channels.models`、`channel_group`、priority、weight、熔断状态 | P0/P1 | 决定候选通道、模型匹配、分组和可用性。 |
 | 模型价格规则 | `model_prices`、`channel_model_prices` | P1 | 决定基础费用，不直接表达身份权限。 |
 | 调用方偏好 | `routerx.route` | P1 | 只在已允许候选集中继续收窄。 |
@@ -135,7 +135,7 @@ API Key scope 是调用凭据层的收窄策略。
 | scope | 示例 | 语义 |
 |-------|------|------|
 | `allow_models` | `["gpt-4o-mini", "claude-3-5-sonnet"]` | 当前已落地；只允许这些调用方模型名，`*` 表示不收窄模型。 |
-| `channel_groups` | `["default", "cheap"]` | 只允许这些通道分组。 |
+| `channel_groups` | `["default", "cheap"]` | 当前已落地；只允许这些通道分组，`*` 表示不收窄通道分组。 |
 | `api_types` | `["openai.chat", "openai.embeddings"]` | 当前已落地；只允许这些接口能力，`*` 表示不收窄 APIType。 |
 | `methods` | `["GET /v1/models", "POST /v1/chat/completions"]` | 只允许这些路径和方法。 |
 | `ip_cidrs` | `["203.0.113.0/24"]` | 只允许指定来源网络。 |
@@ -267,7 +267,7 @@ access allowed
 ### P1 验收
 
 - 用户分组和通道分组访问控制可配置、可验证、可审计。
-- API Key scope 已支持模型和 APIType 收窄；通道分组、协议入口、IP 和预算收窄仍需补齐。
+- API Key scope 已支持模型、APIType 和通道分组收窄；协议入口、IP 和预算收窄仍需补齐。
 - `routerx.route` 合法、忽略、越权和无候选路径都有稳定行为和日志摘要。
 - 计费倍率和访问控制分别快照，历史账单可解释。
 - 限流覆盖用户、Token、模型和通道维度；SQLite 单镜像可进程内降级，外部数据库或集群模式必须依赖 Redis 保持一致性。
@@ -285,7 +285,7 @@ access allowed
 | 场景 | 断言 |
 |------|------|
 | 默认开箱 | 不配置高级策略也能完成首次调用。 |
-| API Key scope 收窄 | 允许模型/APIType 成功，未允许模型或 APIType 拒绝且不调用上游。 |
+| API Key scope 收窄 | 允许模型/APIType/通道分组成功，未允许模型、APIType 或通道分组拒绝且不调用上游。 |
 | 用户分组访问 | 用户只能访问允许的通道分组。 |
 | deny 优先 | 同时命中 allow 和 deny 时拒绝。 |
 | `routerx.route` 合法 | 在允许候选集中继续收窄。 |

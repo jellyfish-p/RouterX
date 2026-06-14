@@ -38,13 +38,15 @@ type BatchDisableTokensRequest struct {
 }
 
 type UpdateTokenScopeRequest struct {
-	AllowModels []string `json:"allow_models"`
-	APITypes    []string `json:"api_types"`
+	AllowModels   []string `json:"allow_models"`
+	APITypes      []string `json:"api_types"`
+	ChannelGroups []string `json:"channel_groups"`
 }
 
 type TokenScopeResponse struct {
-	AllowModels []string `json:"allow_models,omitempty"`
-	APITypes    []string `json:"api_types,omitempty"`
+	AllowModels   []string `json:"allow_models,omitempty"`
+	APITypes      []string `json:"api_types,omitempty"`
+	ChannelGroups []string `json:"channel_groups,omitempty"`
 }
 
 type TokenResponse struct {
@@ -119,7 +121,7 @@ func TokenScopeFromJSON(raw model.JSONValue) *TokenScopeResponse {
 	if err := json.Unmarshal(raw, &scope); err != nil {
 		return nil
 	}
-	if len(scope.AllowModels) == 0 && len(scope.APITypes) == 0 {
+	if len(scope.AllowModels) == 0 && len(scope.APITypes) == 0 && len(scope.ChannelGroups) == 0 {
 		return nil
 	}
 	return &scope

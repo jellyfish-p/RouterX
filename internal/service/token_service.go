@@ -28,16 +28,19 @@ var (
 	ErrBatchDisableNoFilter   = errors.New("batch disable requires token_ids or user_id")
 	ErrModelNotAllowed        = errors.New("model not allowed by api key scope")
 	ErrAPINotAllowed          = errors.New("api type not allowed by api key scope")
+	ErrChannelGroupNotAllowed = errors.New("channel group not allowed by api key scope")
 )
 
 const (
-	maxTokenScopeModels   = 200
-	maxTokenScopeAPITypes = 64
+	maxTokenScopeModels        = 200
+	maxTokenScopeAPITypes      = 64
+	maxTokenScopeChannelGroups = 64
 )
 
 type TokenScope struct {
-	AllowModels []string `json:"allow_models,omitempty"`
-	APITypes    []string `json:"api_types,omitempty"` // 入口能力白名单, 如 openai.chat/openai.embeddings
+	AllowModels   []string `json:"allow_models,omitempty"`
+	APITypes      []string `json:"api_types,omitempty"`      // 入口能力白名单, 如 openai.chat/openai.embeddings
+	ChannelGroups []string `json:"channel_groups,omitempty"` // 通道分组白名单, 空通道分组按 default 处理
 }
 
 type TokenUsageStats struct {
@@ -292,11 +295,15 @@ func (s *TokenService) ReportLeakForUser(id, userID uint, reason string) (*model
 func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*model.Token, error) {
 	scope.AllowModels = normalizeScopeModels(scope.AllowModels)
 	scope.APITypes = normalizeScopeAPITypes(scope.APITypes)
+	scope.ChannelGroups = normalizeScopeChannelGroups(scope.ChannelGroups)
 	if len(scope.AllowModels) > maxTokenScopeModels {
 		return nil, errors.New("allow_models exceeds limit")
 	}
 	if len(scope.APITypes) > maxTokenScopeAPITypes {
 		return nil, errors.New("api_types exceeds limit")
+	}
+	if len(scope.ChannelGroups) > maxTokenScopeChannelGroups {
+		return nil, errors.New("channel_groups exceeds limit")
 	}
 	scopeJSON := model.NewJSONValue(scope)
 	var token model.Token
@@ -358,6 +365,26 @@ func (s *TokenService) CheckAPIScope(token *model.Token, apiType string) error {
 	return ErrAPINotAllowed
 }
 
+func (s *TokenService) CheckChannelGroupScope(token *model.Token, channelGroup string) error {
+	if token == nil {
+		return ErrInvalidAPIKey
+	}
+	scope, err := ParseTokenScope(token.ScopeJSON)
+	if err != nil {
+		return ErrChannelGroupNotAllowed
+	}
+	if len(scope.ChannelGroups) == 0 {
+		return nil
+	}
+	channelGroup = normalizeChannelGroupForScope(channelGroup)
+	for _, allowed := range scope.ChannelGroups {
+		if allowed == "*" || allowed == channelGroup {
+			return nil
+		}
+	}
+	return ErrChannelGroupNotAllowed
+}
+
 func ParseTokenScope(raw model.JSONValue) (TokenScope, error) {
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
 		return TokenScope{}, nil
@@ -368,6 +395,7 @@ func ParseTokenScope(raw model.JSONValue) (TokenScope, error) {
 	}
 	scope.AllowModels = normalizeScopeModels(scope.AllowModels)
 	scope.APITypes = normalizeScopeAPITypes(scope.APITypes)
+	scope.ChannelGroups = normalizeScopeChannelGroups(scope.ChannelGroups)
 	return scope, nil
 }
 
@@ -645,4 +673,29 @@ func normalizeScopeAPITypes(apiTypes []string) []string {
 
 func normalizeScopeAPIType(apiType string) string {
 	return strings.ToLower(strings.TrimSpace(apiType))
+}
+
+func normalizeScopeChannelGroups(groups []string) []string {
+	seen := make(map[string]struct{}, len(groups))
+	result := make([]string, 0, len(groups))
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		seen[group] = struct{}{}
+		result = append(result, group)
+	}
+	return result
+}
+
+func normalizeChannelGroupForScope(group string) string {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return "default"
+	}
+	return group
 }
