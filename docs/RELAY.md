@@ -452,10 +452,18 @@ Endpoint 示例：
 /openai/deployments/{deployment}/chat/completions?api-version=2024-10-21
 ```
 
+当前实现：
+
+- Chat Completions 已按 deployment 路径调用 Azure OpenAI。
+- 当前默认 `api-version` 为 `2024-02-15-preview`。
+- 发往 Azure 前会剥离 `model` 和 `routerx`，因为 deployment 已经由路径表达。
+- Azure 返回的 OpenAI-compatible `usage` 会写入 RouterX 日志并扣费。
+
 设计要求：
 
-- 通道配置需要保存 `api_version`，可放在扩展配置字段或 settings。
+- 后续通道配置需要保存 `api_version`，可放在扩展配置字段或 settings。
 - `model` 到 deployment 的映射需要支持别名。
+- Embeddings、Images、Audio 等 Azure API 仍需逐项补齐。
 
 ### Anthropic / Claude
 

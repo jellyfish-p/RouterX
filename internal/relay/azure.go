@@ -1,8 +1,14 @@
 package relay
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"routerx/internal/common"
 )
@@ -11,6 +17,8 @@ import (
 // Azure 的 API 路径格式: /openai/deployments/{model}/chat/completions?api-version=2024-02-15-preview
 // 使用 api-key header 而非 Bearer token。
 type AzureAdapter struct{}
+
+const defaultAzureAPIVersion = "2024-02-15-preview"
 
 func init() {
 	Register(common.ChannelTypeAzure, func() Adapter { return &AzureAdapter{} })
@@ -21,30 +29,66 @@ func (a *AzureAdapter) GetChannelType() int {
 }
 
 func (a *AzureAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
-	// TODO: Phase 7 实现
-	// Azure 请求体与 OpenAI 基本一致，可能需处理 api-version 差异
-	return body, nil
+	if apiType != APIChatCompletions {
+		return nil, errors.New("unsupported api type")
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	// Azure deployment 已经由路径表达，真实上游请求体不再携带 RouterX 私有字段或 model。
+	delete(payload, "model")
+	delete(payload, "routerx")
+	return json.Marshal(payload)
 }
 
 func (a *AzureAdapter) GetAPIEndpoint(apiType APIType, model string) string {
-	// TODO: Phase 7 实现
-	// 构建 Azure 格式端点: /openai/deployments/{model}/...?api-version=...
-	return ""
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	deployment := url.PathEscape(model)
+	switch apiType {
+	case APIChatCompletions:
+		return "/openai/deployments/" + deployment + "/chat/completions?api-version=" + defaultAzureAPIVersion
+	default:
+		return ""
+	}
 }
 
 func (a *AzureAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey string, body []byte) (*http.Response, error) {
-	// TODO: Phase 7 实现
-	// 使用 Header: api-key: {apiKey} (非 Bearer)
-	return nil, nil
+	if endpoint == "" {
+		return nil, errors.New("unsupported api type")
+	}
+	method := http.MethodPost
+	var reader io.Reader
+	if body == nil {
+		method = http.MethodGet
+	} else {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, joinBaseURL(baseURL, endpoint), reader)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("api-key", apiKey)
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return http.DefaultClient.Do(req)
 }
 
 func (a *AzureAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
-	// TODO: Phase 7 实现
-	return nil, nil, nil
+	if apiType != APIChatCompletions {
+		return nil, nil, errors.New("unsupported api type")
+	}
+	if !json.Valid(body) {
+		return nil, nil, errors.New("upstream returned invalid json")
+	}
+	return body, extractOpenAIUsage(body), nil
 }
 
 func (a *AzureAdapter) GetModelList(ctx context.Context, baseURL string, apiKey string) ([]string, error) {
-	// TODO: Phase 7 实现
-	// Azure 通过 deployments API 获取
-	return nil, nil
+	return nil, errors.New("azure model list is not implemented")
 }
