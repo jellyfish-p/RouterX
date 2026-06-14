@@ -234,7 +234,8 @@ func validateSettingValue(key, value string) error {
 		return validateNonNegativeIntSetting(key, value)
 	case "rate_limit.enabled", "relay.error_auto_ban", "log.request_body_enabled", "log.response_body_enabled",
 		"ready.production_strict", "payment.epay.enabled", "payment.stripe.enabled",
-		"payment.refund.auto_deduct", "payment.refund.allow_negative_balance":
+		"payment.refund.auto_deduct", "payment.refund.allow_negative_balance",
+		"observability.metrics_enabled", "observability.audit_enabled":
 		if _, err := strconv.ParseBool(value); err != nil {
 			return errors.New(key + " must be a boolean")
 		}

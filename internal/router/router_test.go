@@ -1725,6 +1725,9 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"log.body_max_bytes",
 		"log.request_body_enabled",
 		"log.response_body_enabled",
+		"observability.metrics_enabled",
+		"observability.audit_enabled",
+		"observability.request_id_header",
 		"ready.production_strict",
 		"billing.bootstrap_admin_quota",
 		"payment.stripe.enabled",
@@ -1754,6 +1757,35 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 	}
 	if strings.Contains(settingsResp.Body.String(), jwtSecret) {
 		t.Fatalf("settings response leaked jwt secret: %s", settingsResp.Body.String())
+	}
+}
+
+func TestMetricsEndpointRequiresSettingAndExposesPrometheusText(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	disabledResp := performJSON(r, http.MethodGet, "/metrics", "", nil)
+	if disabledResp.Code != http.StatusNotFound {
+		t.Fatalf("metrics should be disabled by default, got %d %s", disabledResp.Code, disabledResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("observability.metrics_enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	enabledResp := performJSON(r, http.MethodGet, "/metrics", "", nil)
+	body := enabledResp.Body.String()
+	if enabledResp.Code != http.StatusOK ||
+		!strings.Contains(enabledResp.Header().Get("Content-Type"), "text/plain") ||
+		!strings.Contains(body, "routerx_users_total 1") ||
+		!strings.Contains(body, "routerx_tokens_total 0") ||
+		!strings.Contains(body, "routerx_ready 1") {
+		t.Fatalf("metrics should expose prometheus text when enabled, got %d %s", enabledResp.Code, body)
 	}
 }
 

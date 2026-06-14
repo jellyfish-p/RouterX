@@ -11,6 +11,7 @@ import (
 	"routerx/internal/handler"
 	"routerx/internal/middleware"
 	"routerx/internal/model"
+	"routerx/internal/service"
 )
 
 // SetupRouter 创建并配置所有路由。
@@ -39,6 +40,7 @@ func SetupRouter(
 		c.JSON(200, gin.H{"status": "healthy"})
 	})
 	r.GET("/ready", readyHandler)
+	r.GET("/metrics", metricsHandler)
 
 	// Setup 初始化路由 (无需鉴权, 无需系统已初始化)
 	setupPublicRoutes(r, setupH)
@@ -75,6 +77,74 @@ func readyHandler(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ready"})
+}
+
+func metricsHandler(c *gin.Context) {
+	if !metricsEnabled() {
+		c.String(http.StatusNotFound, "404 page not found")
+		return
+	}
+	if internal.DB == nil {
+		c.String(http.StatusServiceUnavailable, "routerx_ready 0\n")
+		return
+	}
+	userCount, channelCount, tokenCount, todayCalls, todayQuota, activeChannels, err := service.NewLogService().GetDashboardStats()
+	if err != nil {
+		c.String(http.StatusInternalServerError, "metrics unavailable\n")
+		return
+	}
+	ready := int64(1)
+	if sqlDB, err := internal.DB.DB(); err != nil || sqlDB.Ping() != nil {
+		ready = 0
+	} else if internal.IsInitialized() && readinessSettingProblem() != "" {
+		ready = 0
+	}
+	var b strings.Builder
+	writeGauge(&b, "routerx_users_total", "Total users.", userCount)
+	writeGauge(&b, "routerx_channels_total", "Total channels.", channelCount)
+	writeGauge(&b, "routerx_tokens_total", "Total API keys.", tokenCount)
+	writeGauge(&b, "routerx_channels_active", "Enabled channels.", activeChannels)
+	writeGauge(&b, "routerx_ready", "Service readiness status.", ready)
+	writeCounter(&b, "routerx_today_calls_total", "Successful calls since local midnight.", todayCalls)
+	writeCounter(&b, "routerx_today_quota_total", "Quota used since local midnight.", todayQuota)
+	c.Data(http.StatusOK, "text/plain; version=0.0.4; charset=utf-8", []byte(b.String()))
+}
+
+func metricsEnabled() bool {
+	if internal.DB == nil {
+		return false
+	}
+	raw, ok := settingValue("observability.metrics_enabled")
+	if !ok {
+		return false
+	}
+	enabled, err := strconv.ParseBool(strings.TrimSpace(raw))
+	return err == nil && enabled
+}
+
+func writeGauge(b *strings.Builder, name, help string, value int64) {
+	writeMetric(b, name, help, "gauge", value)
+}
+
+func writeCounter(b *strings.Builder, name, help string, value int64) {
+	writeMetric(b, name, help, "counter", value)
+}
+
+func writeMetric(b *strings.Builder, name, help, metricType string, value int64) {
+	b.WriteString("# HELP ")
+	b.WriteString(name)
+	b.WriteByte(' ')
+	b.WriteString(help)
+	b.WriteByte('\n')
+	b.WriteString("# TYPE ")
+	b.WriteString(name)
+	b.WriteByte(' ')
+	b.WriteString(metricType)
+	b.WriteByte('\n')
+	b.WriteString(name)
+	b.WriteByte(' ')
+	b.WriteString(strconv.FormatInt(value, 10))
+	b.WriteByte('\n')
 }
 
 func readinessSettingProblem() string {

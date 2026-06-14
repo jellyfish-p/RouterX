@@ -259,7 +259,7 @@ volumes:
 
 完整指标目录、标签控制和告警建议以 `docs/OBSERVABILITY.md` 为准。
 
-建议暴露 Prometheus `/metrics`。
+当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后先暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度和 ready 状态，后续继续补 Relay、支付和 DB/Redis 指标。
 
 核心指标：
 
@@ -289,7 +289,7 @@ volumes:
 |------|------|--------|
 | `/health` | 存活检查 | 进程是否存活 |
 | `/ready` | 就绪检查 | DB、迁移状态、必要配置 |
-| `/metrics` | 指标 | Prometheus metrics |
+| `/metrics` | 指标 | Prometheus metrics，受 `observability.metrics_enabled` 控制 |
 
 当前 `/ready` 已检查数据库连通性、初始化后 `jwt.secret`、`relay.timeout`，以及已启用支付 provider 的必需密钥：
 
