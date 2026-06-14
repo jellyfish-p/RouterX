@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"routerx/internal/common"
 	"routerx/internal/handler"
 	"routerx/internal/model"
+	"routerx/internal/relay"
 	"routerx/internal/service"
 )
 
@@ -2271,6 +2273,119 @@ func TestCompletionsStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 	}
 	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 7 || callLog.TotalTokens != 7 || callLog.PromptTokens != 3 || callLog.CompletionTokens != 4 {
 		t.Fatalf("unexpected completion stream success log: %+v", callLog)
+	}
+}
+
+func TestChatCompletionStreamCancelsUpstreamWhenClientWriteFails(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCancelled := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-cancel\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-req.Context().Done():
+			close(upstreamCancelled)
+		case <-time.After(2 * time.Second):
+		}
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "stream-cancel",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "stream-cancel",
+		"models":   "gpt-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	relaySvc := service.NewRelayService(service.NewChannelService(), service.NewTokenService(), service.NewLogService(), service.NewSettingService())
+	body, err := json.Marshal(map[string]interface{}{
+		"model": "gpt-test",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+		"stream": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := relaySvc.RelayStream(context.Background(), &storedToken, relay.APIChatCompletions, body, "192.0.2.1")
+	if err != nil {
+		t.Fatalf("stream setup failed: %v", err)
+	}
+	clientClosed := errors.New("client closed")
+	_, err = result.Forward(func(chunk []byte) error {
+		if !bytes.Contains(chunk, []byte("chatcmpl-cancel")) {
+			t.Fatalf("unexpected first stream chunk: %s", string(chunk))
+		}
+		return clientClosed
+	}, func() {})
+	if !errors.Is(err, clientClosed) {
+		t.Fatalf("stream forwarding should return client write error, got %v", err)
+	}
+	select {
+	case <-upstreamCancelled:
+	case <-time.After(time.Second):
+		t.Fatal("upstream request was not cancelled after client write failure")
+	}
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 50 {
+		t.Fatalf("failed stream should not deduct token budget, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("failed stream should not deduct user quota, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusFailed || callLog.QuotaUsed != 0 || !strings.Contains(callLog.ErrorMsg, "stream forwarding failed") {
+		t.Fatalf("unexpected stream cancellation log: %+v", callLog)
 	}
 }
 

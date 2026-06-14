@@ -193,7 +193,7 @@ P2 验收标准：
 | WP0-4 通道基础管理 | P0 | channel、adapter registry、secret encryption | 管理员可创建/测试/启停通道；下游密钥加密；响应和日志不泄露密钥 | `TestP0BackendFlow`、`TestChannelExtendedManagement` |
 | WP0-5 OpenAI-compatible 基础闭环 | P0 | relay handler/service、OpenAI adapter、logs、quota | `/v1/models`、Chat 非流式和 OpenAI Chat/Completions 基础 SSE 可用；无可用通道、余额不足、无效 Key 返回 SDK 兼容错误；成功调用写日志并扣费 | 已有 Chat 成功、本地请求错误、下游 400/401/403/429/5xx/超时、预检拒绝、OpenAI Chat/Completions 基础 SSE 测试 |
 | WP0-6 基础日志与账单 | P0 | logs、billing stats、dashboard | 用户只看自己的日志；管理员可筛选全局日志；账单聚合来自日志事实 | 已覆盖多次成功/失败混合一致性：`TestUserBillingMatchesLogs` |
-| WP1-1 流式和取消 | P1 | relay stream、adapter stream、context cancel | SSE 不缓存完整响应；客户端断开取消下游；流式 usage 可结算或估算 | `TestChatCompletionStreamForwardsSSEAndDeductsUsage`、`TestCompletionsStreamForwardsSSEAndDeductsUsage`、`TestChatCompletionStreamRejectsNonOpenAISSEUpstream` 已覆盖 OpenAI Chat/Completions 基础 SSE；客户端断开和多协议 chunk 转换仍需补齐 |
+| WP1-1 流式和取消 | P1 | relay stream、adapter stream、context cancel | SSE 不缓存完整响应；客户端断开取消下游；流式 usage 可结算或估算 | `TestChatCompletionStreamForwardsSSEAndDeductsUsage`、`TestCompletionsStreamForwardsSSEAndDeductsUsage`、`TestChatCompletionStreamCancelsUpstreamWhenClientWriteFails`、`TestChatCompletionStreamRejectsNonOpenAISSEUpstream` 已覆盖 OpenAI Chat/Completions 基础 SSE、客户端断开取消和非 OpenAI SSE 拒绝；多协议 chunk 转换仍需补齐 |
 | WP1-2 路由决策快照 | P1 | channel selection、route policy、logs、POLICIES | 记录候选过滤、`routerx.route` 处理、最终通道、模型重写和重试结果 | `routerx.route` 边界已由 `TestRouterXRoutePreferenceFiltersChannels` 覆盖；结构化决策快照仍属 P1 |
 | WP1-3 多协议与多上游 | P1 | translator、adapter、error mapper、PROTOCOLS | OpenAI/Anthropic/Gemini 入口与主要上游组合可用；不支持字段明确失败；能力等级与 `docs/PROTOCOLS.md` 一致 | `TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields` 与 `TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol` 已覆盖基础非流式成功、字段降级和基础下游错误外形；完整上游、流式和 SDK 行为矩阵仍需补齐 |
 | WP1-4 计费规则和访问控制 | P1 | model_prices、channel_model_prices、settings、logs、POLICIES | 价格表达式、倍率、访问控制、计费快照和账单聚合一致 | 新增计费事实链测试 |
@@ -228,7 +228,7 @@ P2 验收标准：
 | 9 | Moderations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明内容审核不是只注册路由，且 P0 最低计费边界可解释。 |
 | 10 | Image Generations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明图像生成 JSON 入口不是只注册路由，且无 usage 响应有明确最低计费。 |
 | 11 | `routerx.route` 合法、忽略、拒绝和无候选路径 | 已覆盖：`TestRouterXRoutePreferenceFiltersChannels` | 证明用户偏好不能绕过管理员策略。 |
-| 12 | SSE 流式、客户端断开和流式 usage 结算 | 部分覆盖：OpenAI Chat/Completions 基础 SSE、usage 扣费和非 OpenAI SSE 通道拒绝已覆盖；仍需客户端断开和多协议流式 | 进入 P1 前补齐最容易出现资源泄漏和账单偏差的路径。 |
+| 12 | SSE 流式、客户端断开和流式 usage 结算 | 部分覆盖：OpenAI Chat/Completions 基础 SSE、usage 扣费、客户端断开取消和非 OpenAI SSE 通道拒绝已覆盖；仍需多协议流式和更完整 usage fallback | 进入 P1 前补齐最容易出现资源泄漏和账单偏差的路径。 |
 | 13 | Anthropic/Gemini 入口错误格式和字段降级 | 部分覆盖：API Key 错误外形、非流式成功、字段降级和基础下游错误外形已覆盖；仍需流式、原生字段保真和完整 SDK 行为矩阵 | 证明多入口协议不是只注册路由，而是 SDK 可用。 |
 
 ## 推荐顺序
