@@ -712,6 +712,95 @@ func TestAdminManagesPaymentProducts(t *testing.T) {
 	}
 }
 
+func TestAdminPaymentProductAuditLogs(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/payment/products", rootJWT, map[string]interface{}{
+		"product_id":  "quota_audit",
+		"name":        "Audit credits",
+		"amount":      "7.00",
+		"currency":    "usd",
+		"quota":       70,
+		"bonus_quota": 0,
+	})
+	var createPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create payment product failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createPayload); err != nil {
+		t.Fatal(err)
+	}
+	updateResp := performJSON(r, http.MethodPut, "/v0/admin/payment/products/"+uintString(createPayload.Data.ID), rootJWT, map[string]interface{}{
+		"product_id":  "quota_audit",
+		"name":        "Audit credits updated",
+		"amount":      "8.00",
+		"currency":    "usd",
+		"quota":       80,
+		"bonus_quota": 5,
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update payment product failed: %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	disableResp := performJSON(r, http.MethodPatch, "/v0/admin/payment/products/"+uintString(createPayload.Data.ID)+"/disable", rootJWT, nil)
+	if disableResp.Code != http.StatusOK {
+		t.Fatalf("disable payment product failed: %d %s", disableResp.Code, disableResp.Body.String())
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_product", rootJWT, nil)
+	body := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(body, `"action":"payment_product.create"`) ||
+		!strings.Contains(body, `"action":"payment_product.update"`) ||
+		!strings.Contains(body, `"action":"payment_product.disable"`) ||
+		!strings.Contains(body, `"resource_id":"`+uintString(createPayload.Data.ID)+`"`) {
+		t.Fatalf("admin audit should include payment product changes, got %d %s", auditResp.Code, body)
+	}
+}
+
+func TestAdminAuditRequiresSuperAdmin(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createAdmin := performJSON(r, http.MethodPost, "/v0/admin/admin", rootJWT, map[string]interface{}{
+		"username": "ops",
+		"password": "password123",
+		"role":     common.RoleAdmin,
+	})
+	if createAdmin.Code != http.StatusOK {
+		t.Fatalf("create admin failed: %d %s", createAdmin.Code, createAdmin.Body.String())
+	}
+	opsJWT := loginBearer(t, r, "ops", "password123")
+
+	auditByAdmin := performJSON(r, http.MethodGet, "/v0/admin/audit", opsJWT, nil)
+	if auditByAdmin.Code != http.StatusForbidden {
+		t.Fatalf("normal admin must not query audit logs, got %d %s", auditByAdmin.Code, auditByAdmin.Body.String())
+	}
+}
+
 func TestEpayOrderBuildsSignedCheckoutURL(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -5124,6 +5213,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		&model.PaymentProduct{},
 		&model.PaymentOrder{},
 		&model.PaymentEvent{},
+		&model.AdminAuditLog{},
 		&model.Setting{},
 	); err != nil {
 		t.Fatal(err)

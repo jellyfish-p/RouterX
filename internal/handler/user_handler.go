@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strconv"
@@ -225,6 +226,24 @@ func (h *UserHandler) ListPaymentProductsAdmin(c *gin.Context) {
 	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.PaymentProductAdminInfosFromModels(products)})
 }
 
+// GET /v0/admin/audit — 管理审计日志列表
+func (h *UserHandler) ListAdminAuditLogs(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.AdminAuditListRequest
+	_ = c.ShouldBindQuery(&req)
+	logs, total, err := h.svc.ListAdminAuditLogs(operator.Role, req.Page, req.PageSize, req.Action, req.ResourceType, req.ResourceID, req.ActorUserID)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	page, pageSize := pageValues(req.Page, req.PageSize)
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.AdminAuditLogInfosFromModels(logs)})
+}
+
 // POST /v0/admin/payment/products — 创建支付商品
 func (h *UserHandler) CreatePaymentProduct(c *gin.Context) {
 	operator, ok := currentUser(c)
@@ -246,6 +265,10 @@ func (h *UserHandler) CreatePaymentProduct(c *gin.Context) {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
+	if err := h.recordAdminAudit(c, operator, "payment_product.create", "payment_product", product.ID, nil, paymentProductAuditSummary(product)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
 	common.Success(c, dto.PaymentProductAdminInfoFromModel(product))
 }
 
@@ -265,9 +288,18 @@ func (h *UserHandler) UpdatePaymentProduct(c *gin.Context) {
 		common.FailWithStatus(c, 400, "支付商品参数无效")
 		return
 	}
+	before, err := h.svc.GetPaymentProductAdmin(operator.Role, id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
 	product, err := h.svc.UpdatePaymentProduct(operator.Role, id, paymentProductFromRequest(req, false), req.Enabled)
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAudit(c, operator, "payment_product.update", "payment_product", product.ID, paymentProductAuditSummary(before), paymentProductAuditSummary(product)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
 		return
 	}
 	common.Success(c, dto.PaymentProductAdminInfoFromModel(product))
@@ -293,8 +325,26 @@ func (h *UserHandler) setPaymentProductEnabled(c *gin.Context, enabled bool) {
 	if !ok {
 		return
 	}
+	before, err := h.svc.GetPaymentProductAdmin(operator.Role, id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
 	if err := h.svc.SetPaymentProductEnabled(operator.Role, id, enabled); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	after, err := h.svc.GetPaymentProductAdmin(operator.Role, id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	action := "payment_product.disable"
+	if enabled {
+		action = "payment_product.enable"
+	}
+	if err := h.recordAdminAudit(c, operator, action, "payment_product", id, paymentProductAuditSummary(before), paymentProductAuditSummary(after)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
 		return
 	}
 	if enabled {
@@ -328,6 +378,49 @@ func paymentProductFromRequest(req dto.UpsertPaymentProductRequest, enabled bool
 		BonusQuota:         req.BonusQuota,
 		Enabled:            enabled,
 		ProviderConfigJSON: req.ProviderConfigJSON,
+	}
+}
+
+func (h *UserHandler) recordAdminAudit(c *gin.Context, operator *model.User, action, resourceType string, resourceID uint, before, after interface{}) error {
+	return h.svc.RecordAdminAuditLog(service.AdminAuditRecordInput{
+		RequestID:     c.GetString("request_id"),
+		ActorUserID:   operator.ID,
+		ActorRole:     operator.Role,
+		Action:        action,
+		ResourceType:  resourceType,
+		ResourceID:    strconv.FormatUint(uint64(resourceID), 10),
+		BeforeSummary: auditSummary(before),
+		AfterSummary:  auditSummary(after),
+		Result:        "success",
+		IP:            c.ClientIP(),
+		UserAgent:     c.GetHeader("User-Agent"),
+	})
+}
+
+func auditSummary(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func paymentProductAuditSummary(product *model.PaymentProduct) map[string]interface{} {
+	if product == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"id":          product.ID,
+		"product_id":  product.ProductID,
+		"name":        product.Name,
+		"amount":      product.Amount,
+		"currency":    product.Currency,
+		"quota":       product.Quota,
+		"bonus_quota": product.BonusQuota,
+		"enabled":     product.Enabled,
 	}
 }
 

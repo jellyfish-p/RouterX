@@ -25,6 +25,7 @@ erDiagram
     users ||--o{ redem_codes : redeems
     users ||--o{ payment_orders : pays
     users ||--o{ quota_transactions : changes
+    users ||--o{ admin_audit_logs : audits
     tokens ||--o{ logs : authorizes
     channels ||--o{ logs : serves
     payment_products ||--o{ payment_orders : sells
@@ -99,6 +100,16 @@ erDiagram
         int total_tokens
         int64 quota_used
         int status
+    }
+
+    admin_audit_logs {
+        uint id
+        uint actor_user_id
+        int actor_role
+        string action
+        string resource_type
+        string resource_id
+        string result
     }
 ```
 
@@ -522,6 +533,40 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 - `log`
 - `security`
 
+### `admin_audit_logs`
+
+统一管理审计日志表，记录管理端高风险操作的可复核摘要。当前基础实现已覆盖支付商品创建、更新、启用和禁用，后续继续扩展到 settings、用户、通道、价格、日志导出和支付事件。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | uint | 主键 |
+| `request_id` | nullable string | HTTP 请求追踪 ID |
+| `actor_user_id` | uint | 操作管理员 |
+| `actor_role` | int | 操作时角色 |
+| `action` | string | 动作，例如 `payment_product.create` |
+| `resource_type` | string | 资源类型，例如 `payment_product` |
+| `resource_id` | string | 资源 ID |
+| `before_summary` | text/json | 变更前脱敏摘要 |
+| `after_summary` | text/json | 变更后脱敏摘要 |
+| `result` | string | `success`、`failed`、`denied` |
+| `error_code` | string | 失败或拒绝时的稳定 code |
+| `ip` | string | 操作来源 IP |
+| `user_agent` | string | 操作客户端摘要 |
+| `created_at` | time | 创建时间 |
+
+索引：
+
+- `idx_admin_audit_actor_created`，按操作者和时间追查。
+- `idx_admin_audit_resource`，按资源类型和资源 ID 追查。
+- `idx_admin_audit_action`，按动作追查。
+- `idx_admin_audit_request_id`，按请求链路关联。
+
+安全要求：
+
+- `before_summary` 和 `after_summary` 只能保存脱敏摘要，不保存完整请求体。
+- 支付密钥、下游密钥、JWT secret、API Key 明文和数据库 DSN 不得进入审计摘要。
+- 审计查询当前仅超级管理员可用。
+
 ### `setting_audit_logs`
 
 目标设计中的配置变更审计表。P0 可以先复用统一管理审计日志，P2 应保证关键 settings 变更可独立查询和回滚。
@@ -578,6 +623,7 @@ QuotaUnlimited = -1
 | `001_init` | 创建初始表，历史上 `users` 包含 `username` 和 `password_hash` |
 | `002_user_identities` | 拆出 `user_identities`，迁移本地用户名密码身份，`users` 增加 `phone` 并移除 `password_hash` |
 | `003_channel_routing_config` | 扩展通道路由配置，增加排序、多 base URL、多 key、上游数组、模型重写、通道分组和扩展配置 |
+| `004_admin_audit_logs` | 新增统一管理审计日志表和 actor、resource、action、request_id 索引 |
 
 重要说明：
 
@@ -596,6 +642,7 @@ QuotaUnlimited = -1
 | `channels` | `idx`、`type`、`priority`、`status`、`deleted_at` | 排序、筛选、路由选择和软删除过滤 |
 | `logs` | `user_id`、`token_id`、`channel_id`、`created_at` | 日志查询和统计 |
 | `settings` | `key` unique | 配置读取 |
+| `admin_audit_logs` | `actor_user_id + created_at`、`resource_type + resource_id`、`action`、`request_id` | 管理审计查询和链路追踪 |
 
 后续建议：
 

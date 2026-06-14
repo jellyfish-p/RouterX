@@ -279,10 +279,10 @@ Gemini-compatible 错误示例：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/v0/admin/payment/products` | 基础实现 | 支付商品列表，支持 `page`、`page_size`、`keyword`、`enabled` |
-| POST | `/v0/admin/payment/products` | 基础实现 | 创建支付商品；金额、币种、额度和 provider 配置均由服务端保存 |
-| PUT | `/v0/admin/payment/products/:id` | 基础实现 | 更新支付商品；已创建订单继续使用订单快照 |
-| PATCH | `/v0/admin/payment/products/:id/disable` | 基础实现 | 禁用商品；禁用后用户侧不可见且不能创建新订单 |
-| PATCH | `/v0/admin/payment/products/:id/enable` | 基础实现 | 启用商品 |
+| POST | `/v0/admin/payment/products` | 基础实现 | 创建支付商品；金额、币种、额度和 provider 配置均由服务端保存，成功后写管理审计 |
+| PUT | `/v0/admin/payment/products/:id` | 基础实现 | 更新支付商品；已创建订单继续使用订单快照，成功后写管理审计 |
+| PATCH | `/v0/admin/payment/products/:id/disable` | 基础实现 | 禁用商品；禁用后用户侧不可见且不能创建新订单，成功后写管理审计 |
+| PATCH | `/v0/admin/payment/products/:id/enable` | 基础实现 | 启用商品，成功后写管理审计 |
 
 创建/更新支付商品请求：
 
@@ -300,6 +300,34 @@ Gemini-compatible 错误示例：
   }
 }
 ```
+
+### 管理审计
+
+| 方法 | 路径 | 当前状态 | 说明 |
+|------|------|----------|------|
+| GET | `/v0/admin/audit` | 基础实现 | 超级管理员查询管理审计日志，支持按操作者、动作和资源过滤 |
+
+查询参数：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `page` | int | 页码，默认 1 |
+| `page_size` | int | 每页数量，默认 20，最大 100 |
+| `action` | string | 动作过滤，例如 `payment_product.create` |
+| `resource_type` | string | 资源类型过滤，例如 `payment_product` |
+| `resource_id` | string | 资源 ID 过滤 |
+| `actor_user_id` | uint | 操作人 ID 过滤 |
+
+当前基础实现会记录支付商品管理动作：
+
+| 动作 | 触发接口 |
+|------|----------|
+| `payment_product.create` | `POST /v0/admin/payment/products` |
+| `payment_product.update` | `PUT /v0/admin/payment/products/:id` |
+| `payment_product.disable` | `PATCH /v0/admin/payment/products/:id/disable` |
+| `payment_product.enable` | `PATCH /v0/admin/payment/products/:id/enable` |
+
+审计摘要只保存脱敏后的变更摘要，不保存完整请求体、支付密钥或 provider secret。
 
 ### 管理员管理
 

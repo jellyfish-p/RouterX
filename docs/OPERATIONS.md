@@ -228,7 +228,7 @@ volumes:
 |------|------|------|
 | HTTP 访问日志 | 应用日志 | method、path、status、latency、ip、request_id |
 | 模型调用日志 | `logs` 表 | user、token、channel、model、usage、quota、错误 |
-| 管理审计日志 | 建议新增表 | 管理员操作、目标资源、变更前后摘要 |
+| 管理审计日志 | `admin_audit_logs` 表 | 管理员操作、目标资源、变更前后摘要 |
 | 系统错误日志 | 应用日志 | panic、DB、Redis、下游错误 |
 
 结构化日志字段建议：

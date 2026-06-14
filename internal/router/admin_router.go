@@ -34,6 +34,7 @@ func setupAdminRoutes(
 			authRequired.GET("/redem", userH.ListRedemCodes)
 			authRequired.POST("/redem", userH.CreateRedemCodes)
 			authRequired.PATCH("/redem/:id/disable", userH.DisableRedemCode)
+			authRequired.GET("/audit", middleware.RequireSuperAdmin(), userH.ListAdminAuditLogs)
 			authRequired.GET("/payment/products", userH.ListPaymentProductsAdmin)
 			authRequired.POST("/payment/products", userH.CreatePaymentProduct)
 			authRequired.PUT("/payment/products/:id", userH.UpdatePaymentProduct)

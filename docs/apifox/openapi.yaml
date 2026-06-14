@@ -8,7 +8,7 @@ info:
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message。
-    - 充值码、管理端支付商品、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、管理端支付商品、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -31,6 +31,8 @@ tags:
     description: 管理员用户管理。
   - name: Admin Redem
     description: 管理员充值码管理。
+  - name: Admin Audit
+    description: 超级管理员管理审计查询。
   - name: Admin Payment
     description: 管理员支付商品管理。
   - name: Admin Accounts
@@ -753,6 +755,50 @@ paths:
           $ref: "#/components/responses/StandardOK"
         "400":
           $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/audit:
+    get:
+      tags: [Admin Audit]
+      summary: 管理审计日志列表
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖支付商品创建、更新、启用和禁用的成功审计。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: action
+          in: query
+          required: false
+          schema: { type: string }
+          description: 动作过滤，例如 payment_product.create。
+        - name: resource_type
+          in: query
+          required: false
+          schema: { type: string }
+          description: 资源类型过滤，例如 payment_product。
+        - name: resource_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: 资源 ID 过滤。
+        - name: actor_user_id
+          in: query
+          required: false
+          schema: { type: integer, format: uint64 }
+          description: 操作人用户 ID 过滤。
+      responses:
+        "200":
+          description: 管理审计分页列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdminAuditLogPage"
+        "403":
+          $ref: "#/components/responses/StandardForbidden"
   /v0/admin/payment/products:
     get:
       tags: [Admin Payment]
@@ -784,7 +830,7 @@ paths:
     post:
       tags: [Admin Payment]
       summary: 创建支付商品
-      description: 创建服务端充值商品；客户端下单只能选择 product_id，金额、币种和额度以服务端商品为准。
+      description: 创建服务端充值商品；客户端下单只能选择 product_id，金额、币种和额度以服务端商品为准。成功后写入 payment_product.create 管理审计。
       security:
         - UserJWT: []
       requestBody:
@@ -811,7 +857,7 @@ paths:
     put:
       tags: [Admin Payment]
       summary: 更新支付商品
-      description: 更新商品配置；已创建订单继续使用订单快照，不受后续商品修改影响。
+      description: 更新商品配置；已创建订单继续使用订单快照，不受后续商品修改影响。成功后写入 payment_product.update 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -840,7 +886,7 @@ paths:
     patch:
       tags: [Admin Payment]
       summary: 禁用支付商品
-      description: 禁用后用户侧商品列表不可见，且不能创建新订单；历史订单仍可查询和处理可信回调。
+      description: 禁用后用户侧商品列表不可见，且不能创建新订单；历史订单仍可查询和处理可信回调。成功后写入 payment_product.disable 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -854,6 +900,7 @@ paths:
     patch:
       tags: [Admin Payment]
       summary: 启用支付商品
+      description: 成功后写入 payment_product.enable 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -2098,6 +2145,50 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/PaymentProductAdminInfo"
+    AdminAuditLogInfo:
+      type: object
+      properties:
+        id: { type: integer, format: uint64 }
+        request_id:
+          type: string
+          nullable: true
+        actor_user_id: { type: integer, format: uint64 }
+        actor_role:
+          type: integer
+          description: 1=admin，2=super admin。
+        action:
+          type: string
+          example: payment_product.create
+        resource_type:
+          type: string
+          example: payment_product
+        resource_id:
+          type: string
+          example: "1"
+        before_summary:
+          type: string
+          description: 脱敏 JSON 摘要；创建动作可为空。
+        after_summary:
+          type: string
+          description: 脱敏 JSON 摘要。
+        result:
+          type: string
+          enum: [success, failed, denied]
+        error_code:
+          type: string
+          description: 失败或拒绝时的稳定 code。
+        ip: { type: string }
+        user_agent: { type: string }
+        created_at: { type: string, format: date-time }
+    AdminAuditLogPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/AdminAuditLogInfo"
     CreatePaymentOrderRequest:
       type: object
       required: [provider, product_id]

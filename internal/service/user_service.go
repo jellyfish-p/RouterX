@@ -27,6 +27,78 @@ func NewUserService() *UserService {
 	return &UserService{}
 }
 
+type AdminAuditRecordInput struct {
+	RequestID     string
+	ActorUserID   uint
+	ActorRole     int
+	Action        string
+	ResourceType  string
+	ResourceID    string
+	BeforeSummary string
+	AfterSummary  string
+	Result        string
+	ErrorCode     string
+	IP            string
+	UserAgent     string
+}
+
+// RecordAdminAuditLog 写入管理审计摘要。审计失败不应泄露敏感请求体。
+func (s *UserService) RecordAdminAuditLog(input AdminAuditRecordInput) error {
+	if input.ActorUserID == 0 || input.Action == "" || input.ResourceType == "" || input.ResourceID == "" {
+		return errors.New("invalid admin audit log")
+	}
+	result := strings.TrimSpace(input.Result)
+	if result == "" {
+		result = "success"
+	}
+	var requestID *string
+	if trimmed := strings.TrimSpace(input.RequestID); trimmed != "" {
+		requestID = &trimmed
+	}
+	log := model.AdminAuditLog{
+		RequestID:     requestID,
+		ActorUserID:   input.ActorUserID,
+		ActorRole:     input.ActorRole,
+		Action:        strings.TrimSpace(input.Action),
+		ResourceType:  strings.TrimSpace(input.ResourceType),
+		ResourceID:    strings.TrimSpace(input.ResourceID),
+		BeforeSummary: strings.TrimSpace(input.BeforeSummary),
+		AfterSummary:  strings.TrimSpace(input.AfterSummary),
+		Result:        result,
+		ErrorCode:     strings.TrimSpace(input.ErrorCode),
+		IP:            strings.TrimSpace(input.IP),
+		UserAgent:     strings.TrimSpace(input.UserAgent),
+	}
+	return internal.DB.Create(&log).Error
+}
+
+func (s *UserService) ListAdminAuditLogs(operatorRole int, page, pageSize int, action, resourceType, resourceID string, actorUserID uint) ([]model.AdminAuditLog, int64, error) {
+	if operatorRole < common.RoleSuper {
+		return nil, 0, errors.New("super admin role required")
+	}
+	page, pageSize = normalizePage(page, pageSize)
+	query := internal.DB.Model(&model.AdminAuditLog{})
+	if strings.TrimSpace(action) != "" {
+		query = query.Where("action = ?", strings.TrimSpace(action))
+	}
+	if strings.TrimSpace(resourceType) != "" {
+		query = query.Where("resource_type = ?", strings.TrimSpace(resourceType))
+	}
+	if strings.TrimSpace(resourceID) != "" {
+		query = query.Where("resource_id = ?", strings.TrimSpace(resourceID))
+	}
+	if actorUserID > 0 {
+		query = query.Where("actor_user_id = ?", actorUserID)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var logs []model.AdminAuditLog
+	err := query.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs).Error
+	return logs, total, err
+}
+
 // GetByID 根据 ID 获取用户。
 func (s *UserService) GetByID(id uint) (*model.User, error) {
 	var user model.User
@@ -313,6 +385,20 @@ func (s *UserService) ListPaymentProductsAdmin(operatorRole int, page, pageSize 
 	var products []model.PaymentProduct
 	err := query.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&products).Error
 	return products, total, err
+}
+
+func (s *UserService) GetPaymentProductAdmin(operatorRole int, id uint) (*model.PaymentProduct, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	if id == 0 {
+		return nil, errors.New("payment product is required")
+	}
+	var product model.PaymentProduct
+	if err := internal.DB.First(&product, id).Error; err != nil {
+		return nil, err
+	}
+	return &product, nil
 }
 
 func (s *UserService) CreatePaymentProduct(operatorRole int, product model.PaymentProduct) (*model.PaymentProduct, error) {

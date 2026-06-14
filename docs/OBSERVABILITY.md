@@ -20,9 +20,12 @@
 - `GET /v0/admin/log` 查询全局调用日志。
 - `DELETE /v0/admin/log` 要求 `before` 时间范围后清理日志。
 - `GET /v0/admin/dashboard` 返回用户数、通道数、API Key 数、当日调用、当日额度和可用通道数。
+- `admin_audit_logs` 表保存基础管理审计日志，字段包含 actor、action、resource、before/after 摘要、request_id、IP 和 User-Agent。
+- `GET /v0/admin/audit` 已注册为超级管理员查询接口，支持按 `action`、`resource_type`、`resource_id` 和 `actor_user_id` 过滤。
+- 支付商品创建、更新、启用和禁用会写入 `payment_product.*` 管理审计摘要。
 - HTTP Logger 中间件已经记录基础访问日志。
 
-这些能力构成 P0 的可见闭环。商业级增强需要继续补结构化字段、审计表、指标、告警、追踪和保留策略。
+这些能力构成 P0 的可见闭环，并补上了支付商品管理审计的基础切片。商业级增强需要继续补更完整的审计覆盖、结构化字段、指标、告警、追踪和保留策略。
 
 ## 观测事实分层
 
@@ -221,7 +224,7 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 | 用户账单 | 聚合成功调用，展示 token、额度和时间范围。 |
 | 管理日志 | 管理员可按用户、API Key、通道、模型、状态、时间筛选。 |
 | 通道健康 | 展示通道状态、错误计数、最近错误、延迟和最近成功时间。 |
-| 审计查询 | 超级管理员可按 actor、资源、动作、结果、时间查询。 |
+| 审计查询 | 超级管理员可按 actor、资源、动作、结果、时间查询；当前基础实现已支持 actor、资源和动作过滤。 |
 | 指标接口 | `/metrics` 可由 Prometheus 抓取；默认可由 settings 控制启用。 |
 | 诊断详情 | 单次调用能关联 request_id、error_code、route_snapshot 和 billing_snapshot。 |
 
@@ -231,7 +234,7 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 |------|------|
 | P0 | 调用日志、用户日志、管理员日志、基础账单和基础 dashboard 可用；body 日志默认关闭。 |
 | P1 | 补 request_id、error_code、route_snapshot、billing_snapshot、usage_source 和结构化失败事实。 |
-| P2 | 补管理审计日志、Prometheus `/metrics`、告警、长期保留、导出审计和生产 readiness 指标。 |
+| P2 | 扩展管理审计覆盖、Prometheus `/metrics`、告警、长期保留、导出审计和生产 readiness 指标。 |
 
 ## 测试要求
 
@@ -243,7 +246,7 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 | 管理日志筛选 | 管理员可按 user、token、channel、model、status、时间筛选。 |
 | 账单一致 | 用户账单聚合等于成功日志事实；启用独立日志库时主库结算最小事实可恢复。 |
 | 脱敏 | 日志和导出不包含 API Key、上游密钥、DSN、支付密钥。 |
-| 审计 | 高风险管理操作写审计，失败和拒绝也有摘要。 |
+| 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖支付商品管理成功操作。 |
 | 指标 | `/metrics` 暴露核心指标，不包含高基数或敏感 label。 |
 
 ## 文档同步

@@ -26,6 +26,8 @@
 | `TestAdminQuotaAdjustmentWritesTransaction` | 管理员调整用户额度时写入额度流水，记录 actor、reason、变更前后余额和幂等键 |
 | `TestAdminManagesRedemCodes` | 管理员生成随机充值码、导入指定充值码、列表查询、作废未使用码，作废码不可兑换 |
 | `TestAdminManagesPaymentProducts` | 管理员创建、更新、启用和禁用支付商品；用户侧只展示启用商品，禁用商品不能创建订单 |
+| `TestAdminPaymentProductAuditLogs` | 支付商品创建、更新和禁用成功后写入 `admin_audit_logs`，超级管理员可按资源类型查询 |
+| `TestAdminAuditRequiresSuperAdmin` | 普通管理员不能查询管理审计日志，超级管理员边界由路由层拦截 |
 | `TestUserListsAvailableModels` | 用户查看当前启用通道的去重模型列表，禁用通道模型不可见，价格状态明确标记未就绪 |
 | `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品；未启用 provider 拒绝下单，启用后创建本地 pending 订单，订单按 settings 过期且不入账 |
 | `TestEpayOrderBuildsSignedCheckoutURL` | 易支付网关配置齐全时创建订单返回签名收银台 URL，参数和签名可复核 |
@@ -392,7 +394,7 @@ Gemini-compatible 最小断言：
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
 | P2 | 高级 API Key 管理 | 轮换、泄露上报、最近使用、作用域拒绝、批量禁用、审计和缓存失效 |
 | P2 | 支付充值 | Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水和人工修正审计 |
-| P2 | 观测审计 | Request ID、结构化日志、Prometheus 指标、管理审计日志、生产 `/ready` |
+| P2 | 观测审计 | 支付商品管理审计基础测试已覆盖；继续补 Request ID、结构化日志、Prometheus 指标、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
 
