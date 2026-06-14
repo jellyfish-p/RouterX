@@ -313,7 +313,11 @@ func (s *UserService) CreatePaymentOrder(userID uint, provider, productID, payTy
 		return nil, err
 	}
 	now := time.Now()
-	expiredAt := now.Add(30 * time.Minute)
+	expireDuration, err := paymentOrderExpireDuration()
+	if err != nil {
+		return nil, err
+	}
+	expiredAt := now.Add(expireDuration)
 	providerOrderID := "local_" + orderNo
 	checkoutURL := "/v0/user/payment/orders/" + orderNo
 	order := &model.PaymentOrder{
@@ -333,6 +337,19 @@ func (s *UserService) CreatePaymentOrder(userID uint, provider, productID, payTy
 		return nil, err
 	}
 	return order, nil
+}
+
+func paymentOrderExpireDuration() (time.Duration, error) {
+	minutes, err := NewSettingService().GetInt("payment.order_expire_minutes")
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		minutes = 30
+	} else if err != nil {
+		return 0, err
+	}
+	if minutes <= 0 {
+		return 0, errors.New("payment.order_expire_minutes must be a positive integer")
+	}
+	return time.Duration(minutes) * time.Minute, nil
 }
 
 // ListPaymentOrders 查询当前用户自己的支付订单列表。

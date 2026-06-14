@@ -417,7 +417,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `provider_payment_id` | nullable string | provider 支付流水号 |
 | `checkout_url` | nullable text | 支付跳转地址，过期后不可继续使用 |
 | `paid_at` | nullable time | 支付成功时间 |
-| `expired_at` | nullable time | 订单过期时间 |
+| `expired_at` | nullable time | 订单过期时间，创建时按 `payment.order_expire_minutes` 生成快照 |
 | `created_at` | time | 创建时间 |
 | `updated_at` | time | 更新时间 |
 

@@ -558,6 +558,9 @@ func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := service.NewSettingService().Set("payment.order_expire_minutes", "5"); err != nil {
+		t.Fatal(err)
+	}
 
 	productsResp := performJSON(r, http.MethodGet, "/v0/user/payment/products", rootJWT, nil)
 	if productsResp.Code != http.StatusOK || !strings.Contains(productsResp.Body.String(), `"product_id":"quota_100"`) || !strings.Contains(productsResp.Body.String(), `"quota":120`) {
@@ -582,6 +585,10 @@ func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 	}
 	if order.Status != common.PaymentOrderStatusPending || order.Quota != 120 || order.Amount != "9.99" || order.Currency != "usd" || order.ExpiredAt == nil {
 		t.Fatalf("unexpected payment order snapshot: %+v", order)
+	}
+	expiresIn := order.ExpiredAt.Sub(order.CreatedAt)
+	if expiresIn < 4*time.Minute || expiresIn > 6*time.Minute {
+		t.Fatalf("payment order should use configured expiration, got %s", expiresIn)
 	}
 	if root.Quota != 0 {
 		t.Fatalf("pending payment order must not grant quota, got %d", root.Quota)

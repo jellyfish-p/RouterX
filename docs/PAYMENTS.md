@@ -390,7 +390,7 @@ POST /v0/user/payment/orders
 1. 校验用户登录态。
 2. 查询服务端商品。
 3. 校验商品启用、provider 可用、金额和币种。
-4. 创建 `payment_orders(pending)`，保存商品快照。
+4. 创建 `payment_orders(pending)`，保存商品快照，并按 `payment.order_expire_minutes` 写入 `expired_at`。
 5. 调用 provider 创建支付会话或跳转参数。
 6. 保存 provider_order_id 和 checkout_url。
 7. 返回安全响应。

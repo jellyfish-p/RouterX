@@ -26,7 +26,7 @@
 | `TestAdminQuotaAdjustmentWritesTransaction` | 管理员调整用户额度时写入额度流水，记录 actor、reason、变更前后余额和幂等键 |
 | `TestAdminManagesRedemCodes` | 管理员生成随机充值码、导入指定充值码、列表查询、作废未使用码，作废码不可兑换 |
 | `TestUserListsAvailableModels` | 用户查看当前启用通道的去重模型列表，禁用通道模型不可见，价格状态明确标记未就绪 |
-| `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品、创建本地 pending 订单、订单不入账、列表和详情只能基于当前用户订单 |
+| `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品、创建本地 pending 订单、订单按 settings 过期且不入账，列表和详情只能基于当前用户订单 |
 | `TestEpayNotifyPaysOrderIdempotently` | 易支付异步通知校验签名和金额，成功通知订单 paid 并入账，重复通知不重复增加额度或流水 |
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
