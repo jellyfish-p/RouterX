@@ -32,6 +32,12 @@ type RelayStreamResult struct {
 	forward     func(write func([]byte) error, flush func()) (*relay.Usage, error)
 }
 
+type RelayRawResult struct {
+	Body        []byte
+	ContentType string
+	Usage       *relay.Usage
+}
+
 func (r *RelayStreamResult) Forward(write func([]byte) error, flush func()) (*relay.Usage, error) {
 	if r == nil || r.forward == nil {
 		return nil, errors.New("stream result is not initialized")
@@ -183,6 +189,20 @@ func (s *RelayService) GetAdapter(channelType int) (relay.Adapter, error) {
 
 // Relay 通用转发入口。
 func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType relay.APIType, body []byte, clientIP string) ([]byte, *relay.Usage, error) {
+	result, usage, err := s.relayNonStream(ctx, token, apiType, body, clientIP, false)
+	if err != nil {
+		return nil, usage, err
+	}
+	return result.Body, result.Usage, nil
+}
+
+// RelayRaw 用于返回非 JSON 响应体的接口，例如 /v1/audio/speech 的音频字节流。
+func (s *RelayService) RelayRaw(ctx context.Context, token *model.Token, apiType relay.APIType, body []byte, clientIP string) (*RelayRawResult, error) {
+	result, _, err := s.relayNonStream(ctx, token, apiType, body, clientIP, true)
+	return result, err
+}
+
+func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, apiType relay.APIType, body []byte, clientIP string, rawResponse bool) (*RelayRawResult, *relay.Usage, error) {
 	if token == nil {
 		return nil, nil, &HTTPError{Status: 401, Message: "invalid api key", Type: "authentication_error", Code: "invalid_api_key"}
 	}
@@ -217,9 +237,9 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 	var lastErr error
 	for i := 0; i < maxAttempts; i++ {
 		channel := attemptCandidates[i]
-		resp, usage, retryable, err := s.relayNonStreamAttempt(ctx, token, apiType, reqInfo, body, clientIP, &channel)
+		result, usage, retryable, err := s.relayNonStreamAttempt(ctx, token, apiType, reqInfo, body, clientIP, &channel, rawResponse)
 		if err == nil {
-			return resp, usage, nil
+			return result, usage, nil
 		}
 		lastUsage = usage
 		lastErr = err
@@ -230,7 +250,7 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 	return nil, lastUsage, lastErr
 }
 
-func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.Token, apiType relay.APIType, reqInfo relayRequestInfo, body []byte, clientIP string, channel *model.Channel) ([]byte, *relay.Usage, bool, error) {
+func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.Token, apiType relay.APIType, reqInfo relayRequestInfo, body []byte, clientIP string, channel *model.Channel, rawResponse bool) (*RelayRawResult, *relay.Usage, bool, error) {
 	adapter, err := s.GetAdapter(channel.Type)
 	if err != nil {
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
@@ -287,6 +307,21 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		}
 	}
 
+	if rawResponse {
+		quotaUsed := quotaFromUsage(nil)
+		if err := s.tokenService.DeductQuota(token.ID, quotaUsed); err != nil {
+			_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
+			return nil, nil, false, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
+		}
+		contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		_ = s.markChannelSuccess(channel, latencyMs)
+		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusSuccess, quotaUsed, "", clientIP)
+		return &RelayRawResult{Body: respBody, ContentType: contentType}, nil, false, nil
+	}
+
 	converted, usage, err := adapter.ConvertResponse(apiType, respBody)
 	if err != nil {
 		_ = s.markChannelFailure(channel, latencyMs)
@@ -300,7 +335,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	}
 	_ = s.markChannelSuccess(channel, latencyMs)
 	_ = s.recordLog(token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
-	return converted, usage, false, nil
+	return &RelayRawResult{Body: converted, ContentType: "application/json; charset=utf-8", Usage: usage}, usage, false, nil
 }
 
 func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiType relay.APIType, body []byte, clientIP string) (*RelayStreamResult, error) {

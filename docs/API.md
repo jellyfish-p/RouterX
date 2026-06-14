@@ -576,7 +576,7 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/images/variations` | 已注册，图像变体 |
 | POST | `/v1/audio/transcriptions` | 已注册，语音转文本 |
 | POST | `/v1/audio/translations` | 已注册，语音翻译 |
-| POST | `/v1/audio/speech` | 已注册，文本转语音 |
+| POST | `/v1/audio/speech` | 基础实现，OpenAI-compatible 文本转语音 JSON 透传，二进制音频响应透传；无 usage 时按 P0 最低计费 |
 | GET | `/v1/models` | 基础实现，模型列表 |
 | GET | `/v1/models/:model` | 基础实现，模型详情 |
 | POST | `/v1/moderations` | 基础实现，OpenAI-compatible Moderations JSON 透传；无 usage 时按 P0 最低计费 |

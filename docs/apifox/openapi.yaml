@@ -973,13 +973,23 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 文本转语音转发
+      description: OpenAI-compatible Audio Speech 基础实现；JSON 请求体透传到上游 /v1/audio/speech，发出前剥离 routerx 私有字段。上游音频字节流会保留 Content-Type 透传给客户端；OpenAI Audio Speech 响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算。完整音频格式策略、时长限制和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
         "200":
-          $ref: "#/components/responses/GenericJSON"
+          description: 音频字节流。
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
         "4XX":
           $ref: "#/components/responses/OpenAIError"
         "5XX":

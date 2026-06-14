@@ -103,7 +103,22 @@ func (h *RelayHandler) AudioTranslations(c *gin.Context) {
 
 // POST /v1/audio/speech — 文字转语音转发
 func (h *RelayHandler) AudioSpeech(c *gin.Context) {
-	h.relayOpenAI(c, relay.APIAudioSpeech)
+	token, ok := middleware.CurrentAPIToken(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, common.OpenAIError("invalid api key", "authentication_error", "invalid_api_key"))
+		return
+	}
+	body, err := readRelayBody(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
+		return
+	}
+	result, err := h.svc.RelayRaw(c.Request.Context(), token, relay.APIAudioSpeech, body, c.ClientIP())
+	if err != nil {
+		writeRelayError(c, err)
+		return
+	}
+	c.Data(http.StatusOK, result.ContentType, result.Body)
 }
 
 func (h *RelayHandler) Moderations(c *gin.Context) {
