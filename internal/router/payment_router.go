@@ -12,6 +12,7 @@ func setupPaymentRoutes(r *gin.Engine, userH *handler.UserHandler) {
 	payment := r.Group("/v0/payment")
 	payment.Use(middleware.SetupCheck())
 	{
+		payment.POST("/stripe/webhook", userH.StripeWebhook)
 		payment.POST("/epay/notify", userH.EpayNotify)
 	}
 }

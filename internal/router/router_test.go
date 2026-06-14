@@ -3,7 +3,9 @@ package router
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -698,6 +700,104 @@ func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 	}
 	if quotaTxCount != 1 {
 		t.Fatalf("duplicate epay notify must not write duplicate quota transactions, got %d", quotaTxCount)
+	}
+}
+
+func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_100",
+		Name:      "100 credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "stripe",
+		"product_id": "quota_100",
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create payment order failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("user_id = ? AND provider = ?", root.ID, common.PaymentProviderStripe).First(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	mismatchBody := stripeCheckoutCompletedPayload("evt_stripe_bad", &order, root.ID, 100, "pi_bad")
+	mismatchResp := performStripeWebhook(r, mismatchBody, "whsec_test_secret")
+	if mismatchResp.Code == http.StatusOK && strings.TrimSpace(mismatchResp.Body.String()) == "success" {
+		t.Fatalf("amount mismatch must not be accepted: %d %s", mismatchResp.Code, mismatchResp.Body.String())
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 0 {
+		t.Fatalf("amount mismatch must not grant quota, got %d", root.Quota)
+	}
+
+	successBody := stripeCheckoutCompletedPayload("evt_stripe_1000", &order, root.ID, 999, "pi_1000")
+	firstNotify := performStripeWebhook(r, successBody, "whsec_test_secret")
+	if firstNotify.Code != http.StatusOK || strings.TrimSpace(firstNotify.Body.String()) != "success" {
+		t.Fatalf("valid stripe webhook should return success, got %d %s", firstNotify.Code, firstNotify.Body.String())
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("valid stripe webhook should grant order quota once, got %d", root.Quota)
+	}
+	if err := internal.DB.First(&order, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != common.PaymentOrderStatusPaid || order.PaidAt == nil || order.ProviderPaymentID == nil || *order.ProviderPaymentID != "pi_1000" {
+		t.Fatalf("valid stripe webhook should mark order paid: %+v", order)
+	}
+	var quotaTxCount int64
+	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("source_type = ? AND source_id = ?", common.QuotaSourceTypePaymentOrder, order.OrderNo).Count(&quotaTxCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if quotaTxCount != 1 {
+		t.Fatalf("valid stripe webhook should write one quota transaction, got %d", quotaTxCount)
+	}
+
+	duplicateNotify := performStripeWebhook(r, successBody, "whsec_test_secret")
+	if duplicateNotify.Code != http.StatusOK || strings.TrimSpace(duplicateNotify.Body.String()) != "success" {
+		t.Fatalf("duplicate stripe webhook should return success, got %d %s", duplicateNotify.Code, duplicateNotify.Body.String())
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("duplicate stripe webhook must not grant quota twice, got %d", root.Quota)
+	}
+	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("source_type = ? AND source_id = ?", common.QuotaSourceTypePaymentOrder, order.OrderNo).Count(&quotaTxCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if quotaTxCount != 1 {
+		t.Fatalf("duplicate stripe webhook must not write duplicate quota transactions, got %d", quotaTxCount)
 	}
 }
 
@@ -4757,10 +4857,17 @@ func performJSON(r http.Handler, method, path, bearer string, body interface{}) 
 }
 
 func performRaw(r http.Handler, method, path, bearer, body string) *httptest.ResponseRecorder {
+	return performRawWithHeaders(r, method, path, bearer, body, nil)
+}
+
+func performRawWithHeaders(r http.Handler, method, path, bearer, body string, headers map[string]string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if bearer != "" {
 		req.Header.Set("Authorization", bearer)
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -4773,6 +4880,46 @@ func performForm(r http.Handler, method, path string, values url.Values) *httpte
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
+}
+
+func performStripeWebhook(r http.Handler, body, secret string) *httptest.ResponseRecorder {
+	return performRawWithHeaders(r, http.MethodPost, "/v0/payment/stripe/webhook", "", body, map[string]string{
+		"Stripe-Signature": stripeSignature(body, secret),
+	})
+}
+
+func stripeSignature(body, secret string) string {
+	timestamp := time.Now().Unix()
+	payload := fmt.Sprintf("%d.%s", timestamp, body)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(payload))
+	return fmt.Sprintf("t=%d,v1=%x", timestamp, mac.Sum(nil))
+}
+
+func stripeCheckoutCompletedPayload(eventID string, order *model.PaymentOrder, userID uint, amountTotal int64, paymentIntent string) string {
+	providerOrderID := ""
+	if order.ProviderOrderID != nil {
+		providerOrderID = *order.ProviderOrderID
+	}
+	raw, _ := json.Marshal(map[string]interface{}{
+		"id":   eventID,
+		"type": "checkout.session.completed",
+		"data": map[string]interface{}{
+			"object": map[string]interface{}{
+				"id":             providerOrderID,
+				"amount_total":   amountTotal,
+				"currency":       order.Currency,
+				"payment_status": "paid",
+				"payment_intent": paymentIntent,
+				"metadata": map[string]string{
+					"order_no":   order.OrderNo,
+					"product_id": order.ProductID,
+					"user_id":    strconv.FormatUint(uint64(userID), 10),
+				},
+			},
+		},
+	})
+	return string(raw)
 }
 
 func loginBearer(t *testing.T, r http.Handler, account, password string) string {

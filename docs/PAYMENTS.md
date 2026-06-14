@@ -242,6 +242,8 @@ Stripe 要求：
 - 非成功事件可以记录为 `ignored`，不能入账。
 - 退款事件先记录为 refund fact；是否扣回额度由退款策略决定。
 
+当前基础实现已注册 `POST /v0/payment/stripe/webhook`，支持 `checkout.session.completed` 成功事件、`Stripe-Signature` 校验、订单 metadata 校验、金额/币种快照校验、`payment_events` 幂等和 `quota_transactions` 入账。真实 Stripe Checkout Session 创建仍是后续能力，当前用户创建订单接口返回本地安全 checkout 占位链接。
+
 ## 6. 易支付契约
 
 易支付适配器用于跳转收银台和异步通知。

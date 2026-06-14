@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"io"
 	"net/http"
 	"strconv"
 
@@ -285,6 +286,20 @@ func (h *UserHandler) PaymentOrder(c *gin.Context) {
 		return
 	}
 	common.Success(c, dto.PaymentOrderInfoFromModel(order))
+}
+
+// POST /v0/payment/stripe/webhook — Stripe 异步通知
+func (h *UserHandler) StripeWebhook(c *gin.Context) {
+	raw, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.String(http.StatusBadRequest, "fail")
+		return
+	}
+	if err := h.svc.ProcessStripeWebhook(raw, c.GetHeader("Stripe-Signature"), c.GetString("request_id")); err != nil {
+		c.String(http.StatusBadRequest, "fail")
+		return
+	}
+	c.String(http.StatusOK, "success")
 }
 
 // POST /v0/payment/epay/notify — 易支付异步通知

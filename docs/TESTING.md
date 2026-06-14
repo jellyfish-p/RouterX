@@ -28,6 +28,7 @@
 | `TestUserListsAvailableModels` | 用户查看当前启用通道的去重模型列表，禁用通道模型不可见，价格状态明确标记未就绪 |
 | `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品、创建本地 pending 订单、订单按 settings 过期且不入账，列表和详情只能基于当前用户订单 |
 | `TestEpayNotifyPaysOrderIdempotently` | 易支付异步通知校验签名和金额，成功通知订单 paid 并入账，重复通知不重复增加额度或流水 |
+| `TestStripeWebhookPaysOrderIdempotently` | Stripe webhook 校验原始 body 签名、Checkout Session 金额和 metadata，成功事件 paid 入账且重复事件不重复流水 |
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |

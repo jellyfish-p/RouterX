@@ -8,7 +8,7 @@ info:
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message。
-    - 充值码、用户侧支付商品/订单和易支付异步通知基础接口已注册；Stripe webhook、OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、用户侧支付商品/订单、Stripe webhook 和易支付异步通知基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -496,6 +496,38 @@ paths:
                         $ref: "#/components/schemas/PaymentOrderInfo"
         "404":
           description: 订单不存在或不属于当前用户。
+  /v0/payment/stripe/webhook:
+    post:
+      tags: [Payment Webhook]
+      summary: Stripe Webhook 异步通知
+      description: 基础实现；使用 PAYMENT_STRIPE_WEBHOOK_SECRET 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions 并增加用户额度；重复事件幂等返回 success。
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string }
+          description: Stripe webhook 签名 header，格式包含 t 和 v1。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StripeWebhookEvent"
+      responses:
+        "200":
+          description: provider 通知已接受；响应体为纯文本 success。
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: success
+        "400":
+          description: 签名、事件、订单、金额、币种或 metadata 校验失败；响应体为纯文本 fail。
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: fail
   /v0/payment/epay/notify:
     post:
       tags: [Payment Webhook]
@@ -1912,6 +1944,51 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/PaymentOrderInfo"
+    StripeWebhookEvent:
+      type: object
+      required: [id, type, data]
+      properties:
+        id:
+          type: string
+          description: Stripe event id，用作 payment_events 幂等键。
+          example: evt_123
+        type:
+          type: string
+          description: 当前基础实现会处理 checkout.session.completed。
+          example: checkout.session.completed
+        data:
+          type: object
+          required: [object]
+          properties:
+            object:
+              type: object
+              description: Stripe Checkout Session 对象。
+              required: [id, amount_total, currency, payment_status, metadata]
+              properties:
+                id:
+                  type: string
+                  example: cs_test_123
+                amount_total:
+                  type: integer
+                  format: int64
+                  description: Stripe minor unit 金额，例如 9.99 USD 为 999。
+                  example: 999
+                currency:
+                  type: string
+                  example: usd
+                payment_status:
+                  type: string
+                  example: paid
+                payment_intent:
+                  type: string
+                  example: pi_123
+                metadata:
+                  type: object
+                  required: [order_no, product_id, user_id]
+                  properties:
+                    order_no: { type: string }
+                    product_id: { type: string }
+                    user_id: { type: string }
     EpayNotifyRequest:
       type: object
       required: [out_trade_no, money, trade_status, sign]

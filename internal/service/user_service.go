@@ -1,7 +1,10 @@
 package service
 
 import (
+	"crypto/hmac"
 	"crypto/md5"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +13,7 @@ import (
 	"routerx/internal/common"
 	"routerx/internal/model"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -466,6 +470,238 @@ func (s *UserService) ProcessEpayNotify(values map[string]string, requestID stri
 		}
 		return tx.Model(&event).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
 	})
+}
+
+type stripeWebhookEvent struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Data struct {
+		Object stripeCheckoutSession `json:"object"`
+	} `json:"data"`
+}
+
+type stripeCheckoutSession struct {
+	ID            string            `json:"id"`
+	Metadata      map[string]string `json:"metadata"`
+	AmountTotal   int64             `json:"amount_total"`
+	Currency      string            `json:"currency"`
+	PaymentStatus string            `json:"payment_status"`
+	PaymentIntent string            `json:"payment_intent"`
+}
+
+// ProcessStripeWebhook 验证 Stripe 原始签名，并在可信 Checkout 成功事件中幂等入账。
+func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestID string) error {
+	secret := strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_WEBHOOK_SECRET"))
+	if secret == "" {
+		return errors.New("stripe webhook secret is not configured")
+	}
+	if !verifyStripeSignature(raw, signatureHeader, secret) {
+		return errors.New("invalid stripe signature")
+	}
+	var event stripeWebhookEvent
+	if err := json.Unmarshal(raw, &event); err != nil {
+		return err
+	}
+	event.ID = strings.TrimSpace(event.ID)
+	event.Type = strings.TrimSpace(event.Type)
+	if event.ID == "" || event.Type == "" {
+		return errors.New("invalid stripe event")
+	}
+	session := event.Data.Object
+	orderNo := strings.TrimSpace(session.Metadata["order_no"])
+
+	return internal.DB.Transaction(func(tx *gorm.DB) error {
+		var existing model.PaymentEvent
+		err := tx.Where("provider = ? AND provider_event_id = ?", common.PaymentProviderStripe, event.ID).First(&existing).Error
+		switch {
+		case err == nil:
+			return nil
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return err
+		}
+
+		paymentEvent := model.PaymentEvent{
+			Provider:        common.PaymentProviderStripe,
+			ProviderEventID: event.ID,
+			OrderNo:         orderNo,
+			EventType:       event.Type,
+			Payload:         string(raw),
+			SignatureValid:  true,
+		}
+		if err := tx.Create(&paymentEvent).Error; err != nil {
+			return err
+		}
+		if event.Type != "checkout.session.completed" || !stripeCheckoutSucceeded(session) {
+			now := time.Now()
+			return tx.Model(&paymentEvent).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
+		}
+		if orderNo == "" {
+			return errors.New("stripe event missing order_no")
+		}
+
+		var order model.PaymentOrder
+		if err := tx.Where("order_no = ? AND provider = ?", orderNo, common.PaymentProviderStripe).First(&order).Error; err != nil {
+			return err
+		}
+		if err := verifyStripeOrderSnapshot(order, session); err != nil {
+			return err
+		}
+		if order.Status == common.PaymentOrderStatusPaid {
+			now := time.Now()
+			return tx.Model(&paymentEvent).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
+		}
+		if order.Status != common.PaymentOrderStatusPending {
+			return errors.New("payment order is not pending")
+		}
+
+		now := time.Now()
+		providerPaymentID := strings.TrimSpace(session.PaymentIntent)
+		if providerPaymentID == "" {
+			providerPaymentID = strings.TrimSpace(session.ID)
+		}
+		updates := map[string]interface{}{
+			"status":     common.PaymentOrderStatusPaid,
+			"paid_at":    &now,
+			"updated_at": now,
+		}
+		if providerPaymentID != "" {
+			updates["provider_payment_id"] = providerPaymentID
+		}
+		if err := tx.Model(&order).Updates(updates).Error; err != nil {
+			return err
+		}
+		if _, _, err := applyQuotaChange(tx, quotaChange{
+			UserID:         order.UserID,
+			Amount:         order.Quota,
+			Type:           common.QuotaTransactionTypePaymentGrant,
+			SourceType:     common.QuotaSourceTypePaymentOrder,
+			SourceID:       order.OrderNo,
+			IdempotencyKey: "payment_order:" + order.OrderNo,
+			Reason:         "stripe payment grant",
+			RequestID:      requestID,
+		}); err != nil {
+			return err
+		}
+		return tx.Model(&paymentEvent).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
+	})
+}
+
+func verifyStripeSignature(raw []byte, signatureHeader, secret string) bool {
+	var timestamp string
+	signatures := make([]string, 0, 1)
+	for _, part := range strings.Split(signatureHeader, ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "t":
+			timestamp = value
+		case "v1":
+			signatures = append(signatures, value)
+		}
+	}
+	if timestamp == "" || len(signatures) == 0 {
+		return false
+	}
+	signedAt, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return false
+	}
+	eventTime := time.Unix(signedAt, 0)
+	if time.Since(eventTime) > 5*time.Minute || time.Until(eventTime) > 5*time.Minute {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(timestamp + "." + string(raw)))
+	expected := mac.Sum(nil)
+	for _, signature := range signatures {
+		decoded, err := hex.DecodeString(signature)
+		if err == nil && hmac.Equal(decoded, expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func stripeCheckoutSucceeded(session stripeCheckoutSession) bool {
+	return strings.EqualFold(strings.TrimSpace(session.PaymentStatus), "paid")
+}
+
+func verifyStripeOrderSnapshot(order model.PaymentOrder, session stripeCheckoutSession) error {
+	expectedAmount, err := decimalAmountToMinorUnits(order.Amount)
+	if err != nil {
+		return err
+	}
+	if expectedAmount != session.AmountTotal {
+		return errors.New("stripe amount mismatch")
+	}
+	if strings.ToLower(strings.TrimSpace(order.Currency)) != strings.ToLower(strings.TrimSpace(session.Currency)) {
+		return errors.New("stripe currency mismatch")
+	}
+	if productID := strings.TrimSpace(session.Metadata["product_id"]); productID != "" && productID != order.ProductID {
+		return errors.New("stripe product mismatch")
+	}
+	if userID := strings.TrimSpace(session.Metadata["user_id"]); userID != "" {
+		parsed, err := strconv.ParseUint(userID, 10, 64)
+		if err != nil || uint(parsed) != order.UserID {
+			return errors.New("stripe user mismatch")
+		}
+	}
+	if order.ProviderOrderID != nil {
+		expectedSessionID := strings.TrimSpace(*order.ProviderOrderID)
+		if expectedSessionID != "" && session.ID != "" && expectedSessionID != strings.TrimSpace(session.ID) {
+			return errors.New("stripe session mismatch")
+		}
+	}
+	return nil
+}
+
+func decimalAmountToMinorUnits(amount string) (int64, error) {
+	amount = strings.TrimSpace(amount)
+	if amount == "" || strings.HasPrefix(amount, "-") {
+		return 0, errors.New("invalid amount")
+	}
+	parts := strings.Split(amount, ".")
+	if len(parts) > 2 {
+		return 0, errors.New("invalid amount")
+	}
+	whole := parts[0]
+	if whole == "" {
+		whole = "0"
+	}
+	if !allDigits(whole) {
+		return 0, errors.New("invalid amount")
+	}
+	fraction := "00"
+	if len(parts) == 2 {
+		fraction = parts[1]
+		if len(fraction) > 2 || !allDigits(fraction) {
+			return 0, errors.New("invalid amount")
+		}
+		fraction += strings.Repeat("0", 2-len(fraction))
+	}
+	major, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	minor, err := strconv.ParseInt(fraction, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return major*100 + minor, nil
+}
+
+func allDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, ch := range value {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // UpdateSelf 用户自助修改个人信息。
