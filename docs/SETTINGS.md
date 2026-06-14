@@ -63,6 +63,7 @@
 - `jwt.secret` 可以由 `JWT_SECRET` 注入；生产和多实例部署必须显式固定，不能让各实例随机生成不同值。
 - `rate_limit.global_per_min`、`rate_limit.per_token_per_min` 和 `rate_limit.per_ip_per_min` 为 `0` 时表示关闭对应维度；Redis 可用时这些 hot setting 会影响后续请求。
 - `relay.retry_count` 默认是 `0`，表示不做自动重试；大于 0 时，非流式 Relay 只对 429、5xx、网络错误、超时和响应读取失败进行有限候选通道重试。
+- `relay.error_auto_ban=false` 时仍会记录通道 `error_count`，但候选查询不会因为 `relay.error_ban_threshold` 排除通道。
 - `relay.log_body_max_bytes` 和 `log.body_max_bytes` 当前默认是 `0`，表示默认不记录请求/响应 body。
 
 ## P0 目标配置

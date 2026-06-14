@@ -88,8 +88,8 @@ rediss://:password@redis.example.com:6379/0
 | `rate_limit.per_ip_per_min` | `30` | IP 每分钟限制；`0` 表示关闭该维度 |
 | `relay.timeout` | `120` | 下游超时秒数 |
 | `relay.retry_count` | `0` | 默认不自动重试；大于 0 时非流式仅对可安全重试错误换候选 |
-| `relay.error_auto_ban` | `true` | 自动熔断 |
-| `relay.error_ban_threshold` | `10` | 熔断阈值 |
+| `relay.error_auto_ban` | `true` | 是否按 `error_count` 自动排除故障通道 |
+| `relay.error_ban_threshold` | `10` | 自动排除通道的连续错误阈值 |
 | `relay.log_body_max_bytes` | `0` | Relay 请求/响应 body 日志上限，`0` 表示不记录 |
 | `billing.default_ratio` | `1.0` | 默认计费倍率 |
 | `log.body_max_bytes` | `0` | 通用日志 body 上限，`0` 表示不记录 |

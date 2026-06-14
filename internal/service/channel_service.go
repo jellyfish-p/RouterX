@@ -25,6 +25,11 @@ const (
 
 type ChannelService struct{}
 
+type circuitBreakerConfig struct {
+	autoBan   bool
+	threshold int
+}
+
 type ChannelUpstreamTarget struct {
 	BaseURL string
 	APIKey  string
@@ -74,9 +79,12 @@ func (s *ChannelService) SelectChannelWithRoute(modelName string, route RoutePre
 func (s *ChannelService) SelectChannelCandidatesWithRoute(modelName string, route RoutePreference) ([]model.Channel, error) {
 	modelName = strings.TrimSpace(modelName)
 	var channels []model.Channel
-	if err := internal.DB.Where("status = ? AND error_count < ?", common.ChannelStatusEnabled, 10).
-		Order("priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC").
-		Find(&channels).Error; err != nil {
+	query := internal.DB.Where("status = ?", common.ChannelStatusEnabled)
+	breaker := s.circuitBreakerConfig()
+	if breaker.autoBan {
+		query = query.Where("error_count < ?", breaker.threshold)
+	}
+	if err := query.Order("priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC").Find(&channels).Error; err != nil {
 		return nil, err
 	}
 	candidates := make([]model.Channel, 0, len(channels))
@@ -93,6 +101,24 @@ func (s *ChannelService) SelectChannelCandidatesWithRoute(modelName string, rout
 		return nil, errors.New("no available channel")
 	}
 	return candidates, nil
+}
+
+func (s *ChannelService) circuitBreakerConfig() circuitBreakerConfig {
+	cfg := circuitBreakerConfig{
+		autoBan:   true,
+		threshold: 10,
+	}
+	if internal.DB == nil {
+		return cfg
+	}
+	settingSvc := NewSettingService()
+	if enabled, err := settingSvc.GetBool("relay.error_auto_ban"); err == nil {
+		cfg.autoBan = enabled
+	}
+	if threshold, err := settingSvc.GetInt("relay.error_ban_threshold"); err == nil && threshold > 0 {
+		cfg.threshold = threshold
+	}
+	return cfg
 }
 
 // ResolveUpstream 解析某个通道本次请求应该使用的 base_url/api_key。
@@ -224,7 +250,7 @@ func (s *ChannelService) Test(channelID uint) (bool, int64, int, error) {
 	if err != nil {
 		_ = internal.DB.Model(channel).Updates(map[string]interface{}{
 			"response_ms": responseMs,
-			"error_count": channel.ErrorCount + 1,
+			"error_count": gorm.Expr("error_count + ?", 1),
 		}).Error
 		return false, responseMs, 0, err
 	}

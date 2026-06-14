@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
@@ -974,7 +976,7 @@ func (s *RelayService) markChannelFailure(channel *model.Channel, responseMs int
 	}
 	return internal.DB.Model(channel).Updates(map[string]interface{}{
 		"response_ms": responseMs,
-		"error_count": channel.ErrorCount + 1,
+		"error_count": gorm.Expr("error_count + ?", 1),
 	}).Error
 }
 

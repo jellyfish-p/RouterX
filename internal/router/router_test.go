@@ -1966,6 +1966,212 @@ func TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce(t *testing.T) {
 	}
 }
 
+func TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	firstCalls := 0
+	firstUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		firstCalls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"temporary"}}`))
+	}))
+	defer firstUpstream.Close()
+
+	secondCalls := 0
+	secondUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		secondCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-breaker","object":"chat.completion","model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer secondUpstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("relay.retry_count", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("relay.error_ban_threshold", "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "breaker",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	firstChannelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "breaker-primary",
+		"models":   "gpt-test",
+		"base_url": firstUpstream.URL,
+		"api_key":  "first-secret",
+		"priority": 20,
+		"idx":      1,
+	})
+	var firstChannelPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(firstChannelResp.Body.Bytes(), &firstChannelPayload); err != nil {
+		t.Fatal(err)
+	}
+	if firstChannelResp.Code != http.StatusOK || firstChannelPayload.Data.ID == 0 {
+		t.Fatalf("create first channel failed: %d %s", firstChannelResp.Code, firstChannelResp.Body.String())
+	}
+	secondChannelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "breaker-backup",
+		"models":   "gpt-test",
+		"base_url": secondUpstream.URL,
+		"api_key":  "second-secret",
+		"priority": 10,
+		"idx":      2,
+	})
+	if secondChannelResp.Code != http.StatusOK {
+		t.Fatalf("create second channel failed: %d %s", secondChannelResp.Code, secondChannelResp.Body.String())
+	}
+
+	body := map[string]interface{}{
+		"model": "gpt-test",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	first := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first request should recover through backup, got %d %s", first.Code, first.Body.String())
+	}
+	second := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second request should skip tripped channel and use backup, got %d %s", second.Code, second.Body.String())
+	}
+	if firstCalls != 1 || secondCalls != 2 {
+		t.Fatalf("tripped primary should be skipped after reaching threshold, first=%d second=%d", firstCalls, secondCalls)
+	}
+	var firstChannel model.Channel
+	if err := internal.DB.First(&firstChannel, firstChannelPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if firstChannel.ErrorCount != 1 {
+		t.Fatalf("failed primary should remain at threshold after being skipped, got %d", firstChannel.ErrorCount)
+	}
+}
+
+func TestChatCompletionHonorsDisabledAutoBanSetting(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-breaker-disabled","object":"chat.completion","model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("relay.error_auto_ban", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("relay.error_ban_threshold", "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "breaker-disabled",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "breaker-disabled",
+		"models":   "gpt-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	var channelPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(channelResp.Body.Bytes(), &channelPayload); err != nil {
+		t.Fatal(err)
+	}
+	if channelResp.Code != http.StatusOK || channelPayload.Data.ID == 0 {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+	if err := internal.DB.Model(&model.Channel{}).Where("id = ?", channelPayload.Data.ID).Update("error_count", 10).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-test",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	})
+	if chatResp.Code != http.StatusOK {
+		t.Fatalf("auto ban disabled should allow high error_count channel, got %d %s", chatResp.Code, chatResp.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("auto ban disabled should call selected upstream, got %d", upstreamCalls)
+	}
+	var channel model.Channel
+	if err := internal.DB.First(&channel, channelPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if channel.ErrorCount != 0 {
+		t.Fatalf("successful request should reset channel error_count, got %d", channel.ErrorCount)
+	}
+}
+
 func TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
