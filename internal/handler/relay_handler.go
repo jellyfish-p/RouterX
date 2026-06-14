@@ -136,6 +136,13 @@ func (h *RelayHandler) Moderations(c *gin.Context) {
 
 // GET /v1/models — 模型列表
 func (h *RelayHandler) ListModels(c *gin.Context) {
+	token, ok := middleware.CurrentAPIToken(c)
+	if ok {
+		if err := h.svc.CheckTokenAPIScope(token, relay.APIModels, c.ClientIP()); err != nil {
+			writeRelayError(c, err)
+			return
+		}
+	}
 	body, err := h.listModelsForRequest(c)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, common.OpenAIError("failed to list models", "server_error", "model_list_failed"))
@@ -145,6 +152,13 @@ func (h *RelayHandler) ListModels(c *gin.Context) {
 }
 
 func (h *RelayHandler) ModelDetail(c *gin.Context) {
+	token, ok := middleware.CurrentAPIToken(c)
+	if ok {
+		if err := h.svc.CheckTokenAPIScope(token, relay.APIModels, c.ClientIP()); err != nil {
+			writeRelayError(c, err)
+			return
+		}
+	}
 	body, err := h.svc.ModelDetail(c.Param("model"))
 	if err != nil {
 		writeRelayError(c, err)

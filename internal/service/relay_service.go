@@ -264,7 +264,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	if reqInfo.Stream {
 		return nil, nil, &HTTPError{Status: 400, Message: "stream is not supported in P0 relay", Type: "invalid_request_error", Code: "unsupported_stream"}
 	}
-	if err := s.enforceTokenModelScope(token, reqInfo.Model, clientIP); err != nil {
+	if err := s.enforceTokenScope(token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, nil, err
 	}
 	if !s.tokenService.HasAvailableQuota(token) {
@@ -415,7 +415,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if !reqInfo.Stream {
 		return nil, &HTTPError{Status: 400, Message: "stream is required", Type: "invalid_request_error", Code: "stream_required"}
 	}
-	if err := s.enforceTokenModelScope(token, reqInfo.Model, clientIP); err != nil {
+	if err := s.enforceTokenScope(token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, err
 	}
 	if !s.tokenService.HasAvailableQuota(token) {
@@ -1415,6 +1415,32 @@ func (s *RelayService) relayRetryCount() int {
 	return value
 }
 
+func (s *RelayService) CheckTokenAPIScope(token *model.Token, apiType relay.APIType, clientIP string) error {
+	return s.enforceTokenAPIScope(token, apiType, "", clientIP)
+}
+
+func (s *RelayService) enforceTokenScope(token *model.Token, apiType relay.APIType, modelName, clientIP string) error {
+	if err := s.enforceTokenAPIScope(token, apiType, modelName, clientIP); err != nil {
+		return err
+	}
+	return s.enforceTokenModelScope(token, modelName, clientIP)
+}
+
+func (s *RelayService) enforceTokenAPIScope(token *model.Token, apiType relay.APIType, modelName, clientIP string) error {
+	if s.tokenService == nil {
+		return nil
+	}
+	scopeName := relayAPITypeScopeName(apiType)
+	if scopeName == "" {
+		return nil
+	}
+	if err := s.tokenService.CheckAPIScope(token, scopeName); err != nil {
+		_ = s.recordLog(token, nil, modelName, nil, common.LogStatusFailed, 0, "api type not allowed by api key scope", clientIP)
+		return &HTTPError{Status: 403, Message: "api type is not allowed by api key scope", Type: "permission_error", Code: "token_forbidden"}
+	}
+	return nil
+}
+
 func (s *RelayService) enforceTokenModelScope(token *model.Token, modelName, clientIP string) error {
 	if s.tokenService == nil || strings.TrimSpace(modelName) == "" {
 		return nil
@@ -1424,6 +1450,56 @@ func (s *RelayService) enforceTokenModelScope(token *model.Token, modelName, cli
 		return &HTTPError{Status: 403, Message: "model is not allowed by api key scope", Type: "permission_error", Code: "model_not_allowed"}
 	}
 	return nil
+}
+
+// relayAPITypeScopeName keeps API Key scope names stable across internal enum values.
+func relayAPITypeScopeName(apiType relay.APIType) string {
+	switch apiType {
+	case relay.APIChatCompletions:
+		return "openai.chat"
+	case relay.APICompletions:
+		return "openai.completions"
+	case relay.APIResponses:
+		return "openai.responses"
+	case relay.APIImagesGenerations:
+		return "openai.images.generations"
+	case relay.APIImagesEdits:
+		return "openai.images.edits"
+	case relay.APIImagesVariations:
+		return "openai.images.variations"
+	case relay.APIAudioTranscriptions:
+		return "openai.audio.transcriptions"
+	case relay.APIAudioTranslations:
+		return "openai.audio.translations"
+	case relay.APIAudioSpeech:
+		return "openai.audio.speech"
+	case relay.APIEmbeddings:
+		return "openai.embeddings"
+	case relay.APIModels:
+		return "openai.models"
+	case relay.APIFiles:
+		return "openai.files"
+	case relay.APIFineTuning:
+		return "openai.fine_tuning"
+	case relay.APIModerations:
+		return "openai.moderations"
+	case relay.APIGeminiGenerateContent:
+		return "gemini.generate_content"
+	case relay.APIGeminiStreamGenerateContent:
+		return "gemini.stream_generate_content"
+	case relay.APIGeminiCountTokens:
+		return "gemini.count_tokens"
+	case relay.APIGeminiEmbedContent:
+		return "gemini.embed_content"
+	case relay.APIGeminiBatchEmbedContents:
+		return "gemini.batch_embed_contents"
+	case relay.APIAnthropicMessages:
+		return "anthropic.messages"
+	case relay.APIAnthropicCountTokens:
+		return "anthropic.count_tokens"
+	default:
+		return ""
+	}
 }
 
 func quotaFromUsage(usage *relay.Usage) int64 {

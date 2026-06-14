@@ -531,7 +531,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | POST | `/v0/user/token/:id/disable` | 已实现 | 禁用自己的 API Key，可记录禁用原因，成功后写 `api_key.disabled` 审计 |
 | POST | `/v0/user/token/:id/rotate` | 已实现 | 创建替换 Key、返回新明文一次、写入 `rotated_from_id` 并禁用旧 Key，成功后写 `api_key.rotated` 审计 |
 | POST | `/v0/user/token/:id/report-leak` | 已实现 | 上报泄露并立即禁用 Key，返回替换建议，成功后写 `api_key.leak_reported` 审计 |
-| PUT | `/v0/user/token/:id/scope` | 基础实现 | 更新自己的 Key 模型 allow-list scope，当前支持 `allow_models`；成功后写 `api_key.scope_updated` 审计 |
+| PUT | `/v0/user/token/:id/scope` | 基础实现 | 更新自己的 Key 收窄 scope，当前支持 `allow_models` 和 `api_types`；成功后写 `api_key.scope_updated` 审计 |
 | GET | `/v0/user/token/:id/usage` | 已实现 | 返回该 Key 的调用数、成功/失败数、额度消耗、总 tokens 和最近调用摘要 |
 | GET | `/v0/admin/token` | 已实现 | 管理员跨用户查询脱敏 API Key 摘要，可按 `user_id` 和 `status` 过滤 |
 | POST | `/v0/admin/token/batch-disable` | 已实现 | 管理员按 `token_ids` 或 `user_id` 批量禁用 Key，必须提供筛选条件，成功后写 `api_key.batch_disabled` 审计 |
@@ -540,11 +540,12 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ```json
 {
-  "allow_models": ["gpt-4o-mini", "gpt-4o"]
+  "allow_models": ["gpt-4o-mini", "gpt-4o"],
+  "api_types": ["openai.chat", "openai.embeddings"]
 }
 ```
 
-`allow_models` 为空或 scope 为空时继承用户和系统策略；非空时只允许列表内模型，拒绝返回 `model_not_allowed` 且不调用上游。
+`allow_models` 为空或 scope 为空时继承用户和系统策略；非空时只允许列表内模型，拒绝返回 `model_not_allowed` 且不调用上游。`api_types` 为空时不按接口能力额外收窄；非空时只允许列出的 APIType，未命中返回 `token_forbidden` 且不调用上游。
 
 ### 用量和账单
 
@@ -730,6 +731,7 @@ P0 明确失败：
 | 非法 JSON | 400 | `invalid_json` |
 | 缺少 `model` | 400 | `model_required` |
 | API Key scope 不允许该模型 | 403 | `model_not_allowed` |
+| API Key scope 不允许该 APIType | 403 | `token_forbidden` |
 | `stream=true` 但选中通道不是 OpenAI SSE 形态 | 502 | `unsupported_stream_channel` |
 | `routerx` 结构非法 | 400 | `invalid_routerx_options` |
 | `routerx.route` 字段类型非法 | 400 | `invalid_routerx_route` |

@@ -426,7 +426,7 @@ paths:
     put:
       tags: [User API Key]
       summary: 更新 API Key scope
-      description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list。列表为空表示继承用户和系统策略；非空时未命中模型会在上游调用前返回 model_not_allowed。成功后写 api_key.scope_updated 管理审计，审计摘要不包含明文 Key 或哈希。
+      description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list 和 api_types APIType allow-list。列表为空表示继承用户和系统策略；模型未命中返回 model_not_allowed，APIType 未命中返回 token_forbidden，且都不会调用上游。成功后写 api_key.scope_updated 管理审计，审计摘要不包含明文 Key 或哈希。
       security:
         - UserJWT: []
       parameters:
@@ -1566,7 +1566,7 @@ paths:
         "401":
           $ref: "#/components/responses/OpenAIError"
         "403":
-          description: API Key scope 或访问策略拒绝；模型 allow-list 未命中时 code 为 model_not_allowed。
+          description: API Key scope 或访问策略拒绝；模型 allow-list 未命中时 code 为 model_not_allowed，APIType allow-list 未命中时 code 为 token_forbidden。
           content:
             application/json:
               schema:
@@ -2709,6 +2709,25 @@ components:
           items:
             type: string
           example: ["gpt-4o-mini", "gpt-4o"]
+        api_types:
+          type: array
+          description: 允许调用的内部 APIType。空数组或省略表示不按接口能力额外收窄；"*" 表示允许所有 APIType。
+          items:
+            type: string
+            enum:
+              - "*"
+              - openai.chat
+              - openai.completions
+              - openai.responses
+              - openai.embeddings
+              - openai.images.generations
+              - openai.images.edits
+              - openai.images.variations
+              - openai.audio.transcriptions
+              - openai.audio.translations
+              - openai.audio.speech
+              - openai.moderations
+          example: ["openai.chat", "openai.embeddings"]
     BatchDisableTokensRequest:
       type: object
       properties:
@@ -2758,6 +2777,12 @@ components:
           items:
             type: string
           example: ["gpt-4o-mini"]
+        api_types:
+          type: array
+          description: 当前已实现的 APIType allow-list；为空或不存在表示继承用户和系统策略。
+          items:
+            type: string
+          example: ["openai.chat"]
     CreateTokenResponse:
       allOf:
         - $ref: "#/components/schemas/Token"

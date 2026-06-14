@@ -27,12 +27,17 @@ var (
 	ErrInsufficientTokenQuota = errors.New("insufficient token quota")
 	ErrBatchDisableNoFilter   = errors.New("batch disable requires token_ids or user_id")
 	ErrModelNotAllowed        = errors.New("model not allowed by api key scope")
+	ErrAPINotAllowed          = errors.New("api type not allowed by api key scope")
 )
 
-const maxTokenScopeModels = 200
+const (
+	maxTokenScopeModels   = 200
+	maxTokenScopeAPITypes = 64
+)
 
 type TokenScope struct {
 	AllowModels []string `json:"allow_models,omitempty"`
+	APITypes    []string `json:"api_types,omitempty"` // 入口能力白名单, 如 openai.chat/openai.embeddings
 }
 
 type TokenUsageStats struct {
@@ -286,8 +291,12 @@ func (s *TokenService) ReportLeakForUser(id, userID uint, reason string) (*model
 
 func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*model.Token, error) {
 	scope.AllowModels = normalizeScopeModels(scope.AllowModels)
+	scope.APITypes = normalizeScopeAPITypes(scope.APITypes)
 	if len(scope.AllowModels) > maxTokenScopeModels {
 		return nil, errors.New("allow_models exceeds limit")
+	}
+	if len(scope.APITypes) > maxTokenScopeAPITypes {
+		return nil, errors.New("api_types exceeds limit")
 	}
 	scopeJSON := model.NewJSONValue(scope)
 	var token model.Token
@@ -329,6 +338,26 @@ func (s *TokenService) CheckModelScope(token *model.Token, modelName string) err
 	return ErrModelNotAllowed
 }
 
+func (s *TokenService) CheckAPIScope(token *model.Token, apiType string) error {
+	if token == nil {
+		return ErrInvalidAPIKey
+	}
+	scope, err := ParseTokenScope(token.ScopeJSON)
+	if err != nil {
+		return ErrAPINotAllowed
+	}
+	if len(scope.APITypes) == 0 {
+		return nil
+	}
+	apiType = normalizeScopeAPIType(apiType)
+	for _, allowed := range scope.APITypes {
+		if allowed == "*" || allowed == apiType {
+			return nil
+		}
+	}
+	return ErrAPINotAllowed
+}
+
 func ParseTokenScope(raw model.JSONValue) (TokenScope, error) {
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
 		return TokenScope{}, nil
@@ -338,6 +367,7 @@ func ParseTokenScope(raw model.JSONValue) (TokenScope, error) {
 		return TokenScope{}, err
 	}
 	scope.AllowModels = normalizeScopeModels(scope.AllowModels)
+	scope.APITypes = normalizeScopeAPITypes(scope.APITypes)
 	return scope, nil
 }
 
@@ -594,4 +624,25 @@ func normalizeScopeModels(models []string) []string {
 		result = append(result, modelName)
 	}
 	return result
+}
+
+func normalizeScopeAPITypes(apiTypes []string) []string {
+	seen := make(map[string]struct{}, len(apiTypes))
+	result := make([]string, 0, len(apiTypes))
+	for _, apiType := range apiTypes {
+		apiType = normalizeScopeAPIType(apiType)
+		if apiType == "" {
+			continue
+		}
+		if _, ok := seen[apiType]; ok {
+			continue
+		}
+		seen[apiType] = struct{}{}
+		result = append(result, apiType)
+	}
+	return result
+}
+
+func normalizeScopeAPIType(apiType string) string {
+	return strings.ToLower(strings.TrimSpace(apiType))
 }
