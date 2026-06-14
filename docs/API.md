@@ -313,8 +313,8 @@ Gemini-compatible 错误示例：
 |------|------|------|
 | `page` | int | 页码，默认 1 |
 | `page_size` | int | 每页数量，默认 20，最大 100 |
-| `action` | string | 动作过滤，例如 `payment_product.create` |
-| `resource_type` | string | 资源类型过滤，例如 `payment_product` |
+| `action` | string | 动作过滤，例如 `payment_product.create` 或 `channel.update` |
+| `resource_type` | string | 资源类型过滤，例如 `payment_product` 或 `channel` |
 | `resource_id` | string | 资源 ID 过滤 |
 | `actor_user_id` | uint | 操作人 ID 过滤 |
 
@@ -331,6 +331,13 @@ Gemini-compatible 错误示例：
 | `user.quota_update` | `PATCH /v0/admin/user/:id/quota` |
 | `redem_code.create` | `POST /v0/admin/redem` |
 | `redem_code.disable` | `PATCH /v0/admin/redem/:id/disable` |
+| `channel.create` | `POST /v0/admin/channel` |
+| `channel.update` | `PUT /v0/admin/channel/:id` |
+| `channel.delete` | `DELETE /v0/admin/channel/:id` |
+| `channel.disable` | `PATCH /v0/admin/channel/:id/disable` |
+| `channel.enable` | `PATCH /v0/admin/channel/:id/enable` |
+| `channel.test` | `POST /v0/admin/channel/:id/test` |
+| `channel.fetch_models` | `GET /v0/admin/channel/:id/models` |
 
 审计摘要只保存脱敏后的变更摘要，不保存完整请求体、支付密钥、JWT secret、API Key 或 provider secret。
 
@@ -355,13 +362,13 @@ Gemini-compatible 错误示例：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/v0/admin/channel` | 已实现 | 通道列表 |
-| POST | `/v0/admin/channel` | 已实现 | 创建通道 |
-| PUT | `/v0/admin/channel/:id` | 已实现 | 编辑通道 |
-| DELETE | `/v0/admin/channel/:id` | 已实现 | 删除通道 |
-| PATCH | `/v0/admin/channel/:id/disable` | 已实现 | 禁用通道 |
-| PATCH | `/v0/admin/channel/:id/enable` | 已实现 | 启用通道 |
-| POST | `/v0/admin/channel/:id/test` | 基础实现 | 测试通道连通性 |
-| GET | `/v0/admin/channel/:id/models` | 基础实现 | 从上游拉取模型列表 |
+| POST | `/v0/admin/channel` | 已实现 | 创建通道，成功后写 `channel.create` 管理审计 |
+| PUT | `/v0/admin/channel/:id` | 已实现 | 编辑通道，成功后写 `channel.update` 管理审计 |
+| DELETE | `/v0/admin/channel/:id` | 已实现 | 删除通道，成功后写 `channel.delete` 管理审计 |
+| PATCH | `/v0/admin/channel/:id/disable` | 已实现 | 禁用通道，成功后写 `channel.disable` 管理审计 |
+| PATCH | `/v0/admin/channel/:id/enable` | 已实现 | 启用通道，成功后写 `channel.enable` 管理审计 |
+| POST | `/v0/admin/channel/:id/test` | 基础实现 | 测试通道连通性，并写 `channel.test` 管理审计 |
+| GET | `/v0/admin/channel/:id/models` | 基础实现 | 从上游拉取模型列表，并写 `channel.fetch_models` 管理审计 |
 
 创建通道目标请求：
 

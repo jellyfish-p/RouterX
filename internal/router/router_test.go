@@ -1282,6 +1282,98 @@ func TestChannelExtendedManagement(t *testing.T) {
 	}
 }
 
+func TestAdminChannelManagementAuditLogs(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1/models" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"audit-model","object":"model"}]}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"idx":                8,
+		"type":               common.ChannelTypeOpenAICompat,
+		"name":               "audit-channel",
+		"models":             "audit-model",
+		"base_urls":          []string{upstream.URL},
+		"api_keys":           []string{"audit-upstream-secret"},
+		"key_selection_mode": "round_robin",
+		"group":              "paid",
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+
+	testResp := performJSON(r, http.MethodPost, "/v0/admin/channel/"+uintString(payload.Data.ID)+"/test", rootJWT, nil)
+	if testResp.Code != http.StatusOK || !strings.Contains(testResp.Body.String(), `"success":true`) {
+		t.Fatalf("test channel failed: %d %s", testResp.Code, testResp.Body.String())
+	}
+	modelsResp := performJSON(r, http.MethodGet, "/v0/admin/channel/"+uintString(payload.Data.ID)+"/models", rootJWT, nil)
+	if modelsResp.Code != http.StatusOK || !strings.Contains(modelsResp.Body.String(), `"audit-model"`) {
+		t.Fatalf("fetch channel models failed: %d %s", modelsResp.Code, modelsResp.Body.String())
+	}
+
+	updateResp := performJSON(r, http.MethodPut, "/v0/admin/channel/"+uintString(payload.Data.ID), rootJWT, map[string]interface{}{
+		"name":   "audit-channel-updated",
+		"weight": 4,
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update channel failed: %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	disableResp := performJSON(r, http.MethodPatch, "/v0/admin/channel/"+uintString(payload.Data.ID)+"/disable", rootJWT, nil)
+	if disableResp.Code != http.StatusOK {
+		t.Fatalf("disable channel failed: %d %s", disableResp.Code, disableResp.Body.String())
+	}
+	enableResp := performJSON(r, http.MethodPatch, "/v0/admin/channel/"+uintString(payload.Data.ID)+"/enable", rootJWT, nil)
+	if enableResp.Code != http.StatusOK {
+		t.Fatalf("enable channel failed: %d %s", enableResp.Code, enableResp.Body.String())
+	}
+	deleteResp := performJSON(r, http.MethodDelete, "/v0/admin/channel/"+uintString(payload.Data.ID), rootJWT, nil)
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("delete channel failed: %d %s", deleteResp.Code, deleteResp.Body.String())
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=channel&resource_id="+uintString(payload.Data.ID), rootJWT, nil)
+	body := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(body, `"action":"channel.create"`) ||
+		!strings.Contains(body, `"action":"channel.test"`) ||
+		!strings.Contains(body, `"action":"channel.fetch_models"`) ||
+		!strings.Contains(body, `"action":"channel.update"`) ||
+		!strings.Contains(body, `"action":"channel.disable"`) ||
+		!strings.Contains(body, `"action":"channel.enable"`) ||
+		!strings.Contains(body, `"action":"channel.delete"`) {
+		t.Fatalf("channel management should write audit logs, got %d %s", auditResp.Code, body)
+	}
+	if strings.Contains(body, "audit-upstream-secret") {
+		t.Fatalf("channel audit should not expose upstream secrets: %s", body)
+	}
+}
+
 func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 	jwtSecret := "test-jwt-secret-with-at-least-32-bytes"
 	t.Setenv("JWT_SECRET", jwtSecret)

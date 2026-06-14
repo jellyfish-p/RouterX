@@ -759,7 +759,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖支付商品创建、更新、启用、禁用，settings 更新，用户调额，以及充值码管理成功审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖支付商品创建、更新、启用、禁用，settings 更新，用户调额，充值码管理，以及通道创建、编辑、启用、禁用、删除、测试和拉取模型成功审计。
       security:
         - UserJWT: []
       parameters:
@@ -769,12 +769,12 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 payment_product.create。
+          description: 动作过滤，例如 payment_product.create 或 channel.update。
         - name: resource_type
           in: query
           required: false
           schema: { type: string }
-          description: 资源类型过滤，例如 payment_product。
+          description: 资源类型过滤，例如 payment_product 或 channel。
         - name: resource_id
           in: query
           required: false
@@ -1015,6 +1015,7 @@ paths:
     post:
       tags: [Admin Channels]
       summary: 创建通道
+      description: 创建成功后写入 channel.create 管理审计；审计摘要只记录脱敏通道信息和密钥数量。
       security:
         - UserJWT: []
       requestBody:
@@ -1041,6 +1042,7 @@ paths:
     put:
       tags: [Admin Channels]
       summary: 编辑通道
+      description: 编辑成功后写入 channel.update 管理审计；下游密钥不会写入审计摘要。
       security:
         - UserJWT: []
       parameters:
@@ -1059,7 +1061,7 @@ paths:
     delete:
       tags: [Admin Channels]
       summary: 删除通道
-      description: 历史日志保留，但解除 channel_id 引用。
+      description: 历史日志保留，但解除 channel_id 引用；删除成功后写入 channel.delete 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -1067,10 +1069,13 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel/{id}/disable:
     patch:
       tags: [Admin Channels]
       summary: 禁用通道
+      description: 禁用成功后写入 channel.disable 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -1078,10 +1083,13 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel/{id}/enable:
     patch:
       tags: [Admin Channels]
       summary: 启用通道
+      description: 启用成功后写入 channel.enable 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -1089,10 +1097,13 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel/{id}/test:
     post:
       tags: [Admin Channels]
       summary: 测试通道连通性
+      description: 调用上游模型列表探测通道健康，成功或失败都会写入 channel.test 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -1109,11 +1120,13 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/TestChannelResult"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel/{id}/models:
     get:
       tags: [Admin Channels]
       summary: 拉取上游模型列表
-      description: 基础实现只支持单 base_url 通道。
+      description: 基础实现只支持单 base_url 通道；成功或失败都会写入 channel.fetch_models 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -1130,6 +1143,8 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/FetchChannelModelsResult"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/log:
     get:
       tags: [Admin Logs]
@@ -2158,10 +2173,10 @@ components:
           description: 1=admin，2=super admin。
         action:
           type: string
-          example: payment_product.create
+          example: channel.update
         resource_type:
           type: string
-          example: payment_product
+          example: channel
         resource_id:
           type: string
           example: "1"
