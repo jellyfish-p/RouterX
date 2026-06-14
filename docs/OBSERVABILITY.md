@@ -22,7 +22,7 @@
 - `GET /v0/admin/dashboard` 返回用户数、通道数、API Key 数、当日调用、当日额度和可用通道数。
 - `admin_audit_logs` 表保存基础管理审计日志，字段包含 actor、action、resource、before/after 摘要、request_id、IP 和 User-Agent。
 - `GET /v0/admin/audit` 已注册为超级管理员查询接口，支持按 `action`、`resource_type`、`resource_id`、`actor_user_id`、`result`、`error_code` 和时间范围过滤。
-- `GET /metrics` 已注册为 Prometheus 文本指标接口，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度和 ready 状态。
+- `GET /metrics` 已注册为 Prometheus 文本指标接口，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis up、调用日志状态、总额度、通道错误计数、支付订单和支付事件指标。
 - API Key 创建、编辑、禁用、删除和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计摘要，完整 Key 明文和哈希不会写入审计摘要。
 - 普通用户创建、编辑、禁用、删除和拒绝角色变更会写入 `user.*` 管理审计摘要，密码不会写入审计摘要。
 - 支付商品创建、更新、启用和禁用会写入 `payment_product.*` 管理审计摘要。
@@ -172,6 +172,7 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 | `routerx_http_request_duration_seconds` | histogram | method、path_group | HTTP 耗时 |
 | `routerx_relay_requests_total` | counter | protocol、api_type、model、status | Relay 请求数 |
 | `routerx_relay_errors_total` | counter | protocol、api_type、error_code、source | Relay 错误数 |
+| `routerx_logs_total` | counter | status | 当前已落地的调用日志状态计数 |
 | `routerx_relay_duration_seconds` | histogram | protocol、api_type、provider | Relay 总耗时 |
 | `routerx_upstream_duration_seconds` | histogram | provider、channel_id、status | 上游耗时 |
 | `routerx_tokens_used_total` | counter | model、provider、usage_source | 模型 token 用量 |
@@ -180,8 +181,11 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 | `routerx_channel_error_count` | gauge | channel_id、provider | 通道连续错误数 |
 | `routerx_rate_limit_rejections_total` | counter | dimension | 限流拒绝次数 |
 | `routerx_billing_failures_total` | counter | reason | 计费失败次数 |
-| `routerx_payment_events_total` | counter | provider、event_type、result | 支付事件处理 |
+| `routerx_payment_orders_total` | gauge | provider、status | 当前已落地的支付订单状态计数 |
+| `routerx_payment_events_total` | gauge | provider、event_type、processed | 支付事件处理状态 |
 | `routerx_audit_events_total` | counter | action、resource_type、result | 审计事件数 |
+| `routerx_db_up` | gauge | 无 | 当前已落地的数据库 ping 状态 |
+| `routerx_redis_up` | gauge | 无 | 当前已落地的 Redis ping 状态；未配置 Redis 时为 0 |
 | `routerx_redis_errors_total` | counter | operation | Redis 错误数 |
 | `routerx_db_errors_total` | counter | operation | DB 错误数 |
 | `routerx_ready` | gauge | reason | 就绪状态，1 为 ready，0 为 not ready |
@@ -257,7 +261,7 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 | 账单一致 | 用户账单聚合等于成功日志事实；启用独立日志库时主库结算最小事实可恢复。 |
 | 脱敏 | 日志和导出不包含 API Key、上游密钥、DSN、支付密钥。 |
 | 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖 API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理和日志清理操作。 |
-| 指标 | `/metrics` 暴露基础实例指标，不包含高基数或敏感 label；后续继续补 Relay、支付和 DB/Redis 指标。 |
+| 指标 | `/metrics` 暴露基础实例、Relay 日志、支付和 DB/Redis 指标，不包含高基数或敏感 label；后续继续补 HTTP 耗时、上游耗时、更多错误维度和告警。 |
 
 ## 文档同步
 

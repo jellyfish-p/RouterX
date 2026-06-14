@@ -259,7 +259,7 @@ volumes:
 
 完整指标目录、标签控制和告警建议以 `docs/OBSERVABILITY.md` 为准。
 
-当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后先暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度和 ready 状态，后续继续补 Relay、支付和 DB/Redis 指标。
+当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis up、调用日志状态、总额度、通道错误计数、支付订单和支付事件指标，后续继续补 HTTP/上游耗时和更细错误维度。
 
 核心指标：
 
@@ -269,11 +269,16 @@ volumes:
 | `routerx_http_request_duration_seconds` | histogram | HTTP 请求耗时 |
 | `routerx_relay_requests_total` | counter | 模型转发请求数 |
 | `routerx_relay_errors_total` | counter | 转发错误数 |
+| `routerx_logs_total` | counter | 当前调用日志状态计数 |
 | `routerx_relay_duration_seconds` | histogram | 下游调用耗时 |
 | `routerx_tokens_used_total` | counter | token 用量 |
 | `routerx_quota_used_total` | counter | 额度消耗 |
 | `routerx_channel_available` | gauge | 通道可用状态 |
 | `routerx_channel_error_count` | gauge | 通道连续错误数 |
+| `routerx_payment_orders_total` | gauge | 支付订单状态计数 |
+| `routerx_payment_events_total` | gauge | 支付事件处理状态 |
+| `routerx_db_up` | gauge | 数据库 ping 状态 |
+| `routerx_redis_up` | gauge | Redis ping 状态 |
 | `routerx_redis_errors_total` | counter | Redis 错误数 |
 | `routerx_db_errors_total` | counter | DB 错误数 |
 

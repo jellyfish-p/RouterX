@@ -2032,6 +2032,81 @@ func TestMetricsEndpointRequiresSettingAndExposesPrometheusText(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("observability.metrics_enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	channel := model.Channel{
+		Type:       common.ChannelTypeOpenAICompat,
+		Name:       "metrics-channel",
+		Models:     "gpt-test",
+		APIKey:     "enc:v1:test",
+		Status:     common.ChannelStatusEnabled,
+		ErrorCount: 3,
+	}
+	if err := internal.DB.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	token, err := service.NewTokenService().Create(root.ID, "metrics-key", 100, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenID := token.ID
+	now := time.Now()
+	logs := []model.Log{
+		{UserID: root.ID, TokenID: &tokenID, ChannelID: &channel.ID, Model: "gpt-test", Status: common.LogStatusSuccess, QuotaUsed: 7, TotalTokens: 7, CreatedAt: now.Add(-time.Minute)},
+		{UserID: root.ID, TokenID: &tokenID, ChannelID: &channel.ID, Model: "gpt-test", Status: common.LogStatusFailed, ErrorMsg: "upstream 500", CreatedAt: now},
+	}
+	if err := internal.DB.Create(&logs).Error; err != nil {
+		t.Fatal(err)
+	}
+	orders := []model.PaymentOrder{
+		{OrderNo: "pay_metrics_1", UserID: root.ID, ProductID: "quota_10", Provider: common.PaymentProviderStripe, Amount: "9.99", Currency: "usd", Quota: 10, Status: common.PaymentOrderStatusPaid},
+		{OrderNo: "pay_metrics_2", UserID: root.ID, ProductID: "quota_20", Provider: common.PaymentProviderEpay, Amount: "19.99", Currency: "usd", Quota: 20, Status: common.PaymentOrderStatusPending},
+	}
+	if err := internal.DB.Create(&orders).Error; err != nil {
+		t.Fatal(err)
+	}
+	processedAt := now
+	events := []model.PaymentEvent{
+		{Provider: common.PaymentProviderStripe, ProviderEventID: "evt_metrics_1", OrderNo: "pay_metrics_1", EventType: "checkout.session.completed", SignatureValid: true, Processed: true, ProcessedAt: &processedAt},
+		{Provider: common.PaymentProviderEpay, ProviderEventID: "evt_metrics_2", OrderNo: "pay_metrics_2", EventType: "notify", SignatureValid: true, Processed: false},
+	}
+	if err := internal.DB.Create(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	resp := performJSON(r, http.MethodGet, "/metrics", "", nil)
+	body := resp.Body.String()
+	if resp.Code != http.StatusOK ||
+		!strings.Contains(body, "routerx_db_up 1") ||
+		!strings.Contains(body, "routerx_redis_up 0") ||
+		!strings.Contains(body, `routerx_logs_total{status="success"} 1`) ||
+		!strings.Contains(body, `routerx_logs_total{status="failed"} 1`) ||
+		!strings.Contains(body, "routerx_quota_used_total 7") ||
+		!strings.Contains(body, "routerx_channel_error_count 3") ||
+		!strings.Contains(body, `routerx_payment_orders_total{provider="stripe",status="paid"} 1`) ||
+		!strings.Contains(body, `routerx_payment_orders_total{provider="epay",status="pending"} 1`) ||
+		!strings.Contains(body, `routerx_payment_events_total{provider="stripe",event_type="checkout.session.completed",processed="true"} 1`) ||
+		!strings.Contains(body, `routerx_payment_events_total{provider="epay",event_type="notify",processed="false"} 1`) {
+		t.Fatalf("metrics should include relay/payment/infrastructure signals, got %d %s", resp.Code, body)
+	}
+}
+
 func TestSettingsValidationAndReadiness(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

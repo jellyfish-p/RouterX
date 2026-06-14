@@ -1,13 +1,16 @@
 package router
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"routerx/internal"
+	"routerx/internal/common"
 	"routerx/internal/handler"
 	"routerx/internal/middleware"
 	"routerx/internal/model"
@@ -93,6 +96,11 @@ func metricsHandler(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "metrics unavailable\n")
 		return
 	}
+	extended, err := collectExtendedMetrics()
+	if err != nil {
+		c.String(http.StatusInternalServerError, "metrics unavailable\n")
+		return
+	}
 	ready := int64(1)
 	if sqlDB, err := internal.DB.DB(); err != nil || sqlDB.Ping() != nil {
 		ready = 0
@@ -107,7 +115,147 @@ func metricsHandler(c *gin.Context) {
 	writeGauge(&b, "routerx_ready", "Service readiness status.", ready)
 	writeCounter(&b, "routerx_today_calls_total", "Successful calls since local midnight.", todayCalls)
 	writeCounter(&b, "routerx_today_quota_total", "Quota used since local midnight.", todayQuota)
+	writeGauge(&b, "routerx_db_up", "Database ping status.", extended.DBUp)
+	writeGauge(&b, "routerx_redis_up", "Redis ping status.", extended.RedisUp)
+	writeLabeledCounter(&b, "routerx_logs_total", "Relay logs by status.", extended.Logs)
+	writeCounter(&b, "routerx_quota_used_total", "Total quota recorded in relay logs.", extended.QuotaUsed)
+	writeGauge(&b, "routerx_channel_error_count", "Current sum of channel error counters.", extended.ChannelErrorCount)
+	writeLabeledGauge(&b, "routerx_payment_orders_total", "Payment orders by provider and status.", extended.PaymentOrders)
+	writeLabeledGauge(&b, "routerx_payment_events_total", "Payment events by provider, event type and processed state.", extended.PaymentEvents)
 	c.Data(http.StatusOK, "text/plain; version=0.0.4; charset=utf-8", []byte(b.String()))
+}
+
+type metricLabel struct {
+	Name  string
+	Value string
+}
+
+type metricSample struct {
+	Labels []metricLabel
+	Value  int64
+}
+
+type extendedMetrics struct {
+	DBUp              int64
+	RedisUp           int64
+	Logs              []metricSample
+	QuotaUsed         int64
+	ChannelErrorCount int64
+	PaymentOrders     []metricSample
+	PaymentEvents     []metricSample
+}
+
+func collectExtendedMetrics() (extendedMetrics, error) {
+	metrics := extendedMetrics{
+		DBUp:    dbUp(),
+		RedisUp: redisUp(),
+	}
+	var logRows []struct {
+		Status int
+		Count  int64
+	}
+	if err := internal.DB.Model(&model.Log{}).
+		Select("status, COUNT(*) AS count").
+		Group("status").
+		Order("status ASC").
+		Scan(&logRows).Error; err != nil {
+		return extendedMetrics{}, err
+	}
+	for _, row := range logRows {
+		metrics.Logs = append(metrics.Logs, metricSample{
+			Labels: []metricLabel{{Name: "status", Value: logStatusLabel(row.Status)}},
+			Value:  row.Count,
+		})
+	}
+	var quota struct {
+		Value int64
+	}
+	if err := internal.DB.Model(&model.Log{}).
+		Select("COALESCE(SUM(quota_used), 0) AS value").
+		Scan(&quota).Error; err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.QuotaUsed = quota.Value
+
+	var channelErrors struct {
+		Value int64
+	}
+	if err := internal.DB.Model(&model.Channel{}).
+		Select("COALESCE(SUM(error_count), 0) AS value").
+		Scan(&channelErrors).Error; err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.ChannelErrorCount = channelErrors.Value
+
+	var orderRows []struct {
+		Provider string
+		Status   string
+		Count    int64
+	}
+	if err := internal.DB.Model(&model.PaymentOrder{}).
+		Select("provider, status, COUNT(*) AS count").
+		Group("provider, status").
+		Order("provider ASC, status ASC").
+		Scan(&orderRows).Error; err != nil {
+		return extendedMetrics{}, err
+	}
+	for _, row := range orderRows {
+		metrics.PaymentOrders = append(metrics.PaymentOrders, metricSample{
+			Labels: []metricLabel{
+				{Name: "provider", Value: row.Provider},
+				{Name: "status", Value: row.Status},
+			},
+			Value: row.Count,
+		})
+	}
+
+	var eventRows []struct {
+		Provider  string
+		EventType string
+		Processed bool
+		Count     int64
+	}
+	if err := internal.DB.Model(&model.PaymentEvent{}).
+		Select("provider, event_type, processed, COUNT(*) AS count").
+		Group("provider, event_type, processed").
+		Order("provider ASC, event_type ASC, processed ASC").
+		Scan(&eventRows).Error; err != nil {
+		return extendedMetrics{}, err
+	}
+	for _, row := range eventRows {
+		metrics.PaymentEvents = append(metrics.PaymentEvents, metricSample{
+			Labels: []metricLabel{
+				{Name: "provider", Value: row.Provider},
+				{Name: "event_type", Value: row.EventType},
+				{Name: "processed", Value: strconv.FormatBool(row.Processed)},
+			},
+			Value: row.Count,
+		})
+	}
+	return metrics, nil
+}
+
+func dbUp() int64 {
+	if internal.DB == nil {
+		return 0
+	}
+	sqlDB, err := internal.DB.DB()
+	if err != nil || sqlDB.Ping() != nil {
+		return 0
+	}
+	return 1
+}
+
+func redisUp() int64 {
+	if internal.RDB == nil {
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := internal.RDB.Ping(ctx).Err(); err != nil {
+		return 0
+	}
+	return 1
 }
 
 func metricsEnabled() bool {
@@ -131,6 +279,25 @@ func writeCounter(b *strings.Builder, name, help string, value int64) {
 }
 
 func writeMetric(b *strings.Builder, name, help, metricType string, value int64) {
+	writeMetricHeader(b, name, help, metricType)
+	writeMetricSample(b, name, nil, value)
+}
+
+func writeLabeledGauge(b *strings.Builder, name, help string, samples []metricSample) {
+	writeMetricHeader(b, name, help, "gauge")
+	for _, sample := range samples {
+		writeMetricSample(b, name, sample.Labels, sample.Value)
+	}
+}
+
+func writeLabeledCounter(b *strings.Builder, name, help string, samples []metricSample) {
+	writeMetricHeader(b, name, help, "counter")
+	for _, sample := range samples {
+		writeMetricSample(b, name, sample.Labels, sample.Value)
+	}
+}
+
+func writeMetricHeader(b *strings.Builder, name, help, metricType string) {
 	b.WriteString("# HELP ")
 	b.WriteString(name)
 	b.WriteByte(' ')
@@ -142,9 +309,45 @@ func writeMetric(b *strings.Builder, name, help, metricType string, value int64)
 	b.WriteString(metricType)
 	b.WriteByte('\n')
 	b.WriteString(name)
+	b.WriteByte('\n')
+}
+
+func writeMetricSample(b *strings.Builder, name string, labels []metricLabel, value int64) {
+	b.WriteString(name)
+	if len(labels) > 0 {
+		b.WriteByte('{')
+		for i, label := range labels {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(label.Name)
+			b.WriteString("=\"")
+			b.WriteString(escapeMetricLabel(label.Value))
+			b.WriteByte('"')
+		}
+		b.WriteByte('}')
+	}
 	b.WriteByte(' ')
 	b.WriteString(strconv.FormatInt(value, 10))
 	b.WriteByte('\n')
+}
+
+func escapeMetricLabel(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, "\n", `\n`)
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	return value
+}
+
+func logStatusLabel(status int) string {
+	switch status {
+	case common.LogStatusSuccess:
+		return "success"
+	case common.LogStatusFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
 }
 
 func readinessSettingProblem() string {

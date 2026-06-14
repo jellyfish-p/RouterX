@@ -82,7 +82,7 @@ paths:
     get:
       tags: [Health]
       summary: Prometheus 指标
-      description: 默认由 observability.metrics_enabled=false 关闭；启用后返回 Prometheus text/plain，包含用户数、API Key 数、通道数、可用通道数、当日调用/额度和 ready 状态。
+      description: 默认由 observability.metrics_enabled=false 关闭；启用后返回 Prometheus text/plain，包含实例、Relay 日志、支付和 DB/Redis 基础指标。
       responses:
         "200":
           description: Prometheus text format metrics.
@@ -94,6 +94,18 @@ paths:
                   # HELP routerx_users_total Total users.
                   # TYPE routerx_users_total gauge
                   routerx_users_total 1
+                  # HELP routerx_logs_total Relay logs by status.
+                  # TYPE routerx_logs_total counter
+                  routerx_logs_total{status="success"} 42
+                  # HELP routerx_quota_used_total Total quota recorded in relay logs.
+                  # TYPE routerx_quota_used_total counter
+                  routerx_quota_used_total 4200
+                  # HELP routerx_payment_orders_total Payment orders by provider and status.
+                  # TYPE routerx_payment_orders_total gauge
+                  routerx_payment_orders_total{provider="stripe",status="paid"} 3
+                  # HELP routerx_db_up Database ping status.
+                  # TYPE routerx_db_up gauge
+                  routerx_db_up 1
         "404":
           description: 指标接口未启用。
   /v0/setup/status:

@@ -484,7 +484,7 @@ receive webhook
 | 指标 | 标签 | 说明 |
 |------|------|------|
 | `routerx_payment_orders_total` | provider、status | 支付订单数 |
-| `routerx_payment_events_total` | provider、event_type、result | 支付事件处理数 |
+| `routerx_payment_events_total` | provider、event_type、processed | 支付事件处理状态 |
 | `routerx_payment_grants_total` | provider、source_type | 入账次数 |
 | `routerx_payment_quota_granted_total` | provider | 入账额度 |
 | `routerx_payment_failures_total` | provider、reason | 支付处理失败 |
