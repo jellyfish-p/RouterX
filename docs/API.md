@@ -149,12 +149,12 @@ Gemini-compatible 错误示例：
 
 | HTTP 状态 | 内部 code 示例 | type/status 示例 | 调用方含义 |
 |-----------|----------------|------------------|------------|
-| 400 | `invalid_json`、`model_required`、`invalid_routerx_options`、`unsupported_api` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数或换用已支持接口 |
+| 400 | `invalid_json`、`invalid_multipart`、`model_required`、`invalid_routerx_options`、`unsupported_api` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数或换用已支持接口 |
 | 401 | `invalid_api_key`、`expired_api_key` | `authentication_error` / `UNAUTHENTICATED` | 更换或重新创建 API Key |
 | 403 | `user_disabled`、`token_forbidden`、`model_not_allowed`、`route_forbidden` | `permission_error` / `PERMISSION_DENIED` | 联系管理员调整权限或通道分组 |
 | 404 | `model_not_found`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名或资源 ID |
 | 429 | `insufficient_quota`、`rate_limit_exceeded` | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 充值、降低并发或等待限流窗口 |
-| 502 | `no_available_channel`、`unsupported_channel`、`upstream_request_failed`、`upstream_secret_error`、`upstream_conversion_failed` | `upstream_error` / `UNAVAILABLE` | 管理员检查通道、密钥或上游状态 |
+| 502 | `no_available_channel`、`unsupported_channel`、`unsupported_multipart_channel`、`upstream_request_failed`、`upstream_secret_error`、`upstream_conversion_failed` | `upstream_error` / `UNAVAILABLE` | 管理员检查通道、密钥或上游状态 |
 | 504 | `upstream_timeout` | `upstream_error` / `DEADLINE_EXCEEDED` | 重试或检查下游耗时 |
 
 错误响应要求：
@@ -574,8 +574,8 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/images/generations` | 基础实现，OpenAI-compatible 图像生成 JSON 透传；无 usage 时按 P0 最低计费 |
 | POST | `/v1/images/edits` | 已注册，图像编辑 |
 | POST | `/v1/images/variations` | 已注册，图像变体 |
-| POST | `/v1/audio/transcriptions` | 已注册，语音转文本 |
-| POST | `/v1/audio/translations` | 已注册，语音翻译 |
+| POST | `/v1/audio/transcriptions` | 基础实现，OpenAI-compatible multipart 音频表单透传、`routerx` 表单字段剥离和路由偏好；无 usage 时按 P0 最低计费 |
+| POST | `/v1/audio/translations` | 基础实现，OpenAI-compatible multipart 音频表单透传、`routerx` 表单字段剥离和路由偏好；无 usage 时按 P0 最低计费 |
 | POST | `/v1/audio/speech` | 基础实现，OpenAI-compatible 文本转语音 JSON 透传，二进制音频响应透传；无 usage 时按 P0 最低计费 |
 | GET | `/v1/models` | 基础实现，模型列表 |
 | GET | `/v1/models/:model` | 基础实现，模型详情 |
@@ -673,7 +673,7 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 - `routerx.route` 只能收窄管理员策略允许的候选通道，不能启用已禁用通道、绕过额度、绕过通道分组访问控制或强制使用无权限 provider。
 - `routerx.upstream` 用于补充上游 header、query 和 body 参数，但敏感鉴权 header 必须来自通道配置，不能由用户请求覆盖。
 - `routerx.provider.<provider>` 仅在选中对应上游 provider 时生效。
-- multipart 或非 JSON 请求可通过 `routerx` 表单字段传递 JSON 字符串，或通过 `X-RouterX-Options` header 传递 base64url JSON。
+- multipart 或非 JSON 请求当前可通过 `routerx` 表单字段传递 JSON 字符串；`X-RouterX-Options` header 是后续扩展目标。
 - 对 `GET /v1/models` 这类无 JSON body 的冲突路径，当前可使用 `?format=gemini` 或 `?format=anthropic`，并可通过 `anthropic-version` header 识别 Anthropic 格式；目标设计可扩展 `?routerx_protocol=` 或 `X-RouterX-Protocol`。
 
 路由偏好处理：

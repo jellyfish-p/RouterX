@@ -72,6 +72,14 @@ func (a *OpenAIAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 }
 
 func (a *OpenAIAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey string, body []byte) (*http.Response, error) {
+	return a.doRequest(ctx, baseURL, endpoint, apiKey, body, "application/json")
+}
+
+func (a *OpenAIAdapter) DoRequestWithContentType(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error) {
+	return a.doRequest(ctx, baseURL, endpoint, apiKey, body, contentType)
+}
+
+func (a *OpenAIAdapter) doRequest(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error) {
 	if endpoint == "" {
 		return nil, errors.New("unsupported api type")
 	}
@@ -88,7 +96,11 @@ func (a *OpenAIAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		contentType = strings.TrimSpace(contentType)
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		req.Header.Set("Content-Type", contentType)
 	}
 	req.Header.Set("Accept", "application/json")
 	return http.DefaultClient.Do(req)

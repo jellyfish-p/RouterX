@@ -227,7 +227,7 @@ API Key 是调用 `/v1/*` 的唯一模型调用凭据。User JWT 只用于控制
 - 真实厂商上游调用前必须剥离 `routerx` 字段。
 - RouterX-Compatible 上游可以继续接收 `routerx`，但必须有 hop 限制，避免循环。
 - `routerx.upstream.headers` 不能覆盖 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`、`api-key` 等敏感鉴权字段。
-- 非 JSON 请求目标可通过 `routerx` 表单字段或 `X-RouterX-Options` 传递，但必须同样校验和脱敏。
+- 非 JSON 请求目标当前可通过 `routerx` 表单字段传递路由偏好；`X-RouterX-Options` 是后续扩展目标，两者都必须校验和脱敏。
 
 调用方应预期：
 

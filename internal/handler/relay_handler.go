@@ -43,6 +43,15 @@ func (h *RelayHandler) relayOpenAI(c *gin.Context, apiType relay.APIType) {
 		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
 		return
 	}
+	if openAIAPIAllowsMultipart(apiType) && requestIsMultipart(c.GetHeader("Content-Type")) {
+		resp, _, err := h.svc.RelayMultipart(c.Request.Context(), token, apiType, body, c.GetHeader("Content-Type"), c.ClientIP())
+		if err != nil {
+			writeRelayError(c, err)
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", resp)
+		return
+	}
 	if openAIAPIAllowsStream(apiType) && requestWantsStream(body) {
 		result, err := h.svc.RelayStream(c.Request.Context(), token, apiType, body, c.ClientIP())
 		if err != nil {
@@ -323,6 +332,15 @@ func requestWantsStream(body []byte) bool {
 
 func openAIAPIAllowsStream(apiType relay.APIType) bool {
 	return apiType == relay.APIChatCompletions || apiType == relay.APICompletions
+}
+
+func openAIAPIAllowsMultipart(apiType relay.APIType) bool {
+	return apiType == relay.APIAudioTranscriptions ||
+		apiType == relay.APIAudioTranslations
+}
+
+func requestIsMultipart(contentType string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "multipart/form-data")
 }
 
 func splitGeminiModelAction(value string) (string, string) {

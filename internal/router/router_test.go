@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -2382,6 +2383,171 @@ func TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge(t *testing.T) {
 	}
 	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 1 || callLog.TotalTokens != 0 || callLog.PromptTokens != 0 || callLog.CompletionTokens != 0 {
 		t.Fatalf("unexpected audio speech success log: %+v", callLog)
+	}
+}
+
+func TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	audioBytes := []byte("RIFF-routerx-audio")
+	paidCalls := 0
+	freeCalls := 0
+	upstreamPath := ""
+	upstreamAuth := ""
+	upstreamModel := ""
+	upstreamPrompt := ""
+	var upstreamFile []byte
+	upstreamHandler := func(label string, calls *int) http.HandlerFunc {
+		return func(w http.ResponseWriter, req *http.Request) {
+			*calls++
+			if label == "paid" {
+				upstreamPath = req.URL.Path
+				upstreamAuth = req.Header.Get("Authorization")
+			}
+			if !strings.Contains(req.Header.Get("Content-Type"), "multipart/form-data") {
+				t.Errorf("%s upstream should receive multipart content type, got %q", label, req.Header.Get("Content-Type"))
+			}
+			if err := req.ParseMultipartForm(20 << 20); err != nil {
+				t.Errorf("%s upstream received invalid multipart body: %v", label, err)
+			}
+			if label == "paid" {
+				upstreamModel = req.FormValue("model")
+				upstreamPrompt = req.FormValue("prompt")
+				if leaked := req.FormValue("routerx"); leaked != "" {
+					t.Errorf("routerx private form field leaked to upstream: %q", leaked)
+				}
+				file, _, err := req.FormFile("file")
+				if err != nil {
+					t.Errorf("paid upstream missing audio file: %v", err)
+				} else {
+					defer file.Close()
+					raw := new(bytes.Buffer)
+					_, _ = raw.ReadFrom(file)
+					upstreamFile = raw.Bytes()
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"text":"` + label + ` transcript"}`))
+		}
+	}
+	freeUpstream := httptest.NewServer(upstreamHandler("free", &freeCalls))
+	defer freeUpstream.Close()
+	paidUpstream := httptest.NewServer(upstreamHandler("paid", &paidCalls))
+	defer paidUpstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "audio-transcriptions",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	createChannel := func(name, group, baseURL, apiKey string, priority int) {
+		t.Helper()
+		resp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+			"type":     common.ChannelTypeOpenAICompat,
+			"name":     name,
+			"models":   "whisper-test",
+			"base_url": baseURL,
+			"api_key":  apiKey,
+			"group":    group,
+			"priority": priority,
+		})
+		if resp.Code != http.StatusOK {
+			t.Fatalf("create %s channel failed: %d %s", name, resp.Code, resp.Body.String())
+		}
+	}
+	createChannel("free", "free", freeUpstream.URL, "upstream-secret-free", 50)
+	createChannel("paid", "paid", paidUpstream.URL, "upstream-secret-paid", 1)
+
+	var reqBody bytes.Buffer
+	writer := multipart.NewWriter(&reqBody)
+	if err := writer.WriteField("model", "whisper-test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("prompt", "domain words"); err != nil {
+		t.Fatal(err)
+	}
+	routerxOptions, err := json.Marshal(map[string]interface{}{
+		"route": map[string]string{"channel_group": "paid"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("routerx", string(routerxOptions)); err != nil {
+		t.Fatal(err)
+	}
+	fileWriter, err := writer.CreateFormFile("file", "sample.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fileWriter.Write(audioBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &reqBody)
+	req.Header.Set("Authorization", "Bearer "+tokenPayload.Data.Key)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"text":"paid transcript"`) {
+		t.Fatalf("audio transcription multipart passthrough should return paid upstream response, got %d %s", resp.Code, resp.Body.String())
+	}
+	if paidCalls != 1 || freeCalls != 0 || upstreamPath != "/v1/audio/transcriptions" {
+		t.Fatalf("routerx.route should select paid transcription upstream, paid=%d free=%d path=%q", paidCalls, freeCalls, upstreamPath)
+	}
+	if upstreamAuth != "Bearer upstream-secret-paid" {
+		t.Fatalf("upstream authorization should use selected channel secret, got %q", upstreamAuth)
+	}
+	if upstreamModel != "whisper-test" || upstreamPrompt != "domain words" || !bytes.Equal(upstreamFile, audioBytes) {
+		t.Fatalf("multipart fields should be preserved without routerx, model=%q prompt=%q file=%q", upstreamModel, upstreamPrompt, string(upstreamFile))
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 49 {
+		t.Fatalf("audio transcription without usage should use minimum token budget charge, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 99 {
+		t.Fatalf("audio transcription without usage should use minimum user quota charge, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 1 || callLog.TotalTokens != 0 || callLog.PromptTokens != 0 || callLog.CompletionTokens != 0 {
+		t.Fatalf("unexpected audio transcription success log: %+v", callLog)
 	}
 }
 

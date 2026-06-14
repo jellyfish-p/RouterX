@@ -85,9 +85,11 @@
 | `service_not_initialized` | 503 | `server_error` / `UNAVAILABLE` | 初始化中间件 | 否 | 否 | 否 | request_id、path | 先完成 `/v0/setup/init` |
 | `invalid_request` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 请求转换或通用参数错误 | 否 | 否 | 否 | 解析失败摘要 | 修正请求 |
 | `invalid_json` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | JSON 解析失败 | 否 | 否 | 否 | body 读取或解析摘要，不保存完整 body | 修正 JSON |
+| `invalid_multipart` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | multipart 表单解析失败 | 否 | 否 | 否 | content-type、boundary 和字段摘要，不保存完整文件内容 | 修正表单边界、字段或文件 |
 | `model_required` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 缺少模型 | 否 | 否 | 否 | 缺少字段 | 补充 model |
 | `unsupported_stream` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 当前入口或 APIType 尚未开启流式 | 否 | 否 | 否 | stream=true | 使用非流式或等待对应协议流式实现 |
 | `unsupported_stream_channel` | 502 | `upstream_error` / `UNAVAILABLE` | 流式请求命中非 OpenAI SSE 形态通道 | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用 OpenAI-compatible 流式通道或等待对应 provider chunk 转换 |
+| `unsupported_multipart_channel` | 502 | `upstream_error` / `UNAVAILABLE` | multipart 请求命中暂不支持文件表单透传的上游 adapter | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用 OpenAI-compatible 通道或等待对应 provider multipart 转换 |
 | `invalid_routerx_options` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | `routerx` 结构非法 | 否 | 否 | 否 | 私有字段解析摘要 | 修正 `routerx` |
 | `invalid_routerx_route` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 路由偏好格式非法 | 否 | 否 | 否 | route 摘要 | 修正路由偏好 |
 | `unsupported_api` | 404 | `invalid_request_error` / `NOT_FOUND` | 已知前缀下不支持的 API | 否 | 否 | 否 | api_type、path | 换用支持的接口 |

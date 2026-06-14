@@ -8,6 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
+	"net/http"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +42,10 @@ type RelayRawResult struct {
 	Usage       *relay.Usage
 }
 
+type contentTypeRelayAdapter interface {
+	DoRequestWithContentType(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error)
+}
+
 func (r *RelayStreamResult) Forward(write func([]byte) error, flush func()) (*relay.Usage, error) {
 	if r == nil || r.forward == nil {
 		return nil, errors.New("stream result is not initialized")
@@ -58,7 +66,9 @@ type HTTPError struct {
 
 var (
 	errInvalidJSONBody       = errors.New("invalid json body")
+	errInvalidMultipartBody  = errors.New("invalid multipart body")
 	errModelRequired         = errors.New("model is required")
+	errUnsupportedMultipart  = errors.New("multipart relay is not supported for selected upstream channel")
 	errInvalidRouterXOptions = errors.New("invalid routerx options")
 	errInvalidRouterXRoute   = errors.New("invalid routerx route")
 )
@@ -189,7 +199,16 @@ func (s *RelayService) GetAdapter(channelType int) (relay.Adapter, error) {
 
 // Relay 通用转发入口。
 func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType relay.APIType, body []byte, clientIP string) ([]byte, *relay.Usage, error) {
-	result, usage, err := s.relayNonStream(ctx, token, apiType, body, clientIP, false)
+	result, usage, err := s.relayNonStream(ctx, token, apiType, body, "", clientIP, false)
+	if err != nil {
+		return nil, usage, err
+	}
+	return result.Body, result.Usage, nil
+}
+
+// RelayMultipart 处理 OpenAI-compatible multipart/form-data 请求，保留文件字段并剥离 RouterX 私有表单字段。
+func (s *RelayService) RelayMultipart(ctx context.Context, token *model.Token, apiType relay.APIType, body []byte, contentType string, clientIP string) ([]byte, *relay.Usage, error) {
+	result, usage, err := s.relayNonStream(ctx, token, apiType, body, contentType, clientIP, false)
 	if err != nil {
 		return nil, usage, err
 	}
@@ -198,15 +217,15 @@ func (s *RelayService) Relay(ctx context.Context, token *model.Token, apiType re
 
 // RelayRaw 用于返回非 JSON 响应体的接口，例如 /v1/audio/speech 的音频字节流。
 func (s *RelayService) RelayRaw(ctx context.Context, token *model.Token, apiType relay.APIType, body []byte, clientIP string) (*RelayRawResult, error) {
-	result, _, err := s.relayNonStream(ctx, token, apiType, body, clientIP, true)
+	result, _, err := s.relayNonStream(ctx, token, apiType, body, "", clientIP, true)
 	return result, err
 }
 
-func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, apiType relay.APIType, body []byte, clientIP string, rawResponse bool) (*RelayRawResult, *relay.Usage, error) {
+func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, apiType relay.APIType, body []byte, contentType string, clientIP string, rawResponse bool) (*RelayRawResult, *relay.Usage, error) {
 	if token == nil {
 		return nil, nil, &HTTPError{Status: 401, Message: "invalid api key", Type: "authentication_error", Code: "invalid_api_key"}
 	}
-	reqInfo, err := parseRelayRequest(apiType, body)
+	reqInfo, err := parseRelayRequestWithContentType(apiType, body, contentType)
 	if err != nil {
 		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: relayRequestErrorCode(err)}
 	}
@@ -237,7 +256,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	var lastErr error
 	for i := 0; i < maxAttempts; i++ {
 		channel := attemptCandidates[i]
-		result, usage, retryable, err := s.relayNonStreamAttempt(ctx, token, apiType, reqInfo, body, clientIP, &channel, rawResponse)
+		result, usage, retryable, err := s.relayNonStreamAttempt(ctx, token, apiType, reqInfo, body, contentType, clientIP, &channel, rawResponse)
 		if err == nil {
 			return result, usage, nil
 		}
@@ -250,7 +269,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	return nil, lastUsage, lastErr
 }
 
-func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.Token, apiType relay.APIType, reqInfo relayRequestInfo, body []byte, clientIP string, channel *model.Channel, rawResponse bool) (*RelayRawResult, *relay.Usage, bool, error) {
+func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.Token, apiType relay.APIType, reqInfo relayRequestInfo, body []byte, contentType string, clientIP string, channel *model.Channel, rawResponse bool) (*RelayRawResult, *relay.Usage, bool, error) {
 	adapter, err := s.GetAdapter(channel.Type)
 	if err != nil {
 		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
@@ -262,24 +281,36 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		return nil, nil, false, &HTTPError{Status: 502, Message: "upstream channel secret is not available", Type: "upstream_error", Code: "upstream_secret_error"}
 	}
 	upstreamModel := s.channelService.ApplyModelRewrite(channel, reqInfo.Model)
-	outInputBody, err := replaceRequestModel(body, upstreamModel)
-	if err != nil {
-		return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
-	}
-
-	outBody, err := adapter.ConvertRequest(apiType, outInputBody)
-	if err != nil {
-		return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
+	outBody := body
+	outContentType := ""
+	if isMultipartRelayContentType(contentType) {
+		outBody, outContentType, err = rewriteMultipartRelayBody(body, contentType, upstreamModel)
+		if err != nil {
+			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid multipart body", Type: "invalid_request_error", Code: "invalid_multipart"}
+		}
+	} else {
+		outInputBody, err := replaceRequestModel(body, upstreamModel)
+		if err != nil {
+			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
+		}
+		outBody, err = adapter.ConvertRequest(apiType, outInputBody)
+		if err != nil {
+			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
+		}
 	}
 	endpoint := adapter.GetAPIEndpoint(apiType, upstreamModel)
 	timeout := s.relayTimeout()
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	start := time.Now()
-	resp, err := adapter.DoRequest(reqCtx, target.BaseURL, endpoint, target.APIKey, outBody)
+	resp, err := doRelayAdapterRequest(reqCtx, adapter, target.BaseURL, endpoint, target.APIKey, outBody, outContentType)
 	latencyMs := int(time.Since(start).Milliseconds())
 	if err != nil {
 		_ = s.markChannelFailure(channel, latencyMs)
+		if errors.Is(err, errUnsupportedMultipart) {
+			_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "multipart relay is not supported for selected upstream channel", clientIP)
+			return nil, nil, false, &HTTPError{Status: 502, Message: "multipart relay is not supported for selected upstream channel", Type: "upstream_error", Code: "unsupported_multipart_channel"}
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream timeout", clientIP)
 			return nil, nil, true, &HTTPError{Status: 504, Message: "upstream request timed out", Type: "upstream_error", Code: "upstream_timeout"}
@@ -522,6 +553,13 @@ type relayRequestInfo struct {
 	Route  RoutePreference
 }
 
+func parseRelayRequestWithContentType(apiType relay.APIType, body []byte, contentType string) (relayRequestInfo, error) {
+	if isMultipartRelayContentType(contentType) {
+		return parseMultipartRelayRequest(body, contentType)
+	}
+	return parseRelayRequest(apiType, body)
+}
+
 func parseRelayRequest(apiType relay.APIType, body []byte) (relayRequestInfo, error) {
 	if apiType == relay.APIModels {
 		return relayRequestInfo{}, nil
@@ -545,10 +583,54 @@ func parseRelayRequest(apiType relay.APIType, body []byte) (relayRequestInfo, er
 	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream, Route: route}, nil
 }
 
+func parseMultipartRelayRequest(body []byte, contentType string) (relayRequestInfo, error) {
+	boundary, err := multipartBoundary(contentType)
+	if err != nil {
+		return relayRequestInfo{}, err
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	info := relayRequestInfo{}
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return relayRequestInfo{}, errInvalidMultipartBody
+		}
+		name := part.FormName()
+		if name == "" {
+			continue
+		}
+		raw, err := io.ReadAll(part)
+		if err != nil {
+			return relayRequestInfo{}, errInvalidMultipartBody
+		}
+		switch name {
+		case "model":
+			info.Model = strings.TrimSpace(string(raw))
+		case "stream":
+			info.Stream = multipartBoolValue(raw)
+		case "routerx":
+			route, err := parseRouterXRoute(bytes.TrimSpace(raw))
+			if err != nil {
+				return relayRequestInfo{}, err
+			}
+			info.Route = route
+		}
+	}
+	if info.Model == "" {
+		return relayRequestInfo{}, errModelRequired
+	}
+	return info, nil
+}
+
 func relayRequestErrorCode(err error) string {
 	switch {
 	case errors.Is(err, errInvalidJSONBody):
 		return "invalid_json"
+	case errors.Is(err, errInvalidMultipartBody):
+		return "invalid_multipart"
 	case errors.Is(err, errModelRequired):
 		return "model_required"
 	case errors.Is(err, errInvalidRouterXOptions):
@@ -665,6 +747,90 @@ func replaceRequestModel(body []byte, modelName string) ([]byte, error) {
 	}
 	payload["model"] = rawModel
 	return json.Marshal(payload)
+}
+
+func rewriteMultipartRelayBody(body []byte, contentType string, modelName string) ([]byte, string, error) {
+	boundary, err := multipartBoundary(contentType)
+	if err != nil {
+		return nil, "", err
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	var out bytes.Buffer
+	writer := multipart.NewWriter(&out)
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, "", errInvalidMultipartBody
+		}
+		name := part.FormName()
+		if name == "routerx" {
+			_, _ = io.Copy(io.Discard, part)
+			continue
+		}
+		header := cloneMIMEHeader(part.Header)
+		dst, err := writer.CreatePart(header)
+		if err != nil {
+			return nil, "", errInvalidMultipartBody
+		}
+		if name == "model" && strings.TrimSpace(modelName) != "" {
+			if _, err := dst.Write([]byte(modelName)); err != nil {
+				return nil, "", errInvalidMultipartBody
+			}
+			_, _ = io.Copy(io.Discard, part)
+			continue
+		}
+		if _, err := io.Copy(dst, part); err != nil {
+			return nil, "", errInvalidMultipartBody
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", errInvalidMultipartBody
+	}
+	return out.Bytes(), writer.FormDataContentType(), nil
+}
+
+func isMultipartRelayContentType(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	return err == nil && strings.EqualFold(mediaType, "multipart/form-data")
+}
+
+func multipartBoundary(contentType string) (string, error) {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || !strings.EqualFold(mediaType, "multipart/form-data") || strings.TrimSpace(params["boundary"]) == "" {
+		return "", errInvalidMultipartBody
+	}
+	return params["boundary"], nil
+}
+
+func multipartBoolValue(raw []byte) bool {
+	switch strings.ToLower(strings.TrimSpace(string(raw))) {
+	case "true", "1", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+func cloneMIMEHeader(header textproto.MIMEHeader) textproto.MIMEHeader {
+	cloned := make(textproto.MIMEHeader, len(header))
+	for key, values := range header {
+		cloned[key] = append([]string(nil), values...)
+	}
+	return cloned
+}
+
+func doRelayAdapterRequest(ctx context.Context, adapter relay.Adapter, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error) {
+	if strings.TrimSpace(contentType) == "" {
+		return adapter.DoRequest(ctx, baseURL, endpoint, apiKey, body)
+	}
+	contentTypeAdapter, ok := adapter.(contentTypeRelayAdapter)
+	if !ok {
+		return nil, errUnsupportedMultipart
+	}
+	return contentTypeAdapter.DoRequestWithContentType(ctx, baseURL, endpoint, apiKey, body, contentType)
 }
 
 func anthropicMessagesToOpenAI(body []byte) ([]byte, error) {

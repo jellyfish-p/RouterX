@@ -943,10 +943,11 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 语音转文字转发
+      description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，发出前剥离 routerx 表单字段，并使用其中的 routerx.route 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、文件大小、安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       requestBody:
-        $ref: "#/components/requestBodies/GenericJSON"
+        $ref: "#/components/requestBodies/AudioMultipart"
       responses:
         "200":
           $ref: "#/components/responses/GenericJSON"
@@ -958,10 +959,11 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 语音翻译转发
+      description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，发出前剥离 routerx 表单字段，并使用其中的 routerx.route 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、文件大小、安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       requestBody:
-        $ref: "#/components/requestBodies/GenericJSON"
+        $ref: "#/components/requestBodies/AudioMultipart"
       responses:
         "200":
           $ref: "#/components/responses/GenericJSON"
@@ -1276,6 +1278,42 @@ components:
           schema:
             type: object
             additionalProperties: true
+    AudioMultipart:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [model, file]
+            properties:
+              model:
+                type: string
+                description: OpenAI-compatible 音频模型名；RouterX 使用该值选择通道。
+                example: whisper-1
+              file:
+                type: string
+                format: binary
+                description: 音频文件字段。
+              prompt:
+                type: string
+                description: 可选上下文提示词。
+              response_format:
+                type: string
+                enum: [json, text, srt, verbose_json, vtt]
+              language:
+                type: string
+                description: 转写语言；翻译接口可忽略。
+              temperature:
+                type: number
+                format: float
+              timestamp_granularities:
+                type: array
+                items:
+                  type: string
+                  enum: [word, segment]
+              routerx:
+                type: string
+                description: RouterX 私有 JSON 字符串，例如 {"route":{"channel_group":"premium"}}；发往真实上游前会被剥离。
   responses:
     StandardOK:
       description: 成功。

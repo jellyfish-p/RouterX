@@ -228,9 +228,10 @@ P2 验收标准：
 | 9 | Moderations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明内容审核不是只注册路由，且 P0 最低计费边界可解释。 |
 | 10 | Image Generations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明图像生成 JSON 入口不是只注册路由，且无 usage 响应有明确最低计费。 |
 | 11 | Audio Speech 基础二进制响应透传和 usage 缺失最低计费 | 已覆盖：`TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge` | 证明高级 API 不只支持 JSON 响应，文本转语音能保留音频 Content-Type 和字节流。 |
-| 12 | `routerx.route` 合法、忽略、拒绝和无候选路径 | 已覆盖：`TestRouterXRoutePreferenceFiltersChannels` | 证明用户偏好不能绕过管理员策略。 |
-| 13 | SSE 流式、客户端断开和流式 usage 结算 | 部分覆盖：OpenAI Chat/Completions 基础 SSE、Anthropic Messages Stream/Gemini streamGenerateContent 到 OpenAI-compatible SSE、usage 扣费、客户端断开取消和非 OpenAI SSE 通道拒绝已覆盖；仍需 Anthropic/Gemini 原生上游流式和更完整 usage fallback | 进入 P1 前补齐最容易出现资源泄漏和账单偏差的路径。 |
-| 14 | Anthropic/Gemini 入口错误格式和字段降级 | 部分覆盖：API Key 错误外形、非流式成功、字段降级、Anthropic/Gemini 基础流式和基础下游错误外形已覆盖；仍需原生字段保真和完整 SDK 行为矩阵 | 证明多入口协议不是只注册路由，而是 SDK 可用。 |
+| 12 | Audio Transcriptions multipart 表单透传、路由偏好和最低计费 | 已覆盖：`TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge` | 证明音频文件类接口不是只注册路由，multipart 表单能保留文件字段、剥离 `routerx` 并按路由偏好选择通道。 |
+| 13 | `routerx.route` 合法、忽略、拒绝和无候选路径 | 已覆盖：`TestRouterXRoutePreferenceFiltersChannels` | 证明用户偏好不能绕过管理员策略。 |
+| 14 | SSE 流式、客户端断开和流式 usage 结算 | 部分覆盖：OpenAI Chat/Completions 基础 SSE、Anthropic Messages Stream/Gemini streamGenerateContent 到 OpenAI-compatible SSE、usage 扣费、客户端断开取消和非 OpenAI SSE 通道拒绝已覆盖；仍需 Anthropic/Gemini 原生上游流式和更完整 usage fallback | 进入 P1 前补齐最容易出现资源泄漏和账单偏差的路径。 |
+| 15 | Anthropic/Gemini 入口错误格式和字段降级 | 部分覆盖：API Key 错误外形、非流式成功、字段降级、Anthropic/Gemini 基础流式和基础下游错误外形已覆盖；仍需原生字段保真和完整 SDK 行为矩阵 | 证明多入口协议不是只注册路由，而是 SDK 可用。 |
 
 ## 推荐顺序
 
