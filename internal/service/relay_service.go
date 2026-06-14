@@ -113,6 +113,29 @@ func (s *RelayService) RelayGeminiGenerateContent(ctx context.Context, token *mo
 	return converted, usage, nil
 }
 
+func (s *RelayService) RelayGeminiGenerateContentStream(ctx context.Context, token *model.Token, modelName string, body []byte, clientIP string) (*RelayStreamResult, error) {
+	canonical, err := geminiGenerateToOpenAI(modelName, body, true)
+	if err != nil {
+		return nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+	}
+	result, err := s.RelayStream(ctx, token, relay.APIChatCompletions, canonical, clientIP)
+	if err != nil {
+		return nil, err
+	}
+	return &RelayStreamResult{
+		ContentType: "text/event-stream",
+		forward: func(write func([]byte) error, flush func()) (*relay.Usage, error) {
+			return result.Forward(func(chunk []byte) error {
+				converted, ok, err := openAIStreamChunkToGemini(chunk)
+				if err != nil || !ok {
+					return err
+				}
+				return write(converted)
+			}, flush)
+		},
+	}, nil
+}
+
 func (s *RelayService) AnthropicCountTokens(body []byte) ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
 		"input_tokens": approximateTokenCount(body),
@@ -766,16 +789,80 @@ func openAIChatToGemini(body []byte) ([]byte, error) {
 			"finishReason": geminiFinishReason(choice.FinishReason),
 		})
 	}
-	usage := map[string]int{}
-	if input.Usage != nil {
-		usage["promptTokenCount"] = input.Usage.PromptTokens
-		usage["candidatesTokenCount"] = input.Usage.CompletionTokens
-		usage["totalTokenCount"] = input.Usage.TotalTokens
-	}
 	return json.Marshal(map[string]interface{}{
 		"candidates":    candidates,
-		"usageMetadata": usage,
+		"usageMetadata": geminiUsageMetadata(input.Usage),
 	})
+}
+
+func openAIStreamChunkToGemini(chunk []byte) ([]byte, bool, error) {
+	line := bytes.TrimSpace(chunk)
+	if len(line) == 0 {
+		return []byte("\n"), true, nil
+	}
+	if !bytes.HasPrefix(line, []byte("data:")) {
+		return chunk, true, nil
+	}
+	payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+	if bytes.Equal(payload, []byte("[DONE]")) {
+		return nil, false, nil
+	}
+	if !json.Valid(payload) {
+		return nil, false, errors.New("invalid openai stream chunk")
+	}
+	var input struct {
+		Choices []struct {
+			Delta struct {
+				Content string `json:"content"`
+			} `json:"delta"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage *relay.Usage `json:"usage"`
+	}
+	if err := json.Unmarshal(payload, &input); err != nil {
+		return nil, false, err
+	}
+	output := map[string]interface{}{}
+	candidates := make([]map[string]interface{}, 0, len(input.Choices))
+	for _, choice := range input.Choices {
+		candidate := map[string]interface{}{}
+		if choice.Delta.Content != "" {
+			candidate["content"] = map[string]interface{}{
+				"role":  "model",
+				"parts": []map[string]string{{"text": choice.Delta.Content}},
+			}
+		}
+		if choice.FinishReason != "" {
+			candidate["finishReason"] = geminiFinishReason(choice.FinishReason)
+		}
+		if len(candidate) > 0 {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if len(candidates) > 0 {
+		output["candidates"] = candidates
+	}
+	if input.Usage != nil {
+		output["usageMetadata"] = geminiUsageMetadata(input.Usage)
+	}
+	if len(output) == 0 {
+		return nil, false, nil
+	}
+	converted, err := json.Marshal(output)
+	if err != nil {
+		return nil, false, err
+	}
+	return append(append([]byte("data: "), converted...), '\n'), true, nil
+}
+
+func geminiUsageMetadata(usage *relay.Usage) map[string]int {
+	metadata := map[string]int{}
+	if usage != nil {
+		metadata["promptTokenCount"] = usage.PromptTokens
+		metadata["candidatesTokenCount"] = usage.CompletionTokens
+		metadata["totalTokenCount"] = usage.TotalTokens
+	}
+	return metadata
 }
 
 func anthropicStopReason(reason string) string {

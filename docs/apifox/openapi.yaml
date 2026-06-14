@@ -1140,7 +1140,7 @@ paths:
     post:
       tags: [Gemini Compatible]
       summary: Gemini streamGenerateContent
-      description: 当前已注册，但 P0 阶段会返回 unsupported_stream。
+      description: 基础实现；Gemini 请求会先转换为 OpenAI-compatible Chat Completions stream 请求，当前支持 OpenAI-compatible SSE 上游，并将 OpenAI data chunk 转为 Gemini SSE data 事件。usage 从 OpenAI SSE chunk 提取后写入 RouterX 日志并扣费；Gemini 原生上游流式、完整 chunk 字段保真和 usage fallback 仍以 docs/PROTOCOLS.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -1152,12 +1152,11 @@ paths:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
         "200":
-          description: Gemini-compatible streaming response when supported.
+          description: Gemini-compatible SSE stream.
           content:
-            application/json:
+            text/event-stream:
               schema:
-                type: object
-                additionalProperties: true
+                type: string
         "400":
           $ref: "#/components/responses/GeminiError"
         "5XX":

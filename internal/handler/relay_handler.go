@@ -176,6 +176,24 @@ func (h *RelayHandler) GeminiModelAction(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, common.GeminiError(http.StatusUnauthorized, "invalid api key", geminiRelayStatusText(http.StatusUnauthorized)))
 			return
 		}
+		if action == "streamGenerateContent" {
+			result, err := h.svc.RelayGeminiGenerateContentStream(c.Request.Context(), token, modelName, body, c.ClientIP())
+			if err != nil {
+				writeGeminiRelayError(c, err)
+				return
+			}
+			c.Header("Content-Type", result.ContentType)
+			c.Header("Cache-Control", "no-cache")
+			c.Header("Connection", "keep-alive")
+			c.Status(http.StatusOK)
+			_, _ = result.Forward(func(chunk []byte) error {
+				_, writeErr := c.Writer.Write(chunk)
+				return writeErr
+			}, func() {
+				c.Writer.Flush()
+			})
+			return
+		}
 		resp, _, err := h.svc.RelayGeminiGenerateContent(c.Request.Context(), token, modelName, body, action == "streamGenerateContent", c.ClientIP())
 		if err != nil {
 			writeGeminiRelayError(c, err)

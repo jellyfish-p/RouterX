@@ -42,6 +42,7 @@
 | `TestCompletionsStreamForwardsSSEAndDeductsUsage` | Legacy Completions SSE chunk 转发、`routerx` 剥离、usage 提取、日志和扣费 |
 | `TestChatCompletionStreamCancelsUpstreamWhenClientWriteFails` | 客户端写入失败时取消上游 SSE 请求，失败日志不扣费 |
 | `TestChatCompletionStreamRejectsNonOpenAISSEUpstream` | 非 OpenAI SSE 通道在流式请求中被上游前拒绝 |
+| `TestGeminiStreamGenerateContentConvertsOpenAISSEAndDeductsUsage` | Gemini streamGenerateContent 转 OpenAI-compatible Chat SSE，上游 OpenAI chunk 转 Gemini SSE 事件，usage 扣费和日志 |
 | `TestChatCompletionUpstreamBadRequestMapping` | 下游 400 错误映射、失败日志和密钥不泄露 |
 | `TestChatCompletionUpstreamErrorStatusMapping` | 下游 401/403/429/5xx 错误映射、失败日志、通道错误计数和不扣费 |
 | `TestChatCompletionUpstreamTimeoutMapping` | 下游超时错误映射、失败日志、通道错误计数和不扣费 |
@@ -55,7 +56,7 @@
 
 仍需优先补齐：
 
-- Anthropic/Gemini 流式转换和更完整的流式 usage fallback/估算策略。
+- Anthropic 流式、Gemini 原生上游流式和更完整的流式 usage fallback/估算策略。
 - Anthropic/Gemini 更完整 SDK 行为细节、原生字段保真和流式错误路径。
 
 ## 测试原则
@@ -361,9 +362,9 @@ Gemini-compatible 最小断言：
 | 阶段 | 能力 | 测试重点 |
 |------|------|----------|
 | P0 | 开发者最小接入 | base URL + RouterX API Key、`/v1/models`、非流式 Chat、OpenAI Chat/Completions 基础 SSE、日志和扣费 |
-| P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 和 Legacy Completions 基础 chunk 转发、usage 扣费和客户端断开取消；继续补 Anthropic/Gemini chunk 转换、usage fallback 和已输出后不切换通道的更多故障注入 |
+| P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 和 Legacy Completions 基础 chunk 转发、Gemini streamGenerateContent 到 OpenAI-compatible SSE、usage 扣费和客户端断开取消；继续补 Anthropic 流式、Gemini 原生上游流式、usage fallback 和已输出后不切换通道的更多故障注入 |
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
-| P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为、原生字段保真和流式路径 |
+| P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Gemini 基础流式、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为、原生字段保真和 Anthropic/Gemini 原生流式路径 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
 | P1 | 调用事实快照 | request、policy、route、usage、billing、error 快照脱敏且能解释历史调用 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |
