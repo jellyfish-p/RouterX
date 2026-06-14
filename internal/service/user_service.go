@@ -183,6 +183,52 @@ func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
 	return internal.DB.Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
 }
 
+// RedeemCode 将未使用的充值码兑换到当前用户余额。当前阶段尚未落库 quota_transactions，
+// 因此必须让状态更新和余额增加在同一事务内完成，避免重复兑换。
+func (s *UserService) RedeemCode(userID uint, code string) (int64, int64, error) {
+	code = strings.TrimSpace(code)
+	if userID == 0 || code == "" {
+		return 0, 0, errors.New("redem code is required")
+	}
+	var redeemedQuota int64
+	var finalQuota int64
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		var redem model.RedemCode
+		if err := tx.Where("code = ? AND status = ?", code, common.RedemCodeStatusUnused).First(&redem).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errors.New("redem code is invalid or already used")
+			}
+			return err
+		}
+		now := time.Now()
+		usedBy := userID
+		res := tx.Model(&model.RedemCode{}).
+			Where("id = ? AND status = ?", redem.ID, common.RedemCodeStatusUnused).
+			Updates(map[string]interface{}{
+				"status":  common.RedemCodeStatusUsed,
+				"used_by": usedBy,
+				"used_at": &now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errors.New("redem code is invalid or already used")
+		}
+		if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("quota", gorm.Expr("quota + ?", redem.Quota)).Error; err != nil {
+			return err
+		}
+		var user model.User
+		if err := tx.Select("quota").First(&user, userID).Error; err != nil {
+			return err
+		}
+		redeemedQuota = redem.Quota
+		finalQuota = user.Quota
+		return nil
+	})
+	return redeemedQuota, finalQuota, err
+}
+
 func normalizePage(page, pageSize int) (int, int) {
 	if page <= 0 {
 		page = 1

@@ -423,6 +423,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 |------|------|----------|------|
 | GET | `/v0/user/log` | 已实现 | 当前用户调用日志 |
 | GET | `/v0/user/billing` | 基础实现 | 当前用户账单统计 |
+| POST | `/v0/user/redem` | 基础实现 | 使用未兑换充值码给当前用户增加额度；当前阶段不写 `quota_transactions` |
 
 ### 目标扩展接口
 
@@ -430,7 +431,6 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/v0/user/redem` | 使用充值码 |
 | GET | `/v0/user/payment/products` | 充值商品列表 |
 | POST | `/v0/user/payment/orders` | 创建支付订单 |
 | GET | `/v0/user/payment/orders` | 当前用户支付订单列表 |

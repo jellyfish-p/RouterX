@@ -37,6 +37,7 @@ func setupUserRoutes(
 
 			jwtRequired.GET("/log", logH.UserList)
 			jwtRequired.GET("/billing", logH.UserBilling)
+			jwtRequired.POST("/redem", userH.RedeemCode)
 		}
 	}
 }

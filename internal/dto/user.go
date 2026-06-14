@@ -40,3 +40,12 @@ type UpdateSelfRequest struct {
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email"`
 }
+
+type RedeemCodeRequest struct {
+	Code string `json:"code" binding:"required"`
+}
+
+type RedeemCodeResult struct {
+	RedeemedQuota int64 `json:"redeemed_quota"`
+	Quota         int64 `json:"quota"`
+}

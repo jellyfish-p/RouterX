@@ -182,6 +182,26 @@ func (h *UserHandler) UpdateSelf(c *gin.Context) {
 	common.SuccessMsg(c, "个人信息已更新")
 }
 
+// POST /v0/user/redem — 使用充值码给当前账户增加额度
+func (h *UserHandler) RedeemCode(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.RedeemCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "充值码参数无效")
+		return
+	}
+	redeemedQuota, quota, err := h.svc.RedeemCode(user.ID, req.Code)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	common.Success(c, dto.RedeemCodeResult{RedeemedQuota: redeemedQuota, Quota: quota})
+}
+
 func parseUintParam(c *gin.Context, name string) (uint, bool) {
 	raw := c.Param(name)
 	id, err := strconv.ParseUint(raw, 10, 64)

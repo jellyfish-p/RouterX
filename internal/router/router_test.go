@@ -303,6 +303,62 @@ func TestAdminPrivilegeBoundaries(t *testing.T) {
 	}
 }
 
+func TestUserRedeemsRedemCodeOnce(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(10)).Error; err != nil {
+		t.Fatal(err)
+	}
+	code := model.RedemCode{Code: "OFFLINE-CREDIT-1", Quota: 25, Status: common.RedemCodeStatusUnused}
+	if err := internal.DB.Create(&code).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	first := performJSON(r, http.MethodPost, "/v0/user/redem", rootJWT, map[string]interface{}{
+		"code": " OFFLINE-CREDIT-1 ",
+	})
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"quota":35`) || !strings.Contains(first.Body.String(), `"redeemed_quota":25`) {
+		t.Fatalf("redeem should increase user quota and return balance, got %d %s", first.Code, first.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 35 {
+		t.Fatalf("redeem should add quota once, got %d", root.Quota)
+	}
+	var storedCode model.RedemCode
+	if err := internal.DB.First(&storedCode, code.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedCode.Status != common.RedemCodeStatusUsed || storedCode.UsedBy == nil || *storedCode.UsedBy != root.ID || storedCode.UsedAt == nil {
+		t.Fatalf("redeem should mark code used by current user: %+v", storedCode)
+	}
+
+	second := performJSON(r, http.MethodPost, "/v0/user/redem", rootJWT, map[string]interface{}{
+		"code": "OFFLINE-CREDIT-1",
+	})
+	if second.Code != http.StatusBadRequest || strings.Contains(second.Body.String(), `"success":true`) {
+		t.Fatalf("used redem code should be rejected, got %d %s", second.Code, second.Body.String())
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 35 {
+		t.Fatalf("used redem code must not add quota again, got %d", root.Quota)
+	}
+}
+
 func TestChannelExtendedManagement(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
