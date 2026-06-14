@@ -426,7 +426,7 @@ paths:
     put:
       tags: [User API Key]
       summary: 更新 API Key scope
-      description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list、api_types APIType allow-list 和 channel_groups 通道分组 allow-list。列表为空表示继承用户和系统策略；模型未命中返回 model_not_allowed，APIType 未命中返回 token_forbidden，通道分组未命中返回 route_forbidden，且都不会调用上游。成功后写 api_key.scope_updated 管理审计，审计摘要不包含明文 Key 或哈希。
+      description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list、api_types APIType allow-list、channel_groups 通道分组 allow-list 和 ip_cidrs IP/CIDR allow-list。列表为空表示继承用户和系统策略；模型未命中返回 model_not_allowed，APIType 或 IP 未命中返回 token_forbidden，通道分组未命中返回 route_forbidden，且都不会调用上游。成功后写 api_key.scope_updated 管理审计，审计摘要不包含明文 Key 或哈希。
       security:
         - UserJWT: []
       parameters:
@@ -1566,7 +1566,7 @@ paths:
         "401":
           $ref: "#/components/responses/OpenAIError"
         "403":
-          description: API Key scope 或访问策略拒绝；模型 allow-list 未命中时 code 为 model_not_allowed，APIType allow-list 未命中时 code 为 token_forbidden，通道分组 allow-list 未命中时 code 为 route_forbidden。
+          description: API Key scope 或访问策略拒绝；模型 allow-list 未命中时 code 为 model_not_allowed，APIType 或 IP/CIDR allow-list 未命中时 code 为 token_forbidden，通道分组 allow-list 未命中时 code 为 route_forbidden。
           content:
             application/json:
               schema:
@@ -2734,6 +2734,12 @@ components:
           items:
             type: string
           example: ["default", "cheap"]
+        ip_cidrs:
+          type: array
+          description: 允许使用该 Key 的来源 IP 或 CIDR。空数组或省略表示不按来源 IP 额外收窄；"*" 表示允许所有来源。
+          items:
+            type: string
+          example: ["203.0.113.10", "198.51.100.0/24"]
     BatchDisableTokensRequest:
       type: object
       properties:
@@ -2795,6 +2801,12 @@ components:
           items:
             type: string
           example: ["cheap"]
+        ip_cidrs:
+          type: array
+          description: 当前已实现的 IP/CIDR allow-list；为空或不存在表示继承用户和系统策略。
+          items:
+            type: string
+          example: ["198.51.100.0/24"]
     CreateTokenResponse:
       allOf:
         - $ref: "#/components/schemas/Token"

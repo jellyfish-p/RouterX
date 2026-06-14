@@ -44,10 +44,10 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 - API Key 支持用户轮换、泄露上报、单 Key 用量摘要、显式禁用、管理员跨用户脱敏查询和按 `token_ids`/`user_id` 批量禁用。
 - `tokens.rotated_from_id` 保存轮换来源，`tokens.revoked_reason` 保存禁用原因；轮换会创建替换 Key、返回新明文一次并禁用旧 Key。
 - API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计，审计摘要不包含完整明文 Key 或哈希。
-- `tokens.scope_json` 已支持基础模型 allow-list、APIType allow-list 和通道分组 allow-list：用户可通过 `PUT /v0/user/token/:id/scope` 写入 `allow_models`、`api_types` 与 `channel_groups`，Relay 在上游调用前返回 `model_not_allowed`、`token_forbidden` 或 `route_forbidden` 并写失败日志。
+- `tokens.scope_json` 已支持基础模型 allow-list、APIType allow-list、通道分组 allow-list 和 IP/CIDR allow-list：用户可通过 `PUT /v0/user/token/:id/scope` 写入 `allow_models`、`api_types`、`channel_groups` 与 `ip_cidrs`，系统在上游调用前返回 `model_not_allowed`、`token_forbidden` 或 `route_forbidden` 并写失败日志。
 - API Key 鉴权成功后向请求上下文注入当前用户和当前 Token，供 Relay、限流、日志和计费使用。
 
-当前代码事实是后续目标能力的基础，额度语义以 `docs/DECISIONS.md` 的 RXD-009/RXD-010 为目标口径；后续仍需补 `quota_limit`/`quota_used` 目标字段、持久化最近使用来源摘要、协议入口/IP/预算等更完整作用域策略、批量过期和风险视图。
+当前代码事实是后续目标能力的基础，额度语义以 `docs/DECISIONS.md` 的 RXD-009/RXD-010 为目标口径；后续仍需补 `quota_limit`/`quota_used` 目标字段、持久化最近使用来源摘要、协议入口/预算等更完整作用域策略、批量过期和风险视图。
 
 ## 4. 身份边界
 
@@ -141,7 +141,7 @@ User JWT 登录
 | `unlimited` | 是否 Key 自身不限额。 |
 | `rotated_from_id` | 轮换来源 Key，用于解释迁移链路。 |
 | `revoked_reason` | 禁用原因，例如用户主动、泄露、轮换或风控。 |
-| `scope_json` | API Key 收窄策略 JSON；当前支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list 和 `channel_groups` 通道分组 allow-list，后续扩展协议入口、IP 和预算限制。 |
+| `scope_json` | API Key 收窄策略 JSON；当前支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list 和 `ip_cidrs` IP/CIDR allow-list，后续扩展协议入口和预算限制。 |
 | `created_at` / `updated_at` / `deleted_at` | 创建、更新和软删除时间。 |
 
 ### 目标增强字段
@@ -195,7 +195,7 @@ API Key 最大消耗额度必须和账单文档保持一致。
 
 ## 10. 作用域和策略
 
-P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型 allow-list、APIType allow-list 与通道分组 allow-list scope；后续作用域能力继续遵守只收窄、不放大的原则。
+P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型 allow-list、APIType allow-list、通道分组 allow-list 与 IP/CIDR allow-list scope；后续作用域能力继续遵守只收窄、不放大的原则。
 跨模块策略决策顺序、访问控制、分组、限流、`routerx.route` 冲突规则和策略快照以 `docs/POLICIES.md` 为准；入口协议、APIType 和能力等级以 `docs/PROTOCOLS.md` 为准；调用事实快照封套和脱敏规则以 `docs/SNAPSHOTS.md` 为准。本节只说明 API Key scope 对调用凭据的影响。
 
 | 作用域 | 示例 | 拒绝时错误 |
@@ -203,9 +203,9 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 | `allow_models` 模型 allow-list | 只能调用 `gpt-4o-mini`、`claude-3-5-sonnet` | `model_not_allowed` |
 | `api_types` APIType allow-list | 只允许 `openai.chat` 或 `openai.embeddings` | `token_forbidden` |
 | `channel_groups` 通道分组 allow-list | 只能使用 `default` 或 `cheap` 分组 | `route_forbidden` |
+| `ip_cidrs` IP/CIDR allow-list | 只允许固定出口 IP 或网段 | `token_forbidden` |
 | 协议入口 | 只允许 OpenAI-compatible Chat | `token_forbidden` 或协议兼容错误 |
 | 请求类型 | 只允许 `/v1/models` 和 `/v1/chat/completions` | `token_forbidden` |
-| IP/CIDR | 只允许固定出口 IP | `token_forbidden` |
 | 预算限制 | 每日最多消耗固定额度 | `insufficient_quota` 或 `rate_limit_exceeded` |
 | 并发和频率 | 每 Key RPM/TPM/并发上限 | `rate_limit_exceeded` |
 
@@ -231,7 +231,7 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 | POST | `/v0/user/token/:id/disable` | 显式禁用自己的 API Key，可记录原因并写 `api_key.disabled` 审计。 |
 | POST | `/v0/user/token/:id/rotate` | 创建替换 Key，继承安全属性，禁用旧 Key，并写 `api_key.rotated` 审计。 |
 | POST | `/v0/user/token/:id/report-leak` | 上报泄露并立即禁用 Key，写 `api_key.leak_reported` 审计。 |
-| PUT | `/v0/user/token/:id/scope` | 更新 `allow_models` 模型 allow-list、`api_types` APIType allow-list 和 `channel_groups` 通道分组 allow-list，并写 `api_key.scope_updated` 审计。 |
+| PUT | `/v0/user/token/:id/scope` | 更新 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list 和 `ip_cidrs` IP/CIDR allow-list，并写 `api_key.scope_updated` 审计。 |
 | GET | `/v0/user/token/:id/usage` | 查看单 Key 调用数、成功/失败数、额度消耗、总 tokens 和最近调用摘要。 |
 
 用户接口必须保持这些边界：
@@ -250,7 +250,7 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 | 禁用 | `POST /v0/user/token/:id/disable` | Key 所属用户或管理员 | 立即禁用并清理缓存。 |
 | 泄露上报 | `POST /v0/user/token/:id/report-leak` | Key 所属用户或管理员 | 禁用 Key、写审计、提示创建替换 Key。 |
 | 用量摘要 | `GET /v0/user/token/:id/usage` | Key 所属用户或管理员 | 返回该 Key 的调用量、额度消耗、错误和最近使用摘要。 |
-| 作用域扩展 | `PUT /v0/user/token/:id/scope` | 管理员或具备策略权限的用户 | 在已实现 `allow_models`、`api_types` 和 `channel_groups` 基础上继续扩展协议入口、IP 和预算限制。 |
+| 作用域扩展 | `PUT /v0/user/token/:id/scope` | 管理员或具备策略权限的用户 | 在已实现 `allow_models`、`api_types`、`channel_groups` 和 `ip_cidrs` 基础上继续扩展协议入口和预算限制。 |
 | 批量禁用 | `POST /v0/admin/token/batch-disable` | 管理员 | 按用户、标签、环境、异常条件批量禁用。 |
 | 管理查询 | `GET /v0/admin/token` | 管理员 | 跨用户按状态、最近使用、错误、额度和标签检索脱敏摘要。 |
 
@@ -349,14 +349,14 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 - API Key 用量摘要支持调用量、成功/失败数、额度消耗、最近模型和最近错误；持久化脱敏来源摘要仍待补。
 - 已支持轮换动作：创建新 Key、保留旧 Key 关联、禁用旧 Key、审计完整。
 - 支持按 Key 查看用量摘要和过滤日志；账单、错误和限流事件的统一视图仍待补。
-- 已支持基础作用域：模型 allow-list、APIType allow-list 和通道分组 allow-list；协议入口、IP 和预算仍需补齐。
+- 已支持基础作用域：模型 allow-list、APIType allow-list、通道分组 allow-list 和 IP/CIDR allow-list；协议入口和预算仍需补齐。
 - 缓存失效覆盖更新、禁用、删除、用户状态变化和作用域变化。
 
 ### P2 验收
 
 - 管理员已支持跨用户查询和批量禁用；批量过期和异常 Key 风险视图仍待补。
 - 支持企业团队、服务账号、标签、环境和导出脱敏摘要。
-- 支持 IP/CIDR、日预算、RPM/TPM、并发限制和更完整策略快照。
+- 已支持 IP/CIDR allow-list；日预算、RPM/TPM、并发限制和更完整策略快照仍待补。
 - 已支持泄露上报和替换建议；泄露窗口分析、自动轮换建议和告警仍待补。
 - API Key 预算调整、支付入账、退款、充值码和人工补账统一走对应审计或额度流水。
 
@@ -376,7 +376,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 | 无限额度 | 调用扣 `users.quota`，Token 自身保持无限标记。 |
 | 管理审计 | 创建、编辑、禁用、删除和禁止用户端改额度会写 `api_key.*`，审计中不含 `sk-` 明文。 |
 | 泄露处理 | 旧 Key 失效，新 Key 可用，审计不含明文。 |
-| 作用域拒绝 | 模型 allow-list 未命中时返回 `model_not_allowed`，APIType allow-list 未命中时返回 `token_forbidden`，通道分组 allow-list 未命中时返回 `route_forbidden`；都会写失败日志且不调用上游。 |
+| 作用域拒绝 | 模型 allow-list 未命中时返回 `model_not_allowed`，APIType allow-list 或 IP/CIDR allow-list 未命中时返回 `token_forbidden`，通道分组 allow-list 未命中时返回 `route_forbidden`；都会写失败日志且不调用上游。 |
 
 ## 17. 文档同步
 

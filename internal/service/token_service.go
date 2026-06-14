@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
@@ -29,18 +30,21 @@ var (
 	ErrModelNotAllowed        = errors.New("model not allowed by api key scope")
 	ErrAPINotAllowed          = errors.New("api type not allowed by api key scope")
 	ErrChannelGroupNotAllowed = errors.New("channel group not allowed by api key scope")
+	ErrIPNotAllowed           = errors.New("ip not allowed by api key scope")
 )
 
 const (
 	maxTokenScopeModels        = 200
 	maxTokenScopeAPITypes      = 64
 	maxTokenScopeChannelGroups = 64
+	maxTokenScopeIPCIDRs       = 64
 )
 
 type TokenScope struct {
 	AllowModels   []string `json:"allow_models,omitempty"`
 	APITypes      []string `json:"api_types,omitempty"`      // 入口能力白名单, 如 openai.chat/openai.embeddings
 	ChannelGroups []string `json:"channel_groups,omitempty"` // 通道分组白名单, 空通道分组按 default 处理
+	IPCIDRs       []string `json:"ip_cidrs,omitempty"`       // 来源 IP/CIDR 白名单
 }
 
 type TokenUsageStats struct {
@@ -296,6 +300,7 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 	scope.AllowModels = normalizeScopeModels(scope.AllowModels)
 	scope.APITypes = normalizeScopeAPITypes(scope.APITypes)
 	scope.ChannelGroups = normalizeScopeChannelGroups(scope.ChannelGroups)
+	scope.IPCIDRs = normalizeScopeIPCIDRs(scope.IPCIDRs)
 	if len(scope.AllowModels) > maxTokenScopeModels {
 		return nil, errors.New("allow_models exceeds limit")
 	}
@@ -304,6 +309,12 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 	}
 	if len(scope.ChannelGroups) > maxTokenScopeChannelGroups {
 		return nil, errors.New("channel_groups exceeds limit")
+	}
+	if len(scope.IPCIDRs) > maxTokenScopeIPCIDRs {
+		return nil, errors.New("ip_cidrs exceeds limit")
+	}
+	if err := validateScopeIPCIDRs(scope.IPCIDRs); err != nil {
+		return nil, err
 	}
 	scopeJSON := model.NewJSONValue(scope)
 	var token model.Token
@@ -385,6 +396,55 @@ func (s *TokenService) CheckChannelGroupScope(token *model.Token, channelGroup s
 	return ErrChannelGroupNotAllowed
 }
 
+func (s *TokenService) CheckIPScope(token *model.Token, ip string) error {
+	if token == nil {
+		return ErrInvalidAPIKey
+	}
+	scope, err := ParseTokenScope(token.ScopeJSON)
+	if err != nil {
+		return ErrIPNotAllowed
+	}
+	if len(scope.IPCIDRs) == 0 {
+		return nil
+	}
+	clientIP := net.ParseIP(strings.TrimSpace(ip))
+	if clientIP == nil {
+		return ErrIPNotAllowed
+	}
+	for _, allowed := range scope.IPCIDRs {
+		if allowed == "*" {
+			return nil
+		}
+		if strings.Contains(allowed, "/") {
+			_, network, err := net.ParseCIDR(allowed)
+			if err == nil && network.Contains(clientIP) {
+				return nil
+			}
+			continue
+		}
+		if allowedIP := net.ParseIP(allowed); allowedIP != nil && allowedIP.Equal(clientIP) {
+			return nil
+		}
+	}
+	return ErrIPNotAllowed
+}
+
+func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, clientIP string) {
+	if token == nil {
+		return
+	}
+	tokenID := token.ID
+	_ = internal.DB.Create(&model.Log{
+		UserID:    token.UserID,
+		TokenID:   &tokenID,
+		Model:     "",
+		Status:    common.LogStatusFailed,
+		QuotaUsed: 0,
+		ErrorMsg:  errorMsg,
+		IP:        clientIP,
+	}).Error
+}
+
 func ParseTokenScope(raw model.JSONValue) (TokenScope, error) {
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
 		return TokenScope{}, nil
@@ -396,6 +456,7 @@ func ParseTokenScope(raw model.JSONValue) (TokenScope, error) {
 	scope.AllowModels = normalizeScopeModels(scope.AllowModels)
 	scope.APITypes = normalizeScopeAPITypes(scope.APITypes)
 	scope.ChannelGroups = normalizeScopeChannelGroups(scope.ChannelGroups)
+	scope.IPCIDRs = normalizeScopeIPCIDRs(scope.IPCIDRs)
 	return scope, nil
 }
 
@@ -698,4 +759,39 @@ func normalizeChannelGroupForScope(group string) string {
 		return "default"
 	}
 	return group
+}
+
+func normalizeScopeIPCIDRs(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func validateScopeIPCIDRs(values []string) error {
+	for _, value := range values {
+		if value == "*" {
+			continue
+		}
+		if strings.Contains(value, "/") {
+			if _, _, err := net.ParseCIDR(value); err != nil {
+				return errors.New("ip_cidrs contains invalid cidr")
+			}
+			continue
+		}
+		if net.ParseIP(value) == nil {
+			return errors.New("ip_cidrs contains invalid ip")
+		}
+	}
+	return nil
 }

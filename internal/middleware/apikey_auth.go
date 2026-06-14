@@ -77,6 +77,11 @@ func authenticateAPIKey(c *gin.Context) bool {
 		writeProtocolAuthError(c, http.StatusUnauthorized, "invalid api key", "authentication_error", "invalid_api_key")
 		return false
 	}
+	if err := tokenSvc.CheckIPScope(token, c.ClientIP()); err != nil {
+		tokenSvc.RecordScopeDeniedLog(token, "ip not allowed by api key scope", c.ClientIP())
+		writeProtocolAuthError(c, http.StatusForbidden, "ip is not allowed by api key scope", "permission_error", "token_forbidden")
+		return false
+	}
 	if !tokenSvc.HasAvailableQuota(token) {
 		writeProtocolAuthError(c, http.StatusTooManyRequests, "insufficient quota", "insufficient_quota", "insufficient_quota")
 		return false

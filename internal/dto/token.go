@@ -41,12 +41,14 @@ type UpdateTokenScopeRequest struct {
 	AllowModels   []string `json:"allow_models"`
 	APITypes      []string `json:"api_types"`
 	ChannelGroups []string `json:"channel_groups"`
+	IPCIDRs       []string `json:"ip_cidrs"`
 }
 
 type TokenScopeResponse struct {
 	AllowModels   []string `json:"allow_models,omitempty"`
 	APITypes      []string `json:"api_types,omitempty"`
 	ChannelGroups []string `json:"channel_groups,omitempty"`
+	IPCIDRs       []string `json:"ip_cidrs,omitempty"`
 }
 
 type TokenResponse struct {
@@ -121,7 +123,7 @@ func TokenScopeFromJSON(raw model.JSONValue) *TokenScopeResponse {
 	if err := json.Unmarshal(raw, &scope); err != nil {
 		return nil
 	}
-	if len(scope.AllowModels) == 0 && len(scope.APITypes) == 0 && len(scope.ChannelGroups) == 0 {
+	if len(scope.AllowModels) == 0 && len(scope.APITypes) == 0 && len(scope.ChannelGroups) == 0 && len(scope.IPCIDRs) == 0 {
 		return nil
 	}
 	return &scope
