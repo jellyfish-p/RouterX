@@ -1,11 +1,15 @@
 package service
 
 import (
+	"crypto/md5"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
+	"sort"
 	"strings"
 	"time"
 
@@ -360,6 +364,93 @@ func (s *UserService) GetPaymentOrder(userID uint, orderNo string) (*model.Payme
 	return &order, nil
 }
 
+// ProcessEpayNotify 验证易支付异步通知，并在可信成功事件中幂等入账。
+func (s *UserService) ProcessEpayNotify(values map[string]string, requestID string) error {
+	key := strings.TrimSpace(os.Getenv("PAYMENT_EPAY_KEY"))
+	if key == "" {
+		return errors.New("epay key is not configured")
+	}
+	if !verifyEpaySign(values, key) {
+		return errors.New("invalid epay signature")
+	}
+	orderNo := strings.TrimSpace(values["out_trade_no"])
+	tradeNo := strings.TrimSpace(values["trade_no"])
+	money := strings.TrimSpace(values["money"])
+	status := strings.TrimSpace(values["trade_status"])
+	if orderNo == "" || money == "" || !epayTradeSucceeded(status) {
+		return errors.New("invalid epay notify")
+	}
+	eventID := tradeNo
+	if eventID == "" {
+		eventID = common.PaymentProviderEpay + ":" + orderNo + ":" + status
+	}
+	payload, _ := json.Marshal(redactedEpayPayload(values))
+
+	return internal.DB.Transaction(func(tx *gorm.DB) error {
+		var existing model.PaymentEvent
+		err := tx.Where("provider = ? AND provider_event_id = ?", common.PaymentProviderEpay, eventID).First(&existing).Error
+		switch {
+		case err == nil:
+			return nil
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return err
+		}
+
+		event := model.PaymentEvent{
+			Provider:        common.PaymentProviderEpay,
+			ProviderEventID: eventID,
+			OrderNo:         orderNo,
+			EventType:       "notify",
+			Payload:         string(payload),
+			SignatureValid:  true,
+		}
+		if err := tx.Create(&event).Error; err != nil {
+			return err
+		}
+
+		var order model.PaymentOrder
+		if err := tx.Where("order_no = ? AND provider = ?", orderNo, common.PaymentProviderEpay).First(&order).Error; err != nil {
+			return err
+		}
+		if strings.TrimSpace(order.Amount) != money {
+			return errors.New("epay notify amount mismatch")
+		}
+		if order.Status == common.PaymentOrderStatusPaid {
+			now := time.Now()
+			return tx.Model(&event).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
+		}
+		if order.Status != common.PaymentOrderStatusPending {
+			return errors.New("payment order is not pending")
+		}
+
+		now := time.Now()
+		updates := map[string]interface{}{
+			"status":     common.PaymentOrderStatusPaid,
+			"paid_at":    &now,
+			"updated_at": now,
+		}
+		if tradeNo != "" {
+			updates["provider_payment_id"] = tradeNo
+		}
+		if err := tx.Model(&order).Updates(updates).Error; err != nil {
+			return err
+		}
+		if _, _, err := applyQuotaChange(tx, quotaChange{
+			UserID:         order.UserID,
+			Amount:         order.Quota,
+			Type:           common.QuotaTransactionTypePaymentGrant,
+			SourceType:     common.QuotaSourceTypePaymentOrder,
+			SourceID:       order.OrderNo,
+			IdempotencyKey: "payment_order:" + order.OrderNo,
+			Reason:         "epay payment grant",
+			RequestID:      requestID,
+		}); err != nil {
+			return err
+		}
+		return tx.Model(&event).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
+	})
+}
+
 // UpdateSelf 用户自助修改个人信息。
 func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
 	updates := map[string]interface{}{}
@@ -504,6 +595,46 @@ func generatePaymentOrderNo() (string, error) {
 		return "", err
 	}
 	return "pay_" + time.Now().UTC().Format("20060102150405") + suffix, nil
+}
+
+func verifyEpaySign(values map[string]string, key string) bool {
+	sign := strings.ToLower(strings.TrimSpace(values["sign"]))
+	if sign == "" {
+		return false
+	}
+	return sign == epaySign(values, key)
+}
+
+func epaySign(values map[string]string, key string) string {
+	keys := make([]string, 0, len(values))
+	for k, v := range values {
+		if k == "sign" || k == "sign_type" || strings.TrimSpace(v) == "" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+values[k])
+	}
+	sum := md5.Sum([]byte(strings.Join(parts, "&") + key))
+	return fmt.Sprintf("%x", sum)
+}
+
+func redactedEpayPayload(values map[string]string) map[string]string {
+	payload := make(map[string]string, len(values))
+	for k, v := range values {
+		if k == "sign" {
+			continue
+		}
+		payload[k] = v
+	}
+	return payload
+}
+
+func epayTradeSucceeded(status string) bool {
+	return status == "TRADE_SUCCESS" || status == "TRADE_FINISHED"
 }
 
 func filterUpdates(updates map[string]interface{}, keys ...string) map[string]interface{} {

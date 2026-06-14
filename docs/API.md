@@ -448,7 +448,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；真实 Stripe/易支付回调、签名校验和支付入账仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；易支付异步通知已支持 MD5 签名、金额校验和幂等入账。Stripe webhook、易支付同步返回页、退款和审计仍属于后续能力。
 
 用户鉴权接口：
 
@@ -464,7 +464,7 @@ Provider 回调接口：
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
 | POST | `/v0/payment/stripe/webhook` | Stripe 签名 | Stripe Webhook 异步通知 |
-| GET/POST | `/v0/payment/epay/notify` | 易支付签名 | 易支付异步通知 |
+| POST | `/v0/payment/epay/notify` | 易支付签名 | 基础实现；易支付异步通知，成功时幂等入账并返回纯文本 `success` |
 | GET | `/v0/payment/epay/return` | 无，仅读状态 | 易支付同步返回页 |
 
 创建支付订单请求：
@@ -548,6 +548,7 @@ Stripe Webhook 要求：
 - 校验 `pid`、`out_trade_no`、`money` 和成功状态。
 - 入账只依赖异步通知；同步返回页只展示本地订单状态。
 - 通知处理成功后返回网关要求的纯文本，例如 `success`。
+- 当前实现从 `PAYMENT_EPAY_KEY` 读取签名密钥，金额匹配且订单为 `pending` 时才把订单置为 `paid`、写 `payment_events`、写 `quota_transactions` 并增加用户额度；重复通知不会重复入账。
 
 安全要求：
 

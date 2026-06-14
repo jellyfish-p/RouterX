@@ -3,12 +3,15 @@ package router
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -590,6 +593,104 @@ func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 	detailResp := performJSON(r, http.MethodGet, "/v0/user/payment/orders/"+order.OrderNo, rootJWT, nil)
 	if detailResp.Code != http.StatusOK || !strings.Contains(detailResp.Body.String(), `"order_no":"`+order.OrderNo+`"`) {
 		t.Fatalf("user should fetch own payment order detail, got %d %s", detailResp.Code, detailResp.Body.String())
+	}
+}
+
+func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_EPAY_KEY", "epay-test-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_100",
+		Name:      "100 credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "epay",
+		"product_id": "quota_100",
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create payment order failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("user_id = ? AND provider = ?", root.ID, common.PaymentProviderEpay).First(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	amountMismatch := epayNotifyValues(order.OrderNo, "TRADE-BAD", "1.00", "epay-test-secret")
+	mismatchResp := performForm(r, http.MethodPost, "/v0/payment/epay/notify", amountMismatch)
+	if mismatchResp.Code == http.StatusOK && strings.TrimSpace(mismatchResp.Body.String()) == "success" {
+		t.Fatalf("amount mismatch must not be accepted: %d %s", mismatchResp.Code, mismatchResp.Body.String())
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 0 {
+		t.Fatalf("amount mismatch must not grant quota, got %d", root.Quota)
+	}
+
+	successNotify := epayNotifyValues(order.OrderNo, "TRADE1000", "9.99", "epay-test-secret")
+	firstNotify := performForm(r, http.MethodPost, "/v0/payment/epay/notify", successNotify)
+	if firstNotify.Code != http.StatusOK || strings.TrimSpace(firstNotify.Body.String()) != "success" {
+		t.Fatalf("valid epay notify should return success, got %d %s", firstNotify.Code, firstNotify.Body.String())
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("valid epay notify should grant order quota once, got %d", root.Quota)
+	}
+	if err := internal.DB.First(&order, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != common.PaymentOrderStatusPaid || order.PaidAt == nil || order.ProviderPaymentID == nil || *order.ProviderPaymentID != "TRADE1000" {
+		t.Fatalf("valid epay notify should mark order paid: %+v", order)
+	}
+	var quotaTxCount int64
+	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("source_type = ? AND source_id = ?", common.QuotaSourceTypePaymentOrder, order.OrderNo).Count(&quotaTxCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if quotaTxCount != 1 {
+		t.Fatalf("valid epay notify should write one quota transaction, got %d", quotaTxCount)
+	}
+
+	duplicateNotify := performForm(r, http.MethodPost, "/v0/payment/epay/notify", successNotify)
+	if duplicateNotify.Code != http.StatusOK || strings.TrimSpace(duplicateNotify.Body.String()) != "success" {
+		t.Fatalf("duplicate epay notify should return success, got %d %s", duplicateNotify.Code, duplicateNotify.Body.String())
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("duplicate epay notify must not grant quota twice, got %d", root.Quota)
+	}
+	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("source_type = ? AND source_id = ?", common.QuotaSourceTypePaymentOrder, order.OrderNo).Count(&quotaTxCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if quotaTxCount != 1 {
+		t.Fatalf("duplicate epay notify must not write duplicate quota transactions, got %d", quotaTxCount)
 	}
 }
 
@@ -4618,6 +4719,14 @@ func performRaw(r http.Handler, method, path, bearer, body string) *httptest.Res
 	return w
 }
 
+func performForm(r http.Handler, method, path string, values url.Values) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
 func loginBearer(t *testing.T, r http.Handler, account, password string) string {
 	t.Helper()
 	resp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
@@ -4641,4 +4750,36 @@ func loginBearer(t *testing.T, r http.Handler, account, password string) string 
 
 func uintString(id uint) string {
 	return strconv.FormatUint(uint64(id), 10)
+}
+
+func epayNotifyValues(orderNo, tradeNo, money, key string) url.Values {
+	values := url.Values{
+		"pid":          {"merchant-1"},
+		"type":         {"alipay"},
+		"out_trade_no": {orderNo},
+		"trade_no":     {tradeNo},
+		"money":        {money},
+		"trade_status": {"TRADE_SUCCESS"},
+		"name":         {"RouterX quota"},
+		"sign_type":    {"MD5"},
+	}
+	values.Set("sign", epaySign(values, key))
+	return values
+}
+
+func epaySign(values url.Values, key string) string {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		if k == "sign" || k == "sign_type" || values.Get(k) == "" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+values.Get(k))
+	}
+	sum := md5.Sum([]byte(strings.Join(parts, "&") + key))
+	return fmt.Sprintf("%x", sum)
 }

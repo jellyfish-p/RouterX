@@ -8,7 +8,7 @@ info:
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message。
-    - 充值码和用户侧支付商品/订单基础接口已注册；支付 webhook、OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、用户侧支付商品/订单和易支付异步通知基础接口已注册；Stripe webhook、OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -25,6 +25,8 @@ tags:
     description: 用户调用日志、账单统计、充值码和模型可见性。
   - name: User Payment
     description: 用户侧支付商品和订单。
+  - name: Payment Webhook
+    description: 支付 provider 异步通知。
   - name: Admin Users
     description: 管理员用户管理。
   - name: Admin Redem
@@ -494,6 +496,32 @@ paths:
                         $ref: "#/components/schemas/PaymentOrderInfo"
         "404":
           description: 订单不存在或不属于当前用户。
+  /v0/payment/epay/notify:
+    post:
+      tags: [Payment Webhook]
+      summary: 易支付异步通知
+      description: 基础实现；使用 PAYMENT_EPAY_KEY 校验 MD5 签名，校验 out_trade_no、money 和成功状态。成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions 并增加用户额度；重复通知幂等返回 success。
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/EpayNotifyRequest"
+      responses:
+        "200":
+          description: provider 通知已接受；响应体为纯文本 success。
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: success
+        "400":
+          description: 签名、订单、金额或状态校验失败；响应体为纯文本 fail。
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: fail
   /v0/admin/user:
     get:
       tags: [Admin Users]
@@ -1880,6 +1908,25 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/PaymentOrderInfo"
+    EpayNotifyRequest:
+      type: object
+      required: [out_trade_no, money, trade_status, sign]
+      properties:
+        pid: { type: string }
+        type: { type: string, example: alipay }
+        out_trade_no: { type: string }
+        trade_no: { type: string }
+        money: { type: string }
+        trade_status:
+          type: string
+          example: TRADE_SUCCESS
+        name: { type: string }
+        sign:
+          type: string
+          description: 排除 sign、sign_type 和空值字段后按易支付规则生成的 MD5 签名。
+        sign_type:
+          type: string
+          example: MD5
     CreateRedemCodesRequest:
       type: object
       required: [quota]

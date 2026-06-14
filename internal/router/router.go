@@ -48,6 +48,9 @@ func SetupRouter(
 	// User Web API (需要 UserJwtAuth + 系统已初始化)
 	setupUserRoutes(r, authH, userH, tokenH, logH)
 
+	// Payment Webhook (需要系统已初始化, 由 provider 签名鉴权)
+	setupPaymentRoutes(r, userH)
+
 	// /v1 OpenAI-Compatible 转发路由 (需要 ApiKeyAuth + 系统已初始化)
 	setupV1Routes(r, relayH)
 

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -284,6 +285,25 @@ func (h *UserHandler) PaymentOrder(c *gin.Context) {
 		return
 	}
 	common.Success(c, dto.PaymentOrderInfoFromModel(order))
+}
+
+// POST /v0/payment/epay/notify — 易支付异步通知
+func (h *UserHandler) EpayNotify(c *gin.Context) {
+	if err := c.Request.ParseForm(); err != nil {
+		c.String(http.StatusBadRequest, "fail")
+		return
+	}
+	values := make(map[string]string, len(c.Request.PostForm))
+	for key, raw := range c.Request.PostForm {
+		if len(raw) > 0 {
+			values[key] = raw[0]
+		}
+	}
+	if err := h.svc.ProcessEpayNotify(values, c.GetString("request_id")); err != nil {
+		c.String(http.StatusBadRequest, "fail")
+		return
+	}
+	c.String(http.StatusOK, "success")
 }
 
 // GET /v0/user/self — 获取个人信息
