@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"encoding/json"
 	"time"
 
 	"routerx/internal/model"
@@ -36,18 +37,27 @@ type BatchDisableTokensRequest struct {
 	Reason   string `json:"reason"`
 }
 
+type UpdateTokenScopeRequest struct {
+	AllowModels []string `json:"allow_models"`
+}
+
+type TokenScopeResponse struct {
+	AllowModels []string `json:"allow_models,omitempty"`
+}
+
 type TokenResponse struct {
-	ID            uint       `json:"id"`
-	UserID        uint       `json:"user_id"`
-	Name          string     `json:"name"`
-	Status        int        `json:"status"`
-	ExpiredAt     *time.Time `json:"expired_at,omitempty"`
-	RemainQuota   int64      `json:"remain_quota"`
-	Unlimited     bool       `json:"unlimited"`
-	RotatedFromID *uint      `json:"rotated_from_id,omitempty"`
-	RevokedReason string     `json:"revoked_reason,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID            uint                `json:"id"`
+	UserID        uint                `json:"user_id"`
+	Name          string              `json:"name"`
+	Status        int                 `json:"status"`
+	ExpiredAt     *time.Time          `json:"expired_at,omitempty"`
+	RemainQuota   int64               `json:"remain_quota"`
+	Unlimited     bool                `json:"unlimited"`
+	RotatedFromID *uint               `json:"rotated_from_id,omitempty"`
+	RevokedReason string              `json:"revoked_reason,omitempty"`
+	Scope         *TokenScopeResponse `json:"scope,omitempty"`
+	CreatedAt     time.Time           `json:"created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"`
 }
 
 type CreateTokenResponse struct {
@@ -93,7 +103,22 @@ func TokenFromModel(token model.Token) TokenResponse {
 		Unlimited:     token.Unlimited,
 		RotatedFromID: token.RotatedFromID,
 		RevokedReason: token.RevokedReason,
+		Scope:         TokenScopeFromJSON(token.ScopeJSON),
 		CreatedAt:     token.CreatedAt,
 		UpdatedAt:     token.UpdatedAt,
 	}
+}
+
+func TokenScopeFromJSON(raw model.JSONValue) *TokenScopeResponse {
+	if len(raw) == 0 {
+		return nil
+	}
+	var scope TokenScopeResponse
+	if err := json.Unmarshal(raw, &scope); err != nil {
+		return nil
+	}
+	if len(scope.AllowModels) == 0 {
+		return nil
+	}
+	return &scope
 }

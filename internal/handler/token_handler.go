@@ -258,6 +258,38 @@ func (h *TokenHandler) ReportLeak(c *gin.Context) {
 	})
 }
 
+func (h *TokenHandler) UpdateScope(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	var req dto.UpdateTokenScopeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "API Key scope 参数无效")
+		return
+	}
+	before, err := h.svc.GetByIDForUser(id, user.ID)
+	if err != nil {
+		common.FailWithStatus(c, 404, "API Key 不存在")
+		return
+	}
+	after, err := h.svc.UpdateScopeForUser(id, user.ID, service.TokenScope{AllowModels: req.AllowModels})
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAPIKeyAudit(c, user, "api_key.scope_updated", id, tokenAuditSummary(before), tokenAuditSummary(after)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.TokenFromModel(*after))
+}
+
 func (h *TokenHandler) Usage(c *gin.Context) {
 	user, ok := currentUser(c)
 	if !ok {
@@ -384,6 +416,7 @@ func tokenAuditSummary(token *model.Token) map[string]interface{} {
 		"unlimited":       info.Unlimited,
 		"rotated_from_id": info.RotatedFromID,
 		"revoked_reason":  info.RevokedReason,
+		"scope":           info.Scope,
 		"created_at":      info.CreatedAt,
 		"updated_at":      info.UpdatedAt,
 	}

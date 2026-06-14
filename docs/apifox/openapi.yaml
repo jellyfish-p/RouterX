@@ -372,7 +372,7 @@ paths:
     post:
       tags: [User API Key]
       summary: 轮换 API Key
-      description: 创建替换 Key，复制名称、过期时间和预算语义，写入 rotated_from_id，禁用旧 Key；新 key 明文只在本次响应展示，成功后写 api_key.rotated 管理审计。
+      description: 创建替换 Key，复制名称、过期时间、预算语义和 scope，写入 rotated_from_id，禁用旧 Key；新 key 明文只在本次响应展示，成功后写 api_key.rotated 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -420,6 +420,37 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/ReportTokenLeakResponse"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
+  /v0/user/token/{id}/scope:
+    put:
+      tags: [User API Key]
+      summary: 更新 API Key scope
+      description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list。列表为空表示继承用户和系统策略；非空时未命中模型会在上游调用前返回 model_not_allowed。成功后写 api_key.scope_updated 管理审计，审计摘要不包含明文 Key 或哈希。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTokenScopeRequest"
+      responses:
+        "200":
+          description: Scope 更新成功，返回脱敏 Token 摘要。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Token"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
         "404":
           $ref: "#/components/responses/StandardNotFound"
   /v0/user/token/{id}/usage:
@@ -1534,6 +1565,12 @@ paths:
                 $ref: "#/components/schemas/OpenAIErrorEnvelope"
         "401":
           $ref: "#/components/responses/OpenAIError"
+        "403":
+          description: API Key scope 或访问策略拒绝；模型 allow-list 未命中时 code 为 model_not_allowed。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorEnvelope"
         "429":
           description: 余额不足、本地限流或上游限流。常见 code 包括 insufficient_quota、rate_limit_exceeded、upstream_429。
           content:
@@ -2663,6 +2700,15 @@ components:
           maxLength: 128
           description: 禁用或泄露上报原因；为空时服务端使用默认原因。
           example: public_repo
+    UpdateTokenScopeRequest:
+      type: object
+      properties:
+        allow_models:
+          type: array
+          description: 允许调用的 RouterX 对外模型名。空数组或省略表示不按模型额外收窄；"*" 表示允许所有模型。
+          items:
+            type: string
+          example: ["gpt-4o-mini", "gpt-4o"]
     BatchDisableTokensRequest:
       type: object
       properties:
@@ -2699,8 +2745,19 @@ components:
         revoked_reason:
           type: string
           description: 禁用原因；启用 Key 通常为空。
+        scope:
+          $ref: "#/components/schemas/TokenScope"
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    TokenScope:
+      type: object
+      properties:
+        allow_models:
+          type: array
+          description: 当前已实现的模型 allow-list；为空或不存在表示继承用户和系统策略。
+          items:
+            type: string
+          example: ["gpt-4o-mini"]
     CreateTokenResponse:
       allOf:
         - $ref: "#/components/schemas/Token"

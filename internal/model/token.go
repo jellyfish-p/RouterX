@@ -20,6 +20,7 @@ type Token struct {
 	Unlimited     bool           `gorm:"not null;default:false" json:"unlimited"`
 	RotatedFromID *uint          `gorm:"index" json:"rotated_from_id,omitempty"` // 轮换来源 Token ID
 	RevokedReason string         `gorm:"type:varchar(128);not null;default:''" json:"revoked_reason,omitempty"`
+	ScopeJSON     JSONValue      `gorm:"type:json" json:"scope_json,omitempty"` // API Key 能力范围, 例如模型 allow-list
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`

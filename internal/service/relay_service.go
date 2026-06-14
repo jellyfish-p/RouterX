@@ -264,6 +264,9 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	if reqInfo.Stream {
 		return nil, nil, &HTTPError{Status: 400, Message: "stream is not supported in P0 relay", Type: "invalid_request_error", Code: "unsupported_stream"}
 	}
+	if err := s.enforceTokenModelScope(token, reqInfo.Model, clientIP); err != nil {
+		return nil, nil, err
+	}
 	if !s.tokenService.HasAvailableQuota(token) {
 		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 		return nil, nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
@@ -411,6 +414,9 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	}
 	if !reqInfo.Stream {
 		return nil, &HTTPError{Status: 400, Message: "stream is required", Type: "invalid_request_error", Code: "stream_required"}
+	}
+	if err := s.enforceTokenModelScope(token, reqInfo.Model, clientIP); err != nil {
+		return nil, err
 	}
 	if !s.tokenService.HasAvailableQuota(token) {
 		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
@@ -1407,6 +1413,17 @@ func (s *RelayService) relayRetryCount() int {
 		return 0
 	}
 	return value
+}
+
+func (s *RelayService) enforceTokenModelScope(token *model.Token, modelName, clientIP string) error {
+	if s.tokenService == nil || strings.TrimSpace(modelName) == "" {
+		return nil
+	}
+	if err := s.tokenService.CheckModelScope(token, modelName); err != nil {
+		_ = s.recordLog(token, nil, modelName, nil, common.LogStatusFailed, 0, "model not allowed by api key scope", clientIP)
+		return &HTTPError{Status: 403, Message: "model is not allowed by api key scope", Type: "permission_error", Code: "model_not_allowed"}
+	}
+	return nil
 }
 
 func quotaFromUsage(usage *relay.Usage) int64 {

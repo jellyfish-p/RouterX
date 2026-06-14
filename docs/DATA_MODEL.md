@@ -63,6 +63,7 @@ erDiagram
         time expired_at
         int64 remain_quota
         bool unlimited
+        json scope_json
         int64 quota_limit
         int64 quota_used
     }
@@ -213,6 +214,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `unlimited` | bool | 是否无限制 |
 | `rotated_from_id` | nullable uint | 轮换来源 Token ID |
 | `revoked_reason` | string | 禁用原因，例如 `rotated`、`reported_leak`、`admin_batch_disable` |
+| `scope_json` | json | API Key 收窄策略；当前支持 `allow_models` 模型 allow-list，后续扩展通道分组、协议入口、请求类型、IP 和预算限制 |
 | `created_at` | time | 创建时间 |
 | `updated_at` | time | 更新时间 |
 | `deleted_at` | nullable time | 软删除 |
@@ -222,7 +224,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 - API Key 明文只在创建时返回一次。
 - 数据库长期保存 SHA256 哈希，不保存 API Key 明文。
 - Redis 缓存使用 `SHA256(key)` 作为缓存键，避免明文出现在 Redis key。
-- 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用和用户端额度/无限标记编辑拒绝会写入 `admin_audit_logs`，审计摘要只包含 `tokens` 的公开字段，不保存完整 Key 明文或哈希。
+- 创建、编辑、禁用、删除、轮换、泄露上报、scope 更新、批量禁用和用户端额度/无限标记编辑拒绝会写入 `admin_audit_logs`，审计摘要只包含 `tokens` 的公开字段，不保存完整 Key 明文或哈希。
 
 额度语义：
 
@@ -244,7 +246,6 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `quota_used` | Key 累计已消耗额度，用于计算剩余预算并支持历史统计。 |
 | `last_model` | 最近请求模型名。 |
 | `last_error_code` | 最近失败 code。 |
-| `scope_json` | 模型、通道分组、协议入口、请求类型、IP 范围和预算限制等收窄策略。 |
 | `metadata_json` | 环境、应用、团队、标签和外部关联 ID 等非安全元数据。 |
 | `created_by_user_id` | 创建操作者。 |
 | `updated_by_user_id` | 最近管理操作者。 |
@@ -536,7 +537,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 
 ### `admin_audit_logs`
 
-统一管理审计日志表，记录管理端高风险操作的可复核摘要。当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，settings 批量更新，用户调额，充值码生成、导入、作废、兑换，通道创建、编辑、启用、禁用、删除、测试、拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及按时间清理调用日志审计，后续继续扩展到价格、日志导出、支付事件和更多失败操作。
+统一管理审计日志表，记录管理端高风险操作的可复核摘要。当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、scope 更新、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，settings 批量更新，用户调额，充值码生成、导入、作废、兑换，通道创建、编辑、启用、禁用、删除、测试、拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及按时间清理调用日志审计，后续继续扩展到价格、日志导出、支付事件和更多失败操作。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|

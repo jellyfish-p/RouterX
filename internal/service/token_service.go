@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"routerx/internal"
 	"routerx/internal/common"
@@ -25,7 +26,14 @@ var (
 	ErrInsufficientUserQuota  = errors.New("insufficient user quota")
 	ErrInsufficientTokenQuota = errors.New("insufficient token quota")
 	ErrBatchDisableNoFilter   = errors.New("batch disable requires token_ids or user_id")
+	ErrModelNotAllowed        = errors.New("model not allowed by api key scope")
 )
+
+const maxTokenScopeModels = 200
+
+type TokenScope struct {
+	AllowModels []string `json:"allow_models,omitempty"`
+}
 
 type TokenUsageStats struct {
 	TokenID      uint
@@ -228,6 +236,7 @@ func (s *TokenService) RotateForUser(id, userID uint) (*model.Token, *model.Toke
 			RemainQuota:   old.RemainQuota,
 			Unlimited:     old.Unlimited,
 			RotatedFromID: &rotatedFromID,
+			ScopeJSON:     append(model.JSONValue(nil), old.ScopeJSON...),
 		})
 		if err != nil {
 			return err
@@ -273,6 +282,63 @@ func (s *TokenService) DisableForUser(id, userID uint, reason string) (*model.To
 
 func (s *TokenService) ReportLeakForUser(id, userID uint, reason string) (*model.Token, error) {
 	return s.DisableForUser(id, userID, normalizeRevokedReason(reason, "reported_leak"))
+}
+
+func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*model.Token, error) {
+	scope.AllowModels = normalizeScopeModels(scope.AllowModels)
+	if len(scope.AllowModels) > maxTokenScopeModels {
+		return nil, errors.New("allow_models exceeds limit")
+	}
+	scopeJSON := model.NewJSONValue(scope)
+	var token model.Token
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&token).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Token{}).
+			Where("id = ? AND user_id = ?", id, userID).
+			Update("scope_json", scopeJSON).Error; err != nil {
+			return err
+		}
+		token.ScopeJSON = scopeJSON
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &token, nil
+}
+
+func (s *TokenService) CheckModelScope(token *model.Token, modelName string) error {
+	if token == nil {
+		return ErrInvalidAPIKey
+	}
+	scope, err := ParseTokenScope(token.ScopeJSON)
+	if err != nil {
+		return ErrModelNotAllowed
+	}
+	if len(scope.AllowModels) == 0 {
+		return nil
+	}
+	modelName = strings.TrimSpace(modelName)
+	for _, allowed := range scope.AllowModels {
+		if allowed == "*" || allowed == modelName {
+			return nil
+		}
+	}
+	return ErrModelNotAllowed
+}
+
+func ParseTokenScope(raw model.JSONValue) (TokenScope, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return TokenScope{}, nil
+	}
+	var scope TokenScope
+	if err := json.Unmarshal(raw, &scope); err != nil {
+		return TokenScope{}, err
+	}
+	scope.AllowModels = normalizeScopeModels(scope.AllowModels)
+	return scope, nil
 }
 
 func (s *TokenService) GetUsageForUser(id, userID uint) (TokenUsageStats, error) {
@@ -509,6 +575,23 @@ func uniquePositiveUint(values []uint) []uint {
 		}
 		seen[value] = struct{}{}
 		result = append(result, value)
+	}
+	return result
+}
+
+func normalizeScopeModels(models []string) []string {
+	seen := make(map[string]struct{}, len(models))
+	result := make([]string, 0, len(models))
+	for _, modelName := range models {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		if _, ok := seen[modelName]; ok {
+			continue
+		}
+		seen[modelName] = struct{}{}
+		result = append(result, modelName)
 	}
 	return result
 }

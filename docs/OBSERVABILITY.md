@@ -23,7 +23,7 @@
 - `admin_audit_logs` 表保存基础管理审计日志，字段包含 actor、action、resource、before/after 摘要、request_id、IP 和 User-Agent。
 - `GET /v0/admin/audit` 已注册为超级管理员查询接口，支持按 `action`、`resource_type`、`resource_id`、`actor_user_id`、`result`、`error_code` 和时间范围过滤。
 - `GET /metrics` 已注册为 Prometheus 文本指标接口，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis up、调用日志状态、总额度、通道错误计数、支付订单和支付事件指标。
-- API Key 创建、编辑、禁用、删除和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计摘要，完整 Key 明文和哈希不会写入审计摘要。
+- API Key 创建、编辑、禁用、删除、scope 更新和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计摘要，完整 Key 明文和哈希不会写入审计摘要。
 - 普通用户创建、编辑、禁用、删除和拒绝角色变更会写入 `user.*` 管理审计摘要，密码不会写入审计摘要。
 - 支付商品创建、更新、启用和禁用会写入 `payment_product.*` 管理审计摘要。
 - `PUT /v0/admin/setting` 批量更新成功后会按 key 写入 `setting.create` 或 `setting.update` 管理审计摘要，敏感值只保存脱敏摘要。
@@ -154,7 +154,7 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 |------|------|
 | 用户 | 创建、禁用、删除、调整额度、修改角色、修改分组 |
 | 管理员 | 创建、编辑、删除、禁用、权限拒绝 |
-| API Key | 创建、编辑、禁用、删除、用户端额度或无限标记编辑拒绝、调整额度或无限标记、批量操作 |
+| API Key | 创建、编辑、禁用、删除、scope 更新、用户端额度或无限标记编辑拒绝、调整额度或无限标记、批量操作 |
 | 通道 | 创建、编辑、启用、禁用、删除、测试、拉取模型 |
 | settings | 修改、批量修改、类型校验失败、高风险配置拒绝 |
 | 计费 | 模型价格、通道价格、倍率、访问控制、规则版本变更 |
@@ -260,7 +260,7 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 | 管理日志筛选 | 管理员可按 user、token、channel、model、status、时间筛选。 |
 | 账单一致 | 用户账单聚合等于成功日志事实；启用独立日志库时主库结算最小事实可恢复。 |
 | 脱敏 | 日志和导出不包含 API Key、上游密钥、DSN、支付密钥。 |
-| 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖 API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理和日志清理操作。 |
+| 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖 API Key 管理和 scope 更新、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理和日志清理操作。 |
 | 指标 | `/metrics` 暴露基础实例、Relay 日志、支付和 DB/Redis 指标，不包含高基数或敏感 label；后续继续补 HTTP 耗时、上游耗时、更多错误维度和告警。 |
 
 ## 文档同步
