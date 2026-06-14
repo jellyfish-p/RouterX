@@ -446,27 +446,16 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | POST | `/v0/user/redem` | 基础实现 | 使用未兑换充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水 |
 | GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露的可用模型列表；价格表未接入时 `pricing_ready=false` |
 
-### 目标扩展接口
-
-当前代码尚未注册以下用户端接口，但产品上需要纳入目标设计。
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/v0/user/payment/products` | 充值商品列表 |
-| POST | `/v0/user/payment/orders` | 创建支付订单 |
-| GET | `/v0/user/payment/orders` | 当前用户支付订单列表 |
-| GET | `/v0/user/payment/orders/:order_no` | 当前用户支付订单详情 |
-
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前目标支持 Stripe 和易支付。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；真实 Stripe/易支付回调、签名校验和支付入账仍属于后续能力。
 
 用户鉴权接口：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/v0/user/payment/products` | 获取可购买的充值商品 |
-| POST | `/v0/user/payment/orders` | 创建支付订单并返回支付跳转信息 |
+| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并返回安全 checkout 占位链接 |
 | GET | `/v0/user/payment/orders` | 查询当前用户支付订单列表 |
 | GET | `/v0/user/payment/orders/:order_no` | 查询当前用户支付订单详情 |
 

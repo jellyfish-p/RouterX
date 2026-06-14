@@ -72,6 +72,18 @@ const (
 	QuotaSourceTypeRefund       = "refund"
 )
 
+// 支付 provider 和订单状态
+const (
+	PaymentProviderStripe = "stripe"
+	PaymentProviderEpay   = "epay"
+
+	PaymentOrderStatusPending  = "pending"
+	PaymentOrderStatusPaid     = "paid"
+	PaymentOrderStatusFailed   = "failed"
+	PaymentOrderStatusClosed   = "closed"
+	PaymentOrderStatusRefunded = "refunded"
+)
+
 // 未限制额度标记
 const QuotaUnlimited = -1
 

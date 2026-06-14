@@ -218,6 +218,74 @@ func (h *UserHandler) Models(c *gin.Context) {
 	common.Success(c, dto.UserModelListResult{Models: dto.UserModelInfosFromNames(models)})
 }
 
+// GET /v0/user/payment/products — 充值商品列表
+func (h *UserHandler) PaymentProducts(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	products, err := h.svc.ListPaymentProducts(user.ID)
+	if err != nil {
+		common.FailWithStatus(c, 500, "查询充值商品失败")
+		return
+	}
+	common.Success(c, dto.PaymentProductInfosFromModels(products))
+}
+
+// POST /v0/user/payment/orders — 创建支付订单
+func (h *UserHandler) CreatePaymentOrder(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.CreatePaymentOrderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "支付订单参数无效")
+		return
+	}
+	order, err := h.svc.CreatePaymentOrder(user.ID, req.Provider, req.ProductID, req.PayType, req.ReturnURL)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	common.Success(c, dto.PaymentOrderInfoFromModel(order))
+}
+
+// GET /v0/user/payment/orders — 当前用户支付订单列表
+func (h *UserHandler) PaymentOrders(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.UserListRequest
+	_ = c.ShouldBindQuery(&req)
+	orders, total, err := h.svc.ListPaymentOrders(user.ID, req.Page, req.PageSize)
+	if err != nil {
+		common.FailWithStatus(c, 500, "查询支付订单失败")
+		return
+	}
+	page, pageSize := pageValues(req.Page, req.PageSize)
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.PaymentOrderInfosFromModels(orders)})
+}
+
+// GET /v0/user/payment/orders/:order_no — 当前用户支付订单详情
+func (h *UserHandler) PaymentOrder(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	order, err := h.svc.GetPaymentOrder(user.ID, c.Param("order_no"))
+	if err != nil {
+		common.FailWithStatus(c, 404, "支付订单不存在")
+		return
+	}
+	common.Success(c, dto.PaymentOrderInfoFromModel(order))
+}
+
 // GET /v0/user/self — 获取个人信息
 func (h *UserHandler) Self(c *gin.Context) {
 	user, ok := currentUser(c)

@@ -528,6 +528,71 @@ func TestUserListsAvailableModels(t *testing.T) {
 	}
 }
 
+func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID:  "quota_100",
+		Name:       "100 credits",
+		Amount:     "9.99",
+		Currency:   "usd",
+		Quota:      100,
+		BonusQuota: 20,
+		Enabled:    true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	productsResp := performJSON(r, http.MethodGet, "/v0/user/payment/products", rootJWT, nil)
+	if productsResp.Code != http.StatusOK || !strings.Contains(productsResp.Body.String(), `"product_id":"quota_100"`) || !strings.Contains(productsResp.Body.String(), `"quota":120`) {
+		t.Fatalf("user should list enabled payment products, got %d %s", productsResp.Code, productsResp.Body.String())
+	}
+	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "stripe",
+		"product_id": "quota_100",
+		"pay_type":   "card",
+		"return_url": "https://app.example.com/billing/result",
+	})
+	if createResp.Code != http.StatusOK || !strings.Contains(createResp.Body.String(), `"status":"pending"`) || !strings.Contains(createResp.Body.String(), `"quota":120`) || !strings.Contains(createResp.Body.String(), `"checkout_url"`) {
+		t.Fatalf("user should create pending payment order, got %d %s", createResp.Code, createResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("user_id = ? AND product_id = ?", root.ID, "quota_100").First(&order).Error; err != nil {
+		t.Fatalf("payment order should be stored: %v", err)
+	}
+	if order.Status != common.PaymentOrderStatusPending || order.Quota != 120 || order.Amount != "9.99" || order.Currency != "usd" || order.ExpiredAt == nil {
+		t.Fatalf("unexpected payment order snapshot: %+v", order)
+	}
+	if root.Quota != 0 {
+		t.Fatalf("pending payment order must not grant quota, got %d", root.Quota)
+	}
+	listResp := performJSON(r, http.MethodGet, "/v0/user/payment/orders", rootJWT, nil)
+	if listResp.Code != http.StatusOK || !strings.Contains(listResp.Body.String(), order.OrderNo) {
+		t.Fatalf("user should list own payment orders, got %d %s", listResp.Code, listResp.Body.String())
+	}
+	detailResp := performJSON(r, http.MethodGet, "/v0/user/payment/orders/"+order.OrderNo, rootJWT, nil)
+	if detailResp.Code != http.StatusOK || !strings.Contains(detailResp.Body.String(), `"order_no":"`+order.OrderNo+`"`) {
+		t.Fatalf("user should fetch own payment order detail, got %d %s", detailResp.Code, detailResp.Body.String())
+	}
+}
+
 func TestChannelExtendedManagement(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -4491,6 +4556,9 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		&model.Log{},
 		&model.RedemCode{},
 		&model.QuotaTransaction{},
+		&model.PaymentProduct{},
+		&model.PaymentOrder{},
+		&model.PaymentEvent{},
 		&model.Setting{},
 	); err != nil {
 		t.Fatal(err)

@@ -273,6 +273,93 @@ func (s *UserService) ListAvailableModels() ([]string, error) {
 	return NewChannelService().ListModels()
 }
 
+// ListPaymentProducts 返回当前可购买的启用充值商品。
+func (s *UserService) ListPaymentProducts(userID uint) ([]model.PaymentProduct, error) {
+	if userID == 0 {
+		return nil, errors.New("user is required")
+	}
+	var products []model.PaymentProduct
+	err := internal.DB.Where("enabled = ?", true).Order("id ASC").Find(&products).Error
+	return products, err
+}
+
+// CreatePaymentOrder 创建本地 pending 支付订单，保存商品金额、币种和入账额度快照。
+func (s *UserService) CreatePaymentOrder(userID uint, provider, productID, payType, returnURL string) (*model.PaymentOrder, error) {
+	if userID == 0 {
+		return nil, errors.New("user is required")
+	}
+	provider, err := normalizePaymentProvider(provider)
+	if err != nil {
+		return nil, err
+	}
+	productID = strings.TrimSpace(productID)
+	if productID == "" {
+		return nil, errors.New("product_id is required")
+	}
+	var product model.PaymentProduct
+	if err := internal.DB.Where("product_id = ? AND enabled = ?", productID, true).First(&product).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("payment product is unavailable")
+		}
+		return nil, err
+	}
+
+	orderNo, err := generatePaymentOrderNo()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	expiredAt := now.Add(30 * time.Minute)
+	providerOrderID := "local_" + orderNo
+	checkoutURL := "/v0/user/payment/orders/" + orderNo
+	order := &model.PaymentOrder{
+		OrderNo:         orderNo,
+		UserID:          userID,
+		ProductID:       product.ProductID,
+		Provider:        provider,
+		Amount:          product.Amount,
+		Currency:        strings.ToLower(strings.TrimSpace(product.Currency)),
+		Quota:           product.Quota + product.BonusQuota,
+		Status:          common.PaymentOrderStatusPending,
+		ProviderOrderID: &providerOrderID,
+		CheckoutURL:     &checkoutURL,
+		ExpiredAt:       &expiredAt,
+	}
+	if err := internal.DB.Create(order).Error; err != nil {
+		return nil, err
+	}
+	return order, nil
+}
+
+// ListPaymentOrders 查询当前用户自己的支付订单列表。
+func (s *UserService) ListPaymentOrders(userID uint, page, pageSize int) ([]model.PaymentOrder, int64, error) {
+	if userID == 0 {
+		return nil, 0, errors.New("user is required")
+	}
+	page, pageSize = normalizePage(page, pageSize)
+	query := internal.DB.Model(&model.PaymentOrder{}).Where("user_id = ?", userID)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var orders []model.PaymentOrder
+	err := query.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&orders).Error
+	return orders, total, err
+}
+
+// GetPaymentOrder 查询当前用户自己的支付订单详情。
+func (s *UserService) GetPaymentOrder(userID uint, orderNo string) (*model.PaymentOrder, error) {
+	orderNo = strings.TrimSpace(orderNo)
+	if userID == 0 || orderNo == "" {
+		return nil, errors.New("payment order is required")
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("user_id = ? AND order_no = ?", userID, orderNo).First(&order).Error; err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
 // UpdateSelf 用户自助修改个人信息。
 func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
 	updates := map[string]interface{}{}
@@ -399,6 +486,24 @@ func generateUniqueRedemCodes(tx *gorm.DB, count int) ([]string, error) {
 		return nil, errors.New("failed to generate unique redem codes")
 	}
 	return codes, nil
+}
+
+func normalizePaymentProvider(provider string) (string, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	switch provider {
+	case common.PaymentProviderStripe, common.PaymentProviderEpay:
+		return provider, nil
+	default:
+		return "", errors.New("unsupported payment provider")
+	}
+}
+
+func generatePaymentOrderNo() (string, error) {
+	suffix, err := common.GenerateRandomString(4)
+	if err != nil {
+		return "", err
+	}
+	return "pay_" + time.Now().UTC().Format("20060102150405") + suffix, nil
 }
 
 func filterUpdates(updates map[string]interface{}, keys ...string) map[string]interface{} {

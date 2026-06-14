@@ -39,6 +39,10 @@ func setupUserRoutes(
 			jwtRequired.GET("/billing", logH.UserBilling)
 			jwtRequired.POST("/redem", userH.RedeemCode)
 			jwtRequired.GET("/models", userH.Models)
+			jwtRequired.GET("/payment/products", userH.PaymentProducts)
+			jwtRequired.POST("/payment/orders", userH.CreatePaymentOrder)
+			jwtRequired.GET("/payment/orders", userH.PaymentOrders)
+			jwtRequired.GET("/payment/orders/:order_no", userH.PaymentOrder)
 		}
 	}
 }

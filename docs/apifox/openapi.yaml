@@ -8,7 +8,7 @@ info:
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message。
-    - 充值码用户兑换和管理端基础接口已注册；支付、OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码和用户侧支付商品/订单基础接口已注册；支付 webhook、OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -23,6 +23,8 @@ tags:
     description: 用户 API Key 生命周期。
   - name: User Usage
     description: 用户调用日志、账单统计、充值码和模型可见性。
+  - name: User Payment
+    description: 用户侧支付商品和订单。
   - name: Admin Users
     description: 管理员用户管理。
   - name: Admin Redem
@@ -399,6 +401,99 @@ paths:
                         $ref: "#/components/schemas/UserModelListResult"
         "401":
           $ref: "#/components/responses/StandardUnauthorized"
+  /v0/user/payment/products:
+    get:
+      tags: [User Payment]
+      summary: 充值商品列表
+      description: 返回当前启用的服务端充值商品。quota 为 base_quota + bonus_quota，客户端不能直接指定入账额度。
+      security:
+        - UserJWT: []
+      responses:
+        "200":
+          description: 可购买商品列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/PaymentProductInfo"
+  /v0/user/payment/orders:
+    post:
+      tags: [User Payment]
+      summary: 创建支付订单
+      description: 基础实现；创建本地 pending 订单并保存商品快照，返回安全 checkout 占位链接。真实 provider 会话、签名回调和入账仍按 docs/PAYMENTS.md 后续契约实现。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePaymentOrderRequest"
+      responses:
+        "200":
+          description: 订单创建成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentOrderInfo"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+    get:
+      tags: [User Payment]
+      summary: 当前用户支付订单列表
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: 当前用户订单分页。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentOrderPage"
+  /v0/user/payment/orders/{order_no}:
+    get:
+      tags: [User Payment]
+      summary: 当前用户支付订单详情
+      security:
+        - UserJWT: []
+      parameters:
+        - name: order_no
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 当前用户订单详情。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentOrderInfo"
+        "404":
+          description: 订单不存在或不属于当前用户。
   /v0/admin/user:
     get:
       tags: [Admin Users]
@@ -1736,6 +1831,55 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/UserModelInfo"
+    PaymentProductInfo:
+      type: object
+      properties:
+        product_id: { type: string }
+        name: { type: string }
+        amount: { type: string }
+        currency: { type: string }
+        quota: { type: integer, format: int64 }
+        base_quota: { type: integer, format: int64 }
+        bonus_quota: { type: integer, format: int64 }
+    CreatePaymentOrderRequest:
+      type: object
+      required: [provider, product_id]
+      properties:
+        provider:
+          type: string
+          enum: [stripe, epay]
+        product_id: { type: string }
+        pay_type:
+          type: string
+          description: 易支付支付方式；Stripe 可忽略或使用 card。
+        return_url:
+          type: string
+          description: 支付完成后的前端跳转地址；当前基础实现不直接信任此字段入账。
+    PaymentOrderInfo:
+      type: object
+      properties:
+        order_no: { type: string }
+        provider: { type: string }
+        status:
+          type: string
+          enum: [pending, paid, failed, closed, refunded]
+        product_id: { type: string }
+        amount: { type: string }
+        currency: { type: string }
+        quota: { type: integer, format: int64 }
+        checkout_url: { type: string, nullable: true }
+        expires_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        paid_at: { type: string, format: date-time, nullable: true }
+    PaymentOrderPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/PaymentOrderInfo"
     CreateRedemCodesRequest:
       type: object
       required: [quota]

@@ -108,6 +108,58 @@ CREATE TABLE IF NOT EXISTS quota_transactions (
 CREATE INDEX IF NOT EXISTS idx_quota_transactions_user_id_created_at ON quota_transactions(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_quota_transactions_source ON quota_transactions(source_type, source_id);
 
+CREATE TABLE IF NOT EXISTS payment_products (
+    id SERIAL PRIMARY KEY,
+    product_id VARCHAR(64) NOT NULL UNIQUE,
+    name VARCHAR(128) NOT NULL,
+    amount VARCHAR(32) NOT NULL,
+    currency VARCHAR(16) NOT NULL,
+    quota BIGINT NOT NULL,
+    bonus_quota BIGINT NOT NULL DEFAULT 0,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    provider_config_json JSON,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_payment_products_enabled ON payment_products(enabled);
+
+CREATE TABLE IF NOT EXISTS payment_orders (
+    id SERIAL PRIMARY KEY,
+    order_no VARCHAR(64) NOT NULL UNIQUE,
+    user_id INT NOT NULL REFERENCES users(id),
+    product_id VARCHAR(64) NOT NULL,
+    provider VARCHAR(32) NOT NULL,
+    amount VARCHAR(32) NOT NULL,
+    currency VARCHAR(16) NOT NULL,
+    quota BIGINT NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    provider_order_id VARCHAR(128),
+    provider_payment_id VARCHAR(128),
+    checkout_url TEXT,
+    paid_at TIMESTAMPTZ,
+    expired_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_user_id_created_at ON payment_orders(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_provider_order_id ON payment_orders(provider_order_id);
+CREATE INDEX IF NOT EXISTS idx_payment_orders_status ON payment_orders(status);
+
+CREATE TABLE IF NOT EXISTS payment_events (
+    id SERIAL PRIMARY KEY,
+    provider VARCHAR(32) NOT NULL,
+    provider_event_id VARCHAR(128) NOT NULL,
+    order_no VARCHAR(64) NOT NULL,
+    event_type VARCHAR(128) NOT NULL,
+    payload TEXT NOT NULL DEFAULT '',
+    signature_valid BOOLEAN NOT NULL DEFAULT FALSE,
+    processed BOOLEAN NOT NULL DEFAULT FALSE,
+    processed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(provider, provider_event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_payment_events_order_no ON payment_events(order_no);
+
 CREATE TABLE IF NOT EXISTS settings (
     id SERIAL PRIMARY KEY,
     key VARCHAR(128) NOT NULL UNIQUE,

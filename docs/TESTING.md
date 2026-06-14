@@ -26,6 +26,7 @@
 | `TestAdminQuotaAdjustmentWritesTransaction` | 管理员调整用户额度时写入额度流水，记录 actor、reason、变更前后余额和幂等键 |
 | `TestAdminManagesRedemCodes` | 管理员生成随机充值码、导入指定充值码、列表查询、作废未使用码，作废码不可兑换 |
 | `TestUserListsAvailableModels` | 用户查看当前启用通道的去重模型列表，禁用通道模型不可见，价格状态明确标记未就绪 |
+| `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品、创建本地 pending 订单、订单不入账、列表和详情只能基于当前用户订单 |
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、限流阈值 `0` 禁用语义、JWT/生产 readiness 和关键配置缺失 |
