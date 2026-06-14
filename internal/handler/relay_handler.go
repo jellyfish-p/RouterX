@@ -212,10 +212,19 @@ func (h *RelayHandler) GeminiModelAction(c *gin.Context) {
 		return
 	}
 	switch action {
-	case "generateContent", "streamGenerateContent":
+	case "generateContent", "streamGenerateContent", "embedContent":
 		token, ok := middleware.CurrentAPIToken(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, common.GeminiError(http.StatusUnauthorized, "invalid api key", geminiRelayStatusText(http.StatusUnauthorized)))
+			return
+		}
+		if action == "embedContent" {
+			resp, _, err := h.svc.RelayGeminiEmbedContent(c.Request.Context(), token, modelName, body, c.ClientIP())
+			if err != nil {
+				writeGeminiRelayError(c, err)
+				return
+			}
+			c.Data(http.StatusOK, "application/json; charset=utf-8", resp)
 			return
 		}
 		if action == "streamGenerateContent" {

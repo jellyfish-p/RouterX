@@ -153,6 +153,22 @@ func (s *RelayService) RelayGeminiGenerateContent(ctx context.Context, token *mo
 	return converted, usage, nil
 }
 
+func (s *RelayService) RelayGeminiEmbedContent(ctx context.Context, token *model.Token, modelName string, body []byte, clientIP string) ([]byte, *relay.Usage, error) {
+	canonical, err := geminiEmbedContentToOpenAI(modelName, body)
+	if err != nil {
+		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+	}
+	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
+	if err != nil {
+		return nil, usage, err
+	}
+	converted, err := openAIEmbeddingsToGemini(resp)
+	if err != nil {
+		return nil, usage, &HTTPError{Status: 502, Message: "response conversion failed", Type: "upstream_error", Code: "response_conversion_failed"}
+	}
+	return converted, usage, nil
+}
+
 func (s *RelayService) RelayGeminiGenerateContentStream(ctx context.Context, token *model.Token, modelName string, body []byte, clientIP string) (*RelayStreamResult, error) {
 	canonical, err := geminiGenerateToOpenAI(modelName, body, true)
 	if err != nil {
@@ -953,6 +969,34 @@ func geminiGenerateToOpenAI(modelName string, body []byte, stream bool) ([]byte,
 	return json.Marshal(output)
 }
 
+func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {
+	var input struct {
+		Content struct {
+			Parts []json.RawMessage `json:"parts"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, errors.New("invalid json body")
+	}
+	modelName = strings.TrimPrefix(strings.TrimSpace(modelName), "models/")
+	if modelName == "" {
+		return nil, errors.New("model is required")
+	}
+	parts := make([]string, 0, len(input.Content.Parts))
+	for _, part := range input.Content.Parts {
+		if text := strings.TrimSpace(relay.TextFromContent(part)); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	if len(parts) == 0 {
+		return nil, errors.New("content is required")
+	}
+	return json.Marshal(map[string]interface{}{
+		"model": modelName,
+		"input": strings.Join(parts, "\n"),
+	})
+}
+
 func openAIChatToAnthropic(body []byte) ([]byte, error) {
 	var input struct {
 		ID      string `json:"id"`
@@ -1141,6 +1185,25 @@ func openAIChatToGemini(body []byte) ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
 		"candidates":    candidates,
 		"usageMetadata": geminiUsageMetadata(input.Usage),
+	})
+}
+
+func openAIEmbeddingsToGemini(body []byte) ([]byte, error) {
+	var input struct {
+		Data []struct {
+			Embedding []float64 `json:"embedding"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, err
+	}
+	if len(input.Data) == 0 {
+		return nil, errors.New("embedding response is empty")
+	}
+	return json.Marshal(map[string]interface{}{
+		"embedding": map[string]interface{}{
+			"values": input.Data[0].Embedding,
+		},
 	})
 }
 
