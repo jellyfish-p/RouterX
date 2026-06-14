@@ -220,7 +220,11 @@ func validateSettingValue(key, value string) error {
 		if len(value) < 32 {
 			return errors.New("jwt.secret must be at least 32 characters")
 		}
-	case "server.port", "jwt.admin_expire_hours", "jwt.user_expire_hours",
+	case "server.port":
+		return validatePortSetting(key, value)
+	case "server.mode":
+		return validateServerModeSetting(key, value)
+	case "jwt.admin_expire_hours", "jwt.user_expire_hours",
 		"relay.timeout", "relay.error_ban_threshold":
 		return validatePositiveIntSetting(key, value)
 	case "rate_limit.global_per_min", "rate_limit.per_token_per_min", "rate_limit.per_ip_per_min":
@@ -238,6 +242,23 @@ func validateSettingValue(key, value string) error {
 		}
 	}
 	return nil
+}
+
+func validatePortSetting(key, value string) error {
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 || n > 65535 {
+		return errors.New(key + " must be between 1 and 65535")
+	}
+	return nil
+}
+
+func validateServerModeSetting(key, value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "debug", "test", "release":
+		return nil
+	default:
+		return errors.New(key + " must be debug, test or release")
+	}
 }
 
 func validatePositiveIntSetting(key, value string) error {

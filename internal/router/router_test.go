@@ -471,6 +471,19 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 		t.Fatalf("rate_limit.per_token_per_min=0 should be persisted, got %q", tokenLimit.Value)
 	}
 
+	badPort := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"server.port": "70000",
+	})
+	if badPort.Code != http.StatusBadRequest {
+		t.Fatalf("server.port outside 1..65535 should be rejected, got %d %s", badPort.Code, badPort.Body.String())
+	}
+	badMode := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"server.mode": "benchmark",
+	})
+	if badMode.Code != http.StatusBadRequest {
+		t.Fatalf("invalid server.mode should be rejected, got %d %s", badMode.Code, badMode.Body.String())
+	}
+
 	if err := internal.DB.Model(&model.Setting{}).Where("key = ?", "relay.timeout").Update("value", "0").Error; err != nil {
 		t.Fatal(err)
 	}
