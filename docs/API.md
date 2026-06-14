@@ -319,6 +319,8 @@ Gemini-compatible 错误示例：
 | `actor_user_id` | uint | 操作人 ID 过滤 |
 | `result` | string | 结果过滤，例如 `success`、`failed`、`denied` |
 | `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden` |
+| `start_time` | int64 | 起始 Unix 秒，按 `created_at >= start_time` 过滤 |
+| `end_time` | int64 | 结束 Unix 秒，按 `created_at <= end_time` 过滤 |
 
 当前基础实现会记录以下管理动作：
 

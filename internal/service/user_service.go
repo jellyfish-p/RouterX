@@ -72,7 +72,7 @@ func (s *UserService) RecordAdminAuditLog(input AdminAuditRecordInput) error {
 	return internal.DB.Create(&log).Error
 }
 
-func (s *UserService) ListAdminAuditLogs(operatorRole int, page, pageSize int, action, resourceType, resourceID string, actorUserID uint, result, errorCode string) ([]model.AdminAuditLog, int64, error) {
+func (s *UserService) ListAdminAuditLogs(operatorRole int, page, pageSize int, action, resourceType, resourceID string, actorUserID uint, result, errorCode string, startTime, endTime int64) ([]model.AdminAuditLog, int64, error) {
 	if operatorRole < common.RoleSuper {
 		return nil, 0, errors.New("super admin role required")
 	}
@@ -95,6 +95,12 @@ func (s *UserService) ListAdminAuditLogs(operatorRole int, page, pageSize int, a
 	}
 	if strings.TrimSpace(errorCode) != "" {
 		query = query.Where("error_code = ?", strings.TrimSpace(errorCode))
+	}
+	if startTime > 0 {
+		query = query.Where("created_at >= ?", time.Unix(startTime, 0))
+	}
+	if endTime > 0 {
+		query = query.Where("created_at <= ?", time.Unix(endTime, 0))
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {

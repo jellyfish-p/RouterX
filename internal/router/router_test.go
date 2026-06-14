@@ -262,6 +262,13 @@ func TestUserAPIKeyManagementAuditLogs(t *testing.T) {
 		strings.Contains(deniedBody, `"action":"api_key.created"`) {
 		t.Fatalf("api key denied audit filters should only return denied quota edits, got %d %s", deniedAuditResp.Code, deniedBody)
 	}
+	futureStart := time.Now().Add(24 * time.Hour).Unix()
+	futureEnd := time.Now().Add(48 * time.Hour).Unix()
+	futureAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=api_key&resource_id="+uintString(payload.Data.ID)+"&start_time="+strconv.FormatInt(futureStart, 10)+"&end_time="+strconv.FormatInt(futureEnd, 10), rootJWT, nil)
+	futureBody := futureAuditResp.Body.String()
+	if futureAuditResp.Code != http.StatusOK || strings.Contains(futureBody, `"action":"api_key.created"`) {
+		t.Fatalf("api key audit time filters should exclude records outside the range, got %d %s", futureAuditResp.Code, futureBody)
+	}
 }
 
 func TestAdminPrivilegeBoundaries(t *testing.T) {

@@ -21,7 +21,7 @@
 - `DELETE /v0/admin/log` 要求 `before` 时间范围后清理日志。
 - `GET /v0/admin/dashboard` 返回用户数、通道数、API Key 数、当日调用、当日额度和可用通道数。
 - `admin_audit_logs` 表保存基础管理审计日志，字段包含 actor、action、resource、before/after 摘要、request_id、IP 和 User-Agent。
-- `GET /v0/admin/audit` 已注册为超级管理员查询接口，支持按 `action`、`resource_type`、`resource_id`、`actor_user_id`、`result` 和 `error_code` 过滤。
+- `GET /v0/admin/audit` 已注册为超级管理员查询接口，支持按 `action`、`resource_type`、`resource_id`、`actor_user_id`、`result`、`error_code` 和时间范围过滤。
 - API Key 创建、编辑、禁用、删除和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计摘要，完整 Key 明文和哈希不会写入审计摘要。
 - 普通用户创建、编辑、禁用、删除和拒绝角色变更会写入 `user.*` 管理审计摘要，密码不会写入审计摘要。
 - 支付商品创建、更新、启用和禁用会写入 `payment_product.*` 管理审计摘要。
@@ -233,7 +233,7 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 | 用户账单 | 聚合成功调用，展示 token、额度和时间范围。 |
 | 管理日志 | 管理员可按用户、API Key、通道、模型、状态、时间筛选。 |
 | 通道健康 | 展示通道状态、错误计数、最近错误、延迟和最近成功时间。 |
-| 审计查询 | 超级管理员可按 actor、资源、动作、结果和错误 code 查询；时间范围过滤仍属后续增强。 |
+| 审计查询 | 超级管理员可按 actor、资源、动作、结果、错误 code 和时间范围查询。 |
 | 指标接口 | `/metrics` 可由 Prometheus 抓取；默认可由 settings 控制启用。 |
 | 诊断详情 | 单次调用能关联 request_id、error_code、route_snapshot 和 billing_snapshot。 |
 

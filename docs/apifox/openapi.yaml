@@ -801,6 +801,16 @@ paths:
           required: false
           schema: { type: string }
           description: 失败或拒绝 code 过滤，例如 api_key_quota_edit_forbidden。
+        - name: start_time
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+          description: 起始 Unix 秒，按 created_at >= start_time 过滤。
+        - name: end_time
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+          description: 结束 Unix 秒，按 created_at <= end_time 过滤。
       responses:
         "200":
           description: 管理审计分页列表。

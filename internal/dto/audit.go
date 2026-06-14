@@ -15,6 +15,8 @@ type AdminAuditListRequest struct {
 	ActorUserID  uint   `form:"actor_user_id"`
 	Result       string `form:"result"`
 	ErrorCode    string `form:"error_code"`
+	StartTime    int64  `form:"start_time"`
+	EndTime      int64  `form:"end_time"`
 }
 
 type AdminAuditLogInfo struct {
