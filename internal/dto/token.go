@@ -46,6 +46,7 @@ type UpdateTokenScopeRequest struct {
 	Methods        []string `json:"methods"`
 	DailyQuota     *int64   `json:"daily_quota"`
 	MonthlyQuota   *int64   `json:"monthly_quota"`
+	MaxConcurrency *int64   `json:"max_concurrency"`
 }
 
 type TokenScopeResponse struct {
@@ -57,6 +58,7 @@ type TokenScopeResponse struct {
 	Methods        []string `json:"methods,omitempty"`
 	DailyQuota     *int64   `json:"daily_quota,omitempty"`
 	MonthlyQuota   *int64   `json:"monthly_quota,omitempty"`
+	MaxConcurrency *int64   `json:"max_concurrency,omitempty"`
 }
 
 type TokenResponse struct {
@@ -131,7 +133,7 @@ func TokenScopeFromJSON(raw model.JSONValue) *TokenScopeResponse {
 	if err := json.Unmarshal(raw, &scope); err != nil {
 		return nil
 	}
-	if len(scope.AllowModels) == 0 && len(scope.APITypes) == 0 && len(scope.ChannelGroups) == 0 && len(scope.EntryProtocols) == 0 && len(scope.IPCIDRs) == 0 && len(scope.Methods) == 0 && scope.DailyQuota == nil && scope.MonthlyQuota == nil {
+	if len(scope.AllowModels) == 0 && len(scope.APITypes) == 0 && len(scope.ChannelGroups) == 0 && len(scope.EntryProtocols) == 0 && len(scope.IPCIDRs) == 0 && len(scope.Methods) == 0 && scope.DailyQuota == nil && scope.MonthlyQuota == nil && scope.MaxConcurrency == nil {
 		return nil
 	}
 	return &scope

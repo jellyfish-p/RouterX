@@ -15,13 +15,7 @@ import (
 // 从 Header: Authorization: Bearer sk-xxxx 提取 API Key，
 // 查 tokens 表验证状态/有效期/余额，注入 Token + User 到 context。
 func ApiKeyAuth() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if !authenticateAPIKey(c) {
-			c.Abort()
-			return
-		}
-		c.Next()
-	}
+	return requireAPIKeyAuth
 }
 
 // GetApiKeyToken 从 gin.Context 中提取已鉴权的 Token。
@@ -44,13 +38,21 @@ func GetApiKeyUser(c *gin.Context) interface{} {
 
 // ApiKeyAuthRequired API Key 鉴权入口。
 func ApiKeyAuthRequired() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if !authenticateAPIKey(c) {
-			c.Abort()
-			return
-		}
-		c.Next()
+	return requireAPIKeyAuth
+}
+
+func requireAPIKeyAuth(c *gin.Context) {
+	if !authenticateAPIKey(c) {
+		c.Abort()
+		return
 	}
+	release, ok := acquireAPIKeyConcurrency(c)
+	if !ok {
+		c.Abort()
+		return
+	}
+	defer release()
+	c.Next()
 }
 
 func authenticateAPIKey(c *gin.Context) bool {
@@ -114,6 +116,21 @@ func authenticateAPIKey(c *gin.Context) bool {
 		c.Set("user", token.User)
 	}
 	return true
+}
+
+func acquireAPIKeyConcurrency(c *gin.Context) (func(), bool) {
+	token, ok := CurrentAPIToken(c)
+	if !ok {
+		return func() {}, true
+	}
+	tokenSvc := service.NewTokenService()
+	release, err := tokenSvc.AcquireConcurrencyScope(token)
+	if err != nil {
+		tokenSvc.RecordScopeDeniedLog(token, "concurrency limit exceeded by api key scope", c.ClientIP())
+		writeProtocolAuthError(c, http.StatusTooManyRequests, "concurrency limit exceeded", "rate_limit_error", "rate_limit_exceeded")
+		return nil, false
+	}
+	return release, true
 }
 
 func writeProtocolAuthError(c *gin.Context, status int, message, typ, code string) {

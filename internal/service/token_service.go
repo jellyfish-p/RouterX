@@ -1,13 +1,16 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -35,6 +38,7 @@ var (
 	ErrMethodNotAllowed        = errors.New("method not allowed by api key scope")
 	ErrDailyQuotaExceeded      = errors.New("daily quota exceeded by api key scope")
 	ErrMonthlyQuotaExceeded    = errors.New("monthly quota exceeded by api key scope")
+	ErrMaxConcurrencyExceeded  = errors.New("max concurrency exceeded by api key scope")
 )
 
 const (
@@ -55,7 +59,10 @@ type TokenScope struct {
 	Methods        []string `json:"methods,omitempty"`         // 请求方法和路径白名单, 如 POST /v1/chat/completions
 	DailyQuota     *int64   `json:"daily_quota,omitempty"`     // 单 Key 每日最大成功消耗额度
 	MonthlyQuota   *int64   `json:"monthly_quota,omitempty"`   // 单 Key 每月最大成功消耗额度
+	MaxConcurrency *int64   `json:"max_concurrency,omitempty"` // 单 Key 同时在途请求上限
 }
+
+var tokenConcurrencyScopes = newTokenConcurrencyTracker()
 
 type TokenUsageStats struct {
 	TokenID      uint
@@ -337,6 +344,9 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 	if scope.MonthlyQuota != nil && *scope.MonthlyQuota < 0 {
 		return nil, errors.New("monthly_quota cannot be negative")
 	}
+	if scope.MaxConcurrency != nil && *scope.MaxConcurrency < 0 {
+		return nil, errors.New("max_concurrency cannot be negative")
+	}
 	if err := validateScopeIPCIDRs(scope.IPCIDRs); err != nil {
 		return nil, err
 	}
@@ -562,6 +572,98 @@ func sumSuccessfulTokenQuotaSince(tokenID uint, since time.Time) (int64, error) 
 		Select("COALESCE(SUM(quota_used), 0)").
 		Scan(&used).Error
 	return used, err
+}
+
+func (s *TokenService) AcquireConcurrencyScope(token *model.Token) (func(), error) {
+	if token == nil {
+		return func() {}, ErrInvalidAPIKey
+	}
+	scope, err := ParseTokenScope(token.ScopeJSON)
+	if err != nil {
+		return func() {}, ErrMaxConcurrencyExceeded
+	}
+	if scope.MaxConcurrency == nil {
+		return func() {}, nil
+	}
+	limit := *scope.MaxConcurrency
+	if limit < 0 {
+		return func() {}, ErrMaxConcurrencyExceeded
+	}
+	if internal.RDB != nil {
+		release, err := acquireRedisTokenConcurrency(token.ID, limit)
+		if err == nil {
+			return release, nil
+		}
+		if errors.Is(err, ErrMaxConcurrencyExceeded) {
+			return func() {}, err
+		}
+		// Redis 是可降级依赖；单机或测试环境回落到进程内计数。
+	}
+	return tokenConcurrencyScopes.acquire(token.ID, limit)
+}
+
+func acquireRedisTokenConcurrency(tokenID uint, limit int64) (func(), error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	key := fmt.Sprintf("api_key:concurrency:%d", tokenID)
+	count, err := internal.RDB.Incr(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+	if count == 1 {
+		_ = internal.RDB.Expire(ctx, key, time.Hour).Err()
+	}
+	if count > limit {
+		releaseRedisTokenConcurrency(ctx, key)
+		return nil, ErrMaxConcurrencyExceeded
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			defer cancel()
+			releaseRedisTokenConcurrency(ctx, key)
+		})
+	}, nil
+}
+
+func releaseRedisTokenConcurrency(ctx context.Context, key string) {
+	count, err := internal.RDB.Decr(ctx, key).Result()
+	if err == nil && count <= 0 {
+		_ = internal.RDB.Del(ctx, key).Err()
+	}
+}
+
+type tokenConcurrencyTracker struct {
+	mu     sync.Mutex
+	counts map[uint]int64
+}
+
+func newTokenConcurrencyTracker() *tokenConcurrencyTracker {
+	return &tokenConcurrencyTracker{counts: map[uint]int64{}}
+}
+
+func (t *tokenConcurrencyTracker) acquire(tokenID uint, limit int64) (func(), error) {
+	t.mu.Lock()
+	if t.counts[tokenID] >= limit {
+		t.mu.Unlock()
+		return nil, ErrMaxConcurrencyExceeded
+	}
+	t.counts[tokenID]++
+	t.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			t.mu.Lock()
+			defer t.mu.Unlock()
+			if t.counts[tokenID] <= 1 {
+				delete(t.counts, tokenID)
+				return
+			}
+			t.counts[tokenID]--
+		})
+	}, nil
 }
 
 func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, clientIP string) {

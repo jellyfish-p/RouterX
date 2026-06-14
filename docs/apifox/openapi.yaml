@@ -426,7 +426,7 @@ paths:
     put:
       tags: [User API Key]
       summary: 更新 API Key scope
-      description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list、api_types APIType allow-list、channel_groups 通道分组 allow-list、entry_protocols 入口协议 allow-list、ip_cidrs IP/CIDR allow-list、methods 方法路径 allow-list、daily_quota 日预算和 monthly_quota 月预算。列表为空表示继承用户和系统策略；模型未命中返回 model_not_allowed，APIType、入口协议、IP 或方法路径未命中返回 token_forbidden，通道分组未命中返回 route_forbidden，日/月预算达到上限返回 insufficient_quota，且都不会调用上游。成功后写 api_key.scope_updated 管理审计，审计摘要不包含明文 Key 或哈希。
+      description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list、api_types APIType allow-list、channel_groups 通道分组 allow-list、entry_protocols 入口协议 allow-list、ip_cidrs IP/CIDR allow-list、methods 方法路径 allow-list、daily_quota 日预算、monthly_quota 月预算和 max_concurrency 并发上限。列表为空表示继承用户和系统策略；模型未命中返回 model_not_allowed，APIType、入口协议、IP 或方法路径未命中返回 token_forbidden，通道分组未命中返回 route_forbidden，日/月预算达到上限返回 insufficient_quota，并发上限命中返回 rate_limit_exceeded，且都不会调用上游。成功后写 api_key.scope_updated 管理审计，审计摘要不包含明文 Key 或哈希。
       security:
         - UserJWT: []
       parameters:
@@ -1537,7 +1537,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: OpenAI Chat Completions 转发
-      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。本地限流读取 rate_limit.*，覆盖全局、IP 和 Token 分钟窗口，命中时返回 rate_limit_exceeded 且不调用上游。通道候选读取 relay.error_auto_ban 和 relay.error_ban_threshold，自动排除达到阈值的故障通道。非流式在 relay.retry_count > 0 时会对上游 429、5xx、网络错误、超时和响应读取失败换候选通道；400/401/403 不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
+      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。本地限流读取 rate_limit.*，覆盖全局、IP 和 Token 分钟窗口；API Key max_concurrency 可限制同一 Key 同时在途请求，命中时返回 rate_limit_exceeded 且不调用上游。通道候选读取 relay.error_auto_ban 和 relay.error_ban_threshold，自动排除达到阈值的故障通道。非流式在 relay.retry_count > 0 时会对上游 429、5xx、网络错误、超时和响应读取失败换候选通道；400/401/403 不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
       security:
         - ApiKeyBearer: []
       requestBody:
@@ -1572,7 +1572,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/OpenAIErrorEnvelope"
         "429":
-          description: 余额不足、API Key 日/月预算达到上限、本地限流或上游限流。常见 code 包括 insufficient_quota、rate_limit_exceeded、upstream_429。
+          description: 余额不足、API Key 日/月预算达到上限、API Key 并发上限、本地限流或上游限流。常见 code 包括 insufficient_quota、rate_limit_exceeded、upstream_429。
           content:
             application/json:
               schema:
@@ -2771,6 +2771,13 @@ components:
           minimum: 0
           description: 该 Key 当月成功调用可消耗的最大额度；省略或 null 表示不按月预算额外收窄，达到上限后返回 insufficient_quota。
           example: 3000000
+        max_concurrency:
+          type: integer
+          format: int64
+          nullable: true
+          minimum: 0
+          description: 该 Key 同时在途请求上限；省略或 null 表示不按并发额外收窄，达到上限后返回 rate_limit_exceeded。Redis 可用时使用 Redis 计数，否则 SQLite/单机模式回落进程内计数。
+          example: 2
     BatchDisableTokensRequest:
       type: object
       properties:
@@ -2862,6 +2869,12 @@ components:
           nullable: true
           description: 当前已实现的月预算；为空或不存在表示不按月预算额外收窄。
           example: 3000000
+        max_concurrency:
+          type: integer
+          format: int64
+          nullable: true
+          description: 当前已实现的并发上限；为空或不存在表示不按并发额外收窄。
+          example: 2
     CreateTokenResponse:
       allOf:
         - $ref: "#/components/schemas/Token"

@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -4692,6 +4694,132 @@ func TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed(t *testing.T) {
 	}
 	if failedLog.QuotaUsed != 0 {
 		t.Fatalf("monthly quota scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+}
+
+func TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var releaseFirstOnce sync.Once
+	releaseBlockedFirst := func() {
+		releaseFirstOnce.Do(func() {
+			close(releaseFirst)
+		})
+	}
+	defer releaseBlockedFirst()
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		call := upstreamCalls.Add(1)
+		if call == 1 {
+			close(firstStarted)
+			<-releaseFirst
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-concurrency-scope","object":"chat.completion","model":"gpt-concurrency-scope","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "concurrency-scoped",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 || tokenPayload.Data.Key == "" {
+		t.Fatalf("create scoped token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	scopeResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(tokenPayload.Data.ID)+"/scope", rootJWT, map[string]interface{}{
+		"max_concurrency": 1,
+	})
+	if scopeResp.Code != http.StatusOK || !strings.Contains(scopeResp.Body.String(), `"max_concurrency":1`) {
+		t.Fatalf("update token concurrency scope failed: %d %s", scopeResp.Code, scopeResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "concurrency-scoped-channel",
+		"models":   "gpt-concurrency-scope",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create scoped channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	chatBody := map[string]interface{}{
+		"model": "gpt-concurrency-scope",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		firstDone <- performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, chatBody)
+	}()
+	select {
+	case <-firstStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first request did not reach upstream")
+	}
+
+	secondResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, chatBody)
+	if secondResp.Code != http.StatusTooManyRequests || !strings.Contains(secondResp.Body.String(), `"code":"rate_limit_exceeded"`) {
+		t.Fatalf("second in-flight request should be blocked by concurrency scope, got %d %s", secondResp.Code, secondResp.Body.String())
+	}
+	if got := upstreamCalls.Load(); got != 1 {
+		t.Fatalf("concurrency rejection must not call upstream, got %d calls", got)
+	}
+
+	releaseBlockedFirst()
+	firstResp := <-firstDone
+	if firstResp.Code != http.StatusOK {
+		t.Fatalf("first request should complete after release, got %d %s", firstResp.Code, firstResp.Body.String())
+	}
+	thirdResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, chatBody)
+	if thirdResp.Code != http.StatusOK {
+		t.Fatalf("concurrency slot should be released after first request, got %d %s", thirdResp.Code, thirdResp.Body.String())
+	}
+	if got := upstreamCalls.Load(); got != 2 {
+		t.Fatalf("expected two successful upstream calls after slot release, got %d", got)
+	}
+
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 40 {
+		t.Fatalf("concurrency rejection should not deduct token budget after two successes, got %d", storedToken.RemainQuota)
+	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%concurrency%scope%").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedLog.QuotaUsed != 0 {
+		t.Fatalf("concurrency scope denial should write a zero-quota failed log, got %+v", failedLog)
 	}
 }
 
