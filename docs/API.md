@@ -317,6 +317,8 @@ Gemini-compatible 错误示例：
 | `resource_type` | string | 资源类型过滤，例如 `payment_product` 或 `channel` |
 | `resource_id` | string | 资源 ID 过滤 |
 | `actor_user_id` | uint | 操作人 ID 过滤 |
+| `result` | string | 结果过滤，例如 `success`、`failed`、`denied` |
+| `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden` |
 
 当前基础实现会记录以下管理动作：
 

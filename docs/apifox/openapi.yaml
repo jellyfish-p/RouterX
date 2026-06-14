@@ -789,6 +789,18 @@ paths:
           required: false
           schema: { type: integer, format: uint64 }
           description: 操作人用户 ID 过滤。
+        - name: result
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [success, failed, denied]
+          description: 审计结果过滤。
+        - name: error_code
+          in: query
+          required: false
+          schema: { type: string }
+          description: 失败或拒绝 code 过滤，例如 api_key_quota_edit_forbidden。
       responses:
         "200":
           description: 管理审计分页列表。

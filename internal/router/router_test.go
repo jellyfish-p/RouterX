@@ -255,6 +255,13 @@ func TestUserAPIKeyManagementAuditLogs(t *testing.T) {
 	if strings.Contains(body, payload.Data.Key) || strings.Contains(body, "sk-") {
 		t.Fatalf("api key audit should not expose plaintext keys: %s", body)
 	}
+	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=api_key&resource_id="+uintString(payload.Data.ID)+"&result=denied&error_code=api_key_quota_edit_forbidden", rootJWT, nil)
+	deniedBody := deniedAuditResp.Body.String()
+	if deniedAuditResp.Code != http.StatusOK ||
+		!strings.Contains(deniedBody, `"action":"api_key.quota_limit_denied"`) ||
+		strings.Contains(deniedBody, `"action":"api_key.created"`) {
+		t.Fatalf("api key denied audit filters should only return denied quota edits, got %d %s", deniedAuditResp.Code, deniedBody)
+	}
 }
 
 func TestAdminPrivilegeBoundaries(t *testing.T) {

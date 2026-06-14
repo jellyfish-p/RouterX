@@ -13,6 +13,8 @@ type AdminAuditListRequest struct {
 	ResourceType string `form:"resource_type"`
 	ResourceID   string `form:"resource_id"`
 	ActorUserID  uint   `form:"actor_user_id"`
+	Result       string `form:"result"`
+	ErrorCode    string `form:"error_code"`
 }
 
 type AdminAuditLogInfo struct {

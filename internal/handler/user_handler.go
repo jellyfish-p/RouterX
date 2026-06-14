@@ -304,7 +304,7 @@ func (h *UserHandler) ListAdminAuditLogs(c *gin.Context) {
 	}
 	var req dto.AdminAuditListRequest
 	_ = c.ShouldBindQuery(&req)
-	logs, total, err := h.svc.ListAdminAuditLogs(operator.Role, req.Page, req.PageSize, req.Action, req.ResourceType, req.ResourceID, req.ActorUserID)
+	logs, total, err := h.svc.ListAdminAuditLogs(operator.Role, req.Page, req.PageSize, req.Action, req.ResourceType, req.ResourceID, req.ActorUserID, req.Result, req.ErrorCode)
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
