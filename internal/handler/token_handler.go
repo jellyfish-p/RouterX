@@ -288,6 +288,8 @@ func (h *TokenHandler) UpdateScope(c *gin.Context) {
 		DailyQuota:     req.DailyQuota,
 		MonthlyQuota:   req.MonthlyQuota,
 		MaxConcurrency: req.MaxConcurrency,
+		RPM:            req.RPM,
+		TPM:            req.TPM,
 	})
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())

@@ -34,6 +34,8 @@
 | `TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed` | 用户更新 API Key `daily_quota` scope；当日成功日志已消耗额度达到上限后返回 `insufficient_quota`，不调用上游、不额外扣费，并写失败日志 |
 | `TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed` | 用户更新 API Key `monthly_quota` scope；当月成功日志已消耗额度达到上限后返回 `insufficient_quota`，不调用上游、不额外扣费，并写失败日志 |
 | `TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight` | 用户更新 API Key `max_concurrency` scope；同一 Key 在途请求达到上限后返回 `rate_limit_exceeded`，不调用第二个上游、不额外扣费，原在途请求结束后可继续成功 |
+| `TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay` | 用户更新 API Key `rpm` scope；当前分钟请求数达到上限后返回 `rate_limit_exceeded`，不调用上游、不额外扣费，并写失败日志 |
+| `TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed` | 用户更新 API Key `tpm` scope；当前分钟成功日志的模型 token 达到上限后返回 `rate_limit_exceeded`，不调用上游、不额外扣费，并写失败日志 |
 | `TestAdminPrivilegeBoundaries` | 管理员和超级管理员权限边界、设置脱敏、管理员不能越权管理同级或自己 |
 | `TestAdminAccountManagementAuditLogs` | 超级管理员创建、编辑、禁用和删除管理员写入 `admin.*` 审计，普通管理员越权访问超级管理员接口写 `admin.denied`，审计摘要不泄露密码 |
 | `TestAdminUserManagementAuditLogs` | 管理员创建、编辑、禁用和删除普通用户写入 `user.*` 审计，用户接口拒绝角色变更写 `user.denied`，审计摘要不泄露密码 |
@@ -358,6 +360,7 @@ Gemini-compatible 最小断言：
 | API Key scope 未允许模型、APIType、通道分组、入口协议、IP 或方法路径 | 403，下游计数 0 |
 | API Key scope 达到日/月预算 | 429，下游计数 0 |
 | API Key scope 达到并发上限 | 429，下游计数 0 |
+| API Key scope 达到 RPM/TPM 上限 | 429，下游计数 0 |
 
 断言：
 
@@ -415,7 +418,7 @@ Gemini-compatible 最小断言：
 | P1 | 通道候选缓存 | 预加载、缓存命中、管理员修改后版本失效、集群实例回源一致 |
 | P1 | 独立日志数据库 | `LOG_SQL_DSN` 写入、日志库故障降级、主库结算最小事实可恢复 |
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
-| P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、管理员跨用户查询、批量禁用、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝和并发上限拒绝已覆盖；持久化来源摘要、批量过期、风险视图和缓存失效待补 |
+| P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、管理员跨用户查询、批量禁用、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝和 RPM/TPM 拒绝已覆盖；持久化来源摘要、批量过期、风险视图和缓存失效待补 |
 | P2 | 支付充值 | Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水和人工修正审计 |
 | P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理、日志清理审计和基础 `/metrics`、Relay/支付/DB/Redis 指标测试已覆盖；继续补 Request ID、结构化日志、HTTP/上游耗时指标、更多管理审计动作和生产 `/ready` |
 

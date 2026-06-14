@@ -4823,6 +4823,194 @@ func TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight(t *testing.T) {
 	}
 }
 
+func TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-rpm-scope","object":"chat.completion","model":"gpt-rpm-scope","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "rpm-scoped",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 || tokenPayload.Data.Key == "" {
+		t.Fatalf("create scoped token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	scopeResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(tokenPayload.Data.ID)+"/scope", rootJWT, map[string]interface{}{
+		"rpm": 1,
+	})
+	if scopeResp.Code != http.StatusOK || !strings.Contains(scopeResp.Body.String(), `"rpm":1`) {
+		t.Fatalf("update token rpm scope failed: %d %s", scopeResp.Code, scopeResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "rpm-scoped-channel",
+		"models":   "gpt-rpm-scope",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create scoped channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	chatBody := map[string]interface{}{
+		"model": "gpt-rpm-scope",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	firstResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, chatBody)
+	if firstResp.Code != http.StatusOK {
+		t.Fatalf("first request within rpm scope should succeed, got %d %s", firstResp.Code, firstResp.Body.String())
+	}
+	secondResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, chatBody)
+	if secondResp.Code != http.StatusTooManyRequests || !strings.Contains(secondResp.Body.String(), `"code":"rate_limit_exceeded"`) {
+		t.Fatalf("second request should be blocked by rpm scope, got %d %s", secondResp.Code, secondResp.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("rpm scope rejection must not call upstream, got %d calls", upstreamCalls)
+	}
+
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 45 {
+		t.Fatalf("rpm rejection should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%rpm%scope%").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedLog.QuotaUsed != 0 {
+		t.Fatalf("rpm scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+}
+
+func TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-tpm-scope","object":"chat.completion","model":"gpt-tpm-scope","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "tpm-scoped",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 || tokenPayload.Data.Key == "" {
+		t.Fatalf("create scoped token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	scopeResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(tokenPayload.Data.ID)+"/scope", rootJWT, map[string]interface{}{
+		"tpm": 5,
+	})
+	if scopeResp.Code != http.StatusOK || !strings.Contains(scopeResp.Body.String(), `"tpm":5`) {
+		t.Fatalf("update token tpm scope failed: %d %s", scopeResp.Code, scopeResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "tpm-scoped-channel",
+		"models":   "gpt-tpm-scope",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create scoped channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	chatBody := map[string]interface{}{
+		"model": "gpt-tpm-scope",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	firstResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, chatBody)
+	if firstResp.Code != http.StatusOK {
+		t.Fatalf("first request within tpm scope should succeed, got %d %s", firstResp.Code, firstResp.Body.String())
+	}
+	secondResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, chatBody)
+	if secondResp.Code != http.StatusTooManyRequests || !strings.Contains(secondResp.Body.String(), `"code":"rate_limit_exceeded"`) {
+		t.Fatalf("second request should be blocked by tpm scope, got %d %s", secondResp.Code, secondResp.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("tpm scope rejection must not call upstream, got %d calls", upstreamCalls)
+	}
+
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 45 {
+		t.Fatalf("tpm rejection should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%tpm%scope%").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedLog.QuotaUsed != 0 {
+		t.Fatalf("tpm scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+}
+
 func TestAPIKeyEntryProtocolScopeRejectsBeforeRelay(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

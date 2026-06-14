@@ -1453,7 +1453,10 @@ func (s *RelayService) enforceTokenScope(token *model.Token, apiType relay.APITy
 	if err := s.enforceTokenAPIScope(token, apiType, modelName, clientIP); err != nil {
 		return err
 	}
-	return s.enforceTokenModelScope(token, modelName, clientIP)
+	if err := s.enforceTokenModelScope(token, modelName, clientIP); err != nil {
+		return err
+	}
+	return s.enforceTokenTPMScope(token, modelName, clientIP)
 }
 
 func (s *RelayService) enforceTokenRouteChannelGroupScope(token *model.Token, route RoutePreference, modelName, clientIP string) error {
@@ -1679,6 +1682,17 @@ func (s *RelayService) enforceTokenModelScope(token *model.Token, modelName, cli
 	if err := s.tokenService.CheckModelScope(token, modelName); err != nil {
 		_ = s.recordLog(token, nil, modelName, nil, common.LogStatusFailed, 0, "model not allowed by api key scope", clientIP)
 		return &HTTPError{Status: 403, Message: "model is not allowed by api key scope", Type: "permission_error", Code: "model_not_allowed"}
+	}
+	return nil
+}
+
+func (s *RelayService) enforceTokenTPMScope(token *model.Token, modelName, clientIP string) error {
+	if s.tokenService == nil {
+		return nil
+	}
+	if err := s.tokenService.CheckTPMScope(token); err != nil {
+		_ = s.recordLog(token, nil, modelName, nil, common.LogStatusFailed, 0, "tpm limit exceeded by api key scope", clientIP)
+		return &HTTPError{Status: 429, Message: "rate limit exceeded", Type: "rate_limit_error", Code: "rate_limit_exceeded"}
 	}
 	return nil
 }

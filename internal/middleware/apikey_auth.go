@@ -52,6 +52,10 @@ func requireAPIKeyAuth(c *gin.Context) {
 		return
 	}
 	defer release()
+	if !enforceAPIKeyRPMScope(c) {
+		c.Abort()
+		return
+	}
 	c.Next()
 }
 
@@ -131,6 +135,20 @@ func acquireAPIKeyConcurrency(c *gin.Context) (func(), bool) {
 		return nil, false
 	}
 	return release, true
+}
+
+func enforceAPIKeyRPMScope(c *gin.Context) bool {
+	token, ok := CurrentAPIToken(c)
+	if !ok {
+		return true
+	}
+	tokenSvc := service.NewTokenService()
+	if err := tokenSvc.CheckRPMScope(token); err != nil {
+		tokenSvc.RecordScopeDeniedLog(token, "rpm limit exceeded by api key scope", c.ClientIP())
+		writeProtocolAuthError(c, http.StatusTooManyRequests, "rate limit exceeded", "rate_limit_error", "rate_limit_exceeded")
+		return false
+	}
+	return true
 }
 
 func writeProtocolAuthError(c *gin.Context, status int, message, typ, code string) {

@@ -39,6 +39,8 @@ var (
 	ErrDailyQuotaExceeded      = errors.New("daily quota exceeded by api key scope")
 	ErrMonthlyQuotaExceeded    = errors.New("monthly quota exceeded by api key scope")
 	ErrMaxConcurrencyExceeded  = errors.New("max concurrency exceeded by api key scope")
+	ErrRPMExceeded             = errors.New("rpm exceeded by api key scope")
+	ErrTPMExceeded             = errors.New("tpm exceeded by api key scope")
 )
 
 const (
@@ -60,6 +62,8 @@ type TokenScope struct {
 	DailyQuota     *int64   `json:"daily_quota,omitempty"`     // 单 Key 每日最大成功消耗额度
 	MonthlyQuota   *int64   `json:"monthly_quota,omitempty"`   // 单 Key 每月最大成功消耗额度
 	MaxConcurrency *int64   `json:"max_concurrency,omitempty"` // 单 Key 同时在途请求上限
+	RPM            *int64   `json:"rpm,omitempty"`             // 单 Key 每分钟请求上限
+	TPM            *int64   `json:"tpm,omitempty"`             // 单 Key 每分钟模型 token 上限
 }
 
 var tokenConcurrencyScopes = newTokenConcurrencyTracker()
@@ -347,6 +351,12 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 	if scope.MaxConcurrency != nil && *scope.MaxConcurrency < 0 {
 		return nil, errors.New("max_concurrency cannot be negative")
 	}
+	if scope.RPM != nil && *scope.RPM < 0 {
+		return nil, errors.New("rpm cannot be negative")
+	}
+	if scope.TPM != nil && *scope.TPM < 0 {
+		return nil, errors.New("tpm cannot be negative")
+	}
 	if err := validateScopeIPCIDRs(scope.IPCIDRs); err != nil {
 		return nil, err
 	}
@@ -570,6 +580,75 @@ func sumSuccessfulTokenQuotaSince(tokenID uint, since time.Time) (int64, error) 
 	err := internal.DB.Model(&model.Log{}).
 		Where("token_id = ? AND status = ? AND created_at >= ?", tokenID, common.LogStatusSuccess, since).
 		Select("COALESCE(SUM(quota_used), 0)").
+		Scan(&used).Error
+	return used, err
+}
+
+func (s *TokenService) CheckRPMScope(token *model.Token) error {
+	if token == nil {
+		return ErrInvalidAPIKey
+	}
+	scope, err := ParseTokenScope(token.ScopeJSON)
+	if err != nil {
+		return ErrRPMExceeded
+	}
+	if scope.RPM == nil {
+		return nil
+	}
+	if *scope.RPM < 0 {
+		return ErrRPMExceeded
+	}
+	now := time.Now()
+	startOfMinute := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), 0, 0, now.Location())
+	count, err := countTokenLogsSince(token.ID, startOfMinute)
+	if err != nil {
+		return err
+	}
+	if count >= *scope.RPM {
+		return ErrRPMExceeded
+	}
+	return nil
+}
+
+func countTokenLogsSince(tokenID uint, since time.Time) (int64, error) {
+	var count int64
+	err := internal.DB.Model(&model.Log{}).
+		Where("token_id = ? AND created_at >= ?", tokenID, since).
+		Count(&count).Error
+	return count, err
+}
+
+func (s *TokenService) CheckTPMScope(token *model.Token) error {
+	if token == nil {
+		return ErrInvalidAPIKey
+	}
+	scope, err := ParseTokenScope(token.ScopeJSON)
+	if err != nil {
+		return ErrTPMExceeded
+	}
+	if scope.TPM == nil {
+		return nil
+	}
+	if *scope.TPM < 0 {
+		return ErrTPMExceeded
+	}
+	now := time.Now()
+	startOfMinute := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), 0, 0, now.Location())
+	used, err := sumSuccessfulTokenTokensSince(token.ID, startOfMinute)
+	if err != nil {
+		return err
+	}
+	if used >= *scope.TPM {
+		return ErrTPMExceeded
+	}
+	return nil
+}
+
+func sumSuccessfulTokenTokensSince(tokenID uint, since time.Time) (int64, error) {
+	var used int64
+	err := internal.DB.Model(&model.Log{}).
+		Where("token_id = ? AND status = ? AND created_at >= ?", tokenID, common.LogStatusSuccess, since).
+		Select("COALESCE(SUM(total_tokens), 0)").
 		Scan(&used).Error
 	return used, err
 }
