@@ -148,6 +148,62 @@ func (h *UserHandler) UpdateQuota(c *gin.Context) {
 	common.SuccessMsg(c, "额度已更新")
 }
 
+// GET /v0/admin/redem — 充值码列表
+func (h *UserHandler) ListRedemCodes(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.RedemCodeListRequest
+	_ = c.ShouldBindQuery(&req)
+	codes, total, err := h.svc.ListRedemCodes(operator.Role, req.Page, req.PageSize, req.Status, req.Keyword)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	page, pageSize := pageValues(req.Page, req.PageSize)
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.RedemCodeInfosFromModels(codes)})
+}
+
+// POST /v0/admin/redem — 生成或导入充值码
+func (h *UserHandler) CreateRedemCodes(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.CreateRedemCodesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "充值码参数无效")
+		return
+	}
+	codes, err := h.svc.CreateRedemCodes(operator.Role, req.Quota, req.Count, req.Codes)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	common.Success(c, dto.RedemCodeInfosFromModels(codes))
+}
+
+// PATCH /v0/admin/redem/:id/disable — 作废未使用充值码
+func (h *UserHandler) DisableRedemCode(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	if err := h.svc.DisableRedemCode(operator.Role, id); err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	common.SuccessMsg(c, "充值码已作废")
+}
+
 // GET /v0/user/self — 获取个人信息
 func (h *UserHandler) Self(c *gin.Context) {
 	user, ok := currentUser(c)

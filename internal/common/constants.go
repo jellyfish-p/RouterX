@@ -48,8 +48,9 @@ const (
 
 // 充值码状态
 const (
-	RedemCodeStatusUnused = 0
-	RedemCodeStatusUsed   = 1
+	RedemCodeStatusUnused   = 0
+	RedemCodeStatusUsed     = 1
+	RedemCodeStatusDisabled = 2
 )
 
 // 额度流水类型

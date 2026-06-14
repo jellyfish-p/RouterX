@@ -375,7 +375,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `id` | uint | 主键 |
 | `code` | string | 充值码，唯一 |
 | `quota` | int64 | 充值额度 |
-| `status` | int | `0` 未使用，`1` 已使用 |
+| `status` | int | `0` 未使用，`1` 已使用，`2` 已作废 |
 | `used_by` | nullable uint | 使用者 |
 | `created_at` | time | 创建时间 |
 | `used_at` | nullable time | 使用时间 |

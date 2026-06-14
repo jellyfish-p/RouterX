@@ -431,6 +431,66 @@ func TestAdminQuotaAdjustmentWritesTransaction(t *testing.T) {
 	}
 }
 
+func TestAdminManagesRedemCodes(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	generateResp := performJSON(r, http.MethodPost, "/v0/admin/redem", rootJWT, map[string]interface{}{
+		"quota": 40,
+		"count": 2,
+	})
+	if generateResp.Code != http.StatusOK || !strings.Contains(generateResp.Body.String(), `"quota":40`) {
+		t.Fatalf("admin should generate redem codes, got %d %s", generateResp.Code, generateResp.Body.String())
+	}
+	importResp := performJSON(r, http.MethodPost, "/v0/admin/redem", rootJWT, map[string]interface{}{
+		"quota": 55,
+		"codes": []string{"IMPORT-CREDIT-1"},
+	})
+	if importResp.Code != http.StatusOK || !strings.Contains(importResp.Body.String(), `"code":"IMPORT-CREDIT-1"`) {
+		t.Fatalf("admin should import explicit redem code, got %d %s", importResp.Code, importResp.Body.String())
+	}
+
+	var codes []model.RedemCode
+	if err := internal.DB.Order("id ASC").Find(&codes).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(codes) != 3 {
+		t.Fatalf("expected three redem codes, got %d", len(codes))
+	}
+	listResp := performJSON(r, http.MethodGet, "/v0/admin/redem?status=0", rootJWT, nil)
+	if listResp.Code != http.StatusOK || !strings.Contains(listResp.Body.String(), `"total":3`) || !strings.Contains(listResp.Body.String(), `"code":"IMPORT-CREDIT-1"`) {
+		t.Fatalf("admin should list unused redem codes, got %d %s", listResp.Code, listResp.Body.String())
+	}
+
+	disableResp := performJSON(r, http.MethodPatch, "/v0/admin/redem/"+uintString(codes[0].ID)+"/disable", rootJWT, nil)
+	if disableResp.Code != http.StatusOK {
+		t.Fatalf("admin should disable unused redem code, got %d %s", disableResp.Code, disableResp.Body.String())
+	}
+	var disabled model.RedemCode
+	if err := internal.DB.First(&disabled, codes[0].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if disabled.Status != common.RedemCodeStatusDisabled {
+		t.Fatalf("disabled redem code should be marked disabled, got %+v", disabled)
+	}
+	redeemDisabled := performJSON(r, http.MethodPost, "/v0/user/redem", rootJWT, map[string]interface{}{
+		"code": codes[0].Code,
+	})
+	if redeemDisabled.Code != http.StatusBadRequest {
+		t.Fatalf("disabled redem code should not be redeemable, got %d %s", redeemDisabled.Code, redeemDisabled.Body.String())
+	}
+}
+
 func TestChannelExtendedManagement(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

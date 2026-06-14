@@ -31,6 +31,9 @@ func setupAdminRoutes(
 			authRequired.PUT("/user/:id", userH.Update)
 			authRequired.DELETE("/user/:id", userH.Delete)
 			authRequired.PATCH("/user/:id/quota", userH.UpdateQuota)
+			authRequired.GET("/redem", userH.ListRedemCodes)
+			authRequired.POST("/redem", userH.CreateRedemCodes)
+			authRequired.PATCH("/redem/:id/disable", userH.DisableRedemCode)
 
 			// 管理员账户查看 (Admin+)；写操作仅 SuperAdmin。
 			authRequired.GET("/admin", adminH.List)

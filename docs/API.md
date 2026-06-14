@@ -254,6 +254,26 @@ Gemini-compatible 错误示例：
 }
 ```
 
+### 充值码管理
+
+| 方法 | 路径 | 当前状态 | 说明 |
+|------|------|----------|------|
+| GET | `/v0/admin/redem` | 基础实现 | 充值码列表，支持 `page`、`page_size`、`status`、`keyword` |
+| POST | `/v0/admin/redem` | 基础实现 | 生成随机充值码，或通过 `codes` 导入指定充值码 |
+| PATCH | `/v0/admin/redem/:id/disable` | 基础实现 | 作废未使用充值码；作废后用户不可兑换 |
+
+创建/导入充值码请求：
+
+```json
+{
+  "quota": 100000000,
+  "count": 10,
+  "codes": ["OFFLINE-CREDIT-1"]
+}
+```
+
+当 `codes` 为空时按 `count` 生成随机充值码，`count` 默认 1，最大 100；当 `codes` 非空时导入指定码。
+
 ### 管理员管理
 
 | 方法 | 路径 | 当前状态 | 说明 |

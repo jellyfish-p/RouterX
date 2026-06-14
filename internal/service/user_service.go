@@ -176,6 +176,98 @@ func (s *UserService) UpdateQuotaByAdmin(operatorID uint, operatorRole int, targ
 	})
 }
 
+// ListRedemCodes 查询充值码列表，供管理员按状态或 code 关键字检索。
+func (s *UserService) ListRedemCodes(operatorRole int, page, pageSize int, status *int, keyword string) ([]model.RedemCode, int64, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, 0, errors.New("admin role required")
+	}
+	if status != nil && *status != common.RedemCodeStatusUnused && *status != common.RedemCodeStatusUsed && *status != common.RedemCodeStatusDisabled {
+		return nil, 0, errors.New("invalid redem code status")
+	}
+	page, pageSize = normalizePage(page, pageSize)
+	query := internal.DB.Model(&model.RedemCode{})
+	if status != nil {
+		query = query.Where("status = ?", *status)
+	}
+	if keyword = strings.TrimSpace(keyword); keyword != "" {
+		query = query.Where("code LIKE ?", "%"+keyword+"%")
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var codes []model.RedemCode
+	err := query.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&codes).Error
+	return codes, total, err
+}
+
+// CreateRedemCodes 生成随机充值码，或导入管理员提供的指定充值码。
+func (s *UserService) CreateRedemCodes(operatorRole int, quota int64, count int, codes []string) ([]model.RedemCode, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	if quota <= 0 {
+		return nil, errors.New("quota must be positive")
+	}
+	normalized, err := normalizeRedemCodeInputs(codes)
+	if err != nil {
+		return nil, err
+	}
+	if len(normalized) > 0 {
+		count = len(normalized)
+	} else if count <= 0 {
+		count = 1
+	}
+	if count > 100 {
+		return nil, errors.New("redem code count must be at most 100")
+	}
+
+	created := make([]model.RedemCode, 0, count)
+	err = internal.DB.Transaction(func(tx *gorm.DB) error {
+		if len(normalized) == 0 {
+			var err error
+			normalized, err = generateUniqueRedemCodes(tx, count)
+			if err != nil {
+				return err
+			}
+		} else {
+			var existing int64
+			if err := tx.Model(&model.RedemCode{}).Where("code IN ?", normalized).Count(&existing).Error; err != nil {
+				return err
+			}
+			if existing > 0 {
+				return errors.New("redem code already exists")
+			}
+		}
+		for _, code := range normalized {
+			created = append(created, model.RedemCode{
+				Code:   code,
+				Quota:  quota,
+				Status: common.RedemCodeStatusUnused,
+			})
+		}
+		return tx.Create(&created).Error
+	})
+	return created, err
+}
+
+// DisableRedemCode 作废未使用充值码；已使用或不存在的码不会被修改。
+func (s *UserService) DisableRedemCode(operatorRole int, id uint) error {
+	if operatorRole < common.RoleAdmin {
+		return errors.New("admin role required")
+	}
+	res := internal.DB.Model(&model.RedemCode{}).
+		Where("id = ? AND status = ?", id, common.RedemCodeStatusUnused).
+		Update("status", common.RedemCodeStatusDisabled)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return errors.New("redem code is not unused or not found")
+	}
+	return nil
+}
+
 // UpdateSelf 用户自助修改个人信息。
 func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
 	updates := map[string]interface{}{}
@@ -255,6 +347,53 @@ func normalizePage(page, pageSize int) (int, int) {
 		pageSize = 100
 	}
 	return page, pageSize
+}
+
+func normalizeRedemCodeInputs(codes []string) ([]string, error) {
+	if len(codes) == 0 {
+		return nil, nil
+	}
+	if len(codes) > 100 {
+		return nil, errors.New("redem code count must be at most 100")
+	}
+	seen := map[string]struct{}{}
+	normalized := make([]string, 0, len(codes))
+	for _, raw := range codes {
+		code := strings.TrimSpace(raw)
+		if len(code) < 4 || len(code) > 64 {
+			return nil, errors.New("redem code length must be between 4 and 64")
+		}
+		if _, ok := seen[code]; ok {
+			return nil, errors.New("redem code duplicated in request")
+		}
+		seen[code] = struct{}{}
+		normalized = append(normalized, code)
+	}
+	return normalized, nil
+}
+
+func generateUniqueRedemCodes(tx *gorm.DB, count int) ([]string, error) {
+	seen := map[string]struct{}{}
+	codes := make([]string, 0, count)
+	for attempts := 0; len(codes) < count && attempts < count*20; attempts++ {
+		code := common.GenerateRedemCode()
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		var existing int64
+		if err := tx.Model(&model.RedemCode{}).Where("code = ?", code).Count(&existing).Error; err != nil {
+			return nil, err
+		}
+		if existing > 0 {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	if len(codes) != count {
+		return nil, errors.New("failed to generate unique redem codes")
+	}
+	return codes, nil
 }
 
 func filterUpdates(updates map[string]interface{}, keys ...string) map[string]interface{} {
