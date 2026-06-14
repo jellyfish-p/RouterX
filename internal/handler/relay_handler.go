@@ -132,17 +132,17 @@ func (h *RelayHandler) ModelDetail(c *gin.Context) {
 func (h *RelayHandler) AnthropicMessages(c *gin.Context) {
 	token, ok := middleware.CurrentAPIToken(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, common.OpenAIError("invalid api key", "authentication_error", "invalid_api_key"))
+		c.JSON(http.StatusUnauthorized, common.AnthropicError("invalid api key", "authentication_error"))
 		return
 	}
 	body, err := readRelayBody(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
+		c.JSON(http.StatusBadRequest, common.AnthropicError("failed to read request body", "invalid_request_error"))
 		return
 	}
 	resp, _, err := h.svc.RelayAnthropicMessages(c.Request.Context(), token, body, c.ClientIP())
 	if err != nil {
-		writeRelayError(c, err)
+		writeAnthropicRelayError(c, err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", resp)
@@ -156,7 +156,7 @@ func (h *RelayHandler) AnthropicCountTokens(c *gin.Context) {
 	}
 	resp, err := h.svc.AnthropicCountTokens(body)
 	if err != nil {
-		writeRelayError(c, err)
+		writeAnthropicRelayError(c, err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", resp)
@@ -166,31 +166,31 @@ func (h *RelayHandler) GeminiModelAction(c *gin.Context) {
 	modelName, action := splitGeminiModelAction(c.Param("model"))
 	body, err := readRelayBody(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
+		c.JSON(http.StatusBadRequest, common.GeminiError(http.StatusBadRequest, "failed to read request body", geminiRelayStatusText(http.StatusBadRequest)))
 		return
 	}
 	switch action {
 	case "generateContent", "streamGenerateContent":
 		token, ok := middleware.CurrentAPIToken(c)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, common.OpenAIError("invalid api key", "authentication_error", "invalid_api_key"))
+			c.JSON(http.StatusUnauthorized, common.GeminiError(http.StatusUnauthorized, "invalid api key", geminiRelayStatusText(http.StatusUnauthorized)))
 			return
 		}
 		resp, _, err := h.svc.RelayGeminiGenerateContent(c.Request.Context(), token, modelName, body, action == "streamGenerateContent", c.ClientIP())
 		if err != nil {
-			writeRelayError(c, err)
+			writeGeminiRelayError(c, err)
 			return
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", resp)
 	case "countTokens":
 		resp, err := h.svc.GeminiCountTokens(body)
 		if err != nil {
-			writeRelayError(c, err)
+			writeGeminiRelayError(c, err)
 			return
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", resp)
 	default:
-		writeUnsupported(c)
+		c.JSON(http.StatusNotFound, common.GeminiError(http.StatusNotFound, "unsupported api", geminiRelayStatusText(http.StatusNotFound)))
 	}
 }
 
@@ -213,6 +213,45 @@ func writeRelayError(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusInternalServerError, common.OpenAIError("internal server error", "server_error", "internal_error"))
+}
+
+func writeAnthropicRelayError(c *gin.Context, err error) {
+	var httpErr *service.HTTPError
+	if errors.As(err, &httpErr) {
+		c.JSON(httpErr.Status, common.AnthropicError(httpErr.Message, httpErr.Type))
+		return
+	}
+	c.JSON(http.StatusInternalServerError, common.AnthropicError("internal server error", "server_error"))
+}
+
+func writeGeminiRelayError(c *gin.Context, err error) {
+	var httpErr *service.HTTPError
+	if errors.As(err, &httpErr) {
+		c.JSON(httpErr.Status, common.GeminiError(httpErr.Status, httpErr.Message, geminiRelayStatusText(httpErr.Status)))
+		return
+	}
+	c.JSON(http.StatusInternalServerError, common.GeminiError(http.StatusInternalServerError, "internal server error", geminiRelayStatusText(http.StatusInternalServerError)))
+}
+
+func geminiRelayStatusText(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "INVALID_ARGUMENT"
+	case http.StatusUnauthorized:
+		return "UNAUTHENTICATED"
+	case http.StatusForbidden:
+		return "PERMISSION_DENIED"
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	case http.StatusTooManyRequests:
+		return "RESOURCE_EXHAUSTED"
+	case http.StatusGatewayTimeout:
+		return "DEADLINE_EXCEEDED"
+	case http.StatusBadGateway, http.StatusServiceUnavailable:
+		return "UNAVAILABLE"
+	default:
+		return "INTERNAL"
+	}
 }
 
 func writeUnsupported(c *gin.Context) {

@@ -40,13 +40,14 @@
 | `TestChatCompletionUpstreamTimeoutMapping` | 下游超时错误映射、失败日志、通道错误计数和不扣费 |
 | `TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce` | 非流式 5xx 按 `relay.retry_count` 换候选通道，最终只按成功 usage 扣费一次 |
 | `TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus` | 下游 400 不触发候选通道重试 |
+| `TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol` | Anthropic/Gemini 入口下游错误按各自协议外形返回且不泄密、不扣费 |
 | `TestRelayPrecheckRejectsBeforeUpstream` | 无效 Key、禁用 Key、额度不足、禁用通道不调用下游 |
 | `TestRouterXRoutePreferenceFiltersChannels` | `routerx.route` 被接受、未知字段忽略、非法结构拒绝和筛选后无候选 |
 
 仍需优先补齐：
 
 - 客户端断开取消、Anthropic/Gemini 流式转换和流式 usage fallback/估算策略。
-- Anthropic/Gemini 下游错误 status 映射和更完整 SDK 行为细节。
+- Anthropic/Gemini 更完整 SDK 行为细节、原生字段保真和流式错误路径。
 
 ## 测试原则
 
@@ -353,7 +354,7 @@ Gemini-compatible 最小断言：
 | P0 | 开发者最小接入 | base URL + RouterX API Key、`/v1/models`、非流式 Chat、OpenAI Chat 基础 SSE、日志和扣费 |
 | P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 基础 chunk 转发和 usage 扣费；继续补客户端断开取消、Anthropic/Gemini chunk 转换、usage fallback 和已输出后不切换通道 |
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
-| P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功和鉴权错误；继续按 `docs/PROTOCOLS.md` 断言 OpenAI、Anthropic、Gemini 成功和错误格式分别兼容各自 SDK |
+| P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为、原生字段保真和流式路径 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
 | P1 | 调用事实快照 | request、policy、route、usage、billing、error 快照脱敏且能解释历史调用 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |

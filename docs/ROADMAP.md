@@ -195,7 +195,7 @@ P2 验收标准：
 | WP0-6 基础日志与账单 | P0 | logs、billing stats、dashboard | 用户只看自己的日志；管理员可筛选全局日志；账单聚合来自日志事实 | 已覆盖多次成功/失败混合一致性：`TestUserBillingMatchesLogs` |
 | WP1-1 流式和取消 | P1 | relay stream、adapter stream、context cancel | SSE 不缓存完整响应；客户端断开取消下游；流式 usage 可结算或估算 | `TestChatCompletionStreamForwardsSSEAndDeductsUsage`、`TestChatCompletionStreamRejectsNonOpenAISSEUpstream` 已覆盖 OpenAI Chat 基础 SSE；客户端断开和多协议 chunk 转换仍需补齐 |
 | WP1-2 路由决策快照 | P1 | channel selection、route policy、logs、POLICIES | 记录候选过滤、`routerx.route` 处理、最终通道、模型重写和重试结果 | `routerx.route` 边界已由 `TestRouterXRoutePreferenceFiltersChannels` 覆盖；结构化决策快照仍属 P1 |
-| WP1-3 多协议与多上游 | P1 | translator、adapter、error mapper、PROTOCOLS | OpenAI/Anthropic/Gemini 入口与主要上游组合可用；不支持字段明确失败；能力等级与 `docs/PROTOCOLS.md` 一致 | `TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields` 已覆盖基础非流式成功与字段降级；完整上游、流式和错误矩阵仍需补齐 |
+| WP1-3 多协议与多上游 | P1 | translator、adapter、error mapper、PROTOCOLS | OpenAI/Anthropic/Gemini 入口与主要上游组合可用；不支持字段明确失败；能力等级与 `docs/PROTOCOLS.md` 一致 | `TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields` 与 `TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol` 已覆盖基础非流式成功、字段降级和基础下游错误外形；完整上游、流式和 SDK 行为矩阵仍需补齐 |
 | WP1-4 计费规则和访问控制 | P1 | model_prices、channel_model_prices、settings、logs、POLICIES | 价格表达式、倍率、访问控制、计费快照和账单聚合一致 | 新增计费事实链测试 |
 | WP1-5 可靠性 | P1 | retry、circuit breaker、rate limit、Redis | 非流式可安全重试；流式不跨通道重试；熔断、恢复和限流可解释 | 非流式安全重试已由 `TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce` 和 `TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus` 覆盖；熔断、恢复和限流仍需补齐 |
 | WP1-6 通道候选缓存 | P1 | ChannelService、Redis、settings、POLICIES | 按模型、APIType、用户分组和通道分组预加载候选集；管理员修改后集群失效一致 | 新增缓存失效和版本回源测试 |
@@ -225,7 +225,7 @@ P2 验收标准：
 | 6 | 日志、usage、扣费和用户账单聚合一致 | 已覆盖：`TestUserBillingMatchesLogs` | 证明账单不是从多个互相矛盾的事实源拼出来。 |
 | 7 | `routerx.route` 合法、忽略、拒绝和无候选路径 | 已覆盖：`TestRouterXRoutePreferenceFiltersChannels` | 证明用户偏好不能绕过管理员策略。 |
 | 8 | SSE 流式、客户端断开和流式 usage 结算 | 部分覆盖：OpenAI Chat 基础 SSE、usage 扣费和非 OpenAI SSE 通道拒绝已覆盖；仍需客户端断开和多协议流式 | 进入 P1 前补齐最容易出现资源泄漏和账单偏差的路径。 |
-| 9 | Anthropic/Gemini 入口错误格式和字段降级 | 部分覆盖：API Key 错误外形、非流式成功和字段降级已覆盖；仍需下游错误 status、流式和 SDK 行为矩阵 | 证明多入口协议不是只注册路由，而是 SDK 可用。 |
+| 9 | Anthropic/Gemini 入口错误格式和字段降级 | 部分覆盖：API Key 错误外形、非流式成功、字段降级和基础下游错误外形已覆盖；仍需流式、原生字段保真和完整 SDK 行为矩阵 | 证明多入口协议不是只注册路由，而是 SDK 可用。 |
 
 ## 推荐顺序
 

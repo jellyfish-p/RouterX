@@ -667,6 +667,91 @@ func TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields(t *testing.
 	}
 }
 
+func TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"temporary","secret":"upstream-secret"}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "protocol-errors",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "protocol-errors",
+		"models":   "claude-test,gemini-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	anthropicResp := performJSON(r, http.MethodPost, "/v1/messages", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model":      "claude-test",
+		"max_tokens": 16,
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	})
+	anthropicBody := anthropicResp.Body.String()
+	if anthropicResp.Code != http.StatusBadGateway || !strings.Contains(anthropicBody, `"type":"error"`) || !strings.Contains(anthropicBody, `"type":"upstream_error"`) || strings.Contains(anthropicBody, `"code":"upstream_500"`) || strings.Contains(anthropicBody, "upstream-secret") {
+		t.Fatalf("anthropic upstream error should use Anthropic shape and stay sanitized, got %d %s", anthropicResp.Code, anthropicBody)
+	}
+
+	geminiResp := performJSON(r, http.MethodPost, "/v1/models/gemini-test:generateContent", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{"role": "user", "parts": []map[string]string{{"text": "hello"}}},
+		},
+	})
+	geminiBody := geminiResp.Body.String()
+	if geminiResp.Code != http.StatusBadGateway || !strings.Contains(geminiBody, `"code":502`) || !strings.Contains(geminiBody, `"status":"UNAVAILABLE"`) || strings.Contains(geminiBody, `"code":"upstream_500"`) || strings.Contains(geminiBody, "upstream-secret") {
+		t.Fatalf("gemini upstream error should use Gemini shape and stay sanitized, got %d %s", geminiResp.Code, geminiBody)
+	}
+	if upstreamCalls != 2 {
+		t.Fatalf("expected one upstream call per protocol request, got %d", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 50 {
+		t.Fatalf("protocol upstream errors should not deduct token budget, got %d", storedToken.RemainQuota)
+	}
+}
+
 func TestRelayPrecheckRejectsBeforeUpstream(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
