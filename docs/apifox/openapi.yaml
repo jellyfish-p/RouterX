@@ -8,7 +8,7 @@ info:
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message。
-    - 充值码、管理端支付商品、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、API Key 生命周期审计、管理端支付商品、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -251,7 +251,7 @@ paths:
     post:
       tags: [User API Key]
       summary: 创建 API Key
-      description: 返回一次性 sk- 明文；有限额度 Key 创建时只设置预算上限，不扣用户余额，调用成功时再扣费。
+      description: 返回一次性 sk- 明文；有限额度 Key 创建时只设置预算上限，不扣用户余额，调用成功时再扣费。成功后写入 api_key.created 管理审计，审计摘要不包含完整明文 Key 或哈希。
       security:
         - UserJWT: []
       requestBody:
@@ -278,7 +278,7 @@ paths:
     put:
       tags: [User API Key]
       summary: 编辑 API Key
-      description: 普通用户只能编辑名称、状态和过期时间，不能通过本接口修改额度或无限标记。
+      description: 普通用户只能编辑名称、状态和过期时间，不能通过本接口修改额度或无限标记。普通编辑成功后写 api_key.updated；将状态改为禁用写 api_key.disabled；尝试修改 remain_quota 或 unlimited 会返回 403 并写 api_key.quota_limit_denied。
       security:
         - UserJWT: []
       parameters:
@@ -299,6 +299,7 @@ paths:
     delete:
       tags: [User API Key]
       summary: 删除 API Key
+      description: 软删除当前用户自己的 API Key；成功后写 api_key.deleted 管理审计，历史调用日志保留 token_id 引用。
       security:
         - UserJWT: []
       parameters:
@@ -762,7 +763,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
       security:
         - UserJWT: []
       parameters:
@@ -772,12 +773,12 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 user.create、payment_product.create、channel.update、log.clear 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、channel.update、log.clear 或 admin.denied。
         - name: resource_type
           in: query
           required: false
           schema: { type: string }
-          description: 资源类型过滤，例如 user、payment_product、channel、log 或 admin。
+          description: 资源类型过滤，例如 api_key、user、payment_product、channel、log 或 admin。
         - name: resource_id
           in: query
           required: false

@@ -39,12 +39,12 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 - 校验时支持早期明文存量兼容，验证成功后迁移为 SHA256 哈希。
 - `status`、`expired_at`、软删除和所属用户状态会影响鉴权结果。
 - 普通用户编辑 API Key 时不能修改 `remain_quota` 或 `unlimited`，避免绕过预算上限。
-- 当前代码中有限 API Key 创建仍会从用户额度划拨到 `tokens.remain_quota`，这是需要按 RXD-009 迁移的旧实现口径。
-- 目标设计中，有限 API Key 创建不扣用户余额，`remain_quota` 或目标字段只表示 Key 剩余预算上限；成功调用同时扣用户余额和 Key 预算。
+- 有限 API Key 创建不扣用户余额，`remain_quota` 或目标字段只表示 Key 剩余预算上限；成功调用同时扣用户余额和 Key 预算。
 - `unlimited=true` 或 `remain_quota=-1` 表示 API Key 自身不限额；成功调用仍扣用户额度。
+- API Key 创建、编辑、禁用、删除和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计，审计摘要不包含完整明文 Key 或哈希。
 - API Key 鉴权成功后向请求上下文注入当前用户和当前 Token，供 Relay、限流、日志和计费使用。
 
-当前代码事实是后续目标能力的基础，但额度语义以 `docs/DECISIONS.md` 的 RXD-009/RXD-010 为目标口径；实现时需要把旧的划拨模型迁移为预算上限模型。
+当前代码事实是后续目标能力的基础，额度语义以 `docs/DECISIONS.md` 的 RXD-009/RXD-010 为目标口径；后续仍需补 `quota_limit`/`quota_used` 目标字段、最近使用摘要、轮换和作用域策略。
 
 ## 4. 身份边界
 
@@ -221,9 +221,9 @@ P0 API Key 默认继承所属用户和系统策略。后续作用域能力只允
 | 方法 | 路径 | 语义 |
 |------|------|------|
 | GET | `/v0/user/token` | 当前用户 API Key 列表，不能返回完整明文。 |
-| POST | `/v0/user/token` | 创建 API Key，返回一次性明文。 |
-| PUT | `/v0/user/token/:id` | 编辑名称、状态和过期时间。 |
-| DELETE | `/v0/user/token/:id` | 删除自己的 API Key。 |
+| POST | `/v0/user/token` | 创建 API Key，返回一次性明文，并写 `api_key.created` 审计。 |
+| PUT | `/v0/user/token/:id` | 编辑名称、状态和过期时间；普通编辑写 `api_key.updated`，禁用写 `api_key.disabled`，额度/无限标记编辑拒绝写 `api_key.quota_limit_denied`。 |
+| DELETE | `/v0/user/token/:id` | 删除自己的 API Key，并写 `api_key.deleted` 审计。 |
 
 用户接口必须保持这些边界：
 
@@ -274,6 +274,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 | `api_key.leak_reported` | 用户或管理员上报泄露。 |
 | `api_key.quota_limit_set` | 创建或修改 Key 最大消耗额度。 |
 | `api_key.quota_adjusted` | 管理员调整 Key 预算上限或迁移旧额度口径。 |
+| `api_key.quota_limit_denied` | 用户端尝试修改额度或无限标记被拒绝。 |
 
 审计字段：
 
@@ -332,6 +333,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 - 有限 API Key 和无限 API Key 的扣费语义与 `docs/BILLING.md` 一致。
 - API Key 不能调用 `/v0/user/*` 或 `/v0/admin/*`。
 - 敏感信息扫描不出现用户 API Key、上游密钥、支付密钥或 DSN。
+- 创建、编辑、禁用、删除和用户端额度编辑拒绝都有可查询的脱敏管理审计。
 
 ### P1 验收
 
@@ -363,6 +365,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 | 用户禁用 | 所属 API Key 无法继续调用。 |
 | 有限额度 | 创建不扣用户余额；调用同时扣 `users.quota` 和 Key 剩余预算或累计已用。 |
 | 无限额度 | 调用扣 `users.quota`，Token 自身保持无限标记。 |
+| 管理审计 | 创建、编辑、禁用、删除和禁止用户端改额度会写 `api_key.*`，审计中不含 `sk-` 明文。 |
 | 泄露处理 | 旧 Key 失效，新 Key 可用，审计不含明文。 |
 | 作用域拒绝 | 请求被拒绝并写策略摘要，不调用上游。 |
 

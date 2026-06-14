@@ -21,6 +21,7 @@
 | 测试 | 已覆盖 |
 |------|--------|
 | `TestP0BackendFlow` | 初始化、登录、API Key 创建、用户禁止编辑 Key 额度、通道创建、模型列表、密钥脱敏、无效 Key、空额度 Key、禁用用户 |
+| `TestUserAPIKeyManagementAuditLogs` | API Key 创建、编辑、用户端额度/无限标记编辑拒绝、禁用和删除写入 `api_key.*` 管理审计，审计摘要不泄露 `sk-` 明文 |
 | `TestAdminPrivilegeBoundaries` | 管理员和超级管理员权限边界、设置脱敏、管理员不能越权管理同级或自己 |
 | `TestAdminAccountManagementAuditLogs` | 超级管理员创建、编辑、禁用和删除管理员写入 `admin.*` 审计，普通管理员越权访问超级管理员接口写 `admin.denied`，审计摘要不泄露密码 |
 | `TestAdminUserManagementAuditLogs` | 管理员创建、编辑、禁用和删除普通用户写入 `user.*` 审计，用户接口拒绝角色变更写 `user.denied`，审计摘要不泄露密码 |
@@ -397,9 +398,9 @@ Gemini-compatible 最小断言：
 | P1 | 通道候选缓存 | 预加载、缓存命中、管理员修改后版本失效、集群实例回源一致 |
 | P1 | 独立日志数据库 | `LOG_SQL_DSN` 写入、日志库故障降级、主库结算最小事实可恢复 |
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
-| P2 | 高级 API Key 管理 | 轮换、泄露上报、最近使用、作用域拒绝、批量禁用、审计和缓存失效 |
+| P2 | 高级 API Key 管理 | 基础生命周期审计已覆盖；轮换、泄露上报、最近使用、作用域拒绝、批量禁用和缓存失效待补 |
 | P2 | 支付充值 | Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水和人工修正审计 |
-| P2 | 观测审计 | 用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理和日志清理审计基础测试已覆盖；继续补 Request ID、结构化日志、Prometheus 指标、更多管理审计动作和生产 `/ready` |
+| P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理和日志清理审计基础测试已覆盖；继续补 Request ID、结构化日志、Prometheus 指标、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
 

@@ -186,6 +186,77 @@ func TestP0BackendFlow(t *testing.T) {
 	}
 }
 
+func TestUserAPIKeyManagementAuditLogs(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "audit-key",
+		"remain_quota": int64(100),
+	})
+	var payload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if createResp.Code != http.StatusOK || payload.Data.ID == 0 || !strings.HasPrefix(payload.Data.Key, "sk-") {
+		t.Fatalf("create api key failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+
+	expiredAt := time.Now().Add(24 * time.Hour).Unix()
+	updateResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(payload.Data.ID), rootJWT, map[string]interface{}{
+		"name":       "audit-key-updated",
+		"expired_at": expiredAt,
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update api key failed: %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	quotaResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(payload.Data.ID), rootJWT, map[string]interface{}{
+		"remain_quota": int64(999),
+		"unlimited":    true,
+	})
+	if quotaResp.Code != http.StatusForbidden {
+		t.Fatalf("api key quota edit should be forbidden, got %d %s", quotaResp.Code, quotaResp.Body.String())
+	}
+	disableResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(payload.Data.ID), rootJWT, map[string]interface{}{
+		"status": common.TokenStatusDisabled,
+	})
+	if disableResp.Code != http.StatusOK {
+		t.Fatalf("disable api key failed: %d %s", disableResp.Code, disableResp.Body.String())
+	}
+	deleteResp := performJSON(r, http.MethodDelete, "/v0/user/token/"+uintString(payload.Data.ID), rootJWT, nil)
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("delete api key failed: %d %s", deleteResp.Code, deleteResp.Body.String())
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=api_key&resource_id="+uintString(payload.Data.ID), rootJWT, nil)
+	body := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(body, `"action":"api_key.created"`) ||
+		!strings.Contains(body, `"action":"api_key.updated"`) ||
+		!strings.Contains(body, `"action":"api_key.quota_limit_denied"`) ||
+		!strings.Contains(body, `"action":"api_key.disabled"`) ||
+		!strings.Contains(body, `"action":"api_key.deleted"`) {
+		t.Fatalf("api key management should write audit logs, got %d %s", auditResp.Code, body)
+	}
+	if strings.Contains(body, payload.Data.Key) || strings.Contains(body, "sk-") {
+		t.Fatalf("api key audit should not expose plaintext keys: %s", body)
+	}
+}
+
 func TestAdminPrivilegeBoundaries(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

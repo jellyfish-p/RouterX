@@ -326,6 +326,11 @@ Gemini-compatible 错误示例：
 | `payment_product.update` | `PUT /v0/admin/payment/products/:id` |
 | `payment_product.disable` | `PATCH /v0/admin/payment/products/:id/disable` |
 | `payment_product.enable` | `PATCH /v0/admin/payment/products/:id/enable` |
+| `api_key.created` | `POST /v0/user/token` |
+| `api_key.updated` | `PUT /v0/user/token/:id` 编辑名称或过期时间 |
+| `api_key.disabled` | `PUT /v0/user/token/:id` 将 Key 状态改为禁用 |
+| `api_key.deleted` | `DELETE /v0/user/token/:id` |
+| `api_key.quota_limit_denied` | 用户端尝试通过 `PUT /v0/user/token/:id` 修改额度或无限标记被拒绝 |
 | `setting.create` | `PUT /v0/admin/setting` 新增 key |
 | `setting.update` | `PUT /v0/admin/setting` 修改已有 key |
 | `user.create` | `POST /v0/admin/user` |
@@ -509,11 +514,11 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/v0/user/token` | 已实现 | 当前用户 API Key 列表 |
-| POST | `/v0/user/token` | 已实现 | 创建 API Key，明文只返回一次 |
-| PUT | `/v0/user/token/:id` | 已实现 | 编辑 API Key 名称、状态、过期时间 |
-| DELETE | `/v0/user/token/:id` | 已实现 | 删除 API Key |
+| POST | `/v0/user/token` | 已实现 | 创建 API Key，明文只返回一次，成功后写 `api_key.created` 审计 |
+| PUT | `/v0/user/token/:id` | 已实现 | 编辑 API Key 名称、状态、过期时间；普通编辑写 `api_key.updated`，禁用写 `api_key.disabled`，额度/无限标记编辑拒绝写 `api_key.quota_limit_denied` |
+| DELETE | `/v0/user/token/:id` | 已实现 | 删除 API Key，成功后写 `api_key.deleted` 审计 |
 
-用户端 API Key 不允许直接编辑最大消耗额度和无限额度标记，避免普通用户绕过预算策略。
+用户端 API Key 不允许直接编辑最大消耗额度和无限额度标记，避免普通用户绕过预算策略；拒绝记录会写入管理审计，审计摘要不包含完整 API Key 明文或哈希。
 
 ### 用量和账单
 
