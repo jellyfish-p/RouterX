@@ -648,6 +648,17 @@ func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	returnBeforeNotify := performJSON(r, http.MethodGet, "/v0/payment/epay/return?out_trade_no="+url.QueryEscape(order.OrderNo), "", nil)
+	if returnBeforeNotify.Code != http.StatusOK || !strings.Contains(returnBeforeNotify.Body.String(), `"status":"pending"`) || !strings.Contains(returnBeforeNotify.Body.String(), `"quota":100`) {
+		t.Fatalf("epay return should show local pending order only, got %d %s", returnBeforeNotify.Code, returnBeforeNotify.Body.String())
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 0 {
+		t.Fatalf("epay return must not grant quota, got %d", root.Quota)
+	}
+
 	amountMismatch := epayNotifyValues(order.OrderNo, "TRADE-BAD", "1.00", "epay-test-secret")
 	mismatchResp := performForm(r, http.MethodPost, "/v0/payment/epay/notify", amountMismatch)
 	if mismatchResp.Code == http.StatusOK && strings.TrimSpace(mismatchResp.Body.String()) == "success" {
@@ -676,6 +687,10 @@ func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 	}
 	if order.Status != common.PaymentOrderStatusPaid || order.PaidAt == nil || order.ProviderPaymentID == nil || *order.ProviderPaymentID != "TRADE1000" {
 		t.Fatalf("valid epay notify should mark order paid: %+v", order)
+	}
+	returnAfterNotify := performJSON(r, http.MethodGet, "/v0/payment/epay/return?out_trade_no="+url.QueryEscape(order.OrderNo), "", nil)
+	if returnAfterNotify.Code != http.StatusOK || !strings.Contains(returnAfterNotify.Body.String(), `"status":"paid"`) {
+		t.Fatalf("epay return should show paid status after notify, got %d %s", returnAfterNotify.Code, returnAfterNotify.Body.String())
 	}
 	var quotaTxCount int64
 	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("source_type = ? AND source_id = ?", common.QuotaSourceTypePaymentOrder, order.OrderNo).Count(&quotaTxCount).Error; err != nil {

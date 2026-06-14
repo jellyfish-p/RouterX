@@ -321,6 +321,20 @@ func (h *UserHandler) EpayNotify(c *gin.Context) {
 	c.String(http.StatusOK, "success")
 }
 
+// GET /v0/payment/epay/return — 易支付同步返回只读状态
+func (h *UserHandler) EpayReturn(c *gin.Context) {
+	orderNo := c.Query("out_trade_no")
+	if orderNo == "" {
+		orderNo = c.Query("order_no")
+	}
+	order, err := h.svc.GetEpayReturnOrder(orderNo)
+	if err != nil {
+		common.FailWithStatus(c, http.StatusNotFound, "支付订单不存在")
+		return
+	}
+	common.Success(c, dto.PaymentOrderInfoFromModel(order))
+}
+
 // GET /v0/user/self — 获取个人信息
 func (h *UserHandler) Self(c *gin.Context) {
 	user, ok := currentUser(c)

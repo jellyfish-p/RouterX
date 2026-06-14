@@ -385,6 +385,20 @@ func (s *UserService) GetPaymentOrder(userID uint, orderNo string) (*model.Payme
 	return &order, nil
 }
 
+// GetEpayReturnOrder 返回易支付同步返回页可展示的本地订单状态。
+// 同步返回不可信，只允许读本地订单快照，入账必须等待异步通知。
+func (s *UserService) GetEpayReturnOrder(orderNo string) (*model.PaymentOrder, error) {
+	orderNo = strings.TrimSpace(orderNo)
+	if orderNo == "" {
+		return nil, errors.New("payment order is required")
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("order_no = ? AND provider = ?", orderNo, common.PaymentProviderEpay).First(&order).Error; err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
 // ProcessEpayNotify 验证易支付异步通知，并在可信成功事件中幂等入账。
 func (s *UserService) ProcessEpayNotify(values map[string]string, requestID string) error {
 	key := strings.TrimSpace(os.Getenv("PAYMENT_EPAY_KEY"))

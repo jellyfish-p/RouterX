@@ -313,8 +313,10 @@ user submits code
 - 管理员额度调整已写入 `quota_transactions`，记录 `actor_user_id`、`reason`、变更前后余额和幂等键。
 - 管理员可通过 `/v0/admin/redem` 生成随机充值码或导入指定充值码，并可作废未使用充值码。
 - 用户侧支付商品列表和本地 `pending` 订单创建/查询已具备基础实现；pending 订单不会入账。
+- Stripe webhook 已支持 `checkout.session.completed` 签名校验、金额/币种/metadata 校验、`payment_events` 幂等和入账。
 - 易支付异步通知已支持 MD5 签名校验、金额校验、`payment_events` 幂等记录、订单置为 `paid`、`quota_transactions` 入账和用户额度增加；重复通知不重复入账。
-- 管理审计、充值码批次/备注/过期策略、真实 provider 会话创建、Stripe webhook、易支付同步返回页和退款仍属于后续增强，不能把当前实现误写成完整支付闭环。
+- 易支付同步返回页已支持本地订单状态只读展示，不作为入账依据。
+- 管理审计、充值码批次/备注/过期策略、真实 provider 会话创建和退款仍属于后续增强，不能把当前实现误写成完整支付闭环。
 
 要求：
 

@@ -8,7 +8,7 @@ info:
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message。
-    - 充值码、用户侧支付商品/订单、Stripe webhook 和易支付异步通知基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -554,6 +554,36 @@ paths:
               schema:
                 type: string
                 example: fail
+  /v0/payment/epay/return:
+    get:
+      tags: [Payment Webhook]
+      summary: 易支付同步返回只读状态
+      description: 基础实现；同步返回只读取 RouterX 本地订单状态，不校验为支付成功依据，不写 payment_events，不增加用户额度。入账只依赖易支付异步通知。
+      parameters:
+        - name: out_trade_no
+          in: query
+          required: false
+          schema: { type: string }
+          description: 易支付返回的 RouterX 本地订单号。
+        - name: order_no
+          in: query
+          required: false
+          schema: { type: string }
+          description: 等价查询参数；当 out_trade_no 为空时使用。
+      responses:
+        "200":
+          description: 本地订单状态。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentOrderInfo"
+        "404":
+          description: 订单不存在或不是易支付订单。
   /v0/admin/user:
     get:
       tags: [Admin Users]

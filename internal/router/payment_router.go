@@ -14,5 +14,6 @@ func setupPaymentRoutes(r *gin.Engine, userH *handler.UserHandler) {
 	{
 		payment.POST("/stripe/webhook", userH.StripeWebhook)
 		payment.POST("/epay/notify", userH.EpayNotify)
+		payment.GET("/epay/return", userH.EpayReturn)
 	}
 }

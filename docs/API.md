@@ -448,7 +448,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验和幂等入账；易支付异步通知已支持 MD5 签名、金额校验和幂等入账。真实 Stripe Checkout Session 创建、易支付同步返回页、退款和审计仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验和幂等入账；易支付异步通知已支持 MD5 签名、金额校验和幂等入账，同步返回页仅展示本地订单状态。真实 Stripe Checkout Session 创建、退款和审计仍属于后续能力。
 
 用户鉴权接口：
 
@@ -465,7 +465,7 @@ Provider 回调接口：
 |------|------|------|------|
 | POST | `/v0/payment/stripe/webhook` | Stripe 签名 | 基础实现；Stripe Checkout webhook，成功时幂等入账并返回纯文本 `success` |
 | POST | `/v0/payment/epay/notify` | 易支付签名 | 基础实现；易支付异步通知，成功时幂等入账并返回纯文本 `success` |
-| GET | `/v0/payment/epay/return` | 无，仅读状态 | 易支付同步返回页 |
+| GET | `/v0/payment/epay/return` | 无，仅读状态 | 基础实现；易支付同步返回页，只读取本地订单状态，不入账 |
 
 创建支付订单请求：
 
