@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -40,6 +41,24 @@ func (h *RelayHandler) relayOpenAI(c *gin.Context, apiType relay.APIType) {
 	body, err := readRelayBody(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
+		return
+	}
+	if apiType == relay.APIChatCompletions && requestWantsStream(body) {
+		result, err := h.svc.RelayStream(c.Request.Context(), token, apiType, body, c.ClientIP())
+		if err != nil {
+			writeRelayError(c, err)
+			return
+		}
+		c.Header("Content-Type", result.ContentType)
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Status(http.StatusOK)
+		_, _ = result.Forward(func(chunk []byte) error {
+			_, writeErr := c.Writer.Write(chunk)
+			return writeErr
+		}, func() {
+			c.Writer.Flush()
+		})
 		return
 	}
 	resp, _, err := h.svc.Relay(c.Request.Context(), token, apiType, body, c.ClientIP())
@@ -202,6 +221,14 @@ func writeUnsupported(c *gin.Context) {
 
 func readRelayBody(c *gin.Context) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(c.Request.Body, 20<<20))
+}
+
+func requestWantsStream(body []byte) bool {
+	var payload struct {
+		Stream bool `json:"stream"`
+	}
+	_ = json.Unmarshal(body, &payload)
+	return payload.Stream
 }
 
 func splitGeminiModelAction(value string) (string, string) {

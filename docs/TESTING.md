@@ -29,10 +29,12 @@
 | `TestSettingCacheRefreshesStaleRedisValues` | settings 读取缓存、单项更新和批量更新后的 Redis 刷新边界 |
 | `TestAPIKeyAuthErrorsUseEntryProtocolShape` | Anthropic/Gemini 入口 API Key 鉴权错误外形 |
 | `TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields` | Anthropic/Gemini 非流式成功响应、usage、扣费和非文本 content/parts 降级 |
-| `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model、`stream=true` 在本地失败且不污染通道和账单 |
+| `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model 在本地失败且不污染通道和账单 |
 | `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
 | `TestUserBillingMatchesLogs` | 多次成功/失败混合后，用户账单、日志、余额和 Key 预算一致 |
 | `TestChatCompletionSuccessLogsAndDeductsQuota` | Chat 非流式成功调用、日志、用户额度、Key 预算和账单聚合 |
+| `TestChatCompletionStreamForwardsSSEAndDeductsUsage` | OpenAI-compatible Chat SSE chunk 转发、usage 提取、日志和扣费 |
+| `TestChatCompletionStreamRejectsNonOpenAISSEUpstream` | 非 OpenAI SSE 通道在流式请求中被上游前拒绝 |
 | `TestChatCompletionUpstreamBadRequestMapping` | 下游 400 错误映射、失败日志和密钥不泄露 |
 | `TestChatCompletionUpstreamErrorStatusMapping` | 下游 401/403/429/5xx 错误映射、失败日志、通道错误计数和不扣费 |
 | `TestChatCompletionUpstreamTimeoutMapping` | 下游超时错误映射、失败日志、通道错误计数和不扣费 |
@@ -41,7 +43,7 @@
 
 仍需优先补齐：
 
-- SSE 流式、客户端断开和流式 usage 结算。
+- 客户端断开取消、Anthropic/Gemini 流式转换和流式 usage fallback/估算策略。
 - Anthropic/Gemini 下游错误 status 映射和更完整 SDK 行为细节。
 
 ## 测试原则
@@ -257,7 +259,6 @@ Gemini-compatible 最小断言：
 |------|------|
 | 非法 JSON | 400 `invalid_json` |
 | 缺少 `model` | 400 `model_required` 或 `invalid_request` |
-| `stream=true` | 400 `unsupported_stream` |
 
 断言：
 
@@ -347,8 +348,8 @@ Gemini-compatible 最小断言：
 
 | 阶段 | 能力 | 测试重点 |
 |------|------|----------|
-| P0 | 开发者最小接入 | base URL + RouterX API Key、`/v1/models`、非流式 Chat、日志和扣费 |
-| P1 | SSE 流式 | chunk 转发、客户端断开取消、流式 usage、已输出后不切换通道 |
+| P0 | 开发者最小接入 | base URL + RouterX API Key、`/v1/models`、非流式 Chat、OpenAI Chat 基础 SSE、日志和扣费 |
+| P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 基础 chunk 转发和 usage 扣费；继续补客户端断开取消、Anthropic/Gemini chunk 转换、usage fallback 和已输出后不切换通道 |
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
 | P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功和鉴权错误；继续按 `docs/PROTOCOLS.md` 断言 OpenAI、Anthropic、Gemini 成功和错误格式分别兼容各自 SDK |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |

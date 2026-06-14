@@ -10,7 +10,7 @@ P0 的交付目标是：
 空库初始化 -> 管理员登录 -> 创建通道 -> 创建 API Key -> /v1/models -> /v1/chat/completions -> 日志和额度变化可查
 ```
 
-任何实现动作都必须保护这条开箱路径。支付、OAuth/OIDC、多协议完整矩阵、流式响应、高级价格表达式和生产观测可以作为后续增强，但不能成为 P0 首次调用的前置条件。
+任何实现动作都必须保护这条开箱路径。支付、OAuth/OIDC、多协议完整矩阵、多协议流式转换、高级价格表达式和生产观测可以作为后续增强，但不能成为 P0 首次调用的前置条件。
 
 ## 固定技术决策
 
@@ -92,24 +92,27 @@ P0 的交付目标是：
 - 有限 API Key 调用同时扣用户余额并消耗 Key 预算，二者任一不足都拒绝。
 - 无限 Token 调用扣用户，Token `remain_quota` 保持 `-1`。
 
-### 4. OpenAI-compatible Chat 非流式闭环
+### 4. OpenAI-compatible Chat 闭环
 
 前置文档：`docs/RELAY.md`、`docs/API.md`、`docs/TESTING.md`。
 
 落地动作：
 
 1. `RelayHandler.ChatCompletions` 读取 body、取得 API Key 上下文，调用 `RelayService`。
-2. `RelayService` 解析 model 和 stream；P0 遇到 `stream=true` 返回 `unsupported_stream`。
+2. `RelayService` 解析 model 和 stream；`stream=false` 走非流式 `Relay`，OpenAI Chat `stream=true` 走 `RelayStream`。
 3. 先做用户/API Key/额度预检，再选择通道。
 4. `ChannelService.SelectChannel` 按启用状态、模型匹配、错误计数、priority 和 weight 选择候选。
 5. `ResolveUpstream` 按 `upstreams`、多 key/base URL、单 key/base URL 顺序解析上游。
 6. Adapter 构造下游请求，剥离 `routerx` 私有字段，注入通道密钥。
-7. 成功响应提取 usage，计算 `quota_used`，扣费成功后写 success 日志并返回 OpenAI-compatible 响应。
-8. 扣费失败写 failed 日志；响应未返回前返回 429。
+7. 非流式成功响应提取 usage，计算 `quota_used`，扣费成功后写 success 日志并返回 OpenAI-compatible 响应。
+8. OpenAI-compatible SSE 成功响应逐行转发 `data:` 块，提取最终 usage，流结束后扣费并写 success 日志。
+9. 扣费失败写 failed 日志；非流式在响应未返回前返回 429，流式在已写出后只能记录失败事实。
 
 验收：
 
-- `TestChatCompletionSuccessLogsAndDeductsQuota` 断言 HTTP 响应、下游收到的请求、日志和额度。
+- `TestChatCompletionSuccessLogsAndDeductsQuota` 断言非流式 HTTP 响应、下游收到的请求、日志和额度。
+- `TestChatCompletionStreamForwardsSSEAndDeductsUsage` 断言 OpenAI-compatible SSE 透传、usage 提取、日志和额度。
+- `TestChatCompletionStreamRejectsNonOpenAISSEUpstream` 断言非 OpenAI SSE 通道不会被伪装转发。
 - 成功日志包含 user、token、channel、model、usage、quota 和 status。
 - 下游密钥、用户 API Key 和 DSN 不出现在响应或日志中。
 
@@ -119,11 +122,12 @@ P0 的交付目标是：
 
 落地动作：
 
-1. 非法 JSON、缺少 model、`stream=true` 直接返回 OpenAI-compatible 400。
+1. 非法 JSON、缺少 model 直接返回 OpenAI-compatible 400；当前入口/APIType 不支持流式时返回 `unsupported_stream`。
 2. API Key 无效返回 401，用户或 Token 禁用返回 403，余额不足返回 429。
-3. 无可用通道返回 502 `no_available_channel`，不调用下游。
-4. 下游 400 不重试；401/403 归因通道配置；429/5xx/超时在 P0 默认不自动重试。
-5. 错误日志记录可排障摘要，不记录完整敏感响应体。
+3. OpenAI Chat `stream=true` 命中非 OpenAI SSE 通道时返回 502 `unsupported_stream_channel`，不调用下游、不扣费。
+4. 无可用通道返回 502 `no_available_channel`，不调用下游。
+5. 下游 400 不重试；401/403 归因通道配置；429/5xx/超时在 P0 默认不自动重试。
+6. 错误日志记录可排障摘要，不记录完整敏感响应体。
 
 验收：
 
@@ -168,7 +172,7 @@ P0 的交付目标是：
 
 P0 通过后再进入 P1：
 
-1. 流式 SSE、客户端断开取消和流式 usage 策略。
+1. 客户端断开取消、Anthropic/Gemini 流式转换和更完整的流式 usage 兜底策略。
 2. 非流式安全重试、熔断、半开恢复和更细路由决策快照。
 3. Anthropic/Gemini 入口协议的成功和错误格式精确映射。
 4. 多上游转换矩阵按 `docs/PROTOCOLS.md` 分级推进：OpenAI-Compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek、RouterX-Compatible。
@@ -184,7 +188,7 @@ P0 通过后再进入 P1：
 
 ## 禁止事项
 
-- 不为 P0 首次调用引入支付、OAuth/OIDC、流式响应或完整价格表达式前置依赖。
+- 不为 P0 首次调用引入支付、OAuth/OIDC、多协议流式转换或完整价格表达式前置依赖。
 - 不让 `/v1` 返回 RouterX 管理端统一响应包装。
 - 不在日志、响应、审计或 Redis key 中泄露 API Key、下游密钥、支付密钥或 DSN。
 - 不在调用下游后才发现用户或 Token 明显无额度。

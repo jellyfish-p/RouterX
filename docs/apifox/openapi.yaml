@@ -805,8 +805,8 @@ paths:
   /v1/chat/completions:
     post:
       tags: [OpenAI Compatible]
-      summary: OpenAI Chat Completions 非流式转发
-      description: P0 稳定闭环；stream=true 在当前阶段返回 unsupported_stream；routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
+      summary: OpenAI Chat Completions 转发
+      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
       security:
         - ApiKeyBearer: []
       requestBody:
@@ -817,13 +817,17 @@ paths:
               $ref: "#/components/schemas/ChatCompletionRequest"
       responses:
         "200":
-          description: OpenAI-compatible Chat 响应。
+          description: OpenAI-compatible Chat 响应；stream=true 时为 SSE。
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChatCompletionResponse"
+            text/event-stream:
+              schema:
+                type: string
+                description: "OpenAI-compatible SSE data chunks ending with data: [DONE]."
         "400":
-          description: 请求体或 routerx 扩展非法；常见 code 包括 invalid_json、model_required、unsupported_stream、invalid_routerx_options、invalid_routerx_route。
+          description: 请求体或 routerx 扩展非法；常见 code 包括 invalid_json、model_required、invalid_routerx_options、invalid_routerx_route。
           content:
             application/json:
               schema:
@@ -833,7 +837,7 @@ paths:
         "429":
           $ref: "#/components/responses/OpenAIError"
         "502":
-          description: 无可用通道或上游错误；routerx.route 筛选后无候选时返回 no_available_channel。
+          description: 无可用通道或上游错误；routerx.route 筛选后无候选时返回 no_available_channel，stream=true 命中非 OpenAI SSE 通道时返回 unsupported_stream_channel。
           content:
             application/json:
               schema:
@@ -1682,7 +1686,7 @@ components:
         n: { type: integer, nullable: true }
         stream:
           type: boolean
-          description: 当前 P0 阶段必须为 false 或省略。
+          description: true 时返回 OpenAI-compatible SSE；当前仅支持 OpenAI SSE 形态通道。
         stop:
           type: array
           items: { type: string }

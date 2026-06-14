@@ -65,7 +65,7 @@ P0 可以宣称完成时，必须同时满足以下门禁。
 | G6 模型列表 | 有效 API Key 可调用 `/v1/models`，无效或禁用凭据失败。 | `TestP0BackendFlow`、OpenAI-compatible 错误断言。 |
 | G7 Chat 非流式 | `/v1/chat/completions` 非流式成功返回兼容响应，写日志并扣费。 | `TestChatCompletionSuccessLogsAndDeductsQuota`。 |
 | G8 预检拒绝 | 无效 Key、禁用用户、禁用 API Key、余额不足、禁用通道不调用上游。 | `TestRelayPrecheckRejectsBeforeUpstream`。 |
-| G9 错误兼容 | 非法 JSON、缺少 model、`stream=true`、无通道和下游错误返回稳定 code。 | `TestChatCompletionInvalidRequestDoesNotCallUpstream`、`TestChatCompletionUpstreamErrorMapping`。 |
+| G9 错误兼容 | 非法 JSON、缺少 model、未支持流式通道、无通道和下游错误返回稳定 code。 | `TestChatCompletionInvalidRequestDoesNotCallUpstream`、流式通道拒绝测试、`TestChatCompletionUpstreamErrorMapping`。 |
 | G10 日志账单一致 | 成功调用的 usage、`quota_used`、用户余额、Key 预算和账单聚合一致。 | `TestUserBillingMatchesLogs`。 |
 | G11 开箱不被高级能力阻塞 | 支付、OAuth/OIDC、流式、多协议完整矩阵和高级价格表达式未配置时，不影响 P0。 | P0 测试环境不依赖这些模块。 |
 
@@ -80,7 +80,7 @@ P0 可以宣称完成时，必须同时满足以下门禁。
 - 余额不足、权限不足或请求非法时仍调用上游。
 - API Key、下游密钥、数据库 DSN、支付密钥或内部堆栈进入响应或日志。
 - `/v1` 错误返回 RouterX 管理端 `{success,data,message}` 包装。
-- `stream=true` 在 P0 被静默转发或静默忽略。
+- 不支持的流式入口或通道被静默转发或静默忽略。
 - 通道选择依赖不可解释的随机组合，例如把 `upstreams` 与外层 `api_keys`、`base_urls` 任意交叉。
 - 文档把已注册高级路由写成完整兼容。
 
@@ -90,7 +90,7 @@ P1 可以宣称完成时，必须在 P0 全部通过后再满足：
 
 | 门禁 | 必须证明 | 主要证据 |
 |------|----------|----------|
-| G12 流式 | SSE/chunk 不缓存完整响应，客户端断开取消下游，流式 usage 可结算或估算。 | 流式集成测试、断开取消测试。 |
+| G12 流式 | SSE/chunk 不缓存完整响应，客户端断开取消下游，流式 usage 可结算或估算。 | OpenAI Chat 基础 SSE 测试、流式集成测试、断开取消测试。 |
 | G13 多入口协议 | OpenAI、Anthropic、Gemini 基础入口成功和错误外形分别兼容。 | 基础非流式测试、协议矩阵测试、SDK 行为断言。 |
 | G14 多上游转换 | 主要上游 provider 的请求、响应、usage 和错误映射符合能力等级。 | `docs/PROTOCOLS.md` 对应矩阵测试。 |
 | G15 路由偏好 | `routerx.route` 合法、非法、越权和无候选路径都有稳定行为。 | 路由策略测试、调用事实快照。 |

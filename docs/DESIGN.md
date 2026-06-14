@@ -330,8 +330,8 @@ Relay 是核心模块。RouterX 的长期定位是多协议入口与多上游同
 
 阶段原则：
 
-- P0 建立可靠闭环：API Key 鉴权、通道选择、OpenAI-compatible 非流式基础调用、日志和扣费。
-- P1 扩展核心矩阵：流式响应、Anthropic/Gemini 入口、主要上游转换和 provider-specific 参数。
+- P0 建立可靠闭环：API Key 鉴权、通道选择、OpenAI-compatible 基础调用、OpenAI Chat 基础 SSE、日志和扣费。
+- P1 扩展核心矩阵：多协议流式响应、Anthropic/Gemini 入口、主要上游转换和 provider-specific 参数。
 - P2 完善高级接口：Images、Audio、Moderations、Responses 深度兼容、企业路由和多层 RouterX。
 
 `routerx` 私有扩展字段用于表达路由偏好和上游扩展参数，真实厂商调用前必须剥离；RouterX-Compatible 上游可以继续透传，并通过 hop 限制避免循环。

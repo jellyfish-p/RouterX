@@ -78,7 +78,7 @@ P0 成功保证：
 
 P0 明确不承诺：
 
-- `stream=true`。
+- Anthropic/Gemini 流式、客户端断开取消和完整流式 usage fallback。
 - 全量 OpenAI Responses、Images、Audio、Embeddings、Moderations。
 - Anthropic/Gemini 全量字段无损转换。
 - 自动重试和跨通道流式切换。
@@ -115,7 +115,7 @@ SDK 配置合同：
 | base URL | 指向 RouterX 的 `/v1` 前缀 |
 | API Key | 使用 RouterX 用户 API Key，不使用上游厂商 Key |
 | model | 使用 RouterX 对外模型名，可由通道做模型重写 |
-| stream | P0 使用 `false` 或不传；P1 后按流式契约开启 |
+| stream | OpenAI-compatible Chat 在 OpenAI SSE 形态通道上可设为 `true`；其他协议和通道按 `docs/PROTOCOLS.md` 能力矩阵处理 |
 | timeout | 调用方应设置业务可接受超时，RouterX 也有 `relay.timeout` |
 | retry | P0 调用方可以对本地网络错误和明确可重试错误做保守重试；不要对 400/401/403 盲目重试 |
 
@@ -248,11 +248,11 @@ API Key 是调用 `/v1/*` 的唯一模型调用凭据。User JWT 只用于控制
 
 | HTTP | code 示例 | 调用方动作 |
 |------|-----------|------------|
-| 400 | `invalid_json`、`model_required`、`unsupported_stream` | 修正请求，不重试 |
+| 400 | `invalid_json`、`model_required`、`unsupported_stream` | 修正请求或改用已支持的流式入口，不重试 |
 | 401 | `invalid_api_key` | 更换或重新创建 API Key，不重试 |
 | 403 | `user_disabled`、`route_forbidden` | 联系管理员或调整路由偏好 |
 | 429 | `insufficient_quota`、`rate_limit_exceeded` | 降低并发、等待窗口、充值或调整额度 |
-| 502 | `no_available_channel`、`upstream_secret_error` | 管理员检查通道、模型、密钥和上游 |
+| 502 | `no_available_channel`、`upstream_secret_error`、`unsupported_stream_channel` | 管理员检查通道、模型、密钥、上游和流式能力 |
 | 502/504 | `upstream_5xx`、`upstream_timeout` | 可按业务幂等性和阶段策略保守重试 |
 
 重试建议：
@@ -341,8 +341,8 @@ P0 计费事实：
 
 | 阶段 | 开发者体验承诺 |
 |------|----------------|
-| P0 | OpenAI-compatible Models 和 Chat 非流式闭环；API Key 鉴权；错误、日志和扣费可解释 |
-| P1 | 流式、更多入口协议、主流上游转换、`routerx` 扩展、访问控制、重试熔断和更完整日志，能力等级以 `docs/PROTOCOLS.md` 为准 |
+| P0 | OpenAI-compatible Models 和 Chat 基础闭环；OpenAI Chat 基础 SSE；API Key 鉴权；错误、日志和扣费可解释 |
+| P1 | 多协议流式、更多入口协议、主流上游转换、`routerx` 扩展、访问控制、重试熔断和更完整日志，能力等级以 `docs/PROTOCOLS.md` 为准 |
 | P2 | 高级 API、企业身份、支付运营、高级 API Key 管理、指标告警、审计和 KMS |
 
 阶段原则：
@@ -357,7 +357,7 @@ P0 验收：
 
 - 用 RouterX API Key 可以调用 `/v1/models`。
 - 用 RouterX API Key 可以完成非流式 `/v1/chat/completions`。
-- `stream=true` 返回明确错误，不调用上游。
+- OpenAI-compatible Chat `stream=true` 命中 OpenAI SSE 形态通道时可完成基础流式；未支持的流式协议或通道返回明确错误。
 - 无效 API Key、余额不足、无通道和上游密钥错误都有稳定 code。
 - 成功调用写日志并扣正确余额。
 - 响应、日志和错误不泄露密钥。
