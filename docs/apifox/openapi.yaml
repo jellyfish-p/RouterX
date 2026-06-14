@@ -430,7 +430,7 @@ paths:
     post:
       tags: [User Payment]
       summary: 创建支付订单
-      description: 基础实现；创建本地 pending 订单并保存商品快照，按 payment.order_expire_minutes 生成 expires_at，返回安全 checkout 占位链接。真实 provider 会话、签名回调和入账仍按 docs/PAYMENTS.md 后续契约实现。
+      description: 基础实现；provider 必须已通过 payment.stripe.enabled 或 payment.epay.enabled 启用。创建本地 pending 订单并保存商品快照，按 payment.order_expire_minutes 生成 expires_at，返回安全 checkout 占位链接。真实 provider 会话、签名回调和入账仍按 docs/PAYMENTS.md 后续契约实现。
       security:
         - UserJWT: []
       requestBody:

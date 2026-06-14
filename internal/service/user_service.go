@@ -433,6 +433,13 @@ func (s *UserService) CreatePaymentOrder(userID uint, provider, productID, payTy
 	if err != nil {
 		return nil, err
 	}
+	providerEnabled, err := paymentProviderEnabled(provider)
+	if err != nil {
+		return nil, err
+	}
+	if !providerEnabled {
+		return nil, errors.New("payment provider is disabled")
+	}
 	productID = strings.TrimSpace(productID)
 	if productID == "" {
 		return nil, errors.New("product_id is required")
@@ -474,6 +481,14 @@ func (s *UserService) CreatePaymentOrder(userID uint, provider, productID, payTy
 		return nil, err
 	}
 	return order, nil
+}
+
+func paymentProviderEnabled(provider string) (bool, error) {
+	enabled, err := NewSettingService().GetBool("payment." + provider + ".enabled")
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	return enabled, err
 }
 
 func paymentOrderExpireDuration() (time.Duration, error) {

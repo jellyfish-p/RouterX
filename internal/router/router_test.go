@@ -568,6 +568,16 @@ func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 	if productsResp.Code != http.StatusOK || !strings.Contains(productsResp.Body.String(), `"product_id":"quota_100"`) || !strings.Contains(productsResp.Body.String(), `"quota":120`) {
 		t.Fatalf("user should list enabled payment products, got %d %s", productsResp.Code, productsResp.Body.String())
 	}
+	disabledProviderResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "stripe",
+		"product_id": "quota_100",
+	})
+	if disabledProviderResp.Code != http.StatusBadRequest {
+		t.Fatalf("disabled payment provider should reject new orders, got %d %s", disabledProviderResp.Code, disabledProviderResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
 		"provider":   "stripe",
 		"product_id": "quota_100",
@@ -669,6 +679,9 @@ func TestAdminManagesPaymentProducts(t *testing.T) {
 	if userProducts.Code != http.StatusOK || !strings.Contains(userProducts.Body.String(), `"quota":70`) {
 		t.Fatalf("enabled product should be visible to users, got %d %s", userProducts.Code, userProducts.Body.String())
 	}
+	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
 
 	disableResp := performJSON(r, http.MethodPatch, "/v0/admin/payment/products/"+uintString(createPayload.Data.ID)+"/disable", rootJWT, nil)
 	if disableResp.Code != http.StatusOK {
@@ -724,6 +737,9 @@ func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 		Quota:     100,
 		Enabled:   true,
 	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
 		t.Fatal(err)
 	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
@@ -837,6 +853,9 @@ func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 		Quota:     100,
 		Enabled:   true,
 	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
 		t.Fatal(err)
 	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
