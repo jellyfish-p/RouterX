@@ -286,6 +286,7 @@ func (h *TokenHandler) UpdateScope(c *gin.Context) {
 		IPCIDRs:        req.IPCIDRs,
 		Methods:        req.Methods,
 		DailyQuota:     req.DailyQuota,
+		MonthlyQuota:   req.MonthlyQuota,
 	})
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())

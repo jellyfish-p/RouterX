@@ -34,6 +34,7 @@ var (
 	ErrIPNotAllowed            = errors.New("ip not allowed by api key scope")
 	ErrMethodNotAllowed        = errors.New("method not allowed by api key scope")
 	ErrDailyQuotaExceeded      = errors.New("daily quota exceeded by api key scope")
+	ErrMonthlyQuotaExceeded    = errors.New("monthly quota exceeded by api key scope")
 )
 
 const (
@@ -53,6 +54,7 @@ type TokenScope struct {
 	IPCIDRs        []string `json:"ip_cidrs,omitempty"`        // 来源 IP/CIDR 白名单
 	Methods        []string `json:"methods,omitempty"`         // 请求方法和路径白名单, 如 POST /v1/chat/completions
 	DailyQuota     *int64   `json:"daily_quota,omitempty"`     // 单 Key 每日最大成功消耗额度
+	MonthlyQuota   *int64   `json:"monthly_quota,omitempty"`   // 单 Key 每月最大成功消耗额度
 }
 
 type TokenUsageStats struct {
@@ -332,6 +334,9 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 	if scope.DailyQuota != nil && *scope.DailyQuota < 0 {
 		return nil, errors.New("daily_quota cannot be negative")
 	}
+	if scope.MonthlyQuota != nil && *scope.MonthlyQuota < 0 {
+		return nil, errors.New("monthly_quota cannot be negative")
+	}
 	if err := validateScopeIPCIDRs(scope.IPCIDRs); err != nil {
 		return nil, err
 	}
@@ -514,11 +519,7 @@ func (s *TokenService) CheckDailyQuotaScope(token *model.Token) error {
 	}
 	now := time.Now()
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	var used int64
-	err = internal.DB.Model(&model.Log{}).
-		Where("token_id = ? AND status = ? AND created_at >= ?", token.ID, common.LogStatusSuccess, startOfDay).
-		Select("COALESCE(SUM(quota_used), 0)").
-		Scan(&used).Error
+	used, err := sumSuccessfulTokenQuotaSince(token.ID, startOfDay)
 	if err != nil {
 		return err
 	}
@@ -526,6 +527,41 @@ func (s *TokenService) CheckDailyQuotaScope(token *model.Token) error {
 		return ErrDailyQuotaExceeded
 	}
 	return nil
+}
+
+func (s *TokenService) CheckMonthlyQuotaScope(token *model.Token) error {
+	if token == nil {
+		return ErrInvalidAPIKey
+	}
+	scope, err := ParseTokenScope(token.ScopeJSON)
+	if err != nil {
+		return ErrMonthlyQuotaExceeded
+	}
+	if scope.MonthlyQuota == nil {
+		return nil
+	}
+	if *scope.MonthlyQuota < 0 {
+		return ErrMonthlyQuotaExceeded
+	}
+	now := time.Now()
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	used, err := sumSuccessfulTokenQuotaSince(token.ID, startOfMonth)
+	if err != nil {
+		return err
+	}
+	if used >= *scope.MonthlyQuota {
+		return ErrMonthlyQuotaExceeded
+	}
+	return nil
+}
+
+func sumSuccessfulTokenQuotaSince(tokenID uint, since time.Time) (int64, error) {
+	var used int64
+	err := internal.DB.Model(&model.Log{}).
+		Where("token_id = ? AND status = ? AND created_at >= ?", tokenID, common.LogStatusSuccess, since).
+		Select("COALESCE(SUM(quota_used), 0)").
+		Scan(&used).Error
+	return used, err
 }
 
 func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, clientIP string) {
