@@ -469,6 +469,58 @@ func TestAdminUserManagementAuditLogs(t *testing.T) {
 	}
 }
 
+func TestAdminLogClearWritesAuditLog(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	oldLog := model.Log{
+		UserID:      root.ID,
+		Model:       "audit-log-model",
+		Status:      common.LogStatusSuccess,
+		QuotaUsed:   1,
+		TotalTokens: 1,
+		CreatedAt:   time.Now().AddDate(0, 0, -120),
+	}
+	if err := internal.DB.Create(&oldLog).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().AddDate(0, 0, -90).UTC().Format(time.RFC3339)
+	clearResp := performJSON(r, http.MethodDelete, "/v0/admin/log?before="+url.QueryEscape(before), rootJWT, nil)
+	if clearResp.Code != http.StatusOK {
+		t.Fatalf("clear admin logs failed: %d %s", clearResp.Code, clearResp.Body.String())
+	}
+	var remaining int64
+	if err := internal.DB.Model(&model.Log{}).Where("id = ?", oldLog.ID).Count(&remaining).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("old log should be deleted, remaining=%d", remaining)
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=log", rootJWT, nil)
+	body := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(body, `"action":"log.clear"`) ||
+		!strings.Contains(body, before) {
+		t.Fatalf("admin log clear should write audit log, got %d %s", auditResp.Code, body)
+	}
+}
+
 func TestUserRedeemsRedemCodeOnce(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

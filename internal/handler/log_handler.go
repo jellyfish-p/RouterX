@@ -7,15 +7,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"routerx/internal/common"
 	"routerx/internal/dto"
+	"routerx/internal/model"
 	"routerx/internal/service"
 )
 
 type LogHandler struct {
-	svc *service.LogService
+	svc      *service.LogService
+	auditSvc *service.UserService
 }
 
 func NewLogHandler(svc *service.LogService) *LogHandler {
-	return &LogHandler{svc: svc}
+	return &LogHandler{svc: svc, auditSvc: service.NewUserService()}
 }
 
 // GET /v0/admin/log — 请求日志列表 (Admin 全局视角)
@@ -37,6 +39,11 @@ func (h *LogHandler) AdminList(c *gin.Context) {
 
 // DELETE /v0/admin/log — 清空日志
 func (h *LogHandler) AdminClear(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
 	before, ok := parseQueryTime(c.Query("before"))
 	if !ok {
 		common.FailWithStatus(c, 400, "必须提供 before 时间范围")
@@ -44,6 +51,10 @@ func (h *LogHandler) AdminClear(c *gin.Context) {
 	}
 	if err := h.svc.ClearBefore(before); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordLogAudit(c, operator, "log.clear", logClearAuditSummary(before)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
 		return
 	}
 	common.SuccessMsg(c, "日志已清理")
@@ -150,4 +161,25 @@ func parseQueryTime(value string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+func (h *LogHandler) recordLogAudit(c *gin.Context, operator *model.User, action string, after interface{}) error {
+	return h.auditSvc.RecordAdminAuditLog(service.AdminAuditRecordInput{
+		RequestID:    c.GetString("request_id"),
+		ActorUserID:  operator.ID,
+		ActorRole:    operator.Role,
+		Action:       action,
+		ResourceType: "log",
+		ResourceID:   "admin-log",
+		AfterSummary: auditSummary(after),
+		Result:       "success",
+		IP:           c.ClientIP(),
+		UserAgent:    c.GetHeader("User-Agent"),
+	})
+}
+
+func logClearAuditSummary(before time.Time) map[string]interface{} {
+	return map[string]interface{}{
+		"before": before.UTC().Format(time.RFC3339),
+	}
 }

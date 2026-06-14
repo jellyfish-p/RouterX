@@ -348,6 +348,7 @@ Gemini-compatible 错误示例：
 | `channel.enable` | `PATCH /v0/admin/channel/:id/enable` |
 | `channel.test` | `POST /v0/admin/channel/:id/test` |
 | `channel.fetch_models` | `GET /v0/admin/channel/:id/models` |
+| `log.clear` | `DELETE /v0/admin/log` |
 
 审计摘要只保存脱敏后的变更摘要，不保存完整请求体、支付密钥、JWT secret、API Key 或 provider secret。
 
@@ -422,7 +423,7 @@ Gemini-compatible 错误示例：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/v0/admin/log` | 已实现 | 调用日志列表 |
-| DELETE | `/v0/admin/log` | 基础实现 | 清理日志 |
+| DELETE | `/v0/admin/log` | 基础实现 | 按 `before` 清理日志，成功后写 `log.clear` 管理审计 |
 | GET | `/v0/admin/dashboard` | 基础实现 | 仪表盘统计 |
 | GET | `/v0/admin/setting` | 已实现 | 获取系统设置，仅超级管理员 |
 | PUT | `/v0/admin/setting` | 已实现 | 批量更新系统设置，仅超级管理员，成功后按 key 写管理审计 |
@@ -445,7 +446,7 @@ Gemini-compatible 错误示例：
 
 - 必须支持时间范围。
 - 默认拒绝无条件全表清理。
-- 需要记录管理审计日志。
+- 成功后写 `log.clear` 管理审计，摘要保存本次清理的 `before` 截止时间。
 
 ## 用户端 API
 
