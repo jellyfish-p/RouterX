@@ -64,6 +64,17 @@ type HTTPError struct {
 	Code    string
 }
 
+type channelGroupAccessRule struct {
+	Allow []string `json:"allow"`
+	Deny  []string `json:"deny"`
+}
+
+type channelGroupAccessPolicy struct {
+	allowAll bool
+	allowed  map[string]struct{}
+	denied   map[string]struct{}
+}
+
 var (
 	errInvalidJSONBody       = errors.New("invalid json body")
 	errInvalidMultipartBody  = errors.New("invalid multipart body")
@@ -280,6 +291,10 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
+	candidates, err = s.filterUserChannelGroupAccess(token, candidates, reqInfo.Model, clientIP)
+	if err != nil {
+		return nil, nil, err
+	}
 	candidates, err = s.filterTokenChannelGroupScope(token, candidates, reqInfo.Model, clientIP)
 	if err != nil {
 		return nil, nil, err
@@ -433,6 +448,10 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if err != nil {
 		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
+	}
+	candidates, err = s.filterUserChannelGroupAccess(token, candidates, reqInfo.Model, clientIP)
+	if err != nil {
+		return nil, err
 	}
 	candidates, err = s.filterTokenChannelGroupScope(token, candidates, reqInfo.Model, clientIP)
 	if err != nil {
@@ -1458,6 +1477,169 @@ func (s *RelayService) filterTokenChannelGroupScope(token *model.Token, candidat
 		return nil, s.channelGroupScopeError(token, modelName, clientIP)
 	}
 	return filtered, nil
+}
+
+func (s *RelayService) filterUserChannelGroupAccess(token *model.Token, candidates []model.Channel, modelName, clientIP string) ([]model.Channel, error) {
+	if len(candidates) == 0 {
+		return candidates, nil
+	}
+	policy := s.channelGroupAccessPolicy(token)
+	filtered := make([]model.Channel, 0, len(candidates))
+	for _, candidate := range candidates {
+		if policy.allows(candidate.ChannelGroup) {
+			filtered = append(filtered, candidate)
+		}
+	}
+	if len(filtered) == 0 {
+		_ = s.recordLog(token, nil, modelName, nil, common.LogStatusFailed, 0, "channel group not allowed by user group access", clientIP)
+		return nil, &HTTPError{Status: 403, Message: "channel group is not allowed by user group access", Type: "permission_error", Code: "route_forbidden"}
+	}
+	return filtered, nil
+}
+
+func (s *RelayService) channelGroupAccessPolicy(token *model.Token) channelGroupAccessPolicy {
+	policy := newChannelGroupAccessPolicy(s.defaultUserChannelGroupAccess())
+	overrides := s.userGroupChannelGroupAccess()
+	// 策略合成顺序与 docs/POLICIES.md 一致：默认允许列表先给普通访问范围，再叠加用户分组 allow/deny。
+	for _, key := range userGroupAccessKeys(token) {
+		if rule, ok := overrides[key]; ok {
+			policy.applyAllow(rule.Allow)
+			policy.applyDeny(rule.Deny)
+		}
+	}
+	return policy
+}
+
+func newChannelGroupAccessPolicy(defaultAllowed []string) channelGroupAccessPolicy {
+	policy := channelGroupAccessPolicy{
+		allowed: map[string]struct{}{},
+		denied:  map[string]struct{}{},
+	}
+	policy.applyAllow(defaultAllowed)
+	return policy
+}
+
+func (p *channelGroupAccessPolicy) applyAllow(values []string) {
+	for _, group := range normalizeChannelGroupAccessValues(values) {
+		if group == "*" {
+			p.allowAll = true
+			continue
+		}
+		p.allowed[group] = struct{}{}
+	}
+}
+
+func (p *channelGroupAccessPolicy) applyDeny(values []string) {
+	for _, group := range normalizeChannelGroupAccessValues(values) {
+		p.denied[group] = struct{}{}
+	}
+}
+
+func (p channelGroupAccessPolicy) allows(group string) bool {
+	group = normalizeChannelGroupName(group)
+	if _, ok := p.denied["*"]; ok {
+		return false
+	}
+	if _, ok := p.denied[group]; ok {
+		return false
+	}
+	if p.allowAll {
+		return true
+	}
+	_, ok := p.allowed[group]
+	return ok
+}
+
+func (s *RelayService) defaultUserChannelGroupAccess() []string {
+	fallback := []string{"default"}
+	if s.settingService == nil {
+		return fallback
+	}
+	raw, err := s.settingService.Get("billing.default_user_channel_group_access")
+	if err != nil {
+		return fallback
+	}
+	values, err := parseChannelGroupListSetting(raw)
+	if err != nil {
+		return fallback
+	}
+	return values
+}
+
+func (s *RelayService) userGroupChannelGroupAccess() map[string]channelGroupAccessRule {
+	if s.settingService == nil {
+		return nil
+	}
+	raw, err := s.settingService.Get("billing.user_group_channel_group_access")
+	if err != nil {
+		return nil
+	}
+	var rules map[string]channelGroupAccessRule
+	if err := json.Unmarshal([]byte(raw), &rules); err != nil {
+		return nil
+	}
+	normalized := make(map[string]channelGroupAccessRule, len(rules))
+	for key, rule := range rules {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		normalized[key] = channelGroupAccessRule{
+			Allow: normalizeChannelGroupAccessValues(rule.Allow),
+			Deny:  normalizeChannelGroupAccessValues(rule.Deny),
+		}
+	}
+	return normalized
+}
+
+func parseChannelGroupListSetting(raw string) ([]string, error) {
+	var values []string
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return nil, err
+	}
+	return normalizeChannelGroupAccessValues(values), nil
+}
+
+func normalizeChannelGroupAccessValues(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = normalizeChannelGroupName(value)
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func userGroupAccessKeys(token *model.Token) []string {
+	keys := make([]string, 0, 2)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range keys {
+			if existing == value {
+				return
+			}
+		}
+		keys = append(keys, value)
+	}
+	if token != nil && token.User != nil {
+		if token.User.Group != nil {
+			add(token.User.Group.Name)
+		}
+		if token.User.GroupID != nil && *token.User.GroupID > 0 {
+			add(strconv.FormatUint(uint64(*token.User.GroupID), 10))
+		}
+	}
+	if len(keys) == 0 {
+		add("default")
+	}
+	return keys
 }
 
 func (s *RelayService) enforceTokenChannelGroupValueScope(token *model.Token, channelGroup, modelName, clientIP string) error {

@@ -737,6 +737,7 @@ P0 明确失败：
 | API Key scope 不允许该模型 | 403 | `model_not_allowed` |
 | API Key scope 不允许该 APIType | 403 | `token_forbidden` |
 | API Key scope 不允许该通道分组 | 403 | `route_forbidden` |
+| 用户分组不允许该通道分组 | 403 | `route_forbidden` |
 | API Key scope 不允许该来源 IP | 403 | `token_forbidden` |
 | API Key scope 不允许该方法路径 | 403 | `token_forbidden` |
 | API Key scope 达到日预算 | 429 | `insufficient_quota` |

@@ -1566,7 +1566,7 @@ paths:
         "401":
           $ref: "#/components/responses/OpenAIError"
         "403":
-          description: API Key scope 或访问策略拒绝；模型 allow-list 未命中时 code 为 model_not_allowed，APIType、IP/CIDR 或方法路径 allow-list 未命中时 code 为 token_forbidden，通道分组 allow-list 未命中时 code 为 route_forbidden。
+          description: API Key scope 或访问策略拒绝；模型 allow-list 未命中时 code 为 model_not_allowed，APIType、IP/CIDR 或方法路径 allow-list 未命中时 code 为 token_forbidden，API Key 通道分组 allow-list 或用户分组通道分组访问控制未命中时 code 为 route_forbidden。
           content:
             application/json:
               schema:
@@ -3047,12 +3047,12 @@ components:
         updated_at: { type: string, format: date-time }
     BatchSetSettingsRequest:
       type: object
-      properties:
-        settings:
-          type: object
-          additionalProperties:
-            type: string
-      additionalProperties: true
+      description: 顶层对象为 key/value 字符串映射；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'。
+      additionalProperties:
+        type: string
+      example:
+        billing.default_user_channel_group_access: '["default"]'
+        billing.user_group_channel_group_access: '{"vip":{"allow":["premium"],"deny":["experimental"]}}'
     ChatCompletionRequest:
       type: object
       required: [model, messages]

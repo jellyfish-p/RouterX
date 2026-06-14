@@ -244,6 +244,10 @@ func validateSettingValue(key, value string) error {
 		if err != nil || ratio <= 0 {
 			return errors.New("billing.default_ratio must be a positive number")
 		}
+	case "billing.default_user_channel_group_access":
+		return validateStringArrayJSONSetting(key, value)
+	case "billing.user_group_channel_group_access":
+		return validateChannelGroupAccessSetting(key, value)
 	case "payment.currency":
 		if len(value) != 3 {
 			return errors.New("payment.currency must be a 3-letter currency code")
@@ -294,6 +298,40 @@ func validateNonNegativeIntSetting(key, value string) error {
 	n, err := strconv.Atoi(value)
 	if err != nil || n < 0 {
 		return errors.New(key + " must be a non-negative integer")
+	}
+	return nil
+}
+
+func validateStringArrayJSONSetting(key, value string) error {
+	var values []string
+	if err := json.Unmarshal([]byte(value), &values); err != nil {
+		return errors.New(key + " must be a JSON string array")
+	}
+	for _, item := range values {
+		if strings.TrimSpace(item) == "" {
+			return errors.New(key + " cannot contain empty values")
+		}
+	}
+	return nil
+}
+
+func validateChannelGroupAccessSetting(key, value string) error {
+	var rules map[string]struct {
+		Allow []string `json:"allow"`
+		Deny  []string `json:"deny"`
+	}
+	if err := json.Unmarshal([]byte(value), &rules); err != nil {
+		return errors.New(key + " must be a JSON object")
+	}
+	for group, rule := range rules {
+		if strings.TrimSpace(group) == "" {
+			return errors.New(key + " cannot contain empty user group keys")
+		}
+		for _, item := range append(rule.Allow, rule.Deny...) {
+			if strings.TrimSpace(item) == "" {
+				return errors.New(key + " cannot contain empty channel groups")
+			}
+		}
 	}
 	return nil
 }

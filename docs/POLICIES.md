@@ -30,7 +30,7 @@
 - API Key scope 已支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list 和 `daily_quota` 日预算，未命中或达到上限时在上游调用前返回 `model_not_allowed`、`token_forbidden`、`route_forbidden` 或 `insufficient_quota` 并写失败日志。
 - 通道选择会过滤禁用通道、模型不匹配通道、错误计数过高通道和不可用 Adapter。
 - 通道候选按 `priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC` 排序，并在最高 priority 组内按 `weight` 加权选择。
-- 通道已具备 `channel_group` 字段并可被 API Key scope 收窄；完整的用户分组访问控制、API Key 月预算/并发 scope 和策略快照仍属于目标增强。
+- 通道已具备 `channel_group` 字段，新通道默认写入 `default`；Relay 已按 `billing.default_user_channel_group_access` 和 `billing.user_group_channel_group_access` 在候选阶段过滤用户可访问通道分组。API Key 月预算/并发 scope 和完整策略快照仍属于目标增强。
 - Redis 限流已有全局、Token 和 IP 维度的基础设置与执行路径；阈值来自 `rate_limit.*`，`0` 表示关闭对应维度。
 
 因此，本文档中的 P1/P2 策略能力是对现有 P0 闭环的增强，不应破坏当前开箱路径。
@@ -90,7 +90,7 @@
 P0 默认策略应偏向开箱成功：
 
 - 已初始化实例默认允许超级管理员创建通道和 API Key 后完成首次调用。
-- 未配置用户分组访问控制时，启用且模型匹配的通道可以成为候选。
+- 默认 settings 允许普通用户访问 `default` 通道分组；新通道默认写入 `default`，因此开箱路径仍可用。
 - 未配置 API Key scope 时，API Key 继承所属用户和系统策略。
 - 未配置复杂价格规则时，按 P0 usage 或最低计费规则结算。
 - 未配置 `routerx.route` 时，系统按通道 priority 和 weight 自动选择。
@@ -266,7 +266,7 @@ access allowed
 
 ### P1 验收
 
-- 用户分组和通道分组访问控制可配置、可验证、可审计。
+- 用户分组和通道分组访问控制已可通过 settings 配置、验证和审计；完整调用快照仍需补齐。
 - API Key scope 已支持模型、APIType、通道分组、IP/CIDR、方法路径和日预算收窄；协议入口、月预算和并发收窄仍需补齐。
 - `routerx.route` 合法、忽略、越权和无候选路径都有稳定行为和日志摘要。
 - 计费倍率和访问控制分别快照，历史账单可解释。
@@ -286,7 +286,7 @@ access allowed
 |------|------|
 | 默认开箱 | 不配置高级策略也能完成首次调用。 |
 | API Key scope 收窄 | 允许模型/APIType/通道分组/IP/方法路径和未达日预算请求成功；未允许模型、APIType、通道分组、IP、方法路径或达到日预算时拒绝且不调用上游。 |
-| 用户分组访问 | 用户只能访问允许的通道分组。 |
+| 用户分组访问 | `TestUserGroupChannelGroupAccessFiltersRelayCandidates` 覆盖默认用户只能访问允许的通道分组，越权路由偏好不调用上游。 |
 | deny 优先 | 同时命中 allow 和 deny 时拒绝。 |
 | `routerx.route` 合法 | 在允许候选集中继续收窄。 |
 | `routerx.route` 越权 | 返回 403 或入口协议兼容权限错误，不调用上游。 |

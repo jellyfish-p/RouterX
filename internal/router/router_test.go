@@ -1973,6 +1973,8 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"observability.request_id_header",
 		"ready.production_strict",
 		"billing.bootstrap_admin_quota",
+		"billing.default_user_channel_group_access",
+		"billing.user_group_channel_group_access",
 		"payment.stripe.enabled",
 		"payment.epay.enabled",
 		"payment.epay.gateway",
@@ -2172,6 +2174,18 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badEpayGateway.Code != http.StatusBadRequest {
 		t.Fatalf("invalid payment.epay.gateway should be rejected, got %d %s", badEpayGateway.Code, badEpayGateway.Body.String())
+	}
+	badDefaultAccess := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"billing.default_user_channel_group_access": `"default"`,
+	})
+	if badDefaultAccess.Code != http.StatusBadRequest {
+		t.Fatalf("default channel group access must be a JSON array, got %d %s", badDefaultAccess.Code, badDefaultAccess.Body.String())
+	}
+	badGroupAccess := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"billing.user_group_channel_group_access": `{"vip":{"allow":[""]}}`,
+	})
+	if badGroupAccess.Code != http.StatusBadRequest {
+		t.Fatalf("user group channel group access should reject empty channel groups, got %d %s", badGroupAccess.Code, badGroupAccess.Body.String())
 	}
 
 	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
@@ -3476,6 +3490,9 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := service.NewSettingService().Set("billing.default_user_channel_group_access", `["free","paid"]`); err != nil {
+		t.Fatal(err)
+	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
 		"name":         "route",
 		"remain_quota": 50,
@@ -3553,6 +3570,100 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 	}
 	if paidCalls != 1 || freeCalls != 1 {
 		t.Fatalf("invalid or empty route results must not call upstream, paid=%d free=%d", paidCalls, freeCalls)
+	}
+}
+
+func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	defaultCalls := 0
+	paidCalls := 0
+	upstreamHandler := func(label string, calls *int) http.HandlerFunc {
+		return func(w http.ResponseWriter, req *http.Request) {
+			*calls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-access-` + label + `","object":"chat.completion","model":"gpt-access","choices":[{"index":0,"message":{"role":"assistant","content":"` + label + `"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		}
+	}
+	defaultUpstream := httptest.NewServer(upstreamHandler("default", &defaultCalls))
+	defer defaultUpstream.Close()
+	paidUpstream := httptest.NewServer(upstreamHandler("paid", &paidCalls))
+	defer paidUpstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "group-access",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	createChannel := func(name, group, baseURL string, priority int) {
+		t.Helper()
+		resp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+			"type":     common.ChannelTypeOpenAICompat,
+			"name":     name,
+			"models":   "gpt-access",
+			"base_url": baseURL,
+			"api_key":  "upstream-secret-" + name,
+			"group":    group,
+			"priority": priority,
+		})
+		if resp.Code != http.StatusOK {
+			t.Fatalf("create %s channel failed: %d %s", name, resp.Code, resp.Body.String())
+		}
+	}
+	createChannel("paid", "paid", paidUpstream.URL, 50)
+	createChannel("default", "default", defaultUpstream.URL, 1)
+
+	chat := func(routerx interface{}) *httptest.ResponseRecorder {
+		body := map[string]interface{}{
+			"model": "gpt-access",
+			"messages": []map[string]string{
+				{"role": "user", "content": "hello"},
+			},
+		}
+		if routerx != nil {
+			body["routerx"] = routerx
+		}
+		return performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	}
+
+	defaultResp := chat(nil)
+	if defaultResp.Code != http.StatusOK || !strings.Contains(defaultResp.Body.String(), "default") {
+		t.Fatalf("default user group should only use default channel group, got %d %s", defaultResp.Code, defaultResp.Body.String())
+	}
+	if defaultCalls != 1 || paidCalls != 0 {
+		t.Fatalf("user group access should filter higher-priority paid channel, default=%d paid=%d", defaultCalls, paidCalls)
+	}
+
+	paidResp := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": "paid"}})
+	if paidResp.Code != http.StatusForbidden || !strings.Contains(paidResp.Body.String(), `"code":"route_forbidden"`) {
+		t.Fatalf("route to forbidden channel group should fail before upstream, got %d %s", paidResp.Code, paidResp.Body.String())
+	}
+	if defaultCalls != 1 || paidCalls != 0 {
+		t.Fatalf("forbidden user group route must not call upstream, default=%d paid=%d", defaultCalls, paidCalls)
 	}
 }
 
@@ -3734,6 +3845,9 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	}
 	rootJWT := loginBearer(t, r, "root", "password123")
 	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("billing.default_user_channel_group_access", `["paid"]`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -4083,6 +4197,9 @@ func TestAPIKeyChannelGroupScopeFiltersRelayCandidates(t *testing.T) {
 	}
 	rootJWT := loginBearer(t, r, "root", "password123")
 	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("billing.default_user_channel_group_access", `["cheap","premium"]`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -5105,6 +5222,9 @@ func TestImageMultipartPassthroughUsesRouteAndMinimumCharge(t *testing.T) {
 			if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
 				t.Fatal(err)
 			}
+			if err := service.NewSettingService().Set("billing.default_user_channel_group_access", `["free","paid"]`); err != nil {
+				t.Fatal(err)
+			}
 			tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
 				"name":         "image-" + tc.name,
 				"remain_quota": 50,
@@ -5390,6 +5510,9 @@ func TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge(t *tes
 	}
 	rootJWT := loginBearer(t, r, "root", "password123")
 	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("billing.default_user_channel_group_access", `["free","paid"]`); err != nil {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{

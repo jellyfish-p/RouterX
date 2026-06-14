@@ -17,7 +17,7 @@
 - 支持通道/模型分组默认普通用户可用白名单数组配置。
 - 支持用户分组倍率。
 - 支持用户分组在使用指定通道分组时设置独立额外倍率、折扣或加价。
-- 支持指定用户分组通过系统配置额外启用或禁用通道/模型分组。
+- 支持指定用户分组通过系统配置额外允许或拒绝通道/模型分组。
 - 支持调用日志和账单统计一致。
 - 支持下游未返回 usage 时估算。
 - 支持后台配置计费规则和预扣 token 量。
@@ -27,7 +27,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减和用户账单统计接口。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；完整的价格表达式、规则版本、访问控制快照、支付订单和支付事件仍属于目标增强。
+当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口，以及基于 settings 的用户分组 x 通道分组访问控制。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；完整的价格表达式、规则版本、访问控制快照、支付争议和更多事件仍属于目标增强。
 
 文档中的 `model_prices`、`channel_model_prices`、`billing_*_snapshot` 等字段是商业级目标设计，不应误读为当前迁移已经全部存在。实现时应按阶段先保证 P0 基础日志和扣费一致，再补 P1 价格规则和快照。调用事实快照的统一字段、脱敏和测试要求以 `docs/SNAPSHOTS.md` 为准。
 
@@ -72,7 +72,7 @@ QuotaPerUnit = 100000000
 | `settings` | `billing.channel_group_ratios` / `billing.model_group_ratios` | 通道/模型分组倍率 JSON 配置 |
 | `settings` | `billing.default_user_channel_group_access` | 默认普通用户可用通道/模型分组白名单数组配置 |
 | `settings` | `billing.user_group_channel_ratios` | 用户分组 x 通道/模型分组额外倍率 JSON 配置 |
-| `settings` | `billing.user_group_channel_group_access` | 用户分组额外启用/禁用通道/模型分组 JSON 配置 |
+| `settings` | `billing.user_group_channel_group_access` | 用户分组额外允许/拒绝通道/模型分组 JSON 配置 |
 | `logs` | `prompt_tokens` | 输入 token 数 |
 | `logs` | `completion_tokens` | 输出 token 数 |
 | `logs` | `total_tokens` | 总 token 数 |
@@ -249,7 +249,7 @@ P0 扣费顺序：
 | `billing.channel_group_ratios` / `billing.model_group_ratios` | 通道/模型分组倍率，例如 `{ "premium": 1.2, "default": 1 }` |
 | `billing.user_group_channel_ratios` | 用户分组 x 通道/模型分组额外倍率，例如 `{ "vip": { "premium": 0.9 } }` |
 | `billing.default_user_channel_group_access` | 默认普通用户可用通道/模型分组白名单数组，例如 `["default", "standard"]` |
-| `billing.user_group_channel_group_access` | 用户分组额外启用/禁用通道/模型分组，例如 `{ "vip": { "enable": ["premium"], "disable": ["experimental"] }}` |
+| `billing.user_group_channel_group_access` | 用户分组额外允许/拒绝通道/模型分组，例如 `{ "vip": { "allow": ["premium"], "deny": ["experimental"] }}` |
 
 倍率配置从 `settings.value` 读取，不再维护为 `groups.ratio`、`channel_groups.ratio` 或 `user_group_channel_ratios.ratio` 等独立 SQL 列，除非未来实现明确选择该 schema。
 
@@ -266,9 +266,9 @@ if channel_model_prices.user_enabled == false:
     普通用户请求拒绝或跳过该通道模型
 
 access = settings["billing.user_group_channel_group_access"][user_group]
-if channel_group in access.disable:
+if channel_group in access.deny:
     拒绝或跳过该通道/模型分组
-else if channel_group in access.enable:
+else if channel_group in access.allow:
     额外允许该通道/模型分组
 else if channel_group in settings["billing.default_user_channel_group_access"]:
     默认普通用户允许该通道/模型分组
@@ -280,9 +280,9 @@ else:
 
 - `channel_model_prices.user_enabled` 控制某个通道下某个模型是否允许普通用户使用，不影响管理员测试、内部任务或后台显式授权流程。
 - `billing.default_user_channel_group_access` 控制普通用户默认可用的通道/模型分组，使用数组表达，是默认白名单。
-- `billing.user_group_channel_group_access` 只控制指定用户分组对通道/模型分组的额外启用或禁用，不参与价格表达式，也不参与倍率计算。
-- 默认白名单和用户分组配置都命中时，用户分组配置优先；用户分组配置中同时命中 `enable` 和 `disable` 时，`disable` 优先。
-- 未配置用户分组访问覆盖时，按默认白名单判断；未配置默认白名单时，不额外限制默认可用性。
+- `billing.user_group_channel_group_access` 只控制指定用户分组对通道/模型分组的额外允许或拒绝，不参与价格表达式，也不参与倍率计算。
+- 默认白名单和用户分组配置都命中时，用户分组配置继续合成；用户分组配置中同时命中 `allow` 和 `deny` 时，`deny` 优先。
+- 未配置用户分组访问覆盖时，按默认白名单判断；默认白名单缺失或格式非法时，服务端回退到 `["default"]`，避免静默放开全部通道分组。
 - 最终日志应记录 `access_rule_snapshot`，便于审计为什么某次请求可以或不可以使用某个通道分组。
 
 ### 计费规则层级与优先级
@@ -295,7 +295,7 @@ else:
 | 2 | 系统模型价格 | 全局表达式、价格模式、`unit_tokens`、版本和启用状态 | 存储在 `model_prices` |
 | 3 | 通道模型普通用户可用性 | 普通用户是否可以使用指定通道模型 | 存储在 `channel_model_prices.user_enabled`；不是价格表达式的一部分 |
 | 4 | 默认普通用户通道/模型分组可用性 | 普通用户默认可用的通道/模型分组白名单数组 | 从 `settings.value` 的 `billing.default_user_channel_group_access` 读取；不是价格表达式的一部分 |
-| 5 | 用户分组通道/模型分组访问覆盖 | 指定用户分组额外启用或禁用通道/模型分组 | 从 `settings.value` 的 `billing.user_group_channel_group_access` 读取；不是价格表达式的一部分 |
+| 5 | 用户分组通道/模型分组访问覆盖 | 指定用户分组额外允许或拒绝通道/模型分组 | 从 `settings.value` 的 `billing.user_group_channel_group_access` 读取；不是价格表达式的一部分 |
 | 6 | 用户分组倍率 | 用户分组倍率 | 从 `settings.value` 的 `billing.user_group_ratios` 读取；不是价格表达式的一部分 |
 | 7 | 通道/模型分组倍率 | 通道/模型分组倍率 | 从 `settings.value` 的 `billing.channel_group_ratios` 或 `billing.model_group_ratios` 读取；不是价格表达式的一部分 |
 | 8 | 用户分组 x 通道/模型分组倍率 | 指定用户分组使用指定通道/模型分组时的额外倍率 | 从 `settings.value` 的 `billing.user_group_channel_ratios` 读取；不是价格表达式的一部分 |

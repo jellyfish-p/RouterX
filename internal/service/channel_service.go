@@ -338,7 +338,7 @@ func normalizeChannel(channel *model.Channel, creating bool) error {
 	channel.Models = normalizeModels(channel.Models)
 	channel.BaseURL = normalizeBaseURL(channel.BaseURL, channel.Type)
 	channel.KeySelectionMode = normalizeKeySelectionMode(channel.KeySelectionMode)
-	channel.ChannelGroup = strings.TrimSpace(channel.ChannelGroup)
+	channel.ChannelGroup = normalizeChannelGroupName(channel.ChannelGroup)
 	channel.BaseURLs = normalizeStringSliceJSON(channel.BaseURLs, true)
 	channel.APIKeys = normalizeStringSliceJSON(channel.APIKeys, false)
 	channel.Upstreams = normalizeUpstreamsJSON(channel.Upstreams)
@@ -412,7 +412,7 @@ func normalizeUpdateValues(updates map[string]interface{}) error {
 		updates["model_rewrites"] = normalizeJSONObject(v)
 	}
 	if v, ok := updates["channel_group"].(string); ok {
-		updates["channel_group"] = strings.TrimSpace(v)
+		updates["channel_group"] = normalizeChannelGroupName(v)
 	}
 	if v, ok := updates["upstream_options"].(model.JSONValue); ok {
 		updates["upstream_options"] = normalizeJSONObject(v)
@@ -562,6 +562,14 @@ func normalizeBaseURL(baseURL string, channelType int) string {
 	default:
 		return baseURL
 	}
+}
+
+func normalizeChannelGroupName(group string) string {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return "default"
+	}
+	return group
 }
 
 func normalizeKeySelectionMode(mode string) string {

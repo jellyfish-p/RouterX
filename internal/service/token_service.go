@@ -91,10 +91,10 @@ func (s *TokenService) ValidateAndGetToken(key string) (*model.Token, error) {
 
 	hash := common.SHA256Hex(key)
 	var token model.Token
-	err := internal.DB.Preload("User").Where("key = ?", hash).First(&token).Error
+	err := internal.DB.Preload("User").Preload("User.Group").Where("key = ?", hash).First(&token).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// 兼容早期明文存量，验证成功后迁移为 hash。
-		err = internal.DB.Preload("User").Where("key = ?", key).First(&token).Error
+		err = internal.DB.Preload("User").Preload("User.Group").Where("key = ?", key).First(&token).Error
 		if err == nil {
 			_ = internal.DB.Model(&token).Update("key", hash).Error
 			token.Key = hash

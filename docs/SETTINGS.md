@@ -109,8 +109,8 @@ P0 补齐这些配置时，应同时补测试：
 | `billing.channel_group_ratios` | `{}` | P1 | 通道分组倍率 |
 | `billing.model_group_ratios` | `{}` | P1 | 模型分组倍率；如实现统一使用 `channel_group`，保持术语一致 |
 | `billing.user_group_channel_ratios` | `{}` | P1 | 用户分组 x 通道/模型分组额外倍率 |
-| `billing.default_user_channel_group_access` | `["default"]` | P1 | 普通用户默认可用通道分组白名单 |
-| `billing.user_group_channel_group_access` | `{}` | P1 | 用户分组对通道分组的额外启用或禁用 |
+| `billing.default_user_channel_group_access` | `["default"]` | P1 | 当前已落地；普通用户默认可用通道分组白名单，必须是 JSON 字符串数组 |
+| `billing.user_group_channel_group_access` | `{}` | P1 | 当前已落地；用户分组对通道分组的额外 `allow`/`deny` JSON 对象 |
 | `billing.usage_missing_strategy` | `minimum` | P1 | usage 缺失时使用最低计费、估算或拒绝 |
 
 ### Relay

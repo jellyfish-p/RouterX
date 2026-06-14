@@ -27,6 +27,7 @@
 | `TestAPIKeyModelScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `allow_models` scope；允许模型成功转发，未允许模型返回 `model_not_allowed`，不调用上游、不额外扣费，并写失败日志和 `api_key.scope_updated` 审计 |
 | `TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `api_types` scope；允许 APIType 成功转发，未允许 APIType 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志 |
 | `TestAPIKeyChannelGroupScopeFiltersRelayCandidates` | 用户更新 API Key `channel_groups` scope；候选通道按允许分组过滤，越权 `routerx.route` 返回 `route_forbidden`，不调用上游、不额外扣费，并写失败日志 |
+| `TestUserGroupChannelGroupAccessFiltersRelayCandidates` | 默认用户分组只能访问 settings 允许的通道分组；更高优先级的未授权通道会被过滤，越权 `routerx.route` 返回 `route_forbidden` 且不调用上游 |
 | `TestAPIKeyIPScopeRejectsBeforeRelay` | 用户更新 API Key `ip_cidrs` scope；允许 IP 成功转发，未允许 IP 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志 |
 | `TestAPIKeyMethodScopeRejectsBeforeRelay` | 用户更新 API Key `methods` scope；允许方法路径成功转发，未允许方法路径返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志 |
 | `TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed` | 用户更新 API Key `daily_quota` scope；当日成功日志已消耗额度达到上限后返回 `insufficient_quota`，不调用上游、不额外扣费，并写失败日志 |

@@ -175,8 +175,10 @@ func buildDefaultSettings() map[string]map[string]string {
 			"relay.log_body_max_bytes":  "0",
 		},
 		"billing": {
-			"billing.default_ratio":         "1.0",
-			"billing.bootstrap_admin_quota": "100000000",
+			"billing.default_ratio":                     "1.0",
+			"billing.bootstrap_admin_quota":             "100000000",
+			"billing.default_user_channel_group_access": `["default"]`,
+			"billing.user_group_channel_group_access":   `{}`,
 		},
 		"payment": {
 			"payment.stripe.enabled":                "false",
