@@ -1007,6 +1007,104 @@ func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 	}
 }
 
+func TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_refund",
+		Name:      "Refundable credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	firstOrder := createStripePaidOrder(t, r, rootJWT, "quota_refund", "evt_paid_refund_1", "pi_refund_1")
+	refundBody := stripeChargeRefundedPayload("evt_refund_1", firstOrder, "pi_refund_1", 999)
+	refundResp := performStripeWebhook(r, refundBody, "whsec_test_secret")
+	if refundResp.Code != http.StatusOK || strings.TrimSpace(refundResp.Body.String()) != "success" {
+		t.Fatalf("stripe refund webhook should return success, got %d %s", refundResp.Code, refundResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("refund with auto_deduct=false should not deduct quota, got %d", root.Quota)
+	}
+	if err := internal.DB.First(&firstOrder, firstOrder.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if firstOrder.Status != common.PaymentOrderStatusRefunded {
+		t.Fatalf("refund should mark order refunded, got %+v", firstOrder)
+	}
+	var refundTxCount int64
+	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("type = ? AND source_id = ?", common.QuotaTransactionTypeRefundDeduct, "evt_refund_1").Count(&refundTxCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refundTxCount != 0 {
+		t.Fatalf("refund with auto_deduct=false should not write refund deduct transaction, got %d", refundTxCount)
+	}
+
+	if err := settingSvc.Set("payment.refund.auto_deduct", "true"); err != nil {
+		t.Fatal(err)
+	}
+	secondOrder := createStripePaidOrder(t, r, rootJWT, "quota_refund", "evt_paid_refund_2", "pi_refund_2")
+	refundDeductBody := stripeChargeRefundedPayload("evt_refund_2", secondOrder, "pi_refund_2", 999)
+	deductResp := performStripeWebhook(r, refundDeductBody, "whsec_test_secret")
+	if deductResp.Code != http.StatusOK || strings.TrimSpace(deductResp.Body.String()) != "success" {
+		t.Fatalf("stripe refund auto deduct should return success, got %d %s", deductResp.Code, deductResp.Body.String())
+	}
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("second refund should deduct the second grant once, got %d", root.Quota)
+	}
+	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("type = ? AND source_id = ?", common.QuotaTransactionTypeRefundDeduct, "evt_refund_2").Count(&refundTxCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refundTxCount != 1 {
+		t.Fatalf("refund auto deduct should write one refund deduct transaction, got %d", refundTxCount)
+	}
+	duplicateRefund := performStripeWebhook(r, refundDeductBody, "whsec_test_secret")
+	if duplicateRefund.Code != http.StatusOK || strings.TrimSpace(duplicateRefund.Body.String()) != "success" {
+		t.Fatalf("duplicate stripe refund should return success, got %d %s", duplicateRefund.Code, duplicateRefund.Body.String())
+	}
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("duplicate refund must not deduct quota twice, got %d", root.Quota)
+	}
+	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("type = ? AND source_id = ?", common.QuotaTransactionTypeRefundDeduct, "evt_refund_2").Count(&refundTxCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refundTxCount != 1 {
+		t.Fatalf("duplicate refund must not write duplicate refund transaction, got %d", refundTxCount)
+	}
+}
+
 func TestChannelExtendedManagement(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -1125,6 +1223,8 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"payment.epay.return_url",
 		"payment.currency",
 		"payment.order_expire_minutes",
+		"payment.refund.auto_deduct",
+		"payment.refund.allow_negative_balance",
 	} {
 		var count int64
 		if err := internal.DB.Model(&model.Setting{}).Where("key = ?", key).Count(&count).Error; err != nil {
@@ -5136,6 +5236,54 @@ func stripeCheckoutCompletedPayload(eventID string, order *model.PaymentOrder, u
 		},
 	})
 	return string(raw)
+}
+
+func stripeChargeRefundedPayload(eventID string, order model.PaymentOrder, paymentIntent string, amountRefunded int64) string {
+	raw, _ := json.Marshal(map[string]interface{}{
+		"id":   eventID,
+		"type": "charge.refunded",
+		"data": map[string]interface{}{
+			"object": map[string]interface{}{
+				"id":              "ch_" + paymentIntent,
+				"amount_refunded": amountRefunded,
+				"amount":          amountRefunded,
+				"currency":        order.Currency,
+				"payment_intent":  paymentIntent,
+				"metadata": map[string]string{
+					"order_no": order.OrderNo,
+				},
+			},
+		},
+	})
+	return string(raw)
+}
+
+func createStripePaidOrder(t *testing.T, r http.Handler, bearer, productID, eventID, paymentIntent string) model.PaymentOrder {
+	t.Helper()
+	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", bearer, map[string]interface{}{
+		"provider":   "stripe",
+		"product_id": productID,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create stripe order failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("user_id = ? AND provider = ? AND status = ?", root.ID, common.PaymentProviderStripe, common.PaymentOrderStatusPending).Order("id DESC").First(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	successBody := stripeCheckoutCompletedPayload(eventID, &order, root.ID, 999, paymentIntent)
+	payResp := performStripeWebhook(r, successBody, "whsec_test_secret")
+	if payResp.Code != http.StatusOK || strings.TrimSpace(payResp.Body.String()) != "success" {
+		t.Fatalf("pay stripe order failed: %d %s", payResp.Code, payResp.Body.String())
+	}
+	if err := internal.DB.First(&order, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	return order
 }
 
 func loginBearer(t *testing.T, r http.Handler, account, password string) string {

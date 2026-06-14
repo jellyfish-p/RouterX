@@ -19,6 +19,7 @@ type quotaChange struct {
 	Reason         string
 	ActorUserID    *uint
 	RequestID      string
+	AllowNegative  bool
 }
 
 func applyQuotaChange(tx *gorm.DB, change quotaChange) (int64, int64, error) {
@@ -31,7 +32,7 @@ func applyQuotaChange(tx *gorm.DB, change quotaChange) (int64, int64, error) {
 		return 0, 0, err
 	}
 	balanceBefore := user.Quota
-	if change.Amount < 0 && balanceBefore < -change.Amount {
+	if change.Amount < 0 && !change.AllowNegative && balanceBefore < -change.Amount {
 		return 0, 0, errors.New("insufficient user quota")
 	}
 	balanceAfter := balanceBefore + change.Amount

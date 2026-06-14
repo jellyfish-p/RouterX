@@ -711,12 +711,14 @@ type stripeWebhookEvent struct {
 }
 
 type stripeCheckoutSession struct {
-	ID            string            `json:"id"`
-	Metadata      map[string]string `json:"metadata"`
-	AmountTotal   int64             `json:"amount_total"`
-	Currency      string            `json:"currency"`
-	PaymentStatus string            `json:"payment_status"`
-	PaymentIntent string            `json:"payment_intent"`
+	ID             string            `json:"id"`
+	Metadata       map[string]string `json:"metadata"`
+	Amount         int64             `json:"amount"`
+	AmountTotal    int64             `json:"amount_total"`
+	AmountRefunded int64             `json:"amount_refunded"`
+	Currency       string            `json:"currency"`
+	PaymentStatus  string            `json:"payment_status"`
+	PaymentIntent  string            `json:"payment_intent"`
 }
 
 // ProcessStripeWebhook 验证 Stripe 原始签名，并在可信 Checkout 成功事件中幂等入账。
@@ -760,6 +762,9 @@ func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestI
 		}
 		if err := tx.Create(&paymentEvent).Error; err != nil {
 			return err
+		}
+		if event.Type == "charge.refunded" {
+			return processStripeRefund(tx, &paymentEvent, session, requestID)
 		}
 		if event.Type != "checkout.session.completed" || !stripeCheckoutSucceeded(session) {
 			now := time.Now()
@@ -814,6 +819,76 @@ func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestI
 		}
 		return tx.Model(&paymentEvent).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
 	})
+}
+
+func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeCheckoutSession, requestID string) error {
+	orderNo := strings.TrimSpace(session.Metadata["order_no"])
+	paymentIntent := strings.TrimSpace(session.PaymentIntent)
+	if orderNo == "" && paymentIntent == "" {
+		return errors.New("stripe refund missing order reference")
+	}
+	query := tx.Where("provider = ?", common.PaymentProviderStripe)
+	if orderNo != "" {
+		query = query.Where("order_no = ?", orderNo)
+	} else {
+		query = query.Where("provider_payment_id = ?", paymentIntent)
+	}
+	var order model.PaymentOrder
+	if err := query.First(&order).Error; err != nil {
+		return err
+	}
+	if err := verifyStripeRefundSnapshot(order, session); err != nil {
+		return err
+	}
+
+	now := time.Now()
+	eventUpdates := map[string]interface{}{"processed": true, "processed_at": &now}
+	if event.OrderNo == "" {
+		eventUpdates["order_no"] = order.OrderNo
+	}
+	if order.Status == common.PaymentOrderStatusRefunded {
+		return tx.Model(event).Updates(eventUpdates).Error
+	}
+	if order.Status != common.PaymentOrderStatusPaid {
+		return errors.New("payment order is not paid")
+	}
+	if err := tx.Model(&order).Updates(map[string]interface{}{
+		"status":     common.PaymentOrderStatusRefunded,
+		"updated_at": now,
+	}).Error; err != nil {
+		return err
+	}
+
+	autoDeduct, err := paymentBoolSettingDefault("payment.refund.auto_deduct", false)
+	if err != nil {
+		return err
+	}
+	allowNegative, err := paymentBoolSettingDefault("payment.refund.allow_negative_balance", false)
+	if err != nil {
+		return err
+	}
+	if autoDeduct {
+		var user model.User
+		if err := tx.Select("id", "quota").First(&user, order.UserID).Error; err != nil {
+			return err
+		}
+		if allowNegative || user.Quota >= order.Quota {
+			if _, _, err := applyQuotaChange(tx, quotaChange{
+				UserID:         order.UserID,
+				Amount:         -order.Quota,
+				Type:           common.QuotaTransactionTypeRefundDeduct,
+				SourceType:     common.QuotaSourceTypeRefund,
+				SourceID:       event.ProviderEventID,
+				IdempotencyKey: "refund:" + event.ProviderEventID,
+				Reason:         "stripe refund deduct",
+				RequestID:      requestID,
+				AllowNegative:  allowNegative,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Model(event).Updates(eventUpdates).Error
 }
 
 func verifyStripeSignature(raw []byte, signatureHeader, secret string) bool {
@@ -885,6 +960,32 @@ func verifyStripeOrderSnapshot(order model.PaymentOrder, session stripeCheckoutS
 		}
 	}
 	return nil
+}
+
+func verifyStripeRefundSnapshot(order model.PaymentOrder, session stripeCheckoutSession) error {
+	expectedAmount, err := decimalAmountToMinorUnits(order.Amount)
+	if err != nil {
+		return err
+	}
+	refundedAmount := session.AmountRefunded
+	if refundedAmount == 0 {
+		refundedAmount = session.Amount
+	}
+	if expectedAmount != refundedAmount {
+		return errors.New("stripe refund amount mismatch")
+	}
+	if strings.ToLower(strings.TrimSpace(order.Currency)) != strings.ToLower(strings.TrimSpace(session.Currency)) {
+		return errors.New("stripe refund currency mismatch")
+	}
+	return nil
+}
+
+func paymentBoolSettingDefault(key string, fallback bool) (bool, error) {
+	value, err := NewSettingService().GetBool(key)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return fallback, nil
+	}
+	return value, err
 }
 
 func decimalAmountToMinorUnits(amount string) (int64, error) {

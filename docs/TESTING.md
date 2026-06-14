@@ -31,6 +31,7 @@
 | `TestEpayOrderBuildsSignedCheckoutURL` | 易支付网关配置齐全时创建订单返回签名收银台 URL，参数和签名可复核 |
 | `TestEpayNotifyPaysOrderIdempotently` | 易支付同步返回只读展示本地状态；异步通知校验签名和金额，成功通知订单 paid 并入账，重复通知不重复增加额度或流水 |
 | `TestStripeWebhookPaysOrderIdempotently` | Stripe webhook 校验原始 body 签名、Checkout Session 金额和 metadata，成功事件 paid 入账且重复事件不重复流水 |
+| `TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota` | Stripe 全额退款 webhook 幂等记录订单退款状态；默认不扣额度，开启自动扣回后写 refund_deduct 流水且不重复扣 |
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |

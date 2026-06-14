@@ -475,7 +475,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验和幂等入账；易支付异步通知已支持 MD5 签名、金额校验和幂等入账，同步返回页仅展示本地订单状态。真实 Stripe Checkout Session 创建、退款和审计仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账，以及全额退款事件和可选自动扣回；易支付异步通知已支持 MD5 签名、金额校验和幂等入账，同步返回页仅展示本地订单状态。真实 Stripe Checkout Session 创建、部分退款、争议和完整审计仍属于后续能力。
 
 用户鉴权接口：
 
@@ -568,6 +568,7 @@ Stripe Webhook 要求：
 - 只在 `checkout.session.completed` 或可信成功事件后入账。
 - 校验 `metadata.order_no`、金额、货币和订单状态。
 - 同一个 Stripe event id 必须幂等处理。
+- `charge.refunded` 全额退款事件会把订单置为 `refunded`；开启 `payment.refund.auto_deduct=true` 时按策略扣回额度并写 `refund_deduct` 流水。
 
 易支付通知要求：
 

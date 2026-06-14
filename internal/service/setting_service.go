@@ -233,7 +233,8 @@ func validateSettingValue(key, value string) error {
 	case "relay.retry_count", "relay.log_body_max_bytes", "log.body_max_bytes", "billing.bootstrap_admin_quota":
 		return validateNonNegativeIntSetting(key, value)
 	case "rate_limit.enabled", "relay.error_auto_ban", "log.request_body_enabled", "log.response_body_enabled",
-		"ready.production_strict", "payment.epay.enabled", "payment.stripe.enabled":
+		"ready.production_strict", "payment.epay.enabled", "payment.stripe.enabled",
+		"payment.refund.auto_deduct", "payment.refund.allow_negative_balance":
 		if _, err := strconv.ParseBool(value); err != nil {
 			return errors.New(key + " must be a boolean")
 		}

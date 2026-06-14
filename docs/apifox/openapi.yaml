@@ -502,7 +502,7 @@ paths:
     post:
       tags: [Payment Webhook]
       summary: Stripe Webhook 异步通知
-      description: 基础实现；使用 PAYMENT_STRIPE_WEBHOOK_SECRET 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions 并增加用户额度；重复事件幂等返回 success。
+      description: 基础实现；使用 PAYMENT_STRIPE_WEBHOOK_SECRET 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions 并增加用户额度。charge.refunded 全额退款事件会校验金额和币种，将 paid 订单置为 refunded；payment.refund.auto_deduct=true 时写 refund_deduct 流水并扣回额度。重复事件幂等返回 success。
       parameters:
         - name: Stripe-Signature
           in: header
@@ -2154,7 +2154,7 @@ components:
           example: evt_123
         type:
           type: string
-          description: 当前基础实现会处理 checkout.session.completed。
+          description: 当前基础实现会处理 checkout.session.completed 和 charge.refunded。
           example: checkout.session.completed
         data:
           type: object
@@ -2162,17 +2162,24 @@ components:
           properties:
             object:
               type: object
-              description: Stripe Checkout Session 对象。
-              required: [id, amount_total, currency, payment_status, metadata]
+              description: Stripe Checkout Session 或 Charge 对象。
               properties:
                 id:
                   type: string
                   example: cs_test_123
+                amount:
+                  type: integer
+                  format: int64
+                  description: Charge 原金额，退款事件可用。
                 amount_total:
                   type: integer
                   format: int64
                   description: Stripe minor unit 金额，例如 9.99 USD 为 999。
                   example: 999
+                amount_refunded:
+                  type: integer
+                  format: int64
+                  description: Stripe minor unit 退款金额；当前基础实现按全额退款处理。
                 currency:
                   type: string
                   example: usd
@@ -2184,7 +2191,7 @@ components:
                   example: pi_123
                 metadata:
                   type: object
-                  required: [order_no, product_id, user_id]
+                  description: 支付成功事件要求 order_no/product_id/user_id；退款事件可仅携带 order_no，或通过 payment_intent 回查订单。
                   properties:
                     order_no: { type: string }
                     product_id: { type: string }

@@ -156,6 +156,8 @@ P0 补齐这些配置时，应同时补测试：
 | `payment.epay.return_url` | `` | P2 | 易支付同步返回地址 |
 | `payment.currency` | `usd` | P2 | 默认币种 |
 | `payment.order_expire_minutes` | `30` | P2 | 支付订单过期时间 |
+| `payment.refund.auto_deduct` | `false` | P2 | 退款成功后是否自动扣回原订单额度 |
+| `payment.refund.allow_negative_balance` | `false` | P2 | 自动扣回是否允许用户余额变成负数 |
 
 ## 读取和缓存
 
