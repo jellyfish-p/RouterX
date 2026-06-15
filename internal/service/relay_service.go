@@ -1790,7 +1790,12 @@ func (s *RelayService) enforceTokenChannelGroupValueScope(ctx context.Context, t
 }
 
 func (s *RelayService) channelGroupScopeError(ctx context.Context, token *model.Token, modelName, clientIP string) error {
-	_ = s.recordLog(ctx, token, nil, modelName, nil, common.LogStatusFailed, 0, "channel group not allowed by api key scope", clientIP)
+	logCtx := ContextWithRelayPolicySnapshot(ctx, buildRelayPolicyDenySnapshot(ctx, token, "route_forbidden", "not_evaluated", map[string]interface{}{
+		"api_type":      "allow",
+		"model":         "allow",
+		"channel_group": "deny",
+	}))
+	_ = s.recordLog(logCtx, token, nil, modelName, nil, common.LogStatusFailed, 0, "channel group not allowed by api key scope", clientIP)
 	return channelGroupScopeHTTPError()
 }
 
@@ -1807,7 +1812,12 @@ func (s *RelayService) enforceTokenAPIScope(ctx context.Context, token *model.To
 		return nil
 	}
 	if err := s.tokenService.CheckAPIScope(token, scopeName); err != nil {
-		_ = s.recordLog(ctx, token, nil, modelName, nil, common.LogStatusFailed, 0, "api type not allowed by api key scope", clientIP)
+		logCtx := ContextWithRelayPolicySnapshot(ctx, buildRelayPolicyDenySnapshot(ctx, token, "token_forbidden", "not_evaluated", map[string]interface{}{
+			"api_type":      "deny",
+			"model":         "not_evaluated",
+			"channel_group": "not_evaluated",
+		}))
+		_ = s.recordLog(logCtx, token, nil, modelName, nil, common.LogStatusFailed, 0, "api type not allowed by api key scope", clientIP)
 		return &HTTPError{Status: 403, Message: "api type is not allowed by api key scope", Type: "permission_error", Code: "token_forbidden"}
 	}
 	return nil
@@ -1818,7 +1828,12 @@ func (s *RelayService) enforceTokenModelScope(ctx context.Context, token *model.
 		return nil
 	}
 	if err := s.tokenService.CheckModelScope(token, modelName); err != nil {
-		_ = s.recordLog(ctx, token, nil, modelName, nil, common.LogStatusFailed, 0, "model not allowed by api key scope", clientIP)
+		logCtx := ContextWithRelayPolicySnapshot(ctx, buildRelayPolicyDenySnapshot(ctx, token, "model_not_allowed", "not_evaluated", map[string]interface{}{
+			"api_type":      "allow",
+			"model":         "deny",
+			"channel_group": "not_evaluated",
+		}))
+		_ = s.recordLog(logCtx, token, nil, modelName, nil, common.LogStatusFailed, 0, "model not allowed by api key scope", clientIP)
 		return &HTTPError{Status: 403, Message: "model is not allowed by api key scope", Type: "permission_error", Code: "model_not_allowed"}
 	}
 	return nil
@@ -1983,6 +1998,43 @@ func buildRelayPolicySnapshot(ctx context.Context, token *model.Token, reqInfo r
 	}
 	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
 		snapshot["route_preference"] = preference
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func buildRelayPolicyDenySnapshot(ctx context.Context, token *model.Token, rejectCode, quotaPrecheck string, scopeResult map[string]interface{}) string {
+	snapshot := map[string]interface{}{
+		"schema":          "routerx.snapshot.v1",
+		"kind":            "policy",
+		"stage":           "p1",
+		"source":          "policy",
+		"redacted":        true,
+		"request_id":      relayRequestIDFromContext(ctx),
+		"access_decision": "deny",
+		"quota_precheck":  strings.TrimSpace(quotaPrecheck),
+		"scope_result":    scopeResult,
+		"reject_code":     strings.TrimSpace(rejectCode),
+		"policy_version":  "p0_scope",
+	}
+	if snapshot["quota_precheck"] == "" {
+		snapshot["quota_precheck"] = "not_evaluated"
+	}
+	if token != nil {
+		snapshot["token_status"] = map[string]interface{}{
+			"id":        token.ID,
+			"status":    tokenStatusSnapshot(token.Status),
+			"unlimited": token.Unlimited || token.RemainQuota == common.QuotaUnlimited,
+		}
+		if token.User != nil {
+			snapshot["user_status"] = map[string]interface{}{
+				"id":     token.User.ID,
+				"status": userStatusSnapshot(token.User.Status),
+			}
+		}
 	}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {

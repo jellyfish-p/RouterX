@@ -98,7 +98,7 @@
 | `error_source` | 失败来源，例如 request、auth、quota、route、channel、upstream、billing、system |
 | `upstream_status` | 上游 HTTP 状态；未调用上游或非上游错误时为空/0 |
 | `request_snapshot` | 脱敏请求快照；当前包含入口协议、API 类型、请求模型、stream 标记和安全路由摘要 |
-| `policy_snapshot` | 脱敏策略快照；当前包含成功 allow、额度预检和基础 scope allow 摘要 |
+| `policy_snapshot` | 脱敏策略快照；当前包含成功 allow、额度预检、基础 scope allow、模型/API 类型/通道分组 scope 拒绝和日/月预算 scope 拒绝摘要 |
 | `route_snapshot` | 脱敏路由快照；当前包含基础选择事实、候选过滤原因、模型重写摘要和非流式重试摘要 |
 | `billing_snapshot` | 脱敏计费快照；当前包含结算状态、usage_source、P0 计费表达式摘要、默认倍率摘要、Key 预算前后、用户余额前后和最终扣费 |
 | `content` / `response` | 截断和脱敏后的请求/响应快照 |
@@ -250,7 +250,7 @@
 | 阶段 | 目标 |
 |------|------|
 | P0 | 调用日志、用户日志、管理员日志、基础账单和基础 dashboard 可用；body 日志默认关闭。 |
-| P1 | 已补调用日志 request_id、error_code、usage_source、error_source、upstream_status、基础 request_snapshot、基础 policy_snapshot、含过滤/模型重写/重试摘要的基础 route_snapshot 和含 P0 表达式/默认倍率/预算前后摘要的基础 billing_snapshot；继续补商业价格规则版本、业务倍率快照、更多拒绝分支策略快照和更完整结构化失败事实。 |
+| P1 | 已补调用日志 request_id、error_code、usage_source、error_source、upstream_status、基础 request_snapshot、覆盖成功和部分拒绝分支的基础 policy_snapshot、含过滤/模型重写/重试摘要的基础 route_snapshot 和含 P0 表达式/默认倍率/预算前后摘要的基础 billing_snapshot；继续补商业价格规则版本、业务倍率快照、IP/method/entry protocol/RPM/TPM/并发等更多拒绝分支策略快照和更完整结构化失败事实。 |
 | P2 | 扩展管理审计覆盖、更多 Prometheus 指标、告警、长期保留、导出审计和生产 readiness 指标。 |
 
 ## 测试要求

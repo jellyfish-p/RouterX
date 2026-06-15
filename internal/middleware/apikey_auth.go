@@ -100,12 +100,22 @@ func authenticateAPIKey(c *gin.Context) bool {
 		return false
 	}
 	if err := tokenSvc.CheckDailyQuotaScope(token); err != nil {
-		tokenSvc.RecordScopeDeniedLog(token, "daily quota exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"))
+		tokenSvc.RecordScopeDeniedPolicyLog(token, "daily quota exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"), "insufficient_quota", "scope_limit_exceeded", map[string]interface{}{
+			"api_type":      "not_evaluated",
+			"model":         "not_evaluated",
+			"channel_group": "not_evaluated",
+			"daily_quota":   "deny",
+		})
 		writeProtocolAuthError(c, http.StatusTooManyRequests, "daily quota exceeded", "insufficient_quota", "insufficient_quota")
 		return false
 	}
 	if err := tokenSvc.CheckMonthlyQuotaScope(token); err != nil {
-		tokenSvc.RecordScopeDeniedLog(token, "monthly quota exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"))
+		tokenSvc.RecordScopeDeniedPolicyLog(token, "monthly quota exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"), "insufficient_quota", "scope_limit_exceeded", map[string]interface{}{
+			"api_type":      "not_evaluated",
+			"model":         "not_evaluated",
+			"channel_group": "not_evaluated",
+			"monthly_quota": "deny",
+		})
 		writeProtocolAuthError(c, http.StatusTooManyRequests, "monthly quota exceeded", "insufficient_quota", "insufficient_quota")
 		return false
 	}

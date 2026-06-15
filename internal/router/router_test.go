@@ -4242,6 +4242,20 @@ func TestAPIKeyModelScopeRestrictsRelayBeforeUpstream(t *testing.T) {
 	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "scope") {
 		t.Fatalf("scope denial should write a zero-quota failed log, got %+v", failedLog)
 	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "model_not_allowed" ||
+		policySnapshot["quota_precheck"] != "not_evaluated" ||
+		scopeResult["model"] != "deny" ||
+		scopeResult["api_type"] != "allow" {
+		t.Fatalf("unexpected scope denial policy snapshot: %+v", policySnapshot)
+	}
 	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=api_key&resource_id="+uintString(tokenPayload.Data.ID), rootJWT, nil)
 	auditBody := auditResp.Body.String()
 	if auditResp.Code != http.StatusOK || !strings.Contains(auditBody, `"action":"api_key.scope_updated"`) || strings.Contains(auditBody, tokenPayload.Data.Key) || strings.Contains(auditBody, "sk-") {
@@ -4356,6 +4370,20 @@ func TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream(t *testing.T) {
 	}
 	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "api type") {
 		t.Fatalf("api scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("api scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "token_forbidden" ||
+		policySnapshot["quota_precheck"] != "not_evaluated" ||
+		scopeResult["api_type"] != "deny" ||
+		scopeResult["model"] != "not_evaluated" {
+		t.Fatalf("unexpected api scope denial policy snapshot: %+v", policySnapshot)
 	}
 }
 
@@ -4487,6 +4515,21 @@ func TestAPIKeyChannelGroupScopeFiltersRelayCandidates(t *testing.T) {
 	}
 	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "channel group") {
 		t.Fatalf("channel group scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("channel group scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "route_forbidden" ||
+		policySnapshot["quota_precheck"] != "not_evaluated" ||
+		scopeResult["api_type"] != "allow" ||
+		scopeResult["model"] != "allow" ||
+		scopeResult["channel_group"] != "deny" {
+		t.Fatalf("unexpected channel group scope denial policy snapshot: %+v", policySnapshot)
 	}
 }
 
@@ -4791,6 +4834,20 @@ func TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed(t *testing.T) {
 	if failedLog.QuotaUsed != 0 {
 		t.Fatalf("daily quota scope denial should write a zero-quota failed log, got %+v", failedLog)
 	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("daily quota scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "insufficient_quota" ||
+		policySnapshot["quota_precheck"] != "scope_limit_exceeded" ||
+		scopeResult["daily_quota"] != "deny" ||
+		scopeResult["api_type"] != "not_evaluated" {
+		t.Fatalf("unexpected daily quota scope denial policy snapshot: %+v", policySnapshot)
+	}
 }
 
 func TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed(t *testing.T) {
@@ -4884,6 +4941,20 @@ func TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed(t *testing.T) {
 	}
 	if failedLog.QuotaUsed != 0 {
 		t.Fatalf("monthly quota scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("monthly quota scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "insufficient_quota" ||
+		policySnapshot["quota_precheck"] != "scope_limit_exceeded" ||
+		scopeResult["monthly_quota"] != "deny" ||
+		scopeResult["api_type"] != "not_evaluated" {
+		t.Fatalf("unexpected monthly quota scope denial policy snapshot: %+v", policySnapshot)
 	}
 }
 

@@ -770,20 +770,30 @@ func (t *tokenConcurrencyTracker) acquire(tokenID uint, limit int64) (func(), er
 }
 
 func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, clientIP, userAgent, requestID string) {
+	s.recordScopeDeniedLog(token, errorMsg, clientIP, userAgent, requestID, "")
+}
+
+func (s *TokenService) RecordScopeDeniedPolicyLog(token *model.Token, errorMsg, clientIP, userAgent, requestID, rejectCode, quotaPrecheck string, scopeResult map[string]interface{}) {
+	ctx := ContextWithRelayRequestID(context.Background(), requestID)
+	s.recordScopeDeniedLog(token, errorMsg, clientIP, userAgent, requestID, buildRelayPolicyDenySnapshot(ctx, token, rejectCode, quotaPrecheck, scopeResult))
+}
+
+func (s *TokenService) recordScopeDeniedLog(token *model.Token, errorMsg, clientIP, userAgent, requestID, policySnapshot string) {
 	if token == nil {
 		return
 	}
 	tokenID := token.ID
 	_ = NewLogService().Record(&model.Log{
-		UserID:    token.UserID,
-		TokenID:   &tokenID,
-		Model:     "",
-		Status:    common.LogStatusFailed,
-		QuotaUsed: 0,
-		ErrorMsg:  errorMsg,
-		IP:        clientIP,
-		UserAgent: userAgent,
-		RequestID: requestID,
+		UserID:         token.UserID,
+		TokenID:        &tokenID,
+		Model:          "",
+		Status:         common.LogStatusFailed,
+		QuotaUsed:      0,
+		ErrorMsg:       errorMsg,
+		IP:             clientIP,
+		UserAgent:      userAgent,
+		RequestID:      requestID,
+		PolicySnapshot: strings.TrimSpace(policySnapshot),
 	})
 }
 
