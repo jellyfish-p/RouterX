@@ -27,9 +27,9 @@
 
 ## 当前实现边界
 
-当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口、含 P0 usage/minimum 表达式和默认倍率的基础 `billing_snapshot`，基于 settings 的用户分组 x 通道分组访问控制，系统模型价格表 `model_prices` 的管理端 API、规则版本和用户侧模型价格就绪状态展示，以及通道模型价格覆盖 `channel_model_prices` 的管理端 API、规则版本、普通用户可见性和用户侧通道级价格状态展示。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；商业级表达式接入热路径、业务倍率、访问控制快照和更多事件仍属于目标增强。
+当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口、基于 settings 的用户分组 x 通道分组访问控制，系统模型价格表 `model_prices` 的管理端 API、规则版本和用户侧模型价格就绪状态展示，以及通道模型价格覆盖 `channel_model_prices` 的管理端 API、规则版本、普通用户可见性和用户侧通道级价格状态展示。成功调用后的扣费热路径已读取启用的通道级价格表达式，未命中时读取启用的系统模型价格表达式，并把实际执行表达式、变量、规则 ID、规则版本和最终 `quota_used` 写入 `billing_snapshot`；无价格规则或表达式不可执行时回退 P0 usage/minimum。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；业务倍率、完整访问控制快照和更多事件仍属于目标增强。
 
-文档中的商业级 `billing_*_snapshot` 等字段仍是目标设计，不应误读为当前迁移已经全部存在。`model_prices` 和 `channel_model_prices` 当前已经落库并用于管理端维护和 `/v0/user/models` 价格状态/可见性展示，但当前 P0 调用热路径仍只解释 usage/minimum 基础扣费和默认倍率；实现时应按阶段先保证 P0 基础日志和扣费一致，再补 P1 价格表达式执行和快照。调用事实快照的统一字段、脱敏和测试要求以 `docs/SNAPSHOTS.md` 为准。
+文档中的部分商业级 `billing_*_snapshot` 字段仍是目标设计，不应误读为当前迁移已经全部存在。`model_prices` 和 `channel_model_prices` 当前已经落库并用于管理端维护、`/v0/user/models` 价格状态/可见性展示，以及成功调用后的基础价格表达式执行；业务倍率目前仍为默认 `1.0` 快照。调用事实快照的统一字段、脱敏和测试要求以 `docs/SNAPSHOTS.md` 为准。
 
 ## 额度单位
 
@@ -193,7 +193,7 @@ P0 扣费顺序：
 
 系统模型价格表，提供模型全局默认价格表达式。
 
-当前已实现后台管理 API：`GET/POST /v0/admin/model-prices`、`PUT /v0/admin/model-prices/:id`、`PATCH /v0/admin/model-prices/:id/disable|enable`。启用规则会让 `/v0/user/models` 对应模型返回 `pricing_ready=true` 和 `model_price:<price_mode>:v<rule_version>`；禁用或未配置时返回 `minimum_usage`。表达式尚未接入实际调用扣费热路径。
+当前已实现后台管理 API：`GET/POST /v0/admin/model-prices`、`PUT /v0/admin/model-prices/:id`、`PATCH /v0/admin/model-prices/:id/disable|enable`。启用规则会让 `/v0/user/models` 对应模型返回 `pricing_ready=true` 和 `model_price:<price_mode>:v<rule_version>`；成功调用后若没有命中通道级覆盖，热路径会执行该表达式并写入 `billing_snapshot`。禁用或未配置时返回 `minimum_usage`，调用扣费回退 P0 usage/minimum。
 
 | 字段 | 说明 |
 |------|------|
@@ -212,7 +212,7 @@ P0 扣费顺序：
 
 通道级模型价格覆盖表，优先级高于 `model_prices`。
 
-当前已实现后台管理 API：`GET/POST /v0/admin/channel-model-prices`、`PUT /v0/admin/channel-model-prices/:id`、`PATCH /v0/admin/channel-model-prices/:id/disable|enable`。当默认可见通道存在启用覆盖时，`/v0/user/models` 返回 `channel_model_price:<price_mode>:v<rule_version>`；`user_enabled=false` 时该通道不再向普通用户贡献该模型可见性。表达式尚未接入实际调用扣费热路径。
+当前已实现后台管理 API：`GET/POST /v0/admin/channel-model-prices`、`PUT /v0/admin/channel-model-prices/:id`、`PATCH /v0/admin/channel-model-prices/:id/disable|enable`。当默认可见通道存在启用覆盖时，`/v0/user/models` 返回 `channel_model_price:<price_mode>:v<rule_version>`；`user_enabled=false` 时该通道不再向普通用户贡献该模型可见性。成功调用后如果选中的通道存在启用覆盖，热路径优先执行该通道级表达式并写入 `billing_snapshot`。
 
 | 字段 | 说明 |
 |------|------|

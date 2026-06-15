@@ -378,7 +378,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `request_snapshot` | text/json string | 脱敏请求快照；当前包含 request_id、入口协议、API 类型、请求模型、stream 标记和安全路由摘要 |
 | `policy_snapshot` | text/json string | 脱敏策略快照；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要 |
 | `route_snapshot` | text/json string | 脱敏路由快照；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要 |
-| `billing_snapshot` | text/json string | 脱敏计费快照；当前包含结算状态、usage_source、P0 计费表达式摘要、默认倍率摘要、Key 预算前后、用户余额前后和最终扣费 |
+| `billing_snapshot` | text/json string | 脱敏计费快照；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式摘要、默认倍率摘要、Key 预算前后、用户余额前后和最终扣费 |
 | `content` | text | 请求体快照，需截断和脱敏 |
 | `response` | text | 响应体快照，需截断和脱敏 |
 | `error_msg` | text | 错误信息 |
@@ -405,8 +405,8 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 |------|------|
 | `billing_expression_id` | 使用的模型价格或通道价格规则 ID |
 | `billing_expression_version` | 使用的价格规则版本 |
-| `billing_expression_source` | 后续补 `model_prices`、`channel_model_prices` 等商业来源；当前 P0 为 `p0_usage` 或 `minimum` |
-| `billing_expression_snapshot` | 后续补商业价格规则表达式和变量；当前 P0 已记录 usage/minimum 表达式摘要 |
+| `billing_expression_source` | 当前可为 `channel_model_prices`、`model_prices`、`p0_usage` 或 `minimum` |
+| `billing_expression_snapshot` | 当前已记录实际执行的价格规则表达式、变量、规则 ID、规则版本和 `base_quota`；无规则时记录 usage/minimum 回退表达式摘要 |
 | `multiplier_snapshot` | 后续补用户分组、通道分组、用户分组 x 通道分组业务倍率；当前 P0 为默认 `1.0` |
 | `access_rule_snapshot` | 用户、Token、模型、通道分组访问控制快照 |
 | `billing_snapshot.expression` / `billing_snapshot.multiplier` | 后续补齐商业价格规则版本和业务倍率摘要 |
@@ -436,7 +436,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 
 ### `model_prices`
 
-系统模型价格表。该表保存模型级默认价格表达式和规则版本；当前已用于 `/v0/user/models` 的 `pricing_ready`/`price_rule` 展示，调用热路径仍按 P0 usage/minimum 规则扣费，后续再接入表达式执行和账单快照。
+系统模型价格表。该表保存模型级默认价格表达式和规则版本；当前已用于 `/v0/user/models` 的 `pricing_ready`/`price_rule` 展示，并在成功调用后作为通道覆盖缺失时的计费表达式来源写入 `billing_snapshot`。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -458,7 +458,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 
 ### `channel_model_prices`
 
-通道级模型价格覆盖表。该表优先于 `model_prices`，同时可通过 `user_enabled` 控制某个通道下某个模型是否向普通用户暴露；当前已用于 `/v0/user/models` 的可见性和价格状态展示，调用热路径仍按 P0 usage/minimum 规则扣费。
+通道级模型价格覆盖表。该表优先于 `model_prices`，同时可通过 `user_enabled` 控制某个通道下某个模型是否向普通用户暴露；当前已用于 `/v0/user/models` 的可见性和价格状态展示，并在选中通道存在启用覆盖时作为成功调用后的优先计费表达式来源写入 `billing_snapshot`。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|

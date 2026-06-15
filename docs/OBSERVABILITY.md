@@ -247,14 +247,14 @@
 | 通道健康 | 展示通道状态、错误计数、最近错误、延迟和最近成功时间。 |
 | 审计查询 | 超级管理员可按 actor、资源、动作、结果、错误 code 和时间范围查询。 |
 | 指标接口 | `/metrics` 可由 Prometheus 抓取；当前由 `observability.metrics_enabled` 控制启用。 |
-| 诊断详情 | 单次调用能关联 request_id、error_code、基础 request_snapshot、基础 policy_snapshot、含过滤/模型重写/重试摘要的基础 route_snapshot 和含 P0 表达式/默认倍率的基础 billing_snapshot；商业价格规则版本、业务倍率和更完整结构化失败事实仍需补齐。 |
+| 诊断详情 | 单次调用能关联 request_id、error_code、基础 request_snapshot、基础 policy_snapshot、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/默认倍率的基础 billing_snapshot；业务倍率和更完整结构化失败事实仍需补齐。 |
 
 ## 阶段边界
 
 | 阶段 | 目标 |
 |------|------|
 | P0 | 调用日志、用户日志、管理员日志、基础账单和基础 dashboard 可用；body 日志默认关闭。 |
-| P1 | 已补调用日志 request_id、error_code、usage_source、error_source、upstream_status、基础 request_snapshot、覆盖成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝和 Redis Token 限流拒绝分支的基础 policy_snapshot、含过滤/模型重写/重试摘要的基础 route_snapshot 和含 P0 表达式/默认倍率/预算前后摘要的基础 billing_snapshot；继续补商业价格规则版本、业务倍率快照和更完整结构化失败事实。 |
+| P1 | 已补调用日志 request_id、error_code、usage_source、error_source、upstream_status、基础 request_snapshot、覆盖成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝和 Redis Token 限流拒绝分支的基础 policy_snapshot、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/默认倍率/预算前后摘要的基础 billing_snapshot；继续补业务倍率快照和更完整结构化失败事实。 |
 | P2 | 扩展管理审计覆盖、更多 Prometheus 指标、告警、长期保留、导出审计和生产 readiness 指标。 |
 
 ## 测试要求

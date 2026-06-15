@@ -5749,6 +5749,211 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	}
 }
 
+func TestChatCompletionUsesModelPriceExpressionForBilling(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "chatcmpl-priced",
+			"object": "chat.completion",
+			"model": "gpt-priced",
+			"choices": [
+				{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+			],
+			"usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+		}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("billing.default_user_channel_group_access", `["paid"]`); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "priced-key",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "priced-compat",
+		"models":   "gpt-priced",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+		"group":    "paid",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+	var channelPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(channelResp.Body.Bytes(), &channelPayload); err != nil {
+		t.Fatal(err)
+	}
+	if channelPayload.Data.ID == 0 {
+		t.Fatalf("create channel should return id: %s", channelResp.Body.String())
+	}
+	if err := internal.DB.Create(&model.ModelPrice{
+		Model:           "gpt-priced",
+		PriceMode:       "token",
+		PriceExpression: "prompt_tokens * prompt_multiplier + completion_tokens * completion_multiplier",
+		VariablesJSON: model.NewJSONValue(map[string]interface{}{
+			"prompt_multiplier":     2,
+			"completion_multiplier": 3,
+		}),
+		UnitTokens:  1,
+		RuleVersion: 7,
+		Enabled:     true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-priced",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+		"stream": false,
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"channel_group": "paid"},
+		},
+	})
+	if chatResp.Code != http.StatusOK {
+		t.Fatalf("chat completion failed: %d %s", chatResp.Code, chatResp.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("expected one upstream request, got %d", upstreamCalls)
+	}
+
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 38 {
+		t.Fatalf("token budget should be deducted by model price expression, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 88 {
+		t.Fatalf("user quota should be deducted by model price expression, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.QuotaUsed != 12 || callLog.TotalTokens != 5 || callLog.PromptTokens != 3 || callLog.CompletionTokens != 2 {
+		t.Fatalf("success log should record expression quota and upstream usage, got %+v", callLog)
+	}
+	var billingSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.BillingSnapshot), &billingSnapshot); err != nil {
+		t.Fatalf("success log should store billing snapshot JSON, got %q: %v", callLog.BillingSnapshot, err)
+	}
+	if billingSnapshot["billing_expression_source"] != "model_prices" || billingSnapshot["price_source"] != "model_prices" || billingSnapshot["final_quota_used"] != float64(12) {
+		t.Fatalf("billing snapshot should record model price source and expression quota: %+v", billingSnapshot)
+	}
+	expressionSnapshot, ok := billingSnapshot["billing_expression_snapshot"].(map[string]interface{})
+	if !ok || expressionSnapshot["source"] != "model_prices" || expressionSnapshot["expression"] != "prompt_tokens * prompt_multiplier + completion_tokens * completion_multiplier" || expressionSnapshot["base_quota"] != float64(12) || expressionSnapshot["rule_version"] != float64(7) {
+		t.Fatalf("billing expression snapshot should record model price expression: %+v", billingSnapshot)
+	}
+	expressionVariables, ok := expressionSnapshot["variables"].(map[string]interface{})
+	if !ok || expressionVariables["prompt_tokens"] != float64(3) || expressionVariables["completion_tokens"] != float64(2) || expressionVariables["total_tokens"] != float64(5) || expressionVariables["prompt_multiplier"] != float64(2) || expressionVariables["completion_multiplier"] != float64(3) {
+		t.Fatalf("billing expression snapshot should record token and price variables: %+v", expressionSnapshot)
+	}
+
+	if err := internal.DB.Create(&model.ChannelModelPrice{
+		ChannelID:       channelPayload.Data.ID,
+		Model:           "gpt-priced",
+		Enabled:         true,
+		UserEnabled:     true,
+		PriceMode:       "token",
+		OverrideMode:    "override",
+		PriceExpression: "total_tokens * channel_multiplier",
+		VariablesJSON: model.NewJSONValue(map[string]interface{}{
+			"channel_multiplier": 4,
+		}),
+		UnitTokens:  1,
+		RuleVersion: 9,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	secondResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-priced",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello again"},
+		},
+		"stream": false,
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"channel_group": "paid"},
+		},
+	})
+	if secondResp.Code != http.StatusOK {
+		t.Fatalf("second chat completion failed: %d %s", secondResp.Code, secondResp.Body.String())
+	}
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 18 {
+		t.Fatalf("token budget should prefer channel model price expression, got %d", storedToken.RemainQuota)
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 68 {
+		t.Fatalf("user quota should prefer channel model price expression, got %d", root.Quota)
+	}
+	var secondLog model.Log
+	if err := internal.DB.Order("id DESC").First(&secondLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if secondLog.QuotaUsed != 20 {
+		t.Fatalf("second success log should record channel expression quota, got %+v", secondLog)
+	}
+	if err := json.Unmarshal([]byte(secondLog.BillingSnapshot), &billingSnapshot); err != nil {
+		t.Fatalf("second success log should store billing snapshot JSON, got %q: %v", secondLog.BillingSnapshot, err)
+	}
+	if billingSnapshot["billing_expression_source"] != "channel_model_prices" || billingSnapshot["price_source"] != "channel_model_prices" || billingSnapshot["final_quota_used"] != float64(20) {
+		t.Fatalf("billing snapshot should record channel price source and expression quota: %+v", billingSnapshot)
+	}
+	expressionSnapshot, ok = billingSnapshot["billing_expression_snapshot"].(map[string]interface{})
+	if !ok || expressionSnapshot["source"] != "channel_model_prices" || expressionSnapshot["expression"] != "total_tokens * channel_multiplier" || expressionSnapshot["base_quota"] != float64(20) || expressionSnapshot["rule_version"] != float64(9) {
+		t.Fatalf("billing expression snapshot should record channel price expression: %+v", billingSnapshot)
+	}
+}
+
 func TestAPIKeyModelScopeRestrictsRelayBeforeUpstream(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

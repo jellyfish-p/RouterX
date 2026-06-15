@@ -518,8 +518,8 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	s.recordUpstreamDuration(channel, "success", time.Since(start))
 
 	if rawResponse {
-		quotaUsed := quotaFromUsage(nil)
-		deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, quotaUsed)
+		billing := s.calculateRelayBilling(channel, reqInfo.Model, nil)
+		deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 		if err != nil {
 			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 			return nil, nil, false, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
@@ -529,8 +529,8 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 			contentType = "application/octet-stream"
 		}
 		_ = s.markChannelSuccess(channel, latencyMs)
-		logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(nil, quotaUsed, deduction))
-		_ = s.recordLog(logCtx, token, channel, reqInfo.Model, nil, common.LogStatusSuccess, quotaUsed, "", clientIP)
+		logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(nil, billing, deduction))
+		_ = s.recordLog(logCtx, token, channel, reqInfo.Model, nil, common.LogStatusSuccess, billing.QuotaUsed, "", clientIP)
 		return &RelayRawResult{Body: respBody, ContentType: contentType}, nil, false, nil
 	}
 
@@ -540,15 +540,15 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response conversion failed", clientIP)
 		return nil, nil, false, &HTTPError{Status: 502, Message: "upstream response conversion failed", Type: "upstream_error", Code: "upstream_conversion_failed"}
 	}
-	quotaUsed := quotaFromUsage(usage)
-	deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, quotaUsed)
+	billing := s.calculateRelayBilling(channel, reqInfo.Model, usage)
+	deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 	if err != nil {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, usage, false, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 	_ = s.markChannelSuccess(channel, latencyMs)
-	logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(usage, quotaUsed, deduction))
-	_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
+	logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(usage, billing, deduction))
+	_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, billing.QuotaUsed, "", clientIP)
 	return &RelayRawResult{Body: converted, ContentType: "application/json; charset=utf-8", Usage: usage}, usage, false, nil
 }
 
@@ -681,15 +681,15 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 				_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, "stream forwarding failed", clientIP)
 				return usage, err
 			}
-			quotaUsed := quotaFromUsage(usage)
-			deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, quotaUsed)
+			billing := s.calculateRelayBilling(channel, reqInfo.Model, usage)
+			deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 			if err != nil {
 				_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
 				return usage, err
 			}
 			_ = s.markChannelSuccess(channel, latencyMs)
-			logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(usage, quotaUsed, deduction))
-			_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
+			logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(usage, billing, deduction))
+			_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, billing.QuotaUsed, "", clientIP)
 			return usage, nil
 		},
 	}, nil
@@ -2224,15 +2224,27 @@ func upstreamStatusFromHTTPError(err *HTTPError) int {
 	return status
 }
 
-func buildRelayBillingSnapshot(usage *relay.Usage, quotaUsed int64, deduction QuotaDeductionResult) string {
+func buildRelayBillingSnapshot(usage *relay.Usage, billing relayBillingResult, deduction QuotaDeductionResult) string {
+	quotaUsed := billing.QuotaUsed
 	usageSource := logUsageSource(usage, common.LogStatusSuccess, quotaUsed)
 	payer := "token_and_user"
 	if deduction.TokenUnlimited {
 		payer = "user"
 	}
-	expressionSource := "p0_usage"
-	if usageSource == common.LogUsageSourceMinimum {
-		expressionSource = "minimum"
+	expressionSource := strings.TrimSpace(billing.ExpressionSource)
+	if expressionSource == "" {
+		expressionSource = "p0_usage"
+		if usageSource == common.LogUsageSourceMinimum {
+			expressionSource = "minimum"
+		}
+	}
+	priceSource := strings.TrimSpace(billing.PriceSource)
+	if priceSource == "" {
+		priceSource = expressionSource
+	}
+	expressionSnapshot := billing.ExpressionSnapshot
+	if expressionSnapshot == nil {
+		expressionSnapshot = buildP0BillingExpressionSnapshot(usage, usageSource, quotaUsed)
 	}
 	snapshot := map[string]interface{}{
 		"schema":                      "routerx.snapshot.v1",
@@ -2241,9 +2253,9 @@ func buildRelayBillingSnapshot(usage *relay.Usage, quotaUsed int64, deduction Qu
 		"source":                      "billing",
 		"redacted":                    true,
 		"billing_status":              "settled",
-		"price_source":                expressionSource,
+		"price_source":                priceSource,
 		"billing_expression_source":   expressionSource,
-		"billing_expression_snapshot": buildP0BillingExpressionSnapshot(usage, usageSource, quotaUsed),
+		"billing_expression_snapshot": expressionSnapshot,
 		"multiplier_snapshot":         defaultMultiplierSnapshot(),
 		"usage_source":                usageSource,
 		"payer":                       payer,

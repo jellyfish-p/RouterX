@@ -4,6 +4,7 @@ go 1.26.4
 
 require (
 	ariga.io/atlas-provider-gorm v0.6.1
+	github.com/expr-lang/expr v1.17.8
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/redis/go-redis/v9 v9.20.0

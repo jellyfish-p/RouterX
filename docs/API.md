@@ -381,7 +381,7 @@ Provider 退款请求：
 }
 ```
 
-`price_mode` 当前允许 `request`、`token`、`second`、`tiered`。系统模型价格已经用于 `/v0/user/models` 的 `pricing_ready` 和 `price_rule` 展示；调用热路径仍按 P0 usage/minimum 规则扣费，后续再把表达式接入 `billing_snapshot`。
+`price_mode` 当前允许 `request`、`token`、`second`、`tiered`。系统模型价格用于 `/v0/user/models` 的 `pricing_ready` 和 `price_rule` 展示；成功调用后如果没有命中通道级覆盖，热路径会执行该表达式，并在 `billing_snapshot` 写入规则来源、表达式、变量、版本和最终扣费。
 
 创建/更新通道模型价格覆盖请求：
 
@@ -402,7 +402,7 @@ Provider 退款请求：
 }
 ```
 
-`override_mode` 当前允许 `override` 和 `merge_variables`。`user_enabled=false` 表示该通道下该模型不向普通用户暴露；如果没有其他可见通道提供该模型，`/v0/user/models` 不再返回该模型。通道级启用价格覆盖优先于系统模型价格展示，禁用覆盖后会回退到启用的系统模型价格或 `minimum_usage`。
+`override_mode` 当前允许 `override` 和 `merge_variables`。`user_enabled=false` 表示该通道下该模型不向普通用户暴露；如果没有其他可见通道提供该模型，`/v0/user/models` 不再返回该模型。通道级启用价格覆盖优先于系统模型价格展示，也优先于系统模型价格参与成功调用后的扣费；禁用覆盖后会回退到启用的系统模型价格或 `minimum_usage`。
 
 ### 管理审计
 
@@ -581,7 +581,7 @@ Provider 退款请求：
 | `start_at` | string | 开始时间 |
 | `end_at` | string | 结束时间 |
 
-日志响应字段至少包含 `user_id`、`token_id`、`channel_id`、`model`、usage、`usage_source`、`quota_used`、`status`、`request_id`、`error_code`、`error_source`、`upstream_status`、`request_snapshot`、`policy_snapshot`、`route_snapshot`、`billing_snapshot`、`error_msg`、`ip` 和 `created_at`。`usage_source` 当前会记录 `upstream` 或 `minimum`；`request_id` 用于关联 HTTP 访问日志和审计日志；`error_code` 成功调用为空，失败调用按 `docs/ERRORS.md` 使用稳定 code；`error_source` 和 `upstream_status` 用于排查失败来源；`request_snapshot`、`policy_snapshot`、`route_snapshot` 和 `billing_snapshot` 当前是脱敏 JSON 字符串，分别记录基础请求事实、基础策略事实、基础路由选择事实和基础计费事实，其中请求快照包含入口协议、API 类型、请求模型和 stream 标记，策略快照包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要，路由快照包含候选过滤、模型重写和非流式重试摘要，计费快照包含 P0 表达式、默认倍率、Key 预算和用户余额前后摘要。
+日志响应字段至少包含 `user_id`、`token_id`、`channel_id`、`model`、usage、`usage_source`、`quota_used`、`status`、`request_id`、`error_code`、`error_source`、`upstream_status`、`request_snapshot`、`policy_snapshot`、`route_snapshot`、`billing_snapshot`、`error_msg`、`ip` 和 `created_at`。`usage_source` 当前会记录 `upstream` 或 `minimum`；`request_id` 用于关联 HTTP 访问日志和审计日志；`error_code` 成功调用为空，失败调用按 `docs/ERRORS.md` 使用稳定 code；`error_source` 和 `upstream_status` 用于排查失败来源；`request_snapshot`、`policy_snapshot`、`route_snapshot` 和 `billing_snapshot` 当前是脱敏 JSON 字符串，分别记录基础请求事实、基础策略事实、基础路由选择事实和基础计费事实，其中请求快照包含入口协议、API 类型、请求模型和 stream 标记，策略快照包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要，路由快照包含候选过滤、模型重写和非流式重试摘要，计费快照包含价格表达式或 P0 回退表达式、默认倍率、Key 预算和用户余额前后摘要。
 
 删除日志目标要求：
 

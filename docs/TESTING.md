@@ -50,6 +50,7 @@
 | `TestUserListsAvailableModels` | 用户查看当前启用通道的去重模型列表，禁用通道模型不可见，未配置系统价格时返回 `minimum_usage` 和 `pricing_ready=false` |
 | `TestAdminModelPriceManagementUpdatesUserModelPricing` | 管理员创建、更新、启用和禁用系统模型价格；用户侧模型列表随启用价格返回版本化 `price_rule`，禁用后回退 `minimum_usage`，并写 `model_price.*` 审计 |
 | `TestAdminChannelModelPriceControlsUserModelPricingAndVisibility` | 管理员创建、更新、启用和禁用通道模型价格覆盖；通道级价格优先于系统价格，`user_enabled=false` 会隐藏普通用户模型，并写 `channel_model_price.*` 审计 |
+| `TestChatCompletionUsesModelPriceExpressionForBilling` | Chat 成功调用后按启用系统模型价格表达式扣减用户余额和 Key 预算；选中通道存在启用覆盖时优先按通道级表达式扣费，并在 `billing_snapshot` 记录规则来源、表达式、变量和版本 |
 | `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品；未启用 provider 拒绝下单，启用后创建本地 pending 订单并写 `payment_order.create` 管理审计，订单按 settings 过期且不入账 |
 | `TestStripeOrderCreatesCheckoutSessionWhenConfigured` | Stripe secret、测试 API base 和绝对 return_url 齐全时创建 Checkout Session，表单 metadata/金额/货币可复核，并保存 session id/url |
 | `TestEpayOrderBuildsSignedCheckoutURL` | 易支付网关配置齐全时创建订单返回签名收银台 URL，参数和签名可复核 |
@@ -82,7 +83,7 @@
 | `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model 在本地失败且不污染通道和账单 |
 | `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
 | `TestUserBillingMatchesLogs` | 多次成功/失败混合后，用户账单、日志、余额和 Key 预算一致 |
-| `TestChatCompletionSuccessLogsAndDeductsQuota` | Chat 非流式成功调用、基础 request_snapshot、基础 policy_snapshot、上游 usage_source、基础 route_snapshot、含 P0 表达式/默认倍率/预算前后摘要的基础 billing_snapshot、日志、用户额度、Key 预算和账单聚合 |
+| `TestChatCompletionSuccessLogsAndDeductsQuota` | Chat 非流式成功调用、基础 request_snapshot、基础 policy_snapshot、上游 usage_source、基础 route_snapshot、含 P0 回退表达式/默认倍率/预算前后摘要的基础 billing_snapshot、日志、用户额度、Key 预算和账单聚合 |
 | `TestAzureChatCompletionUsesDeploymentPathAndAPIKey` | Azure OpenAI Chat 基础转发，deployment 路径、`api-version` query、`api-key` header、`model/routerx` 剥离、usage 日志和扣费 |
 | `TestResponsesPassthroughExtractsUsageAndDeductsQuota` | Responses 基础 JSON 透传、`routerx` 剥离、`input_tokens/output_tokens` usage 映射、日志和扣费 |
 | `TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota` | Embeddings 基础 JSON 透传、`routerx` 剥离、`prompt_tokens/total_tokens` usage 映射、日志和扣费 |
@@ -426,7 +427,7 @@ Gemini-compatible 最小断言：
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
 | P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Anthropic/Gemini 基础流式、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为、原生字段保真和 Anthropic/Gemini 原生流式路径 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
-| P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝和 Redis Token 限流拒绝分支 policy_snapshot、基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含 P0 表达式/默认倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
+| P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝和 Redis Token 限流拒绝分支 policy_snapshot、基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/默认倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |
 | P1 | 可靠性 | 已覆盖非流式安全重试、Redis 全局/IP/Token 基础限流和 `error_count` 自动熔断候选过滤；继续补半开恢复、探测任务、更多限流维度和生产 fail-open/fail-closed 策略 |
 | P1 | 运行模式 | SQLite 单镜像无 Redis 可运行；外部数据库无 Redis 不就绪或启动失败 |

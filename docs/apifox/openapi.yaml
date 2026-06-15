@@ -1224,7 +1224,7 @@ paths:
     get:
       tags: [Admin Billing]
       summary: 系统模型价格列表
-      description: 管理员查看系统模型价格；可按模型名/价格模式关键字和 enabled 状态过滤。该表当前用于用户侧模型价格就绪状态展示，表达式尚未接入调用扣费热路径。
+      description: 管理员查看系统模型价格；可按模型名/价格模式关键字和 enabled 状态过滤。启用规则用于用户侧模型价格就绪状态展示，并在成功调用后作为通道覆盖缺失时的计费表达式来源。
       security:
         - UserJWT: []
       parameters:
@@ -1335,7 +1335,7 @@ paths:
     get:
       tags: [Admin Billing]
       summary: 通道模型价格覆盖列表
-      description: 管理员查看通道级模型价格覆盖；可按模型名/价格模式关键字、channel_id、enabled 和 user_enabled 过滤。该表当前用于用户侧模型可见性和价格状态展示，表达式尚未接入调用扣费热路径。
+      description: 管理员查看通道级模型价格覆盖；可按模型名/价格模式关键字、channel_id、enabled 和 user_enabled 过滤。启用覆盖用于用户侧模型可见性和价格状态展示，并在选中通道存在覆盖时优先作为成功调用后的计费表达式来源。
       security:
         - UserJWT: []
       parameters:
@@ -2740,7 +2740,7 @@ components:
           example: token
         price_expression:
           type: string
-          description: 价格表达式；当前先保存和展示，后续接入扣费热路径。
+          description: 价格表达式；成功调用后若未命中通道级覆盖，热路径会执行该表达式并把规则、变量和版本写入 billing_snapshot。
           example: prompt_tokens * prompt_price + completion_tokens * completion_price
         variables_json:
           type: object
@@ -2819,7 +2819,7 @@ components:
           example: override
         price_expression:
           type: string
-          description: 通道级价格表达式；当前先保存和展示，后续接入扣费热路径。
+          description: 通道级价格表达式；成功调用后如果选中通道命中启用覆盖，热路径会优先执行该表达式并把规则、变量和版本写入 billing_snapshot。
           example: prompt_tokens * prompt_price + completion_tokens * completion_price
         variables_json:
           type: object
@@ -3824,7 +3824,7 @@ components:
           description: 脱敏路由快照 JSON 字符串；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要。
         billing_snapshot:
           type: string
-          description: 脱敏计费快照 JSON 字符串；当前包含结算状态、usage_source、P0 表达式、默认倍率、最终扣费、Key 预算前后和用户余额前后摘要。
+          description: 脱敏计费快照 JSON 字符串；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式、默认倍率、最终扣费、Key 预算前后和用户余额前后摘要。
         error_msg: { type: string }
         ip: { type: string }
         created_at: { type: string, format: date-time }
