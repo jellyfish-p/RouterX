@@ -4073,6 +4073,25 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 		requestSnapshot["request_id"] != callLog.RequestID {
 		t.Fatalf("unexpected request snapshot: %+v log=%+v", requestSnapshot, callLog)
 	}
+	var policySnapshotRaw string
+	if err := internal.DB.Model(&model.Log{}).Select("policy_snapshot").Where("id = ?", callLog.ID).Scan(&policySnapshotRaw).Error; err != nil {
+		t.Fatal(err)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(policySnapshotRaw), &policySnapshot); err != nil {
+		t.Fatalf("success log should store policy snapshot JSON, got %q: %v", policySnapshotRaw, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["request_id"] != callLog.RequestID ||
+		policySnapshot["access_decision"] != "allow" ||
+		policySnapshot["quota_precheck"] != "available" ||
+		scopeResult["api_type"] != "allow" ||
+		scopeResult["model"] != "allow" ||
+		scopeResult["channel_group"] != "allow" {
+		t.Fatalf("unexpected policy snapshot: %+v", policySnapshot)
+	}
 	var routeSnapshot map[string]interface{}
 	if err := json.Unmarshal([]byte(callLog.RouteSnapshot), &routeSnapshot); err != nil {
 		t.Fatalf("success log should store route snapshot JSON, got %q: %v", callLog.RouteSnapshot, err)

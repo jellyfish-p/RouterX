@@ -45,6 +45,7 @@ type RelayRawResult struct {
 type relayUserAgentContextKey struct{}
 type relayRequestIDContextKey struct{}
 type relayRequestSnapshotContextKey struct{}
+type relayPolicySnapshotContextKey struct{}
 type relayRouteSnapshotContextKey struct{}
 type relayBillingSnapshotContextKey struct{}
 
@@ -84,6 +85,13 @@ func ContextWithRelayRequestSnapshot(ctx context.Context, snapshot string) conte
 	return context.WithValue(ctx, relayRequestSnapshotContextKey{}, strings.TrimSpace(snapshot))
 }
 
+func ContextWithRelayPolicySnapshot(ctx context.Context, snapshot string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, relayPolicySnapshotContextKey{}, strings.TrimSpace(snapshot))
+}
+
 func ContextWithRelayRouteSnapshot(ctx context.Context, snapshot string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -119,6 +127,14 @@ func relayRequestSnapshotFromContext(ctx context.Context) string {
 		return ""
 	}
 	value, _ := ctx.Value(relayRequestSnapshotContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
+func relayPolicySnapshotFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(relayPolicySnapshotContextKey{}).(string)
 	return strings.TrimSpace(value)
 }
 
@@ -367,6 +383,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 		_ = s.recordLog(ctx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 		return nil, nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
+	ctx = ContextWithRelayPolicySnapshot(ctx, buildRelayPolicySnapshot(ctx, token, reqInfo))
 
 	filteredReasons := map[string]int{}
 	candidates, selectionReasons, err := s.channelService.SelectChannelCandidatesWithRouteFacts(reqInfo.Model, reqInfo.Route)
@@ -546,6 +563,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		_ = s.recordLog(ctx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 		return nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
+	ctx = ContextWithRelayPolicySnapshot(ctx, buildRelayPolicySnapshot(ctx, token, reqInfo))
 
 	filteredReasons := map[string]int{}
 	candidates, selectionReasons, err := s.channelService.SelectChannelCandidatesWithRouteFacts(reqInfo.Model, reqInfo.Route)
@@ -1933,6 +1951,68 @@ func relayIngressProtocolFromAPIType(apiType relay.APIType) string {
 	return strings.TrimSpace(apiTypeName)
 }
 
+func buildRelayPolicySnapshot(ctx context.Context, token *model.Token, reqInfo relayRequestInfo) string {
+	snapshot := map[string]interface{}{
+		"schema":          "routerx.snapshot.v1",
+		"kind":            "policy",
+		"stage":           "p1",
+		"source":          "policy",
+		"redacted":        true,
+		"request_id":      relayRequestIDFromContext(ctx),
+		"access_decision": "allow",
+		"quota_precheck":  "available",
+		"scope_result": map[string]interface{}{
+			"api_type":      "allow",
+			"model":         "allow",
+			"channel_group": "allow",
+		},
+		"policy_version": "p0_scope",
+	}
+	if token != nil {
+		snapshot["token_status"] = map[string]interface{}{
+			"id":        token.ID,
+			"status":    tokenStatusSnapshot(token.Status),
+			"unlimited": token.Unlimited || token.RemainQuota == common.QuotaUnlimited,
+		}
+		if token.User != nil {
+			snapshot["user_status"] = map[string]interface{}{
+				"id":     token.User.ID,
+				"status": userStatusSnapshot(token.User.Status),
+			}
+		}
+	}
+	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
+		snapshot["route_preference"] = preference
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func tokenStatusSnapshot(status int) string {
+	switch status {
+	case common.TokenStatusEnabled:
+		return "enabled"
+	case common.TokenStatusDisabled:
+		return "disabled"
+	default:
+		return "unknown"
+	}
+}
+
+func userStatusSnapshot(status int) string {
+	switch status {
+	case common.UserStatusEnabled:
+		return "enabled"
+	case common.UserStatusDisabled:
+		return "disabled"
+	default:
+		return "unknown"
+	}
+}
+
 func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channel, selected *model.Channel, retryAttempts []map[string]interface{}, filteredReasons map[string]int) string {
 	requestedModel := strings.TrimSpace(reqInfo.Model)
 	snapshot := map[string]interface{}{
@@ -2294,6 +2374,7 @@ func (s *RelayService) recordLog(ctx context.Context, token *model.Token, channe
 		UserAgent:       relayUserAgentFromContext(ctx),
 		RequestID:       relayRequestIDFromContext(ctx),
 		RequestSnapshot: relayRequestSnapshotFromContext(ctx),
+		PolicySnapshot:  relayPolicySnapshotFromContext(ctx),
 		RouteSnapshot:   relayRouteSnapshotFromContext(ctx),
 		BillingSnapshot: relayBillingSnapshotFromContext(ctx),
 	}
