@@ -44,8 +44,24 @@ type AdminAuditRecordInput struct {
 
 // RecordAdminAuditLog 写入管理审计摘要。审计失败不应泄露敏感请求体。
 func (s *UserService) RecordAdminAuditLog(input AdminAuditRecordInput) error {
+	log, err := buildAdminAuditLog(input)
+	if err != nil {
+		return err
+	}
+	return internal.DB.Create(log).Error
+}
+
+func recordAdminAuditLogWithDB(db *gorm.DB, input AdminAuditRecordInput) error {
+	log, err := buildAdminAuditLog(input)
+	if err != nil {
+		return err
+	}
+	return db.Create(log).Error
+}
+
+func buildAdminAuditLog(input AdminAuditRecordInput) (*model.AdminAuditLog, error) {
 	if input.ActorUserID == 0 || input.Action == "" || input.ResourceType == "" || input.ResourceID == "" {
-		return errors.New("invalid admin audit log")
+		return nil, errors.New("invalid admin audit log")
 	}
 	result := strings.TrimSpace(input.Result)
 	if result == "" {
@@ -69,7 +85,55 @@ func (s *UserService) RecordAdminAuditLog(input AdminAuditRecordInput) error {
 		IP:            strings.TrimSpace(input.IP),
 		UserAgent:     strings.TrimSpace(input.UserAgent),
 	}
-	return internal.DB.Create(&log).Error
+	return &log, nil
+}
+
+const (
+	paymentWebhookAuditActorUserID = 1
+
+	adminAuditActionPaymentWebhookProcessed = "payment_webhook.processed"
+	adminAuditActionPaymentOrderPaid        = "payment_order.paid"
+	adminAuditActionPaymentRefundProcessed  = "payment_refund.processed"
+	adminAuditActionPaymentRefundDeducted   = "payment_refund.deducted"
+)
+
+func recordPaymentEventAudit(tx *gorm.DB, requestID, action string, event model.PaymentEvent, order *model.PaymentOrder, extra map[string]interface{}) error {
+	summary := map[string]interface{}{
+		"provider":        event.Provider,
+		"event_id":        event.ProviderEventID,
+		"event_type":      event.EventType,
+		"order_no":        event.OrderNo,
+		"processed":       event.Processed,
+		"signature_valid": event.SignatureValid,
+	}
+	if order != nil {
+		summary["order_no"] = order.OrderNo
+		summary["user_id"] = order.UserID
+		summary["product_id"] = order.ProductID
+		summary["amount"] = order.Amount
+		summary["currency"] = order.Currency
+		summary["quota"] = order.Quota
+		summary["order_status"] = order.Status
+	}
+	for key, value := range extra {
+		summary[key] = value
+	}
+	afterSummary, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+
+	// 支付 provider 回调没有人类操作者；这里使用稳定的系统审计主体，便于统一查询。
+	return recordAdminAuditLogWithDB(tx, AdminAuditRecordInput{
+		RequestID:    requestID,
+		ActorUserID:  paymentWebhookAuditActorUserID,
+		ActorRole:    common.RoleSuper,
+		Action:       action,
+		ResourceType: common.QuotaSourceTypePaymentEvent,
+		ResourceID:   event.ProviderEventID,
+		AfterSummary: string(afterSummary),
+		Result:       "success",
+	})
 }
 
 func (s *UserService) ListAdminAuditLogs(operatorRole int, page, pageSize int, action, resourceType, resourceID string, actorUserID uint, result, errorCode string, startTime, endTime int64) ([]model.AdminAuditLog, int64, error) {
@@ -793,7 +857,14 @@ func (s *UserService) ProcessEpayNotify(values map[string]string, requestID stri
 		}
 		if order.Status == common.PaymentOrderStatusPaid {
 			now := time.Now()
-			return tx.Model(&event).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
+			if err := tx.Model(&event).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error; err != nil {
+				return err
+			}
+			event.Processed = true
+			event.ProcessedAt = &now
+			return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentWebhookProcessed, event, &order, map[string]interface{}{
+				"idempotent": true,
+			})
 		}
 		if order.Status != common.PaymentOrderStatusPending {
 			return errors.New("payment order is not pending")
@@ -823,7 +894,19 @@ func (s *UserService) ProcessEpayNotify(values map[string]string, requestID stri
 		}); err != nil {
 			return err
 		}
-		return tx.Model(&event).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
+		if err := tx.Model(&event).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error; err != nil {
+			return err
+		}
+		event.Processed = true
+		event.ProcessedAt = &now
+		order.Status = common.PaymentOrderStatusPaid
+		if tradeNo != "" {
+			order.ProviderPaymentID = &tradeNo
+		}
+		if err := recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentWebhookProcessed, event, &order, nil); err != nil {
+			return err
+		}
+		return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentOrderPaid, event, &order, nil)
 	})
 }
 
@@ -893,7 +976,14 @@ func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestI
 		}
 		if event.Type != "checkout.session.completed" || !stripeCheckoutSucceeded(session) {
 			now := time.Now()
-			return tx.Model(&paymentEvent).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
+			if err := tx.Model(&paymentEvent).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error; err != nil {
+				return err
+			}
+			paymentEvent.Processed = true
+			paymentEvent.ProcessedAt = &now
+			return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentWebhookProcessed, paymentEvent, nil, map[string]interface{}{
+				"accepted_without_order": true,
+			})
 		}
 		if orderNo == "" {
 			return errors.New("stripe event missing order_no")
@@ -908,7 +998,14 @@ func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestI
 		}
 		if order.Status == common.PaymentOrderStatusPaid {
 			now := time.Now()
-			return tx.Model(&paymentEvent).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
+			if err := tx.Model(&paymentEvent).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error; err != nil {
+				return err
+			}
+			paymentEvent.Processed = true
+			paymentEvent.ProcessedAt = &now
+			return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentWebhookProcessed, paymentEvent, &order, map[string]interface{}{
+				"idempotent": true,
+			})
 		}
 		if order.Status != common.PaymentOrderStatusPending {
 			return errors.New("payment order is not pending")
@@ -942,7 +1039,19 @@ func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestI
 		}); err != nil {
 			return err
 		}
-		return tx.Model(&paymentEvent).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error
+		if err := tx.Model(&paymentEvent).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error; err != nil {
+			return err
+		}
+		paymentEvent.Processed = true
+		paymentEvent.ProcessedAt = &now
+		order.Status = common.PaymentOrderStatusPaid
+		if providerPaymentID != "" {
+			order.ProviderPaymentID = &providerPaymentID
+		}
+		if err := recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentWebhookProcessed, paymentEvent, &order, nil); err != nil {
+			return err
+		}
+		return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentOrderPaid, paymentEvent, &order, nil)
 	})
 }
 
@@ -970,9 +1079,17 @@ func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeC
 	eventUpdates := map[string]interface{}{"processed": true, "processed_at": &now}
 	if event.OrderNo == "" {
 		eventUpdates["order_no"] = order.OrderNo
+		event.OrderNo = order.OrderNo
 	}
 	if order.Status == common.PaymentOrderStatusRefunded {
-		return tx.Model(event).Updates(eventUpdates).Error
+		if err := tx.Model(event).Updates(eventUpdates).Error; err != nil {
+			return err
+		}
+		event.Processed = true
+		event.ProcessedAt = &now
+		return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentRefundProcessed, *event, &order, map[string]interface{}{
+			"idempotent": true,
+		})
 	}
 	if order.Status != common.PaymentOrderStatusPaid {
 		return errors.New("payment order is not paid")
@@ -983,6 +1100,7 @@ func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeC
 	}).Error; err != nil {
 		return err
 	}
+	order.Status = common.PaymentOrderStatusRefunded
 
 	autoDeduct, err := paymentBoolSettingDefault("payment.refund.auto_deduct", false)
 	if err != nil {
@@ -992,6 +1110,7 @@ func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeC
 	if err != nil {
 		return err
 	}
+	deducted := false
 	if autoDeduct {
 		var user model.User
 		if err := tx.Select("id", "quota").First(&user, order.UserID).Error; err != nil {
@@ -1011,9 +1130,27 @@ func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeC
 			}); err != nil {
 				return err
 			}
+			deducted = true
 		}
 	}
-	return tx.Model(event).Updates(eventUpdates).Error
+	if err := tx.Model(event).Updates(eventUpdates).Error; err != nil {
+		return err
+	}
+	event.Processed = true
+	event.ProcessedAt = &now
+	refundSummary := map[string]interface{}{
+		"amount_refunded": session.AmountRefunded,
+		"auto_deduct":     autoDeduct,
+		"allow_negative":  allowNegative,
+		"deducted":        deducted,
+	}
+	if err := recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentRefundProcessed, *event, &order, refundSummary); err != nil {
+		return err
+	}
+	if deducted {
+		return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentRefundDeducted, *event, &order, refundSummary)
+	}
+	return nil
 }
 
 func verifyStripeSignature(raw []byte, signatureHeader, secret string) bool {

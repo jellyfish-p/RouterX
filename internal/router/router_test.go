@@ -1659,6 +1659,16 @@ func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 	if quotaTxCount != 1 {
 		t.Fatalf("valid epay notify should write one quota transaction, got %d", quotaTxCount)
 	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_event&resource_id=TRADE1000", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_webhook.processed"`) ||
+		!strings.Contains(auditBody, `"action":"payment_order.paid"`) ||
+		!strings.Contains(auditBody, "event_id") ||
+		!strings.Contains(auditBody, "TRADE1000") ||
+		!strings.Contains(auditBody, order.OrderNo) {
+		t.Fatalf("epay notify should write payment event audit logs, got %d %s", auditResp.Code, auditBody)
+	}
 
 	duplicateNotify := performForm(r, http.MethodPost, "/v0/payment/epay/notify", successNotify)
 	if duplicateNotify.Code != http.StatusOK || strings.TrimSpace(duplicateNotify.Body.String()) != "success" {
@@ -1760,6 +1770,16 @@ func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 	if quotaTxCount != 1 {
 		t.Fatalf("valid stripe webhook should write one quota transaction, got %d", quotaTxCount)
 	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_event&resource_id=evt_stripe_1000", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_webhook.processed"`) ||
+		!strings.Contains(auditBody, `"action":"payment_order.paid"`) ||
+		!strings.Contains(auditBody, "event_id") ||
+		!strings.Contains(auditBody, "evt_stripe_1000") ||
+		!strings.Contains(auditBody, order.OrderNo) {
+		t.Fatalf("stripe webhook payment should write payment event audit logs, got %d %s", auditResp.Code, auditBody)
+	}
 
 	duplicateNotify := performStripeWebhook(r, successBody, "whsec_test_secret")
 	if duplicateNotify.Code != http.StatusOK || strings.TrimSpace(duplicateNotify.Body.String()) != "success" {
@@ -1858,6 +1878,16 @@ func TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota(t *testing.T) {
 	}
 	if refundTxCount != 1 {
 		t.Fatalf("refund auto deduct should write one refund deduct transaction, got %d", refundTxCount)
+	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_event&resource_id=evt_refund_2", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_refund.processed"`) ||
+		!strings.Contains(auditBody, `"action":"payment_refund.deducted"`) ||
+		!strings.Contains(auditBody, "event_id") ||
+		!strings.Contains(auditBody, "evt_refund_2") ||
+		!strings.Contains(auditBody, secondOrder.OrderNo) {
+		t.Fatalf("stripe refund should write payment event audit logs, got %d %s", auditResp.Code, auditBody)
 	}
 	duplicateRefund := performStripeWebhook(r, refundDeductBody, "whsec_test_secret")
 	if duplicateRefund.Code != http.StatusOK || strings.TrimSpace(duplicateRefund.Body.String()) != "success" {
