@@ -25,6 +25,7 @@ RouterX 支持两类基础运行方式，并可在第二类上扩展高可用。
 | `ENCRYPTION_KEY` | 空 | 加密下游 API Key、OAuth/OIDC client secret 的主密钥；生产必须显式指定或由 KMS 提供 |
 | `PAYMENT_STRIPE_SECRET_KEY` | 空 | Stripe Secret Key，启用 Stripe 时必填 |
 | `PAYMENT_STRIPE_WEBHOOK_SECRET` | 空 | Stripe Webhook 签名密钥，启用 Stripe Webhook 时必填 |
+| `PAYMENT_STRIPE_API_BASE` | `https://api.stripe.com` | 可选 Stripe API 基础地址；仅测试、私有代理或受控网络出口场景覆盖 |
 | `PAYMENT_EPAY_KEY` | 空 | 易支付商户签名密钥，启用易支付时必填 |
 | `SERVER_PORT` | `3000` | HTTP 服务端口 |
 

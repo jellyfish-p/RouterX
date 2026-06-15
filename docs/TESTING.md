@@ -48,6 +48,7 @@
 | `TestAdminAuditRequiresSuperAdmin` | 普通管理员不能查询管理审计日志，超级管理员边界由路由层拦截 |
 | `TestUserListsAvailableModels` | 用户查看当前启用通道的去重模型列表，禁用通道模型不可见，价格状态明确标记未就绪 |
 | `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品；未启用 provider 拒绝下单，启用后创建本地 pending 订单并写 `payment_order.create` 管理审计，订单按 settings 过期且不入账 |
+| `TestStripeOrderCreatesCheckoutSessionWhenConfigured` | Stripe secret、测试 API base 和绝对 return_url 齐全时创建 Checkout Session，表单 metadata/金额/货币可复核，并保存 session id/url |
 | `TestEpayOrderBuildsSignedCheckoutURL` | 易支付网关配置齐全时创建订单返回签名收银台 URL，参数和签名可复核 |
 | `TestEpayNotifyPaysOrderIdempotently` | 易支付同步返回只读展示本地状态；异步通知校验签名和金额，成功通知订单 paid、入账并写 webhook/入账审计，重复通知不重复增加额度或流水 |
 | `TestStripeWebhookPaysOrderIdempotently` | Stripe webhook 校验原始 body 签名、Checkout Session 金额和 metadata，成功事件 paid 入账并写 webhook/入账审计，重复事件不重复流水 |
@@ -426,7 +427,7 @@ Gemini-compatible 最小断言：
 | P1 | 独立日志数据库 | `LOG_SQL_DSN` 写入、日志库故障降级、主库结算最小事实可恢复 |
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝和 RPM/TPM 拒绝已覆盖；风险视图和缓存失效待补 |
-| P2 | 支付充值 | Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账审计、Stripe 全额/部分退款和扣回审计、Stripe 争议事件和可选 API Key 禁用审计、支付人工补账/扣回审计；完整争议生命周期和更完整人工退款流程待补 |
+| P2 | 支付充值 | Stripe Checkout Session 创建、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账审计、Stripe 全额/部分退款和扣回审计、Stripe 争议事件和可选 API Key 禁用审计、支付人工补账/扣回审计；完整争议生命周期和更完整人工退款流程待补 |
 | P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理、日志清理审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status 和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis 指标测试已覆盖；继续补更完整结构化日志、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定

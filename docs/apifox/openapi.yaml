@@ -622,7 +622,7 @@ paths:
     post:
       tags: [User Payment]
       summary: 创建支付订单
-      description: 基础实现；provider 必须已通过 payment.stripe.enabled 或 payment.epay.enabled 启用。创建本地 pending 订单并保存商品快照，按 payment.order_expire_minutes 生成 expires_at，成功后写 payment_order.create 管理审计；审计摘要不保存 checkout_url。易支付网关、商户号、回调 URL 和 PAYMENT_EPAY_KEY 配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接。真实 Stripe Checkout Session 创建仍按 docs/PAYMENTS.md 后续契约实现。
+      description: 基础实现；provider 必须已通过 payment.stripe.enabled 或 payment.epay.enabled 启用。创建本地 pending 订单并保存商品快照，按 payment.order_expire_minutes 生成 expires_at，成功后写 payment_order.create 管理审计；审计摘要不保存 checkout_url。Stripe 在 PAYMENT_STRIPE_SECRET_KEY 和绝对 return_url 齐全时创建 Checkout Session 并保存 session.id/session.url；易支付网关、商户号、回调 URL 和 PAYMENT_EPAY_KEY 配置齐全时返回签名收银台 URL；配置不足时返回安全 checkout 占位链接。
       security:
         - UserJWT: []
       requestBody:
@@ -2600,7 +2600,7 @@ components:
           description: 易支付支付方式；Stripe 可忽略或使用 card。
         return_url:
           type: string
-          description: 支付完成后的前端跳转地址；当前基础实现不直接信任此字段入账。
+          description: 支付完成后的前端跳转地址；Stripe 创建真实 Checkout Session 时必须是绝对 URL，入账仍只依赖 provider webhook。
     PaymentOrderInfo:
       type: object
       properties:

@@ -1427,6 +1427,98 @@ func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 	}
 }
 
+func TestStripeOrderCreatesCheckoutSessionWhenConfigured(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_STRIPE_SECRET_KEY", "sk_test_routerx")
+	var called atomic.Bool
+	stripeAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		called.Store(true)
+		if req.Method != http.MethodPost || req.URL.Path != "/v1/checkout/sessions" {
+			t.Errorf("unexpected stripe request: %s %s", req.Method, req.URL.Path)
+			http.NotFound(w, req)
+			return
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer sk_test_routerx" {
+			t.Errorf("unexpected stripe authorization header: %q", got)
+		}
+		if err := req.ParseForm(); err != nil {
+			t.Errorf("parse stripe form: %v", err)
+		}
+		orderNo := req.PostForm.Get("metadata[order_no]")
+		if orderNo == "" || !strings.HasPrefix(orderNo, "pay_") {
+			t.Errorf("stripe metadata should include generated order_no, got %q", orderNo)
+		}
+		expected := map[string]string{
+			"mode":                                   "payment",
+			"client_reference_id":                    orderNo,
+			"success_url":                            "https://app.example.com/billing/success",
+			"cancel_url":                             "https://app.example.com/billing/success",
+			"line_items[0][price_data][currency]":    "usd",
+			"line_items[0][price_data][unit_amount]": "999",
+			"line_items[0][price_data][product_data][name]":       "100 credits",
+			"line_items[0][quantity]":                             "1",
+			"metadata[product_id]":                                "quota_stripe_session",
+			"metadata[user_id]":                                   "1",
+			"payment_intent_data[metadata][order_no]":             orderNo,
+			"payment_intent_data[metadata][product_id]":           "quota_stripe_session",
+			"payment_intent_data[metadata][user_id]":              "1",
+			"payment_intent_data[metadata][routerx_order_source]": "payment_order",
+		}
+		for key, want := range expected {
+			if got := req.PostForm.Get(key); got != want {
+				t.Errorf("stripe form %s = %q, want %q", key, got, want)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cs_test_123","url":"https://checkout.stripe.com/c/session_123"}`))
+	}))
+	defer stripeAPI.Close()
+	t.Setenv("PAYMENT_STRIPE_API_BASE", stripeAPI.URL)
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_stripe_session",
+		Name:      "100 credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "stripe",
+		"product_id": "quota_stripe_session",
+		"return_url": "https://app.example.com/billing/success",
+	})
+	if createResp.Code != http.StatusOK || !strings.Contains(createResp.Body.String(), "https://checkout.stripe.com/c/session_123") {
+		t.Fatalf("stripe order should return checkout session URL, got %d %s", createResp.Code, createResp.Body.String())
+	}
+	if !called.Load() {
+		t.Fatal("stripe checkout session API was not called")
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("provider = ? AND product_id = ?", common.PaymentProviderStripe, "quota_stripe_session").First(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.ProviderOrderID == nil || *order.ProviderOrderID != "cs_test_123" || order.CheckoutURL == nil || *order.CheckoutURL != "https://checkout.stripe.com/c/session_123" {
+		t.Fatalf("stripe order should store checkout session identifiers, got %+v", order)
+	}
+}
+
 func TestAdminManagesPaymentProducts(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

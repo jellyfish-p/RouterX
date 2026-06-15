@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"routerx/internal"
@@ -808,6 +810,16 @@ func (s *UserService) CreatePaymentOrder(userID uint, provider, productID, payTy
 	expiredAt := now.Add(expireDuration)
 	providerOrderID := "local_" + orderNo
 	checkoutURL := "/v0/user/payment/orders/" + orderNo
+	if provider == common.PaymentProviderStripe {
+		sessionID, sessionURL, err := createStripeCheckoutSession(orderNo, userID, product, returnURL)
+		if err != nil {
+			return nil, err
+		}
+		if sessionID != "" && sessionURL != "" {
+			providerOrderID = sessionID
+			checkoutURL = sessionURL
+		}
+	}
 	if provider == common.PaymentProviderEpay {
 		if signedURL, err := epayCheckoutURL(orderNo, product, payType); err != nil {
 			return nil, err
@@ -832,6 +844,84 @@ func (s *UserService) CreatePaymentOrder(userID uint, provider, productID, payTy
 		return nil, err
 	}
 	return order, nil
+}
+
+func createStripeCheckoutSession(orderNo string, userID uint, product model.PaymentProduct, returnURL string) (string, string, error) {
+	secret := strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_SECRET_KEY"))
+	if secret == "" {
+		return "", "", nil
+	}
+	returnURL = strings.TrimSpace(returnURL)
+	if returnURL == "" {
+		return "", "", nil
+	}
+	parsedReturnURL, err := url.Parse(returnURL)
+	if err != nil || parsedReturnURL.Scheme == "" || parsedReturnURL.Host == "" {
+		return "", "", errors.New("stripe return_url must be an absolute URL")
+	}
+	amountMinor, err := decimalAmountToMinorUnits(product.Amount)
+	if err != nil {
+		return "", "", err
+	}
+	currency := strings.ToLower(strings.TrimSpace(product.Currency))
+	if currency == "" {
+		return "", "", errors.New("stripe currency is required")
+	}
+
+	userIDText := strconv.FormatUint(uint64(userID), 10)
+	values := url.Values{}
+	values.Set("mode", "payment")
+	values.Set("success_url", returnURL)
+	values.Set("cancel_url", returnURL)
+	values.Set("client_reference_id", orderNo)
+	values.Set("line_items[0][price_data][currency]", currency)
+	values.Set("line_items[0][price_data][unit_amount]", strconv.FormatInt(amountMinor, 10))
+	values.Set("line_items[0][price_data][product_data][name]", product.Name)
+	values.Set("line_items[0][quantity]", "1")
+	values.Set("metadata[order_no]", orderNo)
+	values.Set("metadata[product_id]", product.ProductID)
+	values.Set("metadata[user_id]", userIDText)
+	values.Set("payment_intent_data[metadata][order_no]", orderNo)
+	values.Set("payment_intent_data[metadata][product_id]", product.ProductID)
+	values.Set("payment_intent_data[metadata][user_id]", userIDText)
+	values.Set("payment_intent_data[metadata][routerx_order_source]", "payment_order")
+
+	apiBase := strings.TrimRight(strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_API_BASE")), "/")
+	if apiBase == "" {
+		apiBase = "https://api.stripe.com"
+	}
+	req, err := http.NewRequest(http.MethodPost, apiBase+"/v1/checkout/sessions", strings.NewReader(values.Encode()))
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+secret)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", "", err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", "", fmt.Errorf("stripe checkout session failed: status %d", resp.StatusCode)
+	}
+	var result struct {
+		ID  string `json:"id"`
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", "", err
+	}
+	result.ID = strings.TrimSpace(result.ID)
+	result.URL = strings.TrimSpace(result.URL)
+	if result.ID == "" || result.URL == "" {
+		return "", "", errors.New("stripe checkout session response missing id or url")
+	}
+	return result.ID, result.URL, nil
 }
 
 func epayCheckoutURL(orderNo string, product model.PaymentProduct, payType string) (string, error) {

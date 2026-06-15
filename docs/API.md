@@ -593,14 +593,14 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议事件记录和可选 API Key 禁用；易支付异步通知已支持 MD5 签名、金额校验、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回并写流水与审计。真实 Stripe Checkout Session 创建、完整争议生命周期和更完整人工退款流程仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe secret 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议事件记录和可选 API Key 禁用；易支付异步通知已支持 MD5 签名、金额校验、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回并写流水与审计。完整争议生命周期和更完整人工退款流程仍属于后续能力。
 
 用户鉴权接口：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/v0/user/payment/products` | 获取可购买的充值商品 |
-| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并写 `payment_order.create` 管理审计；provider 必须已在 settings 启用，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；`expires_at` 来自 `payment.order_expire_minutes` |
+| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并写 `payment_order.create` 管理审计；provider 必须已在 settings 启用，Stripe secret + 绝对 `return_url` 齐全时创建 Stripe Checkout Session，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；`expires_at` 来自 `payment.order_expire_minutes` |
 | GET | `/v0/user/payment/orders` | 查询当前用户支付订单列表 |
 | GET | `/v0/user/payment/orders/:order_no` | 查询当前用户支付订单详情 |
 
@@ -630,7 +630,7 @@ Provider 回调接口：
 | `provider` | 支付渠道，支持 `stripe`、`epay` |
 | `product_id` | 充值商品 ID，服务端据此确定金额、货币和额度 |
 | `pay_type` | 易支付支付方式，如 `alipay`、`wxpay`、`qqpay`；Stripe 可忽略或使用 `card` |
-| `return_url` | 支付完成后的前端跳转地址，服务端需校验白名单 |
+| `return_url` | 支付完成后的前端跳转地址；Stripe 创建真实 Checkout Session 时必须是绝对 URL，入账仍只依赖 provider webhook |
 
 创建支付订单响应：
 
