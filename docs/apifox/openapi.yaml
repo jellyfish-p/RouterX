@@ -8,7 +8,7 @@ info:
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message。
-    - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败和审计事件计数的基础 /metrics、管理端支付商品、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败和审计事件计数的基础 /metrics、管理端支付商品、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -1045,7 +1045,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
       security:
         - UserJWT: []
       parameters:
@@ -1275,8 +1275,8 @@ paths:
   /v0/admin/payment/refund-requests:
     post:
       tags: [Admin Payment]
-      summary: 发起 Stripe provider 退款请求
-      description: 管理员向 Stripe 发起 provider 退款请求；仅接受 Stripe paid 订单，订单必须已保存 provider_payment_id。refund_amount 为空时按订单全额退款，非空时必须大于 0 且不超过订单金额。成功后写 payment_refund_requests、订单进入 refund_pending，并写 payment_refund.requested 管理审计；最终 refunded 或 partially_refunded 状态仍由 Stripe charge.refunded webhook 确认。
+      summary: 发起 provider 退款请求
+      description: 管理员向 Stripe 或易支付发起 provider 退款请求；仅接受 paid 订单。Stripe 订单必须已保存 provider_payment_id，并调用 Stripe Refund API；易支付订单需要 payment.epay.pid、payment.epay.refund_url 和 PAYMENT_EPAY_KEY，并对退款表单做 MD5 签名。refund_amount 为空时按订单全额退款，非空时必须大于 0 且不超过订单金额。成功后写 payment_refund_requests、订单进入 refund_pending，并写 payment_refund.requested 管理审计；最终 refunded 或 partially_refunded 状态仍由可信 provider webhook 或后续人工收尾确认。
       security:
         - UserJWT: []
       requestBody:
@@ -1287,7 +1287,7 @@ paths:
               $ref: "#/components/schemas/PaymentProviderRefundRequest"
       responses:
         "200":
-          description: Stripe provider 退款请求已受理。
+          description: provider 退款请求已受理。
           content:
             application/json:
               schema:
@@ -2651,7 +2651,7 @@ components:
       properties:
         order_no:
           type: string
-          description: 本地支付订单号；订单必须是 Stripe paid 状态且已保存 provider_payment_id。
+          description: 本地支付订单号；订单必须是 paid 状态。Stripe 订单需已保存 provider_payment_id，易支付订单需配置 payment.epay.refund_url。
           example: RX202606150001
         refund_amount:
           type: string
@@ -2659,11 +2659,11 @@ components:
           example: "5.00"
         reason:
           type: string
-          description: 发起 provider 退款的原因；默认策略要求必填，会写入 Stripe metadata 和管理审计。
+          description: 发起 provider 退款的原因；默认策略要求必填，会写入 provider 请求摘要和管理审计。
           example: customer requested partial refund
         idempotency_key:
           type: string
-          description: 幂等键；会作为 Stripe Idempotency-Key，并在本地 payment_refund_requests 中唯一记录。
+          description: 幂等键；Stripe 会作为 Idempotency-Key，易支付会随退款表单签名提交，并在本地 payment_refund_requests 中唯一记录。
           example: refund-ticket-5678
     PaymentProviderRefundRequestResult:
       type: object
@@ -2675,7 +2675,7 @@ components:
           type: string
         provider:
           type: string
-          enum: [stripe]
+          enum: [stripe, epay]
         provider_refund_id:
           type: string
           example: re_123
@@ -3486,13 +3486,14 @@ components:
         updated_at: { type: string, format: date-time }
     BatchSetSettingsRequest:
       type: object
-      description: 顶层对象为 key/value 字符串映射；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；支付争议策略可设置 payment.dispute.auto_disable_tokens=true。
+      description: 顶层对象为 key/value 字符串映射；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，易支付退款请求地址可设置 payment.epay.refund_url。
       additionalProperties:
         type: string
       example:
         billing.default_user_channel_group_access: '["default"]'
         billing.user_group_channel_group_access: '{"vip":{"allow":["premium"],"deny":["experimental"]}}'
         payment.dispute.auto_disable_tokens: "true"
+        payment.epay.refund_url: "https://pay.example.com/refund"
     ChatCompletionRequest:
       type: object
       required: [model, messages]

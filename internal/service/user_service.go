@@ -711,9 +711,6 @@ func (s *UserService) CreatePaymentProviderRefundRequest(operatorID uint, operat
 	if err := s.ensureNormalUserTarget(operatorID, operatorRole, order.UserID); err != nil {
 		return nil, err
 	}
-	if order.Provider != common.PaymentProviderStripe {
-		return nil, errors.New("payment provider refund request only supports stripe")
-	}
 	if order.Status != common.PaymentOrderStatusPaid {
 		return nil, errors.New("payment order is not paid")
 	}
@@ -738,7 +735,7 @@ func (s *UserService) CreatePaymentProviderRefundRequest(operatorID uint, operat
 		return nil, errors.New("refund_quota must be positive")
 	}
 
-	providerRefundID, providerStatus, _, err := createStripeRefund(order, refundAmountMinor, idempotencyKey, reason)
+	providerRefundID, providerStatus, _, err := createProviderRefund(order, refundAmountMinor, idempotencyKey, reason)
 	if err != nil {
 		return nil, err
 	}
@@ -835,6 +832,17 @@ func (s *UserService) CreatePaymentProviderRefundRequest(operatorID uint, operat
 		return nil
 	})
 	return result, err
+}
+
+func createProviderRefund(order model.PaymentOrder, amountMinor int64, idempotencyKey, reason string) (string, string, string, error) {
+	switch order.Provider {
+	case common.PaymentProviderStripe:
+		return createStripeRefund(order, amountMinor, idempotencyKey, reason)
+	case common.PaymentProviderEpay:
+		return createEpayRefund(order, amountMinor, idempotencyKey, reason)
+	default:
+		return "", "", "", errors.New("payment provider refund request does not support provider")
+	}
 }
 
 // ListRedemCodes 查询充值码列表，供管理员按状态、批次或关键字检索。
@@ -1352,6 +1360,117 @@ func createStripeRefund(order model.PaymentOrder, amountMinor int64, idempotency
 		return "", "", "", errors.New("stripe refund response missing id")
 	}
 	return result.ID, result.Status, string(body), nil
+}
+
+func createEpayRefund(order model.PaymentOrder, amountMinor int64, idempotencyKey, reason string) (string, string, string, error) {
+	key := strings.TrimSpace(os.Getenv("PAYMENT_EPAY_KEY"))
+	if key == "" {
+		return "", "", "", errors.New("epay key is not configured")
+	}
+	pid, pidOK, err := paymentSetting("payment.epay.pid")
+	if err != nil {
+		return "", "", "", err
+	}
+	refundURL, refundURLOK, err := paymentSetting("payment.epay.refund_url")
+	if err != nil {
+		return "", "", "", err
+	}
+	if !pidOK || !refundURLOK {
+		return "", "", "", errors.New("epay refund settings are not configured")
+	}
+	if amountMinor <= 0 {
+		return "", "", "", errors.New("refund_amount must be positive")
+	}
+
+	values := map[string]string{
+		"act":             "refund",
+		"pid":             pid,
+		"out_trade_no":    order.OrderNo,
+		"money":           formatMinorUnits(amountMinor),
+		"reason":          reason,
+		"idempotency_key": idempotencyKey,
+		"sign_type":       "MD5",
+	}
+	if order.ProviderPaymentID != nil && strings.TrimSpace(*order.ProviderPaymentID) != "" {
+		values["trade_no"] = strings.TrimSpace(*order.ProviderPaymentID)
+	}
+	values["sign"] = epaySign(values, key)
+
+	form := url.Values{}
+	for name, value := range values {
+		form.Set(name, value)
+	}
+	req, err := http.NewRequest(http.MethodPost, refundURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", "", "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", "", "", err
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", "", "", fmt.Errorf("epay refund request failed: status %d", resp.StatusCode)
+	}
+	var result struct {
+		Code     interface{} `json:"code"`
+		Msg      string      `json:"msg"`
+		RefundNo string      `json:"refund_no"`
+		RefundID string      `json:"refund_id"`
+		TradeNo  string      `json:"trade_no"`
+		Status   string      `json:"status"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", "", "", err
+	}
+	if !epayRefundAccepted(result.Code) {
+		msg := strings.TrimSpace(result.Msg)
+		if msg == "" {
+			msg = "epay refund request rejected"
+		}
+		return "", "", "", errors.New(msg)
+	}
+	providerRefundID := firstNonEmpty(result.RefundNo, result.RefundID, result.TradeNo)
+	if providerRefundID == "" {
+		providerRefundID = fallbackEpayRefundID(order.OrderNo, idempotencyKey)
+	}
+	return providerRefundID, strings.TrimSpace(result.Status), string(body), nil
+}
+
+func epayRefundAccepted(code interface{}) bool {
+	switch value := code.(type) {
+	case float64:
+		return value == 1
+	case int:
+		return value == 1
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		return normalized == "1" || normalized == "success" || normalized == "succeeded"
+	case bool:
+		return value
+	default:
+		return false
+	}
+}
+
+func fallbackEpayRefundID(orderNo, idempotencyKey string) string {
+	sum := md5.Sum([]byte(orderNo + ":" + idempotencyKey))
+	return "epay_refund_" + hex.EncodeToString(sum[:])
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func epayCheckoutURL(orderNo string, product model.PaymentProduct, payType string) (string, error) {

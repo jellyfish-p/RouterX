@@ -253,7 +253,7 @@ func validateSettingValue(key, value string) error {
 		if len(value) != 3 {
 			return errors.New("payment.currency must be a 3-letter currency code")
 		}
-	case "payment.epay.gateway", "payment.epay.notify_url", "payment.epay.return_url":
+	case "payment.epay.gateway", "payment.epay.notify_url", "payment.epay.return_url", "payment.epay.refund_url":
 		return validateOptionalURLSetting(key, value)
 	}
 	return nil

@@ -291,7 +291,7 @@ Gemini-compatible 错误示例：
 | PATCH | `/v0/admin/payment/products/:id/enable` | 基础实现 | 启用商品，成功后写管理审计 |
 | POST | `/v0/admin/payment/adjustments` | 基础实现 | 支付相关人工补账或扣回；写 `manual_credit`/`manual_debit` 额度流水和 `payment_manual_adjust.*` 管理审计，默认必须填写原因 |
 | POST | `/v0/admin/payment/refunds` | 基础实现 | 管理员确认支付退款后扣回额度，订单置为 `refunded` 或 `partially_refunded`，写 `refund_deduct` 流水和 `payment_refund.manual` 审计 |
-| POST | `/v0/admin/payment/refund-requests` | 基础实现 | 向 Stripe 发起 provider 退款请求，写 `payment_refund_requests`，订单进入 `refund_pending`，最终状态等待可信 webhook 确认 |
+| POST | `/v0/admin/payment/refund-requests` | 基础实现 | 向 Stripe 或易支付发起 provider 退款请求，写 `payment_refund_requests`，订单进入 `refund_pending`，最终状态等待可信 webhook 或后续人工收尾确认 |
 
 创建/更新支付商品请求：
 
@@ -337,7 +337,7 @@ Gemini-compatible 错误示例：
 
 `refund_quota` 必须大于 0 且不能超过订单入账额度；仅支持对 `paid` 订单人工落账退款。全额退款会将订单置为 `refunded`，部分退款会置为 `partially_refunded`；接口会写 `quota_transactions(type=refund_deduct, source_type=refund, source_id=<order_no>)`，并通过 `idempotency_key` 防止重复扣回。
 
-Stripe provider 退款请求：
+Provider 退款请求：
 
 ```json
 {
@@ -348,7 +348,7 @@ Stripe provider 退款请求：
 }
 ```
 
-`refund_amount` 为空时按订单全额退款；非空时必须大于 0 且不能超过订单金额。接口需要订单为 Stripe `paid` 状态且已保存 `provider_payment_id`，成功后本地订单进入 `refund_pending`，写 `payment_refund_requests` 和 `payment_refund.requested` 审计；最终退款状态和可选额度扣回仍以 Stripe webhook 退款事件为准。
+`refund_amount` 为空时按订单全额退款；非空时必须大于 0 且不能超过订单金额。接口需要订单为 `paid` 状态；Stripe 订单必须已保存 `provider_payment_id`，易支付订单需要配置 `payment.epay.pid`、`payment.epay.refund_url` 和 `PAYMENT_EPAY_KEY`。成功后本地订单进入 `refund_pending`，写 `payment_refund_requests` 和 `payment_refund.requested` 审计；最终退款状态和可选额度扣回仍以可信 provider webhook 或后续人工收尾为准。
 
 ### 管理审计
 
@@ -382,7 +382,7 @@ Stripe provider 退款请求：
 | `payment_order.create` | `POST /v0/user/payment/orders` |
 | `payment_webhook.processed` | `POST /v0/payment/stripe/webhook`、`POST /v0/payment/epay/notify` |
 | `payment_order.paid` | 支付 provider 成功回调入账 |
-| `payment_refund.requested` | `POST /v0/admin/payment/refund-requests` 向 Stripe 发起退款请求 |
+| `payment_refund.requested` | `POST /v0/admin/payment/refund-requests` 向 Stripe 或易支付发起退款请求 |
 | `payment_refund.processed` | `POST /v0/payment/stripe/webhook` 处理全额或部分退款事件 |
 | `payment_refund.deducted` | Stripe 全额或部分退款按 settings 自动扣回额度 |
 | `payment_refund.manual` | `POST /v0/admin/payment/refunds` 管理员人工确认退款并扣回额度 |
@@ -631,7 +631,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe secret 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议生命周期记录和可选 API Key 禁用；易支付异步通知已支持 MD5 签名、金额校验、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回、人工退款落账和 Stripe provider 退款请求并写流水与审计。更多 provider 自动发起退款流程仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe secret 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议生命周期记录和可选 API Key 禁用；易支付异步通知已支持 MD5 签名、金额校验、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回、人工退款落账以及 Stripe/易支付 provider 退款请求并写流水与审计。更多 provider 自动发起退款流程仍属于后续能力。
 
 用户鉴权接口：
 

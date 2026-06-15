@@ -187,6 +187,7 @@ func buildDefaultSettings() map[string]map[string]string {
 			"payment.epay.pid":                             "",
 			"payment.epay.notify_url":                      "",
 			"payment.epay.return_url":                      "",
+			"payment.epay.refund_url":                      "",
 			"payment.currency":                             "usd",
 			"payment.order_expire_minutes":                 "30",
 			"payment.refund.auto_deduct":                   "false",

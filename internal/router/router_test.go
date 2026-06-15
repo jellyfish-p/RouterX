@@ -1506,6 +1506,164 @@ func TestAdminStripeRefundRequestCreatesProviderRefundAndPendingOrder(t *testing
 	}
 }
 
+func TestAdminEpayRefundRequestCreatesProviderRefundAndPendingOrder(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_EPAY_KEY", "epay-refund-secret")
+
+	var refundAPICalls int32
+	epayAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		atomic.AddInt32(&refundAPICalls, 1)
+		if req.Method != http.MethodPost || req.URL.Path != "/refund" {
+			t.Fatalf("unexpected epay refund request: %s %s", req.Method, req.URL.Path)
+		}
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		expected := map[string]string{
+			"act":             "refund",
+			"pid":             "merchant-epay-1",
+			"out_trade_no":    "PAYEPAYREF1000",
+			"money":           "5.00",
+			"reason":          "customer requested epay partial refund",
+			"idempotency_key": "epay-refund-request-1",
+		}
+		for key, want := range expected {
+			if got := req.Form.Get(key); got != want {
+				t.Fatalf("epay refund form %s = %q, want %q", key, got, want)
+			}
+		}
+		if req.Form.Get("sign_type") != "MD5" || req.Form.Get("sign") != epaySign(req.Form, "epay-refund-secret") {
+			t.Fatalf("epay refund sign mismatch: %s", req.Form.Encode())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":1,"msg":"success","refund_no":"epay_refund_1","status":"pending"}`))
+	}))
+	defer epayAPI.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createUserResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username": "alice",
+		"password": "password123",
+		"quota":    100,
+	})
+	if createUserResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createUserResp.Code, createUserResp.Body.String())
+	}
+	var alice model.User
+	if err := internal.DB.Where("username = ?", "alice").First(&alice).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("payment.epay.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.epay.pid", "merchant-epay-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.epay.refund_url", epayAPI.URL+"/refund"); err != nil {
+		t.Fatal(err)
+	}
+	paidAt := time.Now()
+	providerPaymentID := "TRADE_EP_REF_1"
+	order := model.PaymentOrder{
+		OrderNo:           "PAYEPAYREF1000",
+		UserID:            alice.ID,
+		ProductID:         "quota_epay_refund_request",
+		Provider:          common.PaymentProviderEpay,
+		Amount:            "9.99",
+		Currency:          "cny",
+		Quota:             100,
+		Status:            common.PaymentOrderStatusPaid,
+		ProviderPaymentID: &providerPaymentID,
+		PaidAt:            &paidAt,
+	}
+	if err := internal.DB.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	refundResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refund-requests", rootJWT, map[string]interface{}{
+		"order_no":        order.OrderNo,
+		"refund_amount":   "5.00",
+		"reason":          "customer requested epay partial refund",
+		"idempotency_key": "epay-refund-request-1",
+	})
+	refundBody := refundResp.Body.String()
+	if refundResp.Code != http.StatusOK ||
+		!strings.Contains(refundBody, `"provider":"epay"`) ||
+		!strings.Contains(refundBody, `"provider_refund_id":"epay_refund_1"`) ||
+		!strings.Contains(refundBody, `"order_status":"refund_pending"`) ||
+		!strings.Contains(refundBody, `"refund_quota":50`) {
+		t.Fatalf("epay refund request should create provider refund and pending order, got %d %s", refundResp.Code, refundBody)
+	}
+	if atomic.LoadInt32(&refundAPICalls) != 1 {
+		t.Fatalf("epay refund API should be called once, got %d", refundAPICalls)
+	}
+	if err := internal.DB.First(&order, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != common.PaymentOrderStatusRefundPending {
+		t.Fatalf("epay refund request should mark order refund_pending, got %+v", order)
+	}
+	var refundRequest struct {
+		OrderNo          string
+		Provider         string
+		ProviderRefundID string
+		Amount           string
+		AmountMinor      int64
+		Currency         string
+		RefundQuota      int64
+		Status           string
+		IdempotencyKey   string
+		Reason           string
+		ActorUserID      uint
+	}
+	if err := internal.DB.Table("payment_refund_requests").Where("idempotency_key = ?", "epay-refund-request-1").First(&refundRequest).Error; err != nil {
+		t.Fatalf("epay refund request should be recorded: %v", err)
+	}
+	if refundRequest.OrderNo != order.OrderNo ||
+		refundRequest.Provider != common.PaymentProviderEpay ||
+		refundRequest.ProviderRefundID != "epay_refund_1" ||
+		refundRequest.Amount != "5.00" ||
+		refundRequest.AmountMinor != 500 ||
+		refundRequest.Currency != "cny" ||
+		refundRequest.RefundQuota != 50 ||
+		refundRequest.Status != "pending" ||
+		refundRequest.Reason != "customer requested epay partial refund" ||
+		refundRequest.ActorUserID == 0 {
+		t.Fatalf("unexpected epay refund request record: %+v", refundRequest)
+	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo, rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_refund.requested"`) ||
+		!strings.Contains(auditBody, "epay_refund_1") ||
+		!strings.Contains(auditBody, "epay-refund-request-1") {
+		t.Fatalf("epay refund request should write audit log, got %d %s", auditResp.Code, auditBody)
+	}
+
+	duplicateResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refund-requests", rootJWT, map[string]interface{}{
+		"order_no":        order.OrderNo,
+		"refund_amount":   "5.00",
+		"reason":          "customer requested epay partial refund",
+		"idempotency_key": "epay-refund-request-1",
+	})
+	if duplicateResp.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate epay refund request idempotency key should fail, got %d %s", duplicateResp.Code, duplicateResp.Body.String())
+	}
+	if atomic.LoadInt32(&refundAPICalls) != 1 {
+		t.Fatalf("duplicate epay refund request must not call provider again, got %d", refundAPICalls)
+	}
+}
+
 func TestRedemCodeBatchNoteAndExpirationPolicy(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -2978,6 +3136,7 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"payment.epay.pid",
 		"payment.epay.notify_url",
 		"payment.epay.return_url",
+		"payment.epay.refund_url",
 		"payment.currency",
 		"payment.order_expire_minutes",
 		"payment.refund.auto_deduct",
@@ -3357,6 +3516,12 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badEpayGateway.Code != http.StatusBadRequest {
 		t.Fatalf("invalid payment.epay.gateway should be rejected, got %d %s", badEpayGateway.Code, badEpayGateway.Body.String())
+	}
+	badEpayRefundURL := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"payment.epay.refund_url": "pay.example.com/refund",
+	})
+	if badEpayRefundURL.Code != http.StatusBadRequest {
+		t.Fatalf("invalid payment.epay.refund_url should be rejected, got %d %s", badEpayRefundURL.Code, badEpayRefundURL.Body.String())
 	}
 	badDefaultAccess := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
 		"billing.default_user_channel_group_access": `"default"`,
