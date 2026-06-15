@@ -4077,6 +4077,18 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if billingSnapshot["key_budget_before"] != float64(50) || billingSnapshot["key_budget_after"] != float64(45) || billingSnapshot["user_balance_before"] != float64(100) || billingSnapshot["user_balance_after"] != float64(95) {
 		t.Fatalf("billing snapshot should record budget before/after values: %+v", billingSnapshot)
 	}
+	expressionSnapshot, ok := billingSnapshot["billing_expression_snapshot"].(map[string]interface{})
+	if !ok || expressionSnapshot["source"] != "p0_usage" || expressionSnapshot["expression"] != "total_tokens" || expressionSnapshot["base_quota"] != float64(5) {
+		t.Fatalf("billing snapshot should record P0 usage expression: %+v", billingSnapshot)
+	}
+	expressionVariables, ok := expressionSnapshot["variables"].(map[string]interface{})
+	if !ok || expressionVariables["total_tokens"] != float64(5) || expressionVariables["prompt_tokens"] != float64(3) || expressionVariables["completion_tokens"] != float64(2) {
+		t.Fatalf("billing expression snapshot should record token variables: %+v", expressionSnapshot)
+	}
+	multiplierSnapshot, ok := billingSnapshot["multiplier_snapshot"].(map[string]interface{})
+	if !ok || multiplierSnapshot["effective_ratio"] != float64(1) {
+		t.Fatalf("billing snapshot should record default multiplier summary: %+v", billingSnapshot)
+	}
 
 	billingResp := performJSON(r, http.MethodGet, "/v0/user/billing", rootJWT, nil)
 	if billingResp.Code != http.StatusOK || !strings.Contains(billingResp.Body.String(), `"call_count":1`) || !strings.Contains(billingResp.Body.String(), `"total_quota":5`) || !strings.Contains(billingResp.Body.String(), `"total_tokens":5`) {
@@ -5775,6 +5787,14 @@ func TestModerationsPassthroughUsesMinimumChargeWithoutUsage(t *testing.T) {
 	}
 	if callLog.UsageSource != common.LogUsageSourceMinimum {
 		t.Fatalf("moderations log should record minimum usage source, got %+v", callLog)
+	}
+	var billingSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.BillingSnapshot), &billingSnapshot); err != nil {
+		t.Fatalf("moderations log should store billing snapshot JSON, got %q: %v", callLog.BillingSnapshot, err)
+	}
+	expressionSnapshot, ok := billingSnapshot["billing_expression_snapshot"].(map[string]interface{})
+	if !ok || expressionSnapshot["source"] != "minimum" || expressionSnapshot["expression"] != "minimum_charge" || expressionSnapshot["base_quota"] != float64(1) {
+		t.Fatalf("minimum billing snapshot should record minimum expression: %+v", billingSnapshot)
 	}
 }
 

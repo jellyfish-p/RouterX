@@ -8,6 +8,7 @@ import (
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
+	"routerx/internal/relay"
 	"strconv"
 	"strings"
 	"time"
@@ -188,21 +189,36 @@ func normalizeLogBillingSnapshot(log *model.Log) string {
 	if log.TokenID != nil && *log.TokenID > 0 {
 		payer = "token_and_user"
 	}
+	expressionSource := "p0_usage"
+	if usageSource == common.LogUsageSourceMinimum {
+		expressionSource = "minimum"
+	}
+	var usage *relay.Usage
+	if log.TotalTokens > 0 {
+		usage = &relay.Usage{
+			PromptTokens:     log.PromptTokens,
+			CompletionTokens: log.CompletionTokens,
+			TotalTokens:      log.TotalTokens,
+		}
+	}
 	snapshot := map[string]interface{}{
-		"schema":            "routerx.snapshot.v1",
-		"kind":              "billing",
-		"stage":             "p1",
-		"source":            "billing",
-		"redacted":          true,
-		"billing_status":    "settled",
-		"price_source":      "p0_usage",
-		"usage_source":      usageSource,
-		"payer":             payer,
-		"prompt_tokens":     log.PromptTokens,
-		"completion_tokens": log.CompletionTokens,
-		"total_tokens":      log.TotalTokens,
-		"final_quota_used":  log.QuotaUsed,
-		"deduction_result":  "applied",
+		"schema":                      "routerx.snapshot.v1",
+		"kind":                        "billing",
+		"stage":                       "p1",
+		"source":                      "billing",
+		"redacted":                    true,
+		"billing_status":              "settled",
+		"price_source":                expressionSource,
+		"billing_expression_source":   expressionSource,
+		"billing_expression_snapshot": buildP0BillingExpressionSnapshot(usage, usageSource, log.QuotaUsed),
+		"multiplier_snapshot":         defaultMultiplierSnapshot(),
+		"usage_source":                usageSource,
+		"payer":                       payer,
+		"prompt_tokens":               log.PromptTokens,
+		"completion_tokens":           log.CompletionTokens,
+		"total_tokens":                log.TotalTokens,
+		"final_quota_used":            log.QuotaUsed,
+		"deduction_result":            "applied",
 	}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {

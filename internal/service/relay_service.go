@@ -2000,22 +2000,29 @@ func buildRelayBillingSnapshot(usage *relay.Usage, quotaUsed int64, deduction Qu
 	if deduction.TokenUnlimited {
 		payer = "user"
 	}
+	expressionSource := "p0_usage"
+	if usageSource == common.LogUsageSourceMinimum {
+		expressionSource = "minimum"
+	}
 	snapshot := map[string]interface{}{
-		"schema":              "routerx.snapshot.v1",
-		"kind":                "billing",
-		"stage":               "p1",
-		"source":              "billing",
-		"redacted":            true,
-		"billing_status":      "settled",
-		"price_source":        "p0_usage",
-		"usage_source":        usageSource,
-		"payer":               payer,
-		"final_quota_used":    quotaUsed,
-		"deduction_result":    "applied",
-		"key_budget_before":   deduction.TokenQuotaBefore,
-		"key_budget_after":    deduction.TokenQuotaAfter,
-		"user_balance_before": deduction.UserQuotaBefore,
-		"user_balance_after":  deduction.UserQuotaAfter,
+		"schema":                      "routerx.snapshot.v1",
+		"kind":                        "billing",
+		"stage":                       "p1",
+		"source":                      "billing",
+		"redacted":                    true,
+		"billing_status":              "settled",
+		"price_source":                expressionSource,
+		"billing_expression_source":   expressionSource,
+		"billing_expression_snapshot": buildP0BillingExpressionSnapshot(usage, usageSource, quotaUsed),
+		"multiplier_snapshot":         defaultMultiplierSnapshot(),
+		"usage_source":                usageSource,
+		"payer":                       payer,
+		"final_quota_used":            quotaUsed,
+		"deduction_result":            "applied",
+		"key_budget_before":           deduction.TokenQuotaBefore,
+		"key_budget_after":            deduction.TokenQuotaAfter,
+		"user_balance_before":         deduction.UserQuotaBefore,
+		"user_balance_after":          deduction.UserQuotaAfter,
 	}
 	if usage != nil {
 		snapshot["prompt_tokens"] = usage.PromptTokens
@@ -2027,6 +2034,47 @@ func buildRelayBillingSnapshot(usage *relay.Usage, quotaUsed int64, deduction Qu
 		return ""
 	}
 	return string(raw)
+}
+
+func buildP0BillingExpressionSnapshot(usage *relay.Usage, usageSource string, quotaUsed int64) map[string]interface{} {
+	if usageSource == common.LogUsageSourceMinimum {
+		return map[string]interface{}{
+			"source":     "minimum",
+			"price_mode": "minimum",
+			"expression": "minimum_charge",
+			"base_quota": quotaUsed,
+			"variables": map[string]interface{}{
+				"minimum_quota": quotaUsed,
+			},
+		}
+	}
+	variables := map[string]interface{}{
+		"prompt_tokens":     0,
+		"completion_tokens": 0,
+		"total_tokens":      0,
+	}
+	if usage != nil {
+		variables["prompt_tokens"] = usage.PromptTokens
+		variables["completion_tokens"] = usage.CompletionTokens
+		variables["total_tokens"] = usage.TotalTokens
+	}
+	return map[string]interface{}{
+		"source":     "p0_usage",
+		"price_mode": "token",
+		"expression": "total_tokens",
+		"base_quota": quotaUsed,
+		"variables":  variables,
+	}
+}
+
+func defaultMultiplierSnapshot() map[string]interface{} {
+	return map[string]interface{}{
+		"source":                   "p0_default",
+		"user_group_ratio":         1.0,
+		"channel_group_ratio":      1.0,
+		"user_group_channel_ratio": 1.0,
+		"effective_ratio":          1.0,
+	}
 }
 
 func routePreferenceSnapshot(route RoutePreference) map[string]interface{} {

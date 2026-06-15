@@ -27,9 +27,9 @@
 
 ## 当前实现边界
 
-当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口，以及基于 settings 的用户分组 x 通道分组访问控制。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；完整的价格表达式、规则版本、访问控制快照、支付争议和更多事件仍属于目标增强。
+当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口、含 P0 usage/minimum 表达式和默认倍率的基础 `billing_snapshot`，以及基于 settings 的用户分组 x 通道分组访问控制。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；商业级价格表、规则版本、业务倍率、访问控制快照、支付争议和更多事件仍属于目标增强。
 
-文档中的 `model_prices`、`channel_model_prices`、`billing_*_snapshot` 等字段是商业级目标设计，不应误读为当前迁移已经全部存在。实现时应按阶段先保证 P0 基础日志和扣费一致，再补 P1 价格规则和快照。调用事实快照的统一字段、脱敏和测试要求以 `docs/SNAPSHOTS.md` 为准。
+文档中的 `model_prices`、`channel_model_prices`、商业级 `billing_*_snapshot` 等字段是目标设计，不应误读为当前迁移已经全部存在。当前 P0 快照只解释 usage/minimum 基础扣费和默认倍率；实现时应按阶段先保证 P0 基础日志和扣费一致，再补 P1 价格规则和快照。调用事实快照的统一字段、脱敏和测试要求以 `docs/SNAPSHOTS.md` 为准。
 
 ## 额度单位
 
