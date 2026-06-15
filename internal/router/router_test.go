@@ -2245,6 +2245,13 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 	if err := internal.DB.Create(&events).Error; err != nil {
 		t.Fatal(err)
 	}
+	auditLogs := []model.AdminAuditLog{
+		{ActorUserID: root.ID, ActorRole: common.RoleSuper, Action: "setting.update", ResourceType: "setting", ResourceID: "observability.metrics_enabled", Result: "success", CreatedAt: now},
+		{ActorUserID: root.ID, ActorRole: common.RoleSuper, Action: "channel.test", ResourceType: "channel", ResourceID: uintString(channel.ID), Result: "failed", ErrorCode: "channel_test_failed", CreatedAt: now.Add(time.Second)},
+	}
+	if err := internal.DB.Create(&auditLogs).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	resp := performJSON(r, http.MethodGet, "/metrics", "", nil)
 	body := resp.Body.String()
@@ -2268,7 +2275,9 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 		!strings.Contains(body, `routerx_payment_orders_total{provider="stripe",status="paid"} 1`) ||
 		!strings.Contains(body, `routerx_payment_orders_total{provider="epay",status="pending"} 1`) ||
 		!strings.Contains(body, `routerx_payment_events_total{provider="stripe",event_type="checkout.session.completed",processed="true"} 1`) ||
-		!strings.Contains(body, `routerx_payment_events_total{provider="epay",event_type="notify",processed="false"} 1`) {
+		!strings.Contains(body, `routerx_payment_events_total{provider="epay",event_type="notify",processed="false"} 1`) ||
+		!strings.Contains(body, `routerx_audit_events_total{action="setting.update",resource_type="setting",result="success"} 1`) ||
+		!strings.Contains(body, `routerx_audit_events_total{action="channel.test",resource_type="channel",result="failed"} 1`) {
 		t.Fatalf("metrics should include relay/payment/infrastructure signals, got %d %s", resp.Code, body)
 	}
 }

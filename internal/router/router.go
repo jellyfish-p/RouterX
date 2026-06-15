@@ -128,6 +128,7 @@ func metricsHandler(c *gin.Context) {
 	writeLabeledCounter(&b, "routerx_billing_failures_total", "Billing failures by reason.", extended.BillingFailures)
 	writeLabeledGauge(&b, "routerx_payment_orders_total", "Payment orders by provider and status.", extended.PaymentOrders)
 	writeLabeledGauge(&b, "routerx_payment_events_total", "Payment events by provider, event type and processed state.", extended.PaymentEvents)
+	writeLabeledCounter(&b, "routerx_audit_events_total", "Admin audit events by action, resource type and result.", extended.AuditEvents)
 	c.Data(http.StatusOK, "text/plain; version=0.0.4; charset=utf-8", []byte(b.String()))
 }
 
@@ -153,6 +154,7 @@ type extendedMetrics struct {
 	BillingFailures     []metricSample
 	PaymentOrders       []metricSample
 	PaymentEvents       []metricSample
+	AuditEvents         []metricSample
 }
 
 func collectExtendedMetrics() (extendedMetrics, error) {
@@ -262,7 +264,40 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 			Value: row.Count,
 		})
 	}
+	auditEvents, err := collectAuditEventMetrics()
+	if err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.AuditEvents = auditEvents
 	return metrics, nil
+}
+
+func collectAuditEventMetrics() ([]metricSample, error) {
+	var rows []struct {
+		Action       string
+		ResourceType string
+		Result       string
+		Count        int64
+	}
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Select("action, resource_type, result, COUNT(*) AS count").
+		Group("action, resource_type, result").
+		Order("action ASC, resource_type ASC, result ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	samples := make([]metricSample, 0, len(rows))
+	for _, row := range rows {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{
+				{Name: "action", Value: metricDimensionOrUnknown(row.Action)},
+				{Name: "resource_type", Value: metricDimensionOrUnknown(row.ResourceType)},
+				{Name: "result", Value: metricDimensionOrUnknown(row.Result)},
+			},
+			Value: row.Count,
+		})
+	}
+	return samples, nil
 }
 
 func collectBillingFailureMetrics() ([]metricSample, error) {
