@@ -31,6 +31,14 @@ type CreatePaymentOrderRequest struct {
 	ReturnURL string `json:"return_url"`
 }
 
+type PaymentManualAdjustmentRequest struct {
+	UserID         uint   `json:"user_id"`
+	OrderNo        string `json:"order_no"`
+	Amount         int64  `json:"amount"`
+	Reason         string `json:"reason"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
 type PaymentProductInfo struct {
 	ProductID  string `json:"product_id"`
 	Name       string `json:"name"`

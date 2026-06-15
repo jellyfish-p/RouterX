@@ -1040,7 +1040,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe 全额退款和扣回，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe 全额退款和扣回、支付人工补账/扣回，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
       security:
         - UserJWT: []
       parameters:
@@ -1050,7 +1050,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、payment_order.create、payment_webhook.processed、payment_refund.deducted、channel.update、log.clear 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、payment_order.create、payment_webhook.processed、payment_refund.deducted、payment_manual_adjust.debit、channel.update、log.clear 或 admin.denied。
         - name: resource_type
           in: query
           required: false
@@ -1211,6 +1211,33 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/payment/adjustments:
+    post:
+      tags: [Admin Payment]
+      summary: 支付人工补账或扣回
+      description: 管理员执行支付相关人工补账或扣回；amount 为正数时写 manual_credit，负数时写 manual_debit。默认要求 reason，idempotency_key 必填以防重复操作；传入 order_no 时校验订单属于目标用户，并把流水来源记为 payment_order。成功后写 payment_manual_adjust.credit 或 payment_manual_adjust.debit 管理审计。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentManualAdjustmentRequest"
+      responses:
+        "200":
+          description: 支付人工修正成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentManualAdjustmentResult"
         "400":
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/admin:
@@ -2469,6 +2496,53 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/PaymentProductAdminInfo"
+    PaymentManualAdjustmentRequest:
+      type: object
+      required: [user_id, amount, reason, idempotency_key]
+      properties:
+        user_id:
+          type: integer
+          format: uint64
+          description: 目标普通用户 ID。
+        order_no:
+          type: string
+          description: 可选本地支付订单号；传入时必须属于目标用户。
+          example: RX202606150001
+        amount:
+          type: integer
+          format: int64
+          description: 人工修正额度增量；正数写 manual_credit，负数写 manual_debit，不能为 0。
+          example: -100000000
+        reason:
+          type: string
+          description: 人工补账或扣回原因；默认策略要求必填。
+          example: chargeback correction
+        idempotency_key:
+          type: string
+          description: 幂等键，建议使用工单号或人工动作唯一编号，防止重复改变余额。
+          example: support-ticket-1234
+    PaymentManualAdjustmentResult:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: uint64
+        order_no:
+          type: string
+        amount:
+          type: integer
+          format: int64
+        type:
+          type: string
+          enum: [manual_credit, manual_debit]
+        balance_before:
+          type: integer
+          format: int64
+        balance_after:
+          type: integer
+          format: int64
+        idempotency_key:
+          type: string
     AdminAuditLogInfo:
       type: object
       properties:

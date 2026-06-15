@@ -201,6 +201,34 @@ func (h *UserHandler) UpdateQuota(c *gin.Context) {
 	common.SuccessMsg(c, "额度已更新")
 }
 
+// POST /v0/admin/payment/adjustments — 支付相关人工补账或扣回
+func (h *UserHandler) CreatePaymentManualAdjustment(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.PaymentManualAdjustmentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "人工修正参数无效")
+		return
+	}
+	result, err := h.svc.ApplyPaymentManualAdjustment(operator.ID, operator.Role, service.PaymentManualAdjustmentInput{
+		UserID:         req.UserID,
+		OrderNo:        req.OrderNo,
+		Amount:         req.Amount,
+		Reason:         req.Reason,
+		IdempotencyKey: req.IdempotencyKey,
+		IP:             c.ClientIP(),
+		UserAgent:      c.GetHeader("User-Agent"),
+	}, c.GetString("request_id"))
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	common.Success(c, result)
+}
+
 // GET /v0/admin/redem — 充值码列表
 func (h *UserHandler) ListRedemCodes(c *gin.Context) {
 	operator, ok := currentUser(c)

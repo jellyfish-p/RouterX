@@ -284,6 +284,7 @@ Gemini-compatible 错误示例：
 | PUT | `/v0/admin/payment/products/:id` | 基础实现 | 更新支付商品；已创建订单继续使用订单快照，成功后写管理审计 |
 | PATCH | `/v0/admin/payment/products/:id/disable` | 基础实现 | 禁用商品；禁用后用户侧不可见且不能创建新订单，成功后写管理审计 |
 | PATCH | `/v0/admin/payment/products/:id/enable` | 基础实现 | 启用商品，成功后写管理审计 |
+| POST | `/v0/admin/payment/adjustments` | 基础实现 | 支付相关人工补账或扣回；写 `manual_credit`/`manual_debit` 额度流水和 `payment_manual_adjust.*` 管理审计，默认必须填写原因 |
 
 创建/更新支付商品请求：
 
@@ -301,6 +302,20 @@ Gemini-compatible 错误示例：
   }
 }
 ```
+
+支付人工修正请求：
+
+```json
+{
+  "user_id": 1001,
+  "order_no": "RX202606150001",
+  "amount": -100000000,
+  "reason": "chargeback correction",
+  "idempotency_key": "support-ticket-1234"
+}
+```
+
+`amount` 为正数时写 `manual_credit`，负数时写 `manual_debit`；`order_no` 可关联原支付订单，`idempotency_key` 用于防止同一人工动作重复改变余额。
 
 ### 管理审计
 
@@ -336,6 +351,8 @@ Gemini-compatible 错误示例：
 | `payment_order.paid` | 支付 provider 成功回调入账 |
 | `payment_refund.processed` | `POST /v0/payment/stripe/webhook` 处理全额退款事件 |
 | `payment_refund.deducted` | Stripe 全额退款按 settings 自动扣回额度 |
+| `payment_manual_adjust.credit` | `POST /v0/admin/payment/adjustments` 人工补账 |
+| `payment_manual_adjust.debit` | `POST /v0/admin/payment/adjustments` 人工扣回 |
 | `api_key.created` | `POST /v0/user/token` |
 | `api_key.updated` | `PUT /v0/user/token/:id` 编辑名称或过期时间 |
 | `api_key.disabled` | `PUT /v0/user/token/:id` 将 Key 状态改为禁用，或 `POST /v0/user/token/:id/disable` |
@@ -575,7 +592,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额退款事件、退款审计和可选自动扣回；易支付异步通知已支持 MD5 签名、金额校验、幂等入账和基础审计，同步返回页仅展示本地订单状态。真实 Stripe Checkout Session 创建、部分退款、争议和人工修正审计仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额退款事件、退款审计和可选自动扣回；易支付异步通知已支持 MD5 签名、金额校验、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回并写流水与审计。真实 Stripe Checkout Session 创建、部分退款和争议处理仍属于后续能力。
 
 用户鉴权接口：
 

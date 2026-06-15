@@ -318,7 +318,8 @@ user submits code
 - Stripe webhook 已支持 `checkout.session.completed` 签名校验、金额/币种/metadata 校验、`payment_events` 幂等、入账审计和入账；`charge.refunded` 全额退款事件可幂等记录订单退款状态，写入退款审计，并可按 settings 自动扣回额度。
 - 易支付异步通知已支持 MD5 签名校验、金额校验、`payment_events` 幂等记录、订单置为 `paid`、`quota_transactions` 入账、用户额度增加和基础 webhook/入账审计；重复通知不重复入账。
 - 易支付同步返回页已支持本地订单状态只读展示，不作为入账依据。
-- 充值码批次/备注/过期策略、真实 provider 会话创建、部分退款、争议和人工退款处理仍属于后续增强，不能把当前实现误写成完整支付闭环。
+- 支付相关人工补账/扣回已支持 `POST /v0/admin/payment/adjustments`，会写 `manual_credit` 或 `manual_debit` 额度流水，并在同一事务中写 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 审计。
+- 充值码批次/备注/过期策略、真实 provider 会话创建、部分退款、争议和更完整的人工退款流程仍属于后续增强，不能把当前实现误写成完整支付闭环。
 
 要求：
 
@@ -390,6 +391,15 @@ user submits code
 - 直接手工改 `users.quota` 而不写流水。
 - 用人工补账掩盖支付签名失败。
 - 把模型消费扣费和人工调整混在同一日志口径。
+
+当前基础实现：
+
+- 管理员可通过 `POST /v0/admin/payment/adjustments` 做支付相关人工补账或扣回。
+- `amount > 0` 写 `quota_transactions(type=manual_credit)`，`amount < 0` 写 `quota_transactions(type=manual_debit)`；扣回默认不允许余额扣成负数。
+- `reason` 默认必填，由 `payment.manual_adjust.require_reason=true` 控制；`idempotency_key` 必填，用于防止同一人工动作重复改变余额。
+- 传入 `order_no` 时会校验订单属于目标用户，并把流水来源记为 `source_type=payment_order`、`source_id=<order_no>`。
+- 成功后写 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 审计，摘要包含用户、订单号、金额、原因、前后余额、幂等键和来源。
+- `payment.manual_adjust.large_amount_threshold` 已注册为非负整数配置，后续可用于二次确认或双人审批。
 
 ## 10. 订单创建接口契约
 
@@ -502,7 +512,7 @@ receive webhook
 - 人工补账和扣回。
 - 支付 settings 和密钥引用变更。
 
-当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建，Stripe/易支付 webhook 入账，Stripe 全额退款和扣回，以及充值码生成、导入、作废、兑换的成功审计；部分退款、争议、人工修正和更多失败分支审计仍需继续补齐。
+当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建，Stripe/易支付 webhook 入账，Stripe 全额退款和扣回，支付相关人工补账/扣回，以及充值码生成、导入、作废、兑换的成功审计；部分退款、争议、更完整人工退款流程和更多失败分支审计仍需继续补齐。
 
 审计字段：
 

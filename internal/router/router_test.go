@@ -1103,6 +1103,135 @@ func TestAdminQuotaAdjustmentWritesTransaction(t *testing.T) {
 	}
 }
 
+func TestAdminPaymentManualAdjustmentRequiresReason(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username": "alice",
+		"password": "password123",
+		"quota":    50,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var alice model.User
+	if err := internal.DB.Where("username = ?", "alice").First(&alice).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v0/admin/payment/adjustments", rootJWT, map[string]interface{}{
+		"user_id":         alice.ID,
+		"amount":          10,
+		"idempotency_key": "manual-missing-reason",
+	})
+	if resp.Code != http.StatusBadRequest || !strings.Contains(strings.ToLower(resp.Body.String()), "reason") {
+		t.Fatalf("manual payment adjustment without reason should fail, got %d %s", resp.Code, resp.Body.String())
+	}
+	if err := internal.DB.First(&alice, alice.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if alice.Quota != 50 {
+		t.Fatalf("manual payment adjustment without reason must not change quota, got %d", alice.Quota)
+	}
+}
+
+func TestAdminPaymentManualAdjustmentWritesManualTransactionAndAudit(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username": "alice",
+		"password": "password123",
+		"quota":    50,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	var alice model.User
+	if err := internal.DB.Where("username = ?", "alice").First(&alice).Error; err != nil {
+		t.Fatal(err)
+	}
+	order := model.PaymentOrder{
+		OrderNo:   "PAYMANUAL1000",
+		UserID:    alice.ID,
+		ProductID: "quota_manual",
+		Provider:  common.PaymentProviderStripe,
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Status:    common.PaymentOrderStatusPaid,
+	}
+	if err := internal.DB.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	adjustResp := performJSON(r, http.MethodPost, "/v0/admin/payment/adjustments", rootJWT, map[string]interface{}{
+		"user_id":         alice.ID,
+		"order_no":        order.OrderNo,
+		"amount":          -20,
+		"reason":          "chargeback correction",
+		"idempotency_key": "manual-payment-adjust-1",
+	})
+	adjustBody := adjustResp.Body.String()
+	if adjustResp.Code != http.StatusOK || !strings.Contains(adjustBody, `"type":"manual_debit"`) || !strings.Contains(adjustBody, `"balance_after":30`) {
+		t.Fatalf("manual payment adjustment should succeed with manual_debit result, got %d %s", adjustResp.Code, adjustBody)
+	}
+	if err := internal.DB.First(&alice, alice.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if alice.Quota != 30 {
+		t.Fatalf("manual payment adjustment should deduct quota, got %d", alice.Quota)
+	}
+	var quotaTx model.QuotaTransaction
+	if err := internal.DB.Where("idempotency_key = ?", "manual-payment-adjust-1").First(&quotaTx).Error; err != nil {
+		t.Fatalf("manual payment adjustment should write quota transaction: %v", err)
+	}
+	if quotaTx.UserID != alice.ID ||
+		quotaTx.Type != common.QuotaTransactionTypeManualDebit ||
+		quotaTx.Amount != -20 ||
+		quotaTx.BalanceBefore != 50 ||
+		quotaTx.BalanceAfter != 30 ||
+		quotaTx.SourceType != common.QuotaSourceTypePaymentOrder ||
+		quotaTx.SourceID != order.OrderNo {
+		t.Fatalf("unexpected manual payment quota transaction: %+v", quotaTx)
+	}
+	if quotaTx.ActorUserID == nil || *quotaTx.ActorUserID != root.ID || quotaTx.Reason != "chargeback correction" {
+		t.Fatalf("manual payment quota transaction should include actor and reason: %+v", quotaTx)
+	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo, rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_manual_adjust.debit"`) ||
+		!strings.Contains(auditBody, order.OrderNo) ||
+		!strings.Contains(auditBody, "chargeback correction") ||
+		!strings.Contains(auditBody, "manual-payment-adjust-1") {
+		t.Fatalf("manual payment adjustment should write payment order audit log, got %d %s", auditResp.Code, auditBody)
+	}
+}
+
 func TestAdminManagesRedemCodes(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

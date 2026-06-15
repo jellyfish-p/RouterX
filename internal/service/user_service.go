@@ -95,6 +95,8 @@ const (
 	adminAuditActionPaymentOrderPaid        = "payment_order.paid"
 	adminAuditActionPaymentRefundProcessed  = "payment_refund.processed"
 	adminAuditActionPaymentRefundDeducted   = "payment_refund.deducted"
+	adminAuditActionPaymentManualCredit     = "payment_manual_adjust.credit"
+	adminAuditActionPaymentManualDebit      = "payment_manual_adjust.debit"
 )
 
 func recordPaymentEventAudit(tx *gorm.DB, requestID, action string, event model.PaymentEvent, order *model.PaymentOrder, extra map[string]interface{}) error {
@@ -134,6 +136,26 @@ func recordPaymentEventAudit(tx *gorm.DB, requestID, action string, event model.
 		AfterSummary: string(afterSummary),
 		Result:       "success",
 	})
+}
+
+type PaymentManualAdjustmentInput struct {
+	UserID         uint
+	OrderNo        string
+	Amount         int64
+	Reason         string
+	IdempotencyKey string
+	IP             string
+	UserAgent      string
+}
+
+type PaymentManualAdjustmentResult struct {
+	UserID         uint   `json:"user_id"`
+	OrderNo        string `json:"order_no,omitempty"`
+	Amount         int64  `json:"amount"`
+	Type           string `json:"type"`
+	BalanceBefore  int64  `json:"balance_before"`
+	BalanceAfter   int64  `json:"balance_after"`
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 func (s *UserService) ListAdminAuditLogs(operatorRole int, page, pageSize int, action, resourceType, resourceID string, actorUserID uint, result, errorCode string, startTime, endTime int64) ([]model.AdminAuditLog, int64, error) {
@@ -331,6 +353,137 @@ func (s *UserService) UpdateQuotaByAdmin(operatorID uint, operatorRole int, targ
 		})
 		return err
 	})
+}
+
+// ApplyPaymentManualAdjustment 记录支付相关人工补账或扣回。
+// 该路径必须留下额度流水和审计摘要，避免客服修正绕开账务事实。
+func (s *UserService) ApplyPaymentManualAdjustment(operatorID uint, operatorRole int, input PaymentManualAdjustmentInput, requestID string) (*PaymentManualAdjustmentResult, error) {
+	if err := s.ensureNormalUserTarget(operatorID, operatorRole, input.UserID); err != nil {
+		return nil, err
+	}
+	reason := strings.TrimSpace(input.Reason)
+	requireReason, err := paymentBoolSettingDefault("payment.manual_adjust.require_reason", true)
+	if err != nil {
+		return nil, err
+	}
+	if requireReason && reason == "" {
+		return nil, errors.New("reason is required")
+	}
+	if reason == "" {
+		reason = "payment manual adjustment"
+	}
+	idempotencyKey := strings.TrimSpace(input.IdempotencyKey)
+	if idempotencyKey == "" {
+		return nil, errors.New("idempotency_key is required")
+	}
+	if input.Amount == 0 {
+		return nil, errors.New("manual adjustment amount must not be zero")
+	}
+
+	adjustmentType := common.QuotaTransactionTypeManualCredit
+	auditAction := adminAuditActionPaymentManualCredit
+	if input.Amount < 0 {
+		adjustmentType = common.QuotaTransactionTypeManualDebit
+		auditAction = adminAuditActionPaymentManualDebit
+	}
+
+	orderNo := strings.TrimSpace(input.OrderNo)
+	sourceType := common.QuotaSourceTypeAdminAction
+	sourceID := "payment_manual:" + idempotencyKey
+	resourceType := "user"
+	resourceID := strconv.FormatUint(uint64(input.UserID), 10)
+	var linkedOrder *model.PaymentOrder
+	if orderNo != "" {
+		sourceType = common.QuotaSourceTypePaymentOrder
+		sourceID = orderNo
+		resourceType = common.QuotaSourceTypePaymentOrder
+		resourceID = orderNo
+	}
+
+	var result *PaymentManualAdjustmentResult
+	actorID := operatorID
+	err = internal.DB.Transaction(func(tx *gorm.DB) error {
+		var existing model.QuotaTransaction
+		err := tx.Where("idempotency_key = ?", idempotencyKey).First(&existing).Error
+		switch {
+		case err == nil:
+			return errors.New("idempotency_key has already been used")
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return err
+		}
+
+		if orderNo != "" {
+			var order model.PaymentOrder
+			if err := tx.Where("order_no = ? AND user_id = ?", orderNo, input.UserID).First(&order).Error; err != nil {
+				return err
+			}
+			linkedOrder = &order
+		}
+
+		balanceBefore, balanceAfter, err := applyQuotaChange(tx, quotaChange{
+			UserID:         input.UserID,
+			Amount:         input.Amount,
+			Type:           adjustmentType,
+			SourceType:     sourceType,
+			SourceID:       sourceID,
+			IdempotencyKey: idempotencyKey,
+			Reason:         reason,
+			ActorUserID:    &actorID,
+			RequestID:      requestID,
+		})
+		if err != nil {
+			return err
+		}
+
+		summary := map[string]interface{}{
+			"user_id":         input.UserID,
+			"order_no":        orderNo,
+			"amount":          input.Amount,
+			"type":            adjustmentType,
+			"reason":          reason,
+			"balance_before":  balanceBefore,
+			"balance_after":   balanceAfter,
+			"idempotency_key": idempotencyKey,
+			"source_type":     sourceType,
+			"source_id":       sourceID,
+		}
+		if linkedOrder != nil {
+			summary["provider"] = linkedOrder.Provider
+			summary["payment_status"] = linkedOrder.Status
+			summary["payment_amount"] = linkedOrder.Amount
+			summary["currency"] = linkedOrder.Currency
+		}
+		afterSummary, err := json.Marshal(summary)
+		if err != nil {
+			return err
+		}
+		if err := recordAdminAuditLogWithDB(tx, AdminAuditRecordInput{
+			RequestID:    requestID,
+			ActorUserID:  operatorID,
+			ActorRole:    operatorRole,
+			Action:       auditAction,
+			ResourceType: resourceType,
+			ResourceID:   resourceID,
+			AfterSummary: string(afterSummary),
+			Result:       "success",
+			IP:           input.IP,
+			UserAgent:    input.UserAgent,
+		}); err != nil {
+			return err
+		}
+
+		result = &PaymentManualAdjustmentResult{
+			UserID:         input.UserID,
+			OrderNo:        orderNo,
+			Amount:         input.Amount,
+			Type:           adjustmentType,
+			BalanceBefore:  balanceBefore,
+			BalanceAfter:   balanceAfter,
+			IdempotencyKey: idempotencyKey,
+		}
+		return nil
+	})
+	return result, err
 }
 
 // ListRedemCodes 查询充值码列表，供管理员按状态或 code 关键字检索。
