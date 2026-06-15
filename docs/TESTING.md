@@ -57,7 +57,7 @@
 | `TestAdminLogClearWritesAuditLog` | 管理员按 `before` 清理调用日志写入 `log.clear` 审计，并记录清理截止时间 |
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
 | `TestMetricsEndpointRequiresSettingAndExposesPrometheusText` | `/metrics` 默认关闭，启用 `observability.metrics_enabled` 后返回 Prometheus 文本和基础实例指标 |
-| `TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals` | `/metrics` 输出 DB/Redis up、调用日志成功/失败计数、Relay 请求数、Relay 错误维度、总额度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标 |
+| `TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals` | `/metrics` 输出 DB/Redis up、调用日志成功/失败计数、Relay 请求数、Relay 错误维度、token 用量、总额度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |
 | `TestAdminSettingUpdateWritesAuditLog` | 超级管理员批量更新 settings 后按 key 写 `setting.update` 审计，敏感 payment 配置值不完整泄露 |
 | `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |
@@ -423,7 +423,7 @@ Gemini-compatible 最小断言：
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝和 RPM/TPM 拒绝已覆盖；风险视图和缓存失效待补 |
 | P2 | 支付充值 | Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水和人工修正审计 |
-| P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理、日志清理审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status 和基础 `/metrics`、Relay 请求/错误/通道/限流/计费/支付/审计/DB/Redis 指标测试已覆盖；继续补更完整结构化日志、HTTP/上游耗时指标、更多管理审计动作和生产 `/ready` |
+| P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理、日志清理审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status 和基础 `/metrics`、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis 指标测试已覆盖；继续补更完整结构化日志、HTTP/上游耗时指标、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
 

@@ -2188,7 +2188,19 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 	tokenID := token.ID
 	now := time.Now()
 	logs := []model.Log{
-		{UserID: root.ID, TokenID: &tokenID, ChannelID: &channel.ID, Model: "gpt-test", Status: common.LogStatusSuccess, QuotaUsed: 7, TotalTokens: 7, RequestSnapshot: `{"entry_protocol":"openai","api_type":"chat"}`, CreatedAt: now.Add(-time.Minute)},
+		{
+			UserID:          root.ID,
+			TokenID:         &tokenID,
+			ChannelID:       &channel.ID,
+			Model:           "gpt-test",
+			Status:          common.LogStatusSuccess,
+			QuotaUsed:       7,
+			TotalTokens:     7,
+			UsageSource:     common.LogUsageSourceUpstream,
+			RequestSnapshot: `{"entry_protocol":"openai","api_type":"chat"}`,
+			RouteSnapshot:   `{"selected_provider":"openai-compatible"}`,
+			CreatedAt:       now.Add(-time.Minute),
+		},
 		{
 			UserID:          root.ID,
 			TokenID:         &tokenID,
@@ -2266,6 +2278,7 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 		!strings.Contains(body, `routerx_logs_total{status="failed"} 3`) ||
 		!strings.Contains(body, `routerx_relay_requests_total{protocol="openai",api_type="chat",model="gpt-test",status="success"} 1`) ||
 		!strings.Contains(body, `routerx_relay_requests_total{protocol="openai",api_type="chat",model="gpt-test",status="failed"} 2`) ||
+		!strings.Contains(body, `routerx_tokens_used_total{model="gpt-test",provider="openai-compatible",usage_source="upstream"} 7`) ||
 		!strings.Contains(body, "routerx_quota_used_total 7") ||
 		!strings.Contains(body, enabledChannelMetric) ||
 		!strings.Contains(body, disabledChannelMetric) ||

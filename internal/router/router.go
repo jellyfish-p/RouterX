@@ -122,6 +122,7 @@ func metricsHandler(c *gin.Context) {
 	writeLabeledCounter(&b, "routerx_logs_total", "Relay logs by status.", extended.Logs)
 	writeLabeledCounter(&b, "routerx_relay_requests_total", "Relay requests by protocol, API type, model and status.", extended.RelayRequests)
 	writeLabeledCounter(&b, "routerx_relay_errors_total", "Relay errors by protocol, API type, code and source.", extended.RelayErrors)
+	writeLabeledCounter(&b, "routerx_tokens_used_total", "Model tokens used by model, provider and usage source.", extended.TokensUsed)
 	writeCounter(&b, "routerx_quota_used_total", "Total quota recorded in relay logs.", extended.QuotaUsed)
 	writeLabeledGauge(&b, "routerx_channel_available", "Channel availability by channel and provider.", extended.ChannelAvailable)
 	writeLabeledGauge(&b, "routerx_channel_error_count", "Channel error counters by channel and provider.", extended.ChannelErrorCounts)
@@ -149,6 +150,7 @@ type extendedMetrics struct {
 	Logs                []metricSample
 	RelayRequests       []metricSample
 	RelayErrors         []metricSample
+	TokensUsed          []metricSample
 	QuotaUsed           int64
 	ChannelErrorCounts  []metricSample
 	ChannelAvailable    []metricSample
@@ -192,6 +194,12 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		return extendedMetrics{}, err
 	}
 	metrics.RelayErrors = relayErrors
+
+	tokensUsed, err := collectTokenUsageMetrics()
+	if err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.TokensUsed = tokensUsed
 
 	var quota struct {
 		Value int64
@@ -339,6 +347,76 @@ func collectRelayRequestMetrics() ([]metricSample, error) {
 		})
 	}
 	return samples, nil
+}
+
+type tokenUsageMetricKey struct {
+	Model       string
+	Provider    string
+	UsageSource string
+}
+
+func collectTokenUsageMetrics() ([]metricSample, error) {
+	var rows []struct {
+		Model         string
+		TotalTokens   int
+		UsageSource   string
+		RouteSnapshot string
+	}
+	if err := internal.DB.Model(&model.Log{}).
+		Select("model, total_tokens, usage_source, route_snapshot").
+		Where("status = ? AND total_tokens > 0", common.LogStatusSuccess).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	counts := map[tokenUsageMetricKey]int64{}
+	for _, row := range rows {
+		key := tokenUsageMetricKey{
+			Model:       metricDimensionOrUnknown(row.Model),
+			Provider:    providerFromRouteSnapshot(row.RouteSnapshot),
+			UsageSource: metricDimensionOrUnknown(row.UsageSource),
+		}
+		counts[key] += int64(row.TotalTokens)
+	}
+	keys := make([]tokenUsageMetricKey, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Model != keys[j].Model {
+			return keys[i].Model < keys[j].Model
+		}
+		if keys[i].Provider != keys[j].Provider {
+			return keys[i].Provider < keys[j].Provider
+		}
+		return keys[i].UsageSource < keys[j].UsageSource
+	})
+	samples := make([]metricSample, 0, len(keys))
+	for _, key := range keys {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{
+				{Name: "model", Value: key.Model},
+				{Name: "provider", Value: key.Provider},
+				{Name: "usage_source", Value: key.UsageSource},
+			},
+			Value: counts[key],
+		})
+	}
+	return samples, nil
+}
+
+func providerFromRouteSnapshot(raw string) string {
+	var snapshot struct {
+		SelectedProvider string `json:"selected_provider"`
+		Provider         string `json:"provider"`
+	}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return "unknown"
+	}
+	provider := snapshot.SelectedProvider
+	if provider == "" {
+		provider = snapshot.Provider
+	}
+	return metricDimensionOrUnknown(provider)
 }
 
 func collectAuditEventMetrics() ([]metricSample, error) {
