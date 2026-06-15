@@ -57,7 +57,7 @@
 | `TestAdminLogClearWritesAuditLog` | 管理员按 `before` 清理调用日志写入 `log.clear` 审计，并记录清理截止时间 |
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
 | `TestMetricsEndpointRequiresSettingAndExposesPrometheusText` | `/metrics` 默认关闭，启用 `observability.metrics_enabled` 后返回 Prometheus 文本和基础实例指标 |
-| `TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals` | `/metrics` 输出 DB/Redis up、调用日志成功/失败计数、Relay 错误维度、总额度、通道可用状态、通道错误计数、限流拒绝、计费失败、支付订单和支付事件指标 |
+| `TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals` | `/metrics` 输出 DB/Redis up、调用日志成功/失败计数、Relay 错误维度、总额度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付订单和支付事件指标 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |
 | `TestAdminSettingUpdateWritesAuditLog` | 超级管理员批量更新 settings 后按 key 写 `setting.update` 审计，敏感 payment 配置值不完整泄露 |
 | `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |

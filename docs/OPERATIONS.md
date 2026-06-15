@@ -259,7 +259,7 @@ volumes:
 
 完整指标目录、标签控制和告警建议以 `docs/OBSERVABILITY.md` 为准。
 
-当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis up、调用日志状态、Relay 错误维度、总额度、逐通道可用状态、通道错误计数、限流拒绝、计费失败、支付订单和支付事件指标，后续继续补 HTTP/上游耗时和更细错误维度。
+当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis up、调用日志状态、Relay 错误维度、总额度、逐通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付订单和支付事件指标，后续继续补 HTTP/上游耗时和更细错误维度。
 
 核心指标：
 

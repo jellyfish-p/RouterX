@@ -2250,15 +2250,18 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 	body := resp.Body.String()
 	enabledChannelMetric := fmt.Sprintf(`routerx_channel_available{channel_id="%d",provider="openai-compatible"} 1`, channel.ID)
 	disabledChannelMetric := fmt.Sprintf(`routerx_channel_available{channel_id="%d",provider="anthropic"} 0`, disabledChannel.ID)
+	enabledChannelErrorsMetric := fmt.Sprintf(`routerx_channel_error_count{channel_id="%d",provider="openai-compatible"} 3`, channel.ID)
+	disabledChannelErrorsMetric := fmt.Sprintf(`routerx_channel_error_count{channel_id="%d",provider="anthropic"} 0`, disabledChannel.ID)
 	if resp.Code != http.StatusOK ||
 		!strings.Contains(body, "routerx_db_up 1") ||
 		!strings.Contains(body, "routerx_redis_up 0") ||
 		!strings.Contains(body, `routerx_logs_total{status="success"} 1`) ||
 		!strings.Contains(body, `routerx_logs_total{status="failed"} 3`) ||
 		!strings.Contains(body, "routerx_quota_used_total 7") ||
-		!strings.Contains(body, "routerx_channel_error_count 3") ||
 		!strings.Contains(body, enabledChannelMetric) ||
 		!strings.Contains(body, disabledChannelMetric) ||
+		!strings.Contains(body, enabledChannelErrorsMetric) ||
+		!strings.Contains(body, disabledChannelErrorsMetric) ||
 		!strings.Contains(body, `routerx_relay_errors_total{protocol="openai",api_type="chat",error_code="upstream_500",source="upstream"} 1`) ||
 		!strings.Contains(body, `routerx_rate_limit_rejections_total{dimension="token"} 1`) ||
 		!strings.Contains(body, `routerx_billing_failures_total{reason="post_deduct_failed"} 1`) ||

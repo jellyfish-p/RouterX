@@ -123,7 +123,7 @@ func metricsHandler(c *gin.Context) {
 	writeLabeledCounter(&b, "routerx_relay_errors_total", "Relay errors by protocol, API type, code and source.", extended.RelayErrors)
 	writeCounter(&b, "routerx_quota_used_total", "Total quota recorded in relay logs.", extended.QuotaUsed)
 	writeLabeledGauge(&b, "routerx_channel_available", "Channel availability by channel and provider.", extended.ChannelAvailable)
-	writeGauge(&b, "routerx_channel_error_count", "Current sum of channel error counters.", extended.ChannelErrorCount)
+	writeLabeledGauge(&b, "routerx_channel_error_count", "Channel error counters by channel and provider.", extended.ChannelErrorCounts)
 	writeLabeledCounter(&b, "routerx_rate_limit_rejections_total", "Rate limit rejections by dimension.", extended.RateLimitRejections)
 	writeLabeledCounter(&b, "routerx_billing_failures_total", "Billing failures by reason.", extended.BillingFailures)
 	writeLabeledGauge(&b, "routerx_payment_orders_total", "Payment orders by provider and status.", extended.PaymentOrders)
@@ -147,7 +147,7 @@ type extendedMetrics struct {
 	Logs                []metricSample
 	RelayErrors         []metricSample
 	QuotaUsed           int64
-	ChannelErrorCount   int64
+	ChannelErrorCounts  []metricSample
 	ChannelAvailable    []metricSample
 	RateLimitRejections []metricSample
 	BillingFailures     []metricSample
@@ -193,21 +193,17 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 	}
 	metrics.QuotaUsed = quota.Value
 
-	var channelErrors struct {
-		Value int64
-	}
-	if err := internal.DB.Model(&model.Channel{}).
-		Select("COALESCE(SUM(error_count), 0) AS value").
-		Scan(&channelErrors).Error; err != nil {
-		return extendedMetrics{}, err
-	}
-	metrics.ChannelErrorCount = channelErrors.Value
-
 	channelAvailable, err := collectChannelAvailabilityMetrics()
 	if err != nil {
 		return extendedMetrics{}, err
 	}
 	metrics.ChannelAvailable = channelAvailable
+
+	channelErrorCounts, err := collectChannelErrorCountMetrics()
+	if err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.ChannelErrorCounts = channelErrorCounts
 
 	rateLimitRejections, err := collectRateLimitRejectionMetrics()
 	if err != nil {
@@ -412,6 +408,31 @@ func collectChannelAvailabilityMetrics() ([]metricSample, error) {
 				{Name: "provider", Value: channelMetricProviderName(row.Type)},
 			},
 			Value: value,
+		})
+	}
+	return samples, nil
+}
+
+func collectChannelErrorCountMetrics() ([]metricSample, error) {
+	var rows []struct {
+		ID         uint
+		Type       int
+		ErrorCount int
+	}
+	if err := internal.DB.Model(&model.Channel{}).
+		Select("id, type, error_count").
+		Order("id ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	samples := make([]metricSample, 0, len(rows))
+	for _, row := range rows {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{
+				{Name: "channel_id", Value: strconv.FormatUint(uint64(row.ID), 10)},
+				{Name: "provider", Value: channelMetricProviderName(row.Type)},
+			},
+			Value: int64(row.ErrorCount),
 		})
 	}
 	return samples, nil
