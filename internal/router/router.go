@@ -120,6 +120,7 @@ func metricsHandler(c *gin.Context) {
 	writeGauge(&b, "routerx_db_up", "Database ping status.", extended.DBUp)
 	writeGauge(&b, "routerx_redis_up", "Redis ping status.", extended.RedisUp)
 	writeLabeledCounter(&b, "routerx_logs_total", "Relay logs by status.", extended.Logs)
+	writeLabeledCounter(&b, "routerx_relay_errors_total", "Relay errors by protocol, API type, code and source.", extended.RelayErrors)
 	writeCounter(&b, "routerx_quota_used_total", "Total quota recorded in relay logs.", extended.QuotaUsed)
 	writeLabeledGauge(&b, "routerx_channel_available", "Channel availability by channel and provider.", extended.ChannelAvailable)
 	writeGauge(&b, "routerx_channel_error_count", "Current sum of channel error counters.", extended.ChannelErrorCount)
@@ -143,6 +144,7 @@ type extendedMetrics struct {
 	DBUp                int64
 	RedisUp             int64
 	Logs                []metricSample
+	RelayErrors         []metricSample
 	QuotaUsed           int64
 	ChannelErrorCount   int64
 	ChannelAvailable    []metricSample
@@ -173,6 +175,12 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 			Value:  row.Count,
 		})
 	}
+	relayErrors, err := collectRelayErrorMetrics()
+	if err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.RelayErrors = relayErrors
+
 	var quota struct {
 		Value int64
 	}
@@ -251,6 +259,83 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		})
 	}
 	return metrics, nil
+}
+
+type relayErrorMetricKey struct {
+	Protocol  string
+	APIType   string
+	ErrorCode string
+	Source    string
+}
+
+func collectRelayErrorMetrics() ([]metricSample, error) {
+	var rows []struct {
+		ErrorCode       string
+		ErrorSource     string
+		RequestSnapshot string
+	}
+	if err := internal.DB.Model(&model.Log{}).
+		Select("error_code, error_source, request_snapshot").
+		Where("status = ? AND error_code <> ?", common.LogStatusFailed, "").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	counts := map[relayErrorMetricKey]int64{}
+	for _, row := range rows {
+		protocol, apiType := relayRequestMetricDimensions(row.RequestSnapshot)
+		key := relayErrorMetricKey{
+			Protocol:  protocol,
+			APIType:   apiType,
+			ErrorCode: metricDimensionOrUnknown(row.ErrorCode),
+			Source:    metricDimensionOrUnknown(row.ErrorSource),
+		}
+		counts[key]++
+	}
+	keys := make([]relayErrorMetricKey, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Protocol != keys[j].Protocol {
+			return keys[i].Protocol < keys[j].Protocol
+		}
+		if keys[i].APIType != keys[j].APIType {
+			return keys[i].APIType < keys[j].APIType
+		}
+		if keys[i].ErrorCode != keys[j].ErrorCode {
+			return keys[i].ErrorCode < keys[j].ErrorCode
+		}
+		return keys[i].Source < keys[j].Source
+	})
+	samples := make([]metricSample, 0, len(keys))
+	for _, key := range keys {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{
+				{Name: "protocol", Value: key.Protocol},
+				{Name: "api_type", Value: key.APIType},
+				{Name: "error_code", Value: key.ErrorCode},
+				{Name: "source", Value: key.Source},
+			},
+			Value: counts[key],
+		})
+	}
+	return samples, nil
+}
+
+func relayRequestMetricDimensions(raw string) (string, string) {
+	var snapshot struct {
+		EntryProtocol string `json:"entry_protocol"`
+		Protocol      string `json:"protocol"`
+		APIType       string `json:"api_type"`
+	}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return "unknown", "unknown"
+	}
+	protocol := snapshot.EntryProtocol
+	if protocol == "" {
+		protocol = snapshot.Protocol
+	}
+	return metricDimensionOrUnknown(protocol), metricDimensionOrUnknown(snapshot.APIType)
 }
 
 func collectChannelAvailabilityMetrics() ([]metricSample, error) {
@@ -364,6 +449,14 @@ func normalizedRateLimitDimension(value string) string {
 	default:
 		return "unknown"
 	}
+}
+
+func metricDimensionOrUnknown(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }
 
 func dbUp() int64 {

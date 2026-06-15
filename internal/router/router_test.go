@@ -2189,7 +2189,18 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 	now := time.Now()
 	logs := []model.Log{
 		{UserID: root.ID, TokenID: &tokenID, ChannelID: &channel.ID, Model: "gpt-test", Status: common.LogStatusSuccess, QuotaUsed: 7, TotalTokens: 7, CreatedAt: now.Add(-time.Minute)},
-		{UserID: root.ID, TokenID: &tokenID, ChannelID: &channel.ID, Model: "gpt-test", Status: common.LogStatusFailed, ErrorMsg: "upstream 500", CreatedAt: now},
+		{
+			UserID:          root.ID,
+			TokenID:         &tokenID,
+			ChannelID:       &channel.ID,
+			Model:           "gpt-test",
+			Status:          common.LogStatusFailed,
+			ErrorMsg:        "upstream 500",
+			ErrorCode:       "upstream_500",
+			ErrorSource:     common.LogErrorSourceUpstream,
+			RequestSnapshot: `{"entry_protocol":"openai","api_type":"chat"}`,
+			CreatedAt:       now,
+		},
 		{
 			UserID:          root.ID,
 			TokenID:         &tokenID,
@@ -2235,6 +2246,7 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 		!strings.Contains(body, "routerx_channel_error_count 3") ||
 		!strings.Contains(body, enabledChannelMetric) ||
 		!strings.Contains(body, disabledChannelMetric) ||
+		!strings.Contains(body, `routerx_relay_errors_total{protocol="openai",api_type="chat",error_code="upstream_500",source="upstream"} 1`) ||
 		!strings.Contains(body, `routerx_rate_limit_rejections_total{dimension="token"} 1`) ||
 		!strings.Contains(body, `routerx_payment_orders_total{provider="stripe",status="paid"} 1`) ||
 		!strings.Contains(body, `routerx_payment_orders_total{provider="epay",status="pending"} 1`) ||

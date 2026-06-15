@@ -171,7 +171,7 @@ Gemini-compatible 错误示例：
 |------|------|----------|------|
 | GET | `/health` | 已注册 | 健康检查 |
 | GET | `/ready` | 已实现 | 就绪检查，检查数据库、初始化后的 JWT 配置、关键 settings，以及已启用支付 provider 的必需密钥 |
-| GET | `/metrics` | 基础实现 | Prometheus 文本指标；默认由 `observability.metrics_enabled=false` 关闭，已包含实例、Relay 日志、通道可用状态、限流拒绝、支付和 DB/Redis 基础指标 |
+| GET | `/metrics` | 基础实现 | Prometheus 文本指标；默认由 `observability.metrics_enabled=false` 关闭，已包含实例、Relay 日志、Relay 错误维度、通道可用状态、限流拒绝、支付和 DB/Redis 基础指标 |
 | GET | `/v0/setup/status` | 已实现 | 查询系统是否初始化 |
 | POST | `/v0/setup/init` | 已实现 | 首次初始化超级管理员和默认设置 |
 
