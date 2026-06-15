@@ -2213,6 +2213,19 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 			RequestSnapshot: `{"entry_protocol":"openai"}`,
 			CreatedAt:       now.Add(time.Minute),
 		},
+		{
+			UserID:          root.ID,
+			TokenID:         &tokenID,
+			ChannelID:       &channel.ID,
+			Model:           "gpt-test",
+			Status:          common.LogStatusFailed,
+			ErrorMsg:        "billing failed",
+			ErrorCode:       "billing_failed",
+			ErrorSource:     common.LogErrorSourceBilling,
+			RequestSnapshot: `{"entry_protocol":"openai","api_type":"chat"}`,
+			BillingSnapshot: `{"reason":"post_deduct_failed"}`,
+			CreatedAt:       now.Add(2 * time.Minute),
+		},
 	}
 	if err := internal.DB.Create(&logs).Error; err != nil {
 		t.Fatal(err)
@@ -2241,13 +2254,14 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 		!strings.Contains(body, "routerx_db_up 1") ||
 		!strings.Contains(body, "routerx_redis_up 0") ||
 		!strings.Contains(body, `routerx_logs_total{status="success"} 1`) ||
-		!strings.Contains(body, `routerx_logs_total{status="failed"} 2`) ||
+		!strings.Contains(body, `routerx_logs_total{status="failed"} 3`) ||
 		!strings.Contains(body, "routerx_quota_used_total 7") ||
 		!strings.Contains(body, "routerx_channel_error_count 3") ||
 		!strings.Contains(body, enabledChannelMetric) ||
 		!strings.Contains(body, disabledChannelMetric) ||
 		!strings.Contains(body, `routerx_relay_errors_total{protocol="openai",api_type="chat",error_code="upstream_500",source="upstream"} 1`) ||
 		!strings.Contains(body, `routerx_rate_limit_rejections_total{dimension="token"} 1`) ||
+		!strings.Contains(body, `routerx_billing_failures_total{reason="post_deduct_failed"} 1`) ||
 		!strings.Contains(body, `routerx_payment_orders_total{provider="stripe",status="paid"} 1`) ||
 		!strings.Contains(body, `routerx_payment_orders_total{provider="epay",status="pending"} 1`) ||
 		!strings.Contains(body, `routerx_payment_events_total{provider="stripe",event_type="checkout.session.completed",processed="true"} 1`) ||

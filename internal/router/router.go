@@ -125,6 +125,7 @@ func metricsHandler(c *gin.Context) {
 	writeLabeledGauge(&b, "routerx_channel_available", "Channel availability by channel and provider.", extended.ChannelAvailable)
 	writeGauge(&b, "routerx_channel_error_count", "Current sum of channel error counters.", extended.ChannelErrorCount)
 	writeLabeledCounter(&b, "routerx_rate_limit_rejections_total", "Rate limit rejections by dimension.", extended.RateLimitRejections)
+	writeLabeledCounter(&b, "routerx_billing_failures_total", "Billing failures by reason.", extended.BillingFailures)
 	writeLabeledGauge(&b, "routerx_payment_orders_total", "Payment orders by provider and status.", extended.PaymentOrders)
 	writeLabeledGauge(&b, "routerx_payment_events_total", "Payment events by provider, event type and processed state.", extended.PaymentEvents)
 	c.Data(http.StatusOK, "text/plain; version=0.0.4; charset=utf-8", []byte(b.String()))
@@ -149,6 +150,7 @@ type extendedMetrics struct {
 	ChannelErrorCount   int64
 	ChannelAvailable    []metricSample
 	RateLimitRejections []metricSample
+	BillingFailures     []metricSample
 	PaymentOrders       []metricSample
 	PaymentEvents       []metricSample
 }
@@ -213,6 +215,12 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 	}
 	metrics.RateLimitRejections = rateLimitRejections
 
+	billingFailures, err := collectBillingFailureMetrics()
+	if err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.BillingFailures = billingFailures
+
 	var orderRows []struct {
 		Provider string
 		Status   string
@@ -259,6 +267,48 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		})
 	}
 	return metrics, nil
+}
+
+func collectBillingFailureMetrics() ([]metricSample, error) {
+	var rows []struct {
+		ErrorCode       string
+		BillingSnapshot string
+	}
+	if err := internal.DB.Model(&model.Log{}).
+		Select("error_code, billing_snapshot").
+		Where("status = ? AND error_source = ?", common.LogStatusFailed, common.LogErrorSourceBilling).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	counts := map[string]int64{}
+	for _, row := range rows {
+		counts[billingFailureReason(row.BillingSnapshot, row.ErrorCode)]++
+	}
+	reasons := make([]string, 0, len(counts))
+	for reason := range counts {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	samples := make([]metricSample, 0, len(reasons))
+	for _, reason := range reasons {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{{Name: "reason", Value: reason}},
+			Value:  counts[reason],
+		})
+	}
+	return samples, nil
+}
+
+func billingFailureReason(rawSnapshot, fallbackCode string) string {
+	var snapshot struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(rawSnapshot), &snapshot); err == nil {
+		if reason := metricDimensionOrUnknown(snapshot.Reason); reason != "unknown" {
+			return reason
+		}
+	}
+	return metricDimensionOrUnknown(fallbackCode)
 }
 
 type relayErrorMetricKey struct {
