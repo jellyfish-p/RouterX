@@ -31,6 +31,8 @@
 
 P0 不能因为快照字段尚未完整而牺牲账单一致性。P1/P2 不能用当前 settings 或当前价格规则倒推历史调用。
 
+当前代码已在 `logs` 中基础落地 `request_id`、`error_code` 和 `usage_source`。`usage_source` 目前覆盖 `upstream` 与 `minimum`，`adapter`、`tokenizer` 和 `estimate` 需要随对应能力实现后再写入。
+
 ## 通用封套
 
 结构化快照使用统一封套，便于后续做 schema 校验、版本迁移和审计导出。

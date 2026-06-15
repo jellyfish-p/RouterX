@@ -13,7 +13,7 @@
 
 当前代码已经具备以下基础：
 
-- `logs` 表保存模型调用日志，包含 user、token、channel、model、usage、quota、status、request_id、error_code、error 和 IP。
+- `logs` 表保存模型调用日志，包含 user、token、channel、model、usage、usage_source、quota、status、request_id、error_code、error 和 IP。
 - `LogService.Record` 写入调用日志。
 - `GET /v0/user/log` 查询当前用户日志。
 - `GET /v0/user/billing` 聚合当前用户成功调用的次数、token 和额度。
@@ -90,6 +90,7 @@
 | `channel_id` | 选中的通道，预检失败或未选中时可为空 |
 | `model` | 调用方请求模型 |
 | `prompt_tokens` / `completion_tokens` / `total_tokens` | usage |
+| `usage_source` | usage 来源；当前已落地 upstream 和 minimum |
 | `quota_used` | 本次消耗额度 |
 | `status` | 成功或失败 |
 | `request_id` | 串联访问日志、调用日志和审计 |
@@ -112,7 +113,6 @@
 | `multiplier_snapshot` | 用户分组、通道分组和额外倍率 |
 | `access_rule_snapshot` | 访问控制事实 |
 | `key_budget_snapshot` | API Key 最大消耗额度、调用前后剩余预算或累计已用 |
-| `usage_source` | upstream、adapter、tokenizer、estimate、minimum |
 | `retry_count` | 本次调用重试次数 |
 | `latency_ms` | RouterX 端到端耗时 |
 | `upstream_latency_ms` | 上游调用耗时 |
@@ -247,7 +247,7 @@
 | 阶段 | 目标 |
 |------|------|
 | P0 | 调用日志、用户日志、管理员日志、基础账单和基础 dashboard 可用；body 日志默认关闭。 |
-| P1 | 已补调用日志 request_id 和 error_code；继续补 route_snapshot、billing_snapshot、usage_source 和结构化失败事实。 |
+| P1 | 已补调用日志 request_id、error_code 和 usage_source；继续补 route_snapshot、billing_snapshot 和结构化失败事实。 |
 | P2 | 扩展管理审计覆盖、更多 Prometheus 指标、告警、长期保留、导出审计和生产 readiness 指标。 |
 
 ## 测试要求

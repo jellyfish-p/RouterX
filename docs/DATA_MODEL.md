@@ -342,6 +342,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `prompt_tokens` | int | 输入 token 数 |
 | `completion_tokens` | int | 输出 token 数 |
 | `total_tokens` | int | 总 token 数 |
+| `usage_source` | string | usage 来源；当前已落地 `upstream` 和 `minimum` |
 | `quota_used` | int64 | 本次消耗额度 |
 | `status` | int | `0` 未知，`1` 成功，`2` 失败 |
 | `request_id` | nullable string | HTTP 请求追踪 ID |
@@ -360,10 +361,11 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 - `idx_logs_created_at`
 - `idx_logs_request_id`
 - `idx_logs_error_code`
+- `idx_logs_usage_source`
 
 目标账单快照字段：
 
-当前 `logs` 已保存基础 usage、`quota_used`、状态和错误信息。商业级计费增强需要继续补充以下字段，或拆分出独立账单事实表，但必须保证历史账单可还原：
+当前 `logs` 已保存基础 usage、`usage_source`、`quota_used`、状态和错误信息。商业级计费增强需要继续补充以下字段，或拆分出独立账单事实表，但必须保证历史账单可还原：
 
 | 字段 | 说明 |
 |------|------|
@@ -375,7 +377,6 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `multiplier_snapshot` | 用户分组、通道分组、用户分组 x 通道分组倍率快照 |
 | `access_rule_snapshot` | 用户、Token、模型、通道分组访问控制快照 |
 | `route_snapshot` | 候选过滤、`routerx.route` 处理、最终通道、模型重写和重试摘要 |
-| `usage_source` | `upstream`、`adapter`、`tokenizer`、`estimate`、`minimum` |
 
 数据生命周期：
 
@@ -634,6 +635,7 @@ QuotaUnlimited = -1
 | `006_token_scope` | 新增 API Key scope JSON 字段 |
 | `007_token_last_usage_summary` | 新增 API Key 最近来源摘要、最近模型和最近错误 code |
 | `008_log_request_context` | 新增调用日志 request_id、error_code 和对应索引 |
+| `009_log_usage_source` | 新增调用日志 usage_source 和对应索引 |
 
 重要说明：
 
@@ -650,7 +652,7 @@ QuotaUnlimited = -1
 | `user_identities` | `(user_id, method)` | 用户身份列表和绑定检查 |
 | `tokens` | `key` unique | API Key SHA256 哈希鉴权 |
 | `channels` | `idx`、`type`、`priority`、`status`、`deleted_at` | 排序、筛选、路由选择和软删除过滤 |
-| `logs` | `user_id`、`token_id`、`channel_id`、`created_at`、`request_id`、`error_code` | 日志查询、统计和链路排障 |
+| `logs` | `user_id`、`token_id`、`channel_id`、`created_at`、`request_id`、`error_code`、`usage_source` | 日志查询、统计和链路排障 |
 | `settings` | `key` unique | 配置读取 |
 | `admin_audit_logs` | `actor_user_id + created_at`、`resource_type + resource_id`、`action`、`request_id` | 管理审计查询和链路追踪 |
 

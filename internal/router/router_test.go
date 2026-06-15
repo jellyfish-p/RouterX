@@ -4027,6 +4027,9 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 5 || callLog.TotalTokens != 5 || callLog.PromptTokens != 3 || callLog.CompletionTokens != 2 {
 		t.Fatalf("unexpected success log: %+v", callLog)
 	}
+	if callLog.UsageSource != common.LogUsageSourceUpstream {
+		t.Fatalf("success log should record upstream usage source, got %+v", callLog)
+	}
 	if callLog.TokenID == nil || *callLog.TokenID != tokenPayload.Data.ID || callLog.ChannelID == nil {
 		t.Fatalf("success log should reference token and channel: %+v", callLog)
 	}
@@ -4034,6 +4037,10 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	billingResp := performJSON(r, http.MethodGet, "/v0/user/billing", rootJWT, nil)
 	if billingResp.Code != http.StatusOK || !strings.Contains(billingResp.Body.String(), `"call_count":1`) || !strings.Contains(billingResp.Body.String(), `"total_quota":5`) || !strings.Contains(billingResp.Body.String(), `"total_tokens":5`) {
 		t.Fatalf("billing should aggregate successful logs, got %d %s", billingResp.Code, billingResp.Body.String())
+	}
+	logResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
+	if logResp.Code != http.StatusOK || !strings.Contains(logResp.Body.String(), `"usage_source":"upstream"`) {
+		t.Fatalf("user log should expose upstream usage source, got %d %s", logResp.Code, logResp.Body.String())
 	}
 }
 
@@ -5718,6 +5725,9 @@ func TestModerationsPassthroughUsesMinimumChargeWithoutUsage(t *testing.T) {
 	}
 	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 1 || callLog.TotalTokens != 0 || callLog.PromptTokens != 0 || callLog.CompletionTokens != 0 {
 		t.Fatalf("unexpected moderations success log: %+v", callLog)
+	}
+	if callLog.UsageSource != common.LogUsageSourceMinimum {
+		t.Fatalf("moderations log should record minimum usage source, got %+v", callLog)
 	}
 }
 

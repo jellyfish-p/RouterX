@@ -46,6 +46,12 @@ const (
 	LogStatusFailed  = 2
 )
 
+// 模型调用 usage 来源。
+const (
+	LogUsageSourceUpstream = "upstream"
+	LogUsageSourceMinimum  = "minimum"
+)
+
 // 充值码状态
 const (
 	RedemCodeStatusUnused   = 0

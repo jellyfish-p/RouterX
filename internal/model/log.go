@@ -19,6 +19,7 @@ type Log struct {
 	CompletionTokens int       `json:"completion_tokens"`
 	QuotaUsed        int64     `gorm:"not null;default:0" json:"quota_used"` // 消耗额度 (分)
 	TotalTokens      int       `json:"total_tokens"`
+	UsageSource      string    `gorm:"type:varchar(32);not null;default:''" json:"usage_source,omitempty"`
 	Status           int       `gorm:"not null;default:0" json:"status"`    // 0=未知, 1=成功, 2=失败
 	Content          string    `gorm:"type:text" json:"content,omitempty"`  // 请求体 (截断)
 	Response         string    `gorm:"type:text" json:"response,omitempty"` // 响应体 (截断)

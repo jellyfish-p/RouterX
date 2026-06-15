@@ -1802,6 +1802,16 @@ func quotaFromUsage(usage *relay.Usage) int64 {
 	return int64(usage.TotalTokens)
 }
 
+func logUsageSource(usage *relay.Usage, status int, quotaUsed int64) string {
+	if usage != nil && usage.TotalTokens > 0 {
+		return common.LogUsageSourceUpstream
+	}
+	if status == common.LogStatusSuccess && quotaUsed > 0 {
+		return common.LogUsageSourceMinimum
+	}
+	return ""
+}
+
 func orderRelayAttemptCandidates(candidates []model.Channel, selected *model.Channel) []model.Channel {
 	if selected == nil || selected.ID == 0 {
 		return candidates
@@ -1910,16 +1920,17 @@ func (s *RelayService) recordLog(ctx context.Context, token *model.Token, channe
 		channelID = &id
 	}
 	log := &model.Log{
-		UserID:    token.UserID,
-		TokenID:   tokenID,
-		ChannelID: channelID,
-		Model:     modelName,
-		Status:    status,
-		QuotaUsed: quotaUsed,
-		ErrorMsg:  errMsg,
-		IP:        ip,
-		UserAgent: relayUserAgentFromContext(ctx),
-		RequestID: relayRequestIDFromContext(ctx),
+		UserID:      token.UserID,
+		TokenID:     tokenID,
+		ChannelID:   channelID,
+		Model:       modelName,
+		Status:      status,
+		QuotaUsed:   quotaUsed,
+		UsageSource: logUsageSource(usage, status, quotaUsed),
+		ErrorMsg:    errMsg,
+		IP:          ip,
+		UserAgent:   relayUserAgentFromContext(ctx),
+		RequestID:   relayRequestIDFromContext(ctx),
 	}
 	if usage != nil {
 		log.PromptTokens = usage.PromptTokens
