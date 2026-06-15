@@ -402,7 +402,7 @@ Provider 退款请求：
 }
 ```
 
-`override_mode` 当前允许 `override` 和 `merge_variables`。`user_enabled=false` 表示该通道下该模型不向普通用户暴露；如果没有其他可见通道提供该模型，`/v0/user/models` 不再返回该模型。通道级启用价格覆盖优先于系统模型价格展示，也优先于系统模型价格参与成功调用后的扣费；禁用覆盖后会回退到启用的系统模型价格或 `minimum_usage`。
+`override_mode` 当前允许 `override` 和 `merge_variables`。`user_enabled=false` 表示该通道下该模型不向普通用户暴露，也不会进入普通用户调用候选；如果没有其他可见通道提供该模型，`/v0/user/models` 不再返回该模型。通道级启用价格覆盖优先于系统模型价格展示，也优先于系统模型价格参与成功调用后的扣费；禁用覆盖后会回退到启用的系统模型价格或 `minimum_usage`。
 
 ### 管理审计
 
@@ -689,7 +689,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | GET | `/v0/user/log` | 已实现 | 当前用户调用日志 |
 | GET | `/v0/user/billing` | 基础实现 | 当前用户账单统计 |
 | POST | `/v0/user/redem` | 基础实现 | 使用未兑换且未过期的充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水与 `redem_code.redeem` 管理审计 |
-| GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露且未被 `channel_model_prices.user_enabled=false` 隐藏的可用模型列表；通道级价格优先返回 `channel_model_price:<price_mode>:v<rule_version>`，否则命中启用 `model_prices` 时返回 `model_price:<price_mode>:v<rule_version>`，再否则返回 `minimum_usage` |
+| GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露且未被 `channel_model_prices.user_enabled=false` 隐藏的可用模型列表；普通用户调用也会过滤这些隐藏通道；通道级价格优先返回 `channel_model_price:<price_mode>:v<rule_version>`，否则命中启用 `model_prices` 时返回 `model_price:<price_mode>:v<rule_version>`，再否则返回 `minimum_usage` |
 
 ### 支付接口
 

@@ -394,7 +394,15 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
-	candidates, removed, err := s.filterUserChannelGroupAccess(ctx, token, candidates, reqInfo.Model, clientIP)
+	candidates, removed, err := s.filterUserChannelModelAccess(token, candidates, reqInfo.Model)
+	addRouteFilterReason(filteredReasons, routeFilterReasonAccessDenied, removed)
+	if err != nil {
+		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, nil, nil, filteredReasons))
+		logCtx = ContextWithRelayPolicySnapshot(logCtx, buildRelayChannelModelAccessDenyPolicySnapshot(ctx, token))
+		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
+		return nil, nil, err
+	}
+	candidates, removed, err = s.filterUserChannelGroupAccess(ctx, token, candidates, reqInfo.Model, clientIP)
 	addRouteFilterReason(filteredReasons, routeFilterReasonAccessDenied, removed)
 	if err != nil {
 		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, nil, nil, filteredReasons))
@@ -585,7 +593,15 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
-	candidates, removed, err := s.filterUserChannelGroupAccess(ctx, token, candidates, reqInfo.Model, clientIP)
+	candidates, removed, err := s.filterUserChannelModelAccess(token, candidates, reqInfo.Model)
+	addRouteFilterReason(filteredReasons, routeFilterReasonAccessDenied, removed)
+	if err != nil {
+		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, nil, nil, filteredReasons))
+		logCtx = ContextWithRelayPolicySnapshot(logCtx, buildRelayChannelModelAccessDenyPolicySnapshot(ctx, token))
+		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
+		return nil, err
+	}
+	candidates, removed, err = s.filterUserChannelGroupAccess(ctx, token, candidates, reqInfo.Model, clientIP)
 	addRouteFilterReason(filteredReasons, routeFilterReasonAccessDenied, removed)
 	if err != nil {
 		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, nil, nil, filteredReasons))
@@ -1656,6 +1672,54 @@ func (s *RelayService) filterUserChannelGroupAccess(ctx context.Context, token *
 	return filtered, removed, nil
 }
 
+func (s *RelayService) filterUserChannelModelAccess(token *model.Token, candidates []model.Channel, modelName string) ([]model.Channel, int, error) {
+	if len(candidates) == 0 || tokenAllowsHiddenChannelModels(token) {
+		return candidates, 0, nil
+	}
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return candidates, 0, nil
+	}
+	channelIDs := make([]uint, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.ID > 0 {
+			channelIDs = append(channelIDs, candidate.ID)
+		}
+	}
+	if len(channelIDs) == 0 {
+		return candidates, 0, nil
+	}
+	var prices []model.ChannelModelPrice
+	if err := internal.DB.
+		Where("channel_id IN ? AND model = ? AND user_enabled = ?", channelIDs, modelName, false).
+		Find(&prices).Error; err != nil {
+		return candidates, 0, err
+	}
+	if len(prices) == 0 {
+		return candidates, 0, nil
+	}
+	hiddenByChannel := make(map[uint]struct{}, len(prices))
+	for _, price := range prices {
+		hiddenByChannel[price.ChannelID] = struct{}{}
+	}
+	filtered := make([]model.Channel, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, hidden := hiddenByChannel[candidate.ID]; hidden {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	removed := len(candidates) - len(filtered)
+	if len(filtered) == 0 {
+		return nil, removed, &HTTPError{Status: 403, Message: "channel model is not enabled for ordinary users", Type: "permission_error", Code: "route_forbidden"}
+	}
+	return filtered, removed, nil
+}
+
+func tokenAllowsHiddenChannelModels(token *model.Token) bool {
+	return token != nil && token.User != nil && token.User.Role > common.RoleUser
+}
+
 func (s *RelayService) channelGroupAccessPolicy(token *model.Token) channelGroupAccessPolicy {
 	policy := newChannelGroupAccessPolicy(s.defaultUserChannelGroupAccess())
 	overrides := s.userGroupChannelGroupAccess()
@@ -2077,6 +2141,15 @@ func buildRelayUserGroupAccessDenyPolicySnapshot(ctx context.Context, token *mod
 		"model":                    "allow",
 		"channel_group":            "allow",
 		"user_group_channel_group": "deny",
+	})
+}
+
+func buildRelayChannelModelAccessDenyPolicySnapshot(ctx context.Context, token *model.Token) string {
+	return buildRelayPolicyDenySnapshot(ctx, token, "route_forbidden", "available", map[string]interface{}{
+		"api_type":      "allow",
+		"model":         "allow",
+		"channel_group": "allow",
+		"channel_model": "deny",
 	})
 }
 

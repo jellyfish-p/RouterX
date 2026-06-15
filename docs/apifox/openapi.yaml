@@ -1335,7 +1335,7 @@ paths:
     get:
       tags: [Admin Billing]
       summary: 通道模型价格覆盖列表
-      description: 管理员查看通道级模型价格覆盖；可按模型名/价格模式关键字、channel_id、enabled 和 user_enabled 过滤。启用覆盖用于用户侧模型可见性和价格状态展示，并在选中通道存在覆盖时优先作为成功调用后的计费表达式来源。
+      description: 管理员查看通道级模型价格覆盖；可按模型名/价格模式关键字、channel_id、enabled 和 user_enabled 过滤。启用覆盖用于用户侧模型可见性和价格状态展示，并在选中通道存在覆盖时优先作为成功调用后的计费表达式来源；user_enabled=false 的通道模型不会进入普通用户调用候选。
       security:
         - UserJWT: []
       parameters:
@@ -2806,7 +2806,7 @@ components:
           description: 创建时未传默认为 true；更新时未传则保留原状态。
         user_enabled:
           type: boolean
-          description: 创建时未传默认为 true；false 表示该通道模型不向普通用户展示。
+          description: 创建时未传默认为 true；false 表示该通道模型不向普通用户展示，也不会进入普通用户调用候选。
         price_mode:
           type: string
           enum: [request, token, second, tiered]

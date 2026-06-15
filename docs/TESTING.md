@@ -51,6 +51,7 @@
 | `TestAdminModelPriceManagementUpdatesUserModelPricing` | 管理员创建、更新、启用和禁用系统模型价格；用户侧模型列表随启用价格返回版本化 `price_rule`，禁用后回退 `minimum_usage`，并写 `model_price.*` 审计 |
 | `TestAdminChannelModelPriceControlsUserModelPricingAndVisibility` | 管理员创建、更新、启用和禁用通道模型价格覆盖；通道级价格优先于系统价格，`user_enabled=false` 会隐藏普通用户模型，并写 `channel_model_price.*` 审计 |
 | `TestChatCompletionUsesModelPriceExpressionForBilling` | Chat 成功调用后按启用系统模型价格表达式扣减用户余额和 Key 预算；选中通道存在启用覆盖时优先按通道级表达式扣费，并在 `billing_snapshot` 记录规则来源、表达式、变量和版本 |
+| `TestChannelModelUserEnabledFiltersRelayCandidates` | 普通用户调用会过滤 `channel_model_prices.user_enabled=false` 的通道模型；显式路由到隐藏通道时上游不被调用，失败日志写 `channel_model=deny` policy 快照 |
 | `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品；未启用 provider 拒绝下单，启用后创建本地 pending 订单并写 `payment_order.create` 管理审计，订单按 settings 过期且不入账 |
 | `TestStripeOrderCreatesCheckoutSessionWhenConfigured` | Stripe secret、测试 API base 和绝对 return_url 齐全时创建 Checkout Session，表单 metadata/金额/货币可复核，并保存 session id/url |
 | `TestEpayOrderBuildsSignedCheckoutURL` | 易支付网关配置齐全时创建订单返回签名收银台 URL，参数和签名可复核 |

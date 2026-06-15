@@ -458,7 +458,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 
 ### `channel_model_prices`
 
-通道级模型价格覆盖表。该表优先于 `model_prices`，同时可通过 `user_enabled` 控制某个通道下某个模型是否向普通用户暴露；当前已用于 `/v0/user/models` 的可见性和价格状态展示，并在选中通道存在启用覆盖时作为成功调用后的优先计费表达式来源写入 `billing_snapshot`。
+通道级模型价格覆盖表。该表优先于 `model_prices`，同时可通过 `user_enabled` 控制某个通道下某个模型是否向普通用户暴露和参与普通用户调用候选；当前已用于 `/v0/user/models` 的可见性、热路径候选过滤和价格状态展示，并在选中通道存在启用覆盖时作为成功调用后的优先计费表达式来源写入 `billing_snapshot`。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -466,7 +466,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `channel_id` | uint | 所属通道 |
 | `model` | string | 通道中的模型名 |
 | `enabled` | bool | 是否启用该通道价格覆盖；禁用后价格状态可回退系统模型价格 |
-| `user_enabled` | bool | 普通用户是否可见该通道模型；为 `false` 时该通道不再贡献用户侧模型可见性 |
+| `user_enabled` | bool | 普通用户是否可见并可调用该通道模型；为 `false` 时该通道不再贡献用户侧模型可见性，也不会进入普通用户调用候选 |
 | `price_mode` | string | 价格模板类型，当前允许 `request`、`token`、`second`、`tiered` |
 | `override_mode` | string | 覆盖模式，当前允许 `override`、`merge_variables` |
 | `price_expression` | text | 通道级价格表达式 |
@@ -481,7 +481,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 - `idx_channel_model_prices_channel_model`，唯一索引 `(channel_id, model)`。
 - `idx_channel_model_prices_channel_id`，通道维度查询。
 - `idx_channel_model_prices_enabled`，启用价格覆盖过滤。
-- `idx_channel_model_prices_user_enabled`，普通用户可见性过滤。
+- `idx_channel_model_prices_user_enabled`，普通用户可见性和调用候选过滤。
 
 ### `payment_products`
 
@@ -815,7 +815,7 @@ QuotaUnlimited = -1
 | `settings` | `key` unique | 配置读取 |
 | `admin_audit_logs` | `actor_user_id + created_at`、`resource_type + resource_id`、`action`、`request_id` | 管理审计查询和链路追踪 |
 | `model_prices` | `model` unique、`enabled` | 系统模型价格唯一性和用户侧启用规则读取 |
-| `channel_model_prices` | `channel_id + model` unique、`channel_id`、`enabled`、`user_enabled` | 通道模型价格覆盖唯一性、管理查询和用户侧可见性读取 |
+| `channel_model_prices` | `channel_id + model` unique、`channel_id`、`enabled`、`user_enabled` | 通道模型价格覆盖唯一性、管理查询、用户侧可见性读取和普通用户调用候选过滤 |
 
 后续建议：
 

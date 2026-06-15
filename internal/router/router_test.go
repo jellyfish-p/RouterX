@@ -5393,6 +5393,164 @@ func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
 	}
 }
 
+func TestChannelModelUserEnabledFiltersRelayCandidates(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	hiddenCalls := 0
+	visibleCalls := 0
+	upstreamHandler := func(label string, calls *int) http.HandlerFunc {
+		return func(w http.ResponseWriter, req *http.Request) {
+			*calls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-` + label + `","object":"chat.completion","model":"gpt-user-enabled","choices":[{"index":0,"message":{"role":"assistant","content":"` + label + `"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		}
+	}
+	hiddenUpstream := httptest.NewServer(upstreamHandler("hidden", &hiddenCalls))
+	defer hiddenUpstream.Close()
+	visibleUpstream := httptest.NewServer(upstreamHandler("visible", &visibleCalls))
+	defer visibleUpstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createUserResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "alice",
+		"password":     "password123",
+		"display_name": "Alice",
+		"role":         common.RoleUser,
+		"quota":        100,
+	})
+	if createUserResp.Code != http.StatusOK {
+		t.Fatalf("create ordinary user failed: %d %s", createUserResp.Code, createUserResp.Body.String())
+	}
+	userJWT := loginBearer(t, r, "alice", "password123")
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
+		"name":         "ordinary",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create ordinary token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	createChannel := func(name, baseURL string, priority int) uint {
+		t.Helper()
+		resp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+			"type":     common.ChannelTypeOpenAICompat,
+			"name":     name,
+			"models":   "gpt-user-enabled",
+			"base_url": baseURL,
+			"api_key":  "upstream-secret-" + name,
+			"group":    "default",
+			"priority": priority,
+		})
+		var payload struct {
+			Data struct {
+				ID uint `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Code != http.StatusOK || payload.Data.ID == 0 {
+			t.Fatalf("create %s channel failed: %d %s", name, resp.Code, resp.Body.String())
+		}
+		return payload.Data.ID
+	}
+	hiddenChannelID := createChannel("hidden", hiddenUpstream.URL, 50)
+	visibleChannelID := createChannel("visible", visibleUpstream.URL, 1)
+	if err := internal.DB.Create(&model.ChannelModelPrice{
+		ChannelID:       hiddenChannelID,
+		Model:           "gpt-user-enabled",
+		Enabled:         true,
+		UserEnabled:     false,
+		PriceMode:       "token",
+		OverrideMode:    "override",
+		PriceExpression: "total_tokens",
+		UnitTokens:      1,
+		RuleVersion:     1,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-user-enabled",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	})
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), "visible") {
+		t.Fatalf("ordinary user should use visible channel, got %d %s", resp.Code, resp.Body.String())
+	}
+	if hiddenCalls != 0 || visibleCalls != 1 {
+		t.Fatalf("user_enabled=false channel must not be called by ordinary user, hidden=%d visible=%d", hiddenCalls, visibleCalls)
+	}
+	var callLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ?", common.LogStatusSuccess, tokenPayload.Data.ID, "gpt-user-enabled").First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.ChannelID == nil || *callLog.ChannelID != visibleChannelID || callLog.QuotaUsed != 2 {
+		t.Fatalf("success log should use visible channel and upstream usage, got %+v", callLog)
+	}
+	var routeSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RouteSnapshot), &routeSnapshot); err != nil {
+		t.Fatalf("success log should store route snapshot JSON, got %q: %v", callLog.RouteSnapshot, err)
+	}
+	filteredReasons, ok := routeSnapshot["filtered_reasons"].(map[string]interface{})
+	if !ok || filteredReasons["access_denied"] != float64(1) {
+		t.Fatalf("route snapshot should record hidden channel access filter: %+v", routeSnapshot)
+	}
+
+	deniedResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-user-enabled",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hidden please"},
+		},
+		"routerx": map[string]interface{}{
+			"route": map[string]interface{}{"channel_id": hiddenChannelID},
+		},
+	})
+	if deniedResp.Code != http.StatusForbidden || !strings.Contains(deniedResp.Body.String(), `"code":"route_forbidden"`) {
+		t.Fatalf("explicit hidden channel route should be forbidden, got %d %s", deniedResp.Code, deniedResp.Body.String())
+	}
+	if hiddenCalls != 0 || visibleCalls != 1 {
+		t.Fatalf("hidden route denial must not call upstream, hidden=%d visible=%d", hiddenCalls, visibleCalls)
+	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-user-enabled").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "ordinary users") {
+		t.Fatalf("hidden channel denial should write zero-quota failed log, got %+v", failedLog)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("hidden channel denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "route_forbidden" ||
+		scopeResult["channel_model"] != "deny" {
+		t.Fatalf("unexpected hidden channel denial policy snapshot: %+v", policySnapshot)
+	}
+}
+
 func TestUserBillingMatchesLogs(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
