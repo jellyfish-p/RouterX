@@ -1848,6 +1848,127 @@ func TestUserListsAvailableModels(t *testing.T) {
 	}
 }
 
+func TestAdminModelPriceManagementUpdatesUserModelPricing(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Create(&model.Channel{Idx: 1, Type: common.ChannelTypeOpenAICompat, Name: "priced-channel", Models: "gpt-priced,gpt-unpriced", Status: common.ChannelStatusEnabled}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/model-prices", rootJWT, map[string]interface{}{
+		"model":            "gpt-priced",
+		"price_mode":       "token",
+		"price_expression": "prompt_tokens + completion_tokens",
+		"variables_json": map[string]interface{}{
+			"prompt_price":     1,
+			"completion_price": 1,
+		},
+		"unit_tokens": 1000,
+		"enabled":     true,
+	})
+	var createPayload struct {
+		Data struct {
+			ID          uint   `json:"id"`
+			Model       string `json:"model"`
+			PriceMode   string `json:"price_mode"`
+			RuleVersion int64  `json:"rule_version"`
+			Enabled     bool   `json:"enabled"`
+		} `json:"data"`
+	}
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("admin should create model price, got %d %s", createResp.Code, createResp.Body.String())
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createPayload); err != nil {
+		t.Fatal(err)
+	}
+	if createPayload.Data.ID == 0 || createPayload.Data.Model != "gpt-priced" || createPayload.Data.PriceMode != "token" || createPayload.Data.RuleVersion != 1 || !createPayload.Data.Enabled {
+		t.Fatalf("admin should create model price with initial version, got %d %s", createResp.Code, createResp.Body.String())
+	}
+
+	assertUserModelPricing := func(modelID, priceRule string, ready bool) {
+		t.Helper()
+		resp := performJSON(r, http.MethodGet, "/v0/user/models", rootJWT, nil)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("user models failed: %d %s", resp.Code, resp.Body.String())
+		}
+		var payload struct {
+			Data struct {
+				Models []struct {
+					ID           string `json:"id"`
+					PriceRule    string `json:"price_rule"`
+					PricingReady bool   `json:"pricing_ready"`
+				} `json:"models"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range payload.Data.Models {
+			if item.ID == modelID {
+				if item.PriceRule != priceRule || item.PricingReady != ready {
+					t.Fatalf("model %s pricing mismatch, got rule=%s ready=%v in %s", modelID, item.PriceRule, item.PricingReady, resp.Body.String())
+				}
+				return
+			}
+		}
+		t.Fatalf("model %s not found in %s", modelID, resp.Body.String())
+	}
+	assertUserModelPricing("gpt-priced", "model_price:token:v1", true)
+	assertUserModelPricing("gpt-unpriced", "minimum_usage", false)
+
+	updateResp := performJSON(r, http.MethodPut, "/v0/admin/model-prices/"+uintString(createPayload.Data.ID), rootJWT, map[string]interface{}{
+		"model":            "gpt-priced",
+		"price_mode":       "request",
+		"price_expression": "request_price",
+		"variables_json": map[string]interface{}{
+			"request_price": 2,
+		},
+		"unit_tokens": 1,
+		"enabled":     true,
+	})
+	if updateResp.Code != http.StatusOK || !strings.Contains(updateResp.Body.String(), `"price_mode":"request"`) || !strings.Contains(updateResp.Body.String(), `"rule_version":2`) {
+		t.Fatalf("admin should update model price and bump version, got %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	assertUserModelPricing("gpt-priced", "model_price:request:v2", true)
+
+	adminList := performJSON(r, http.MethodGet, "/v0/admin/model-prices?keyword=gpt-priced", rootJWT, nil)
+	if adminList.Code != http.StatusOK || !strings.Contains(adminList.Body.String(), `"model":"gpt-priced"`) || !strings.Contains(adminList.Body.String(), `"enabled":true`) {
+		t.Fatalf("admin should list model prices, got %d %s", adminList.Code, adminList.Body.String())
+	}
+
+	disableResp := performJSON(r, http.MethodPatch, "/v0/admin/model-prices/"+uintString(createPayload.Data.ID)+"/disable", rootJWT, nil)
+	if disableResp.Code != http.StatusOK {
+		t.Fatalf("admin should disable model price, got %d %s", disableResp.Code, disableResp.Body.String())
+	}
+	assertUserModelPricing("gpt-priced", "minimum_usage", false)
+
+	enableResp := performJSON(r, http.MethodPatch, "/v0/admin/model-prices/"+uintString(createPayload.Data.ID)+"/enable", rootJWT, nil)
+	if enableResp.Code != http.StatusOK {
+		t.Fatalf("admin should enable model price, got %d %s", enableResp.Code, enableResp.Body.String())
+	}
+	assertUserModelPricing("gpt-priced", "model_price:request:v4", true)
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=model_price&resource_id=gpt-priced", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"model_price.create"`) ||
+		!strings.Contains(auditBody, `"action":"model_price.update"`) ||
+		!strings.Contains(auditBody, `"action":"model_price.disable"`) ||
+		!strings.Contains(auditBody, `"action":"model_price.enable"`) {
+		t.Fatalf("model price management should write audit logs, got %d %s", auditResp.Code, auditBody)
+	}
+}
+
 func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -9188,6 +9309,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		&model.Log{},
 		&model.RedemCode{},
 		&model.QuotaTransaction{},
+		&model.ModelPrice{},
 		&model.PaymentProduct{},
 		&model.PaymentOrder{},
 		&model.PaymentEvent{},

@@ -377,6 +377,24 @@ func (h *UserHandler) ListPaymentProductsAdmin(c *gin.Context) {
 	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.PaymentProductAdminInfosFromModels(products)})
 }
 
+// GET /v0/admin/model-prices — 系统模型价格列表
+func (h *UserHandler) ListModelPricesAdmin(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.ModelPriceListRequest
+	_ = c.ShouldBindQuery(&req)
+	prices, total, err := h.svc.ListModelPricesAdmin(operator.Role, req.Page, req.PageSize, req.Keyword, req.Enabled)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	page, pageSize := pageValues(req.Page, req.PageSize)
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.ModelPriceAdminInfosFromModels(prices)})
+}
+
 // GET /v0/admin/audit — 管理审计日志列表
 func (h *UserHandler) ListAdminAuditLogs(c *gin.Context) {
 	operator, ok := currentUser(c)
@@ -423,6 +441,34 @@ func (h *UserHandler) CreatePaymentProduct(c *gin.Context) {
 	common.Success(c, dto.PaymentProductAdminInfoFromModel(product))
 }
 
+// POST /v0/admin/model-prices — 创建系统模型价格
+func (h *UserHandler) CreateModelPrice(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.UpsertModelPriceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "模型价格参数无效")
+		return
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	price, err := h.svc.CreateModelPrice(operator.Role, modelPriceFromRequest(req, enabled))
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAuditString(c, operator, "model_price.create", "model_price", price.Model, nil, modelPriceAuditSummary(price)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.ModelPriceAdminInfoFromModel(price))
+}
+
 // PUT /v0/admin/payment/products/:id — 更新支付商品
 func (h *UserHandler) UpdatePaymentProduct(c *gin.Context) {
 	operator, ok := currentUser(c)
@@ -454,6 +500,39 @@ func (h *UserHandler) UpdatePaymentProduct(c *gin.Context) {
 		return
 	}
 	common.Success(c, dto.PaymentProductAdminInfoFromModel(product))
+}
+
+// PUT /v0/admin/model-prices/:id — 更新系统模型价格
+func (h *UserHandler) UpdateModelPrice(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	var req dto.UpsertModelPriceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "模型价格参数无效")
+		return
+	}
+	before, err := h.svc.GetModelPriceAdmin(operator.Role, id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	price, err := h.svc.UpdateModelPrice(operator.Role, id, modelPriceFromRequest(req, false), req.Enabled)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAuditString(c, operator, "model_price.update", "model_price", price.Model, modelPriceAuditSummary(before), modelPriceAuditSummary(price)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.ModelPriceAdminInfoFromModel(price))
 }
 
 // PATCH /v0/admin/payment/products/:id/disable — 禁用支付商品
@@ -505,6 +584,55 @@ func (h *UserHandler) setPaymentProductEnabled(c *gin.Context, enabled bool) {
 	common.SuccessMsg(c, "支付商品已禁用")
 }
 
+// PATCH /v0/admin/model-prices/:id/disable — 禁用系统模型价格
+func (h *UserHandler) DisableModelPrice(c *gin.Context) {
+	h.setModelPriceEnabled(c, false)
+}
+
+// PATCH /v0/admin/model-prices/:id/enable — 启用系统模型价格
+func (h *UserHandler) EnableModelPrice(c *gin.Context) {
+	h.setModelPriceEnabled(c, true)
+}
+
+func (h *UserHandler) setModelPriceEnabled(c *gin.Context, enabled bool) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	before, err := h.svc.GetModelPriceAdmin(operator.Role, id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.svc.SetModelPriceEnabled(operator.Role, id, enabled); err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	after, err := h.svc.GetModelPriceAdmin(operator.Role, id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	action := "model_price.disable"
+	if enabled {
+		action = "model_price.enable"
+	}
+	if err := h.recordAdminAuditString(c, operator, action, "model_price", after.Model, modelPriceAuditSummary(before), modelPriceAuditSummary(after)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	if enabled {
+		common.SuccessMsg(c, "模型价格已启用")
+		return
+	}
+	common.SuccessMsg(c, "模型价格已禁用")
+}
+
 // GET /v0/user/models — 当前用户可用模型列表
 func (h *UserHandler) Models(c *gin.Context) {
 	if _, ok := currentUser(c); !ok {
@@ -516,7 +644,12 @@ func (h *UserHandler) Models(c *gin.Context) {
 		common.FailWithStatus(c, 500, "查询模型失败")
 		return
 	}
-	common.Success(c, dto.UserModelListResult{Models: dto.UserModelInfosFromNames(models)})
+	prices, err := h.svc.ListEnabledModelPrices(models)
+	if err != nil {
+		common.FailWithStatus(c, 500, "查询模型价格失败")
+		return
+	}
+	common.Success(c, dto.UserModelListResult{Models: dto.UserModelInfosFromNamesAndPrices(models, prices)})
 }
 
 func paymentProductFromRequest(req dto.UpsertPaymentProductRequest, enabled bool) model.PaymentProduct {
@@ -532,18 +665,37 @@ func paymentProductFromRequest(req dto.UpsertPaymentProductRequest, enabled bool
 	}
 }
 
+func modelPriceFromRequest(req dto.UpsertModelPriceRequest, enabled bool) model.ModelPrice {
+	return model.ModelPrice{
+		Model:           req.Model,
+		PriceMode:       req.PriceMode,
+		PriceExpression: req.PriceExpression,
+		VariablesJSON:   req.VariablesJSON,
+		UnitTokens:      req.UnitTokens,
+		Enabled:         enabled,
+	}
+}
+
 func (h *UserHandler) recordAdminAudit(c *gin.Context, operator *model.User, action, resourceType string, resourceID uint, before, after interface{}) error {
 	return h.recordAdminAuditResult(c, operator, action, resourceType, resourceID, before, after, "success", "")
 }
 
 func (h *UserHandler) recordAdminAuditResult(c *gin.Context, operator *model.User, action, resourceType string, resourceID uint, before, after interface{}, result, errorCode string) error {
+	return h.recordAdminAuditStringResult(c, operator, action, resourceType, strconv.FormatUint(uint64(resourceID), 10), before, after, result, errorCode)
+}
+
+func (h *UserHandler) recordAdminAuditString(c *gin.Context, operator *model.User, action, resourceType, resourceID string, before, after interface{}) error {
+	return h.recordAdminAuditStringResult(c, operator, action, resourceType, resourceID, before, after, "success", "")
+}
+
+func (h *UserHandler) recordAdminAuditStringResult(c *gin.Context, operator *model.User, action, resourceType, resourceID string, before, after interface{}, result, errorCode string) error {
 	return h.svc.RecordAdminAuditLog(service.AdminAuditRecordInput{
 		RequestID:     c.GetString("request_id"),
 		ActorUserID:   operator.ID,
 		ActorRole:     operator.Role,
 		Action:        action,
 		ResourceType:  resourceType,
-		ResourceID:    strconv.FormatUint(uint64(resourceID), 10),
+		ResourceID:    resourceID,
 		BeforeSummary: auditSummary(before),
 		AfterSummary:  auditSummary(after),
 		Result:        result,
@@ -577,6 +729,21 @@ func paymentProductAuditSummary(product *model.PaymentProduct) map[string]interf
 		"quota":       product.Quota,
 		"bonus_quota": product.BonusQuota,
 		"enabled":     product.Enabled,
+	}
+}
+
+func modelPriceAuditSummary(price *model.ModelPrice) map[string]interface{} {
+	if price == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"id":               price.ID,
+		"model":            price.Model,
+		"price_mode":       price.PriceMode,
+		"price_expression": price.PriceExpression,
+		"unit_tokens":      price.UnitTokens,
+		"rule_version":     price.RuleVersion,
+		"enabled":          price.Enabled,
 	}
 }
 

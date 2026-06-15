@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"fmt"
 	"time"
 
 	"routerx/internal/model"
@@ -77,13 +78,23 @@ type UserModelListResult struct {
 }
 
 func UserModelInfosFromNames(names []string) []UserModelInfo {
+	return UserModelInfosFromNamesAndPrices(names, nil)
+}
+
+func UserModelInfosFromNamesAndPrices(names []string, prices map[string]model.ModelPrice) []UserModelInfo {
 	items := make([]UserModelInfo, 0, len(names))
 	for _, name := range names {
+		priceRule := "minimum_usage"
+		pricingReady := false
+		if price, ok := prices[name]; ok && price.Enabled {
+			priceRule = fmt.Sprintf("model_price:%s:v%d", price.PriceMode, price.RuleVersion)
+			pricingReady = true
+		}
 		items = append(items, UserModelInfo{
 			ID:           name,
 			Name:         name,
-			PriceRule:    "minimum_usage",
-			PricingReady: false,
+			PriceRule:    priceRule,
+			PricingReady: pricingReady,
 		})
 	}
 	return items

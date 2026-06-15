@@ -107,6 +107,13 @@ const (
 	adminAuditActionPaymentManualDebit      = "payment_manual_adjust.debit"
 )
 
+var allowedModelPriceModes = map[string]struct{}{
+	"request": {},
+	"token":   {},
+	"second":  {},
+	"tiered":  {},
+}
+
 func recordPaymentEventAudit(tx *gorm.DB, requestID, action string, event model.PaymentEvent, order *model.PaymentOrder, extra map[string]interface{}) error {
 	summary := map[string]interface{}{
 		"provider":        event.Provider,
@@ -990,6 +997,186 @@ func (s *UserService) DisableRedemCode(operatorRole int, id uint) error {
 // ListAvailableModels 返回普通用户当前可见的启用通道模型集合。
 func (s *UserService) ListAvailableModels() ([]string, error) {
 	return NewChannelService().ListModels()
+}
+
+// ListEnabledModelPrices 返回启用中的系统模型价格，用于用户侧模型列表展示价格状态。
+func (s *UserService) ListEnabledModelPrices(modelNames []string) (map[string]model.ModelPrice, error) {
+	pricesByModel := make(map[string]model.ModelPrice)
+	if len(modelNames) == 0 {
+		return pricesByModel, nil
+	}
+	seen := map[string]struct{}{}
+	names := make([]string, 0, len(modelNames))
+	for _, raw := range modelNames {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return pricesByModel, nil
+	}
+	var prices []model.ModelPrice
+	if err := internal.DB.Where("model IN ? AND enabled = ?", names, true).Find(&prices).Error; err != nil {
+		return nil, err
+	}
+	for _, price := range prices {
+		pricesByModel[price.Model] = price
+	}
+	return pricesByModel, nil
+}
+
+// ListModelPricesAdmin 返回管理端系统模型价格列表，可按模型名/模式过滤。
+func (s *UserService) ListModelPricesAdmin(operatorRole int, page, pageSize int, keyword string, enabled *bool) ([]model.ModelPrice, int64, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, 0, errors.New("admin role required")
+	}
+	page, pageSize = normalizePage(page, pageSize)
+	query := internal.DB.Model(&model.ModelPrice{})
+	if strings.TrimSpace(keyword) != "" {
+		like := "%" + strings.TrimSpace(keyword) + "%"
+		query = query.Where("model LIKE ? OR price_mode LIKE ?", like, like)
+	}
+	if enabled != nil {
+		query = query.Where("enabled = ?", *enabled)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var prices []model.ModelPrice
+	err := query.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&prices).Error
+	return prices, total, err
+}
+
+func (s *UserService) GetModelPriceAdmin(operatorRole int, id uint) (*model.ModelPrice, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	if id == 0 {
+		return nil, errors.New("model price is required")
+	}
+	var price model.ModelPrice
+	if err := internal.DB.First(&price, id).Error; err != nil {
+		return nil, err
+	}
+	return &price, nil
+}
+
+func (s *UserService) CreateModelPrice(operatorRole int, price model.ModelPrice) (*model.ModelPrice, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	normalized, err := normalizeModelPrice(price)
+	if err != nil {
+		return nil, err
+	}
+	normalized.RuleVersion = 1
+	var existing int64
+	if err := internal.DB.Model(&model.ModelPrice{}).Where("model = ?", normalized.Model).Count(&existing).Error; err != nil {
+		return nil, err
+	}
+	if existing > 0 {
+		return nil, errors.New("model price already exists")
+	}
+	if err := internal.DB.Create(&normalized).Error; err != nil {
+		return nil, err
+	}
+	return &normalized, nil
+}
+
+func (s *UserService) UpdateModelPrice(operatorRole int, id uint, price model.ModelPrice, enabled *bool) (*model.ModelPrice, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	if id == 0 {
+		return nil, errors.New("model price is required")
+	}
+	normalized, err := normalizeModelPrice(price)
+	if err != nil {
+		return nil, err
+	}
+	var current model.ModelPrice
+	if err := internal.DB.First(&current, id).Error; err != nil {
+		return nil, err
+	}
+	var duplicate int64
+	if err := internal.DB.Model(&model.ModelPrice{}).Where("model = ? AND id <> ?", normalized.Model, id).Count(&duplicate).Error; err != nil {
+		return nil, err
+	}
+	if duplicate > 0 {
+		return nil, errors.New("model price already exists")
+	}
+	updates := map[string]interface{}{
+		"model":            normalized.Model,
+		"price_mode":       normalized.PriceMode,
+		"price_expression": normalized.PriceExpression,
+		"variables_json":   normalized.VariablesJSON,
+		"unit_tokens":      normalized.UnitTokens,
+		"rule_version":     current.RuleVersion + 1,
+	}
+	if enabled != nil {
+		updates["enabled"] = *enabled
+	}
+	if err := internal.DB.Model(&current).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	if err := internal.DB.First(&current, id).Error; err != nil {
+		return nil, err
+	}
+	return &current, nil
+}
+
+func (s *UserService) SetModelPriceEnabled(operatorRole int, id uint, enabled bool) error {
+	if operatorRole < common.RoleAdmin {
+		return errors.New("admin role required")
+	}
+	if id == 0 {
+		return errors.New("model price is required")
+	}
+	res := internal.DB.Model(&model.ModelPrice{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"enabled":      enabled,
+			"rule_version": gorm.Expr("rule_version + ?", 1),
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return errors.New("model price not found")
+	}
+	return nil
+}
+
+func normalizeModelPrice(price model.ModelPrice) (model.ModelPrice, error) {
+	price.Model = strings.TrimSpace(price.Model)
+	price.PriceMode = strings.ToLower(strings.TrimSpace(price.PriceMode))
+	price.PriceExpression = strings.TrimSpace(price.PriceExpression)
+	if price.Model == "" {
+		return model.ModelPrice{}, errors.New("model is required")
+	}
+	if _, ok := allowedModelPriceModes[price.PriceMode]; !ok {
+		return model.ModelPrice{}, errors.New("model price mode is invalid")
+	}
+	if price.PriceExpression == "" {
+		return model.ModelPrice{}, errors.New("model price expression is required")
+	}
+	if price.UnitTokens == 0 {
+		price.UnitTokens = 1000
+	}
+	if price.UnitTokens < 0 {
+		return model.ModelPrice{}, errors.New("model price unit_tokens must be positive")
+	}
+	if len(price.VariablesJSON) > 0 && !json.Valid(price.VariablesJSON) {
+		return model.ModelPrice{}, errors.New("model price variables_json must be valid json")
+	}
+	return price, nil
 }
 
 // ListPaymentProducts 返回当前可购买的启用充值商品。

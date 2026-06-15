@@ -350,6 +350,34 @@ Provider 退款请求：
 
 `refund_amount` 为空时按订单全额退款；非空时必须大于 0 且不能超过订单金额。接口需要订单为 `paid` 状态；Stripe 订单必须已保存 `provider_payment_id`，易支付订单需要配置 `payment.epay.pid`、`payment.epay.refund_url` 和 `PAYMENT_EPAY_KEY`。成功后本地订单进入 `refund_pending`，写 `payment_refund_requests` 和 `payment_refund.requested` 审计；最终退款状态和可选额度扣回仍以可信 provider webhook 或后续人工收尾为准。
 
+### 模型价格管理
+
+| 方法 | 路径 | 当前状态 | 说明 |
+|------|------|----------|------|
+| GET | `/v0/admin/model-prices` | 基础实现 | 系统模型价格列表，支持 `page`、`page_size`、`keyword`、`enabled` |
+| POST | `/v0/admin/model-prices` | 基础实现 | 创建系统模型价格；`model` 唯一，成功后 `rule_version=1` 并写 `model_price.create` 管理审计 |
+| PUT | `/v0/admin/model-prices/:id` | 基础实现 | 更新系统模型价格；每次更新递增 `rule_version` 并写 `model_price.update` 管理审计 |
+| PATCH | `/v0/admin/model-prices/:id/disable` | 基础实现 | 禁用系统模型价格；用户侧模型列表回退到 `minimum_usage`，成功后写 `model_price.disable` 管理审计 |
+| PATCH | `/v0/admin/model-prices/:id/enable` | 基础实现 | 启用系统模型价格；用户侧模型列表返回版本化价格规则，成功后写 `model_price.enable` 管理审计 |
+
+创建/更新系统模型价格请求：
+
+```json
+{
+  "model": "gpt-4o-mini",
+  "price_mode": "token",
+  "price_expression": "prompt_tokens * prompt_price + completion_tokens * completion_price",
+  "variables_json": {
+    "prompt_price": 1,
+    "completion_price": 2
+  },
+  "unit_tokens": 1000,
+  "enabled": true
+}
+```
+
+`price_mode` 当前允许 `request`、`token`、`second`、`tiered`。系统模型价格已经用于 `/v0/user/models` 的 `pricing_ready` 和 `price_rule` 展示；调用热路径仍按 P0 usage/minimum 规则扣费，后续再把表达式接入 `billing_snapshot`。
+
 ### 管理审计
 
 | 方法 | 路径 | 当前状态 | 说明 |
@@ -379,6 +407,10 @@ Provider 退款请求：
 | `payment_product.update` | `PUT /v0/admin/payment/products/:id` |
 | `payment_product.disable` | `PATCH /v0/admin/payment/products/:id/disable` |
 | `payment_product.enable` | `PATCH /v0/admin/payment/products/:id/enable` |
+| `model_price.create` | `POST /v0/admin/model-prices` |
+| `model_price.update` | `PUT /v0/admin/model-prices/:id` |
+| `model_price.disable` | `PATCH /v0/admin/model-prices/:id/disable` |
+| `model_price.enable` | `PATCH /v0/admin/model-prices/:id/enable` |
 | `payment_order.create` | `POST /v0/user/payment/orders` |
 | `payment_webhook.processed` | `POST /v0/payment/stripe/webhook`、`POST /v0/payment/epay/notify` |
 | `payment_order.paid` | 支付 provider 成功回调入账 |
@@ -627,7 +659,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | GET | `/v0/user/log` | 已实现 | 当前用户调用日志 |
 | GET | `/v0/user/billing` | 基础实现 | 当前用户账单统计 |
 | POST | `/v0/user/redem` | 基础实现 | 使用未兑换且未过期的充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水与 `redem_code.redeem` 管理审计 |
-| GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露的可用模型列表；价格表未接入时 `pricing_ready=false` |
+| GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露的可用模型列表；命中启用 `model_prices` 时返回 `pricing_ready=true` 和 `model_price:<price_mode>:v<rule_version>`，否则返回 `minimum_usage` |
 
 ### 支付接口
 

@@ -8,7 +8,7 @@ info:
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message。
-    - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败和审计事件计数的基础 /metrics、管理端支付商品、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -35,6 +35,8 @@ tags:
     description: 超级管理员管理审计查询。
   - name: Admin Payment
     description: 管理员支付商品管理。
+  - name: Admin Billing
+    description: 管理员计费规则和模型价格管理。
   - name: Admin Accounts
     description: 管理员账号管理。
   - name: Admin Channels
@@ -580,7 +582,7 @@ paths:
     get:
       tags: [User Usage]
       summary: 当前用户可用模型
-      description: 基础实现；返回启用通道暴露的去重模型列表。价格表和访问控制规则尚未接入时，price_rule 为 minimum_usage 且 pricing_ready=false。
+      description: 基础实现；返回启用通道暴露的去重模型列表。命中启用 model_prices 时，price_rule 返回 model_price:<price_mode>:v<rule_version> 且 pricing_ready=true；未配置或已禁用时回退 minimum_usage。
       security:
         - UserJWT: []
       responses:
@@ -1055,12 +1057,12 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、payment_order.create、payment_webhook.processed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、channel.update、log.clear 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、model_price.create、payment_order.create、payment_webhook.processed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、channel.update、log.clear 或 admin.denied。
         - name: resource_type
           in: query
           required: false
           schema: { type: string }
-          description: 资源类型过滤，例如 api_key、user、payment_product、payment_order、payment_event、channel、log 或 admin。
+          description: 资源类型过滤，例如 api_key、user、payment_product、model_price、payment_order、payment_event、channel、log 或 admin。
         - name: resource_id
           in: query
           required: false
@@ -1209,6 +1211,117 @@ paths:
       tags: [Admin Payment]
       summary: 启用支付商品
       description: 成功后写入 payment_product.enable 管理审计。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/model-prices:
+    get:
+      tags: [Admin Billing]
+      summary: 系统模型价格列表
+      description: 管理员查看系统模型价格；可按模型名/价格模式关键字和 enabled 状态过滤。该表当前用于用户侧模型价格就绪状态展示，表达式尚未接入调用扣费热路径。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Keyword"
+        - name: enabled
+          in: query
+          required: false
+          schema: { type: boolean }
+          description: 是否只查看启用或禁用价格规则。
+      responses:
+        "200":
+          description: 系统模型价格分页列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ModelPriceAdminPage"
+    post:
+      tags: [Admin Billing]
+      summary: 创建系统模型价格
+      description: 创建模型级默认价格表达式；model 唯一，创建后 rule_version=1。成功后写入 model_price.create 管理审计，resource_id 为模型名。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertModelPriceRequest"
+      responses:
+        "200":
+          description: 系统模型价格创建成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ModelPriceAdminInfo"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/model-prices/{id}:
+    put:
+      tags: [Admin Billing]
+      summary: 更新系统模型价格
+      description: 更新模型级默认价格表达式；每次更新 rule_version 递增。成功后写入 model_price.update 管理审计，resource_id 为模型名。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertModelPriceRequest"
+      responses:
+        "200":
+          description: 系统模型价格更新成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ModelPriceAdminInfo"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/model-prices/{id}/disable:
+    patch:
+      tags: [Admin Billing]
+      summary: 禁用系统模型价格
+      description: 禁用后用户侧 /v0/user/models 对应模型回退到 price_rule=minimum_usage、pricing_ready=false；rule_version 递增。成功后写入 model_price.disable 管理审计。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/model-prices/{id}/enable:
+    patch:
+      tags: [Admin Billing]
+      summary: 启用系统模型价格
+      description: 启用后用户侧 /v0/user/models 对应模型返回版本化 price_rule；rule_version 递增。成功后写入 model_price.enable 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -2479,10 +2592,11 @@ components:
         name: { type: string }
         price_rule:
           type: string
-          example: minimum_usage
+          description: 未配置启用系统价格时为 minimum_usage；命中启用 model_prices 时为 model_price:<price_mode>:v<rule_version>。
+          example: model_price:token:v1
         pricing_ready:
           type: boolean
-          description: false 表示尚未接入 model_prices/channel_model_prices 价格表。
+          description: true 表示已命中启用 model_prices；false 表示当前模型仍按 P0 minimum_usage 状态展示。
     UserModelListResult:
       type: object
       properties:
@@ -2490,6 +2604,69 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/UserModelInfo"
+    UpsertModelPriceRequest:
+      type: object
+      required: [model, price_mode, price_expression]
+      properties:
+        model:
+          type: string
+          description: 模型名，必须唯一。
+          example: gpt-4o-mini
+        price_mode:
+          type: string
+          enum: [request, token, second, tiered]
+          description: 价格模板类型。
+          example: token
+        price_expression:
+          type: string
+          description: 价格表达式；当前先保存和展示，后续接入扣费热路径。
+          example: prompt_tokens * prompt_price + completion_tokens * completion_price
+        variables_json:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: 表达式变量默认值。
+          example:
+            prompt_price: 1
+            completion_price: 2
+        unit_tokens:
+          type: integer
+          format: int64
+          description: token 计价单位；未传或为 0 时服务端默认 1000。
+          example: 1000
+        enabled:
+          type: boolean
+          description: 创建时未传默认为 true；更新时未传则保留原状态。
+    ModelPriceAdminInfo:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        model: { type: string }
+        price_mode:
+          type: string
+          enum: [request, token, second, tiered]
+        price_expression: { type: string }
+        variables_json:
+          type: object
+          nullable: true
+          additionalProperties: true
+        unit_tokens: { type: integer, format: int64 }
+        rule_version:
+          type: integer
+          format: int64
+          description: 规则版本；创建为 1，更新、启用、禁用都会递增。
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ModelPriceAdminPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/ModelPriceAdminInfo"
     PaymentProductInfo:
       type: object
       properties:
