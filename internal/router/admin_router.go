@@ -43,6 +43,7 @@ func setupAdminRoutes(
 			authRequired.PATCH("/payment/products/:id/enable", userH.EnablePaymentProduct)
 			authRequired.GET("/token", tokenH.AdminList)
 			authRequired.POST("/token/batch-disable", tokenH.BatchDisable)
+			authRequired.POST("/token/batch-expire", tokenH.BatchExpire)
 
 			// 管理员账户查看 (Admin+)；写操作仅 SuperAdmin。
 			authRequired.GET("/admin", adminH.List)

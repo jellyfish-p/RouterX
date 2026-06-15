@@ -921,6 +921,33 @@ paths:
                         $ref: "#/components/schemas/BatchDisableTokensResponse"
         "400":
           $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/token/batch-expire:
+    post:
+      tags: [Admin API Key]
+      summary: 批量过期 API Key
+      description: 管理员按 token_ids 或 user_id 立即过期 API Key；必须至少提供一个筛选条件，成功后写 api_key.batch_expired 管理审计。该操作只设置 expired_at，不改 status。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchExpireTokensRequest"
+      responses:
+        "200":
+          description: 批量过期结果。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/BatchExpireTokensResponse"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/redem:
     get:
       tags: [Admin Redem]
@@ -991,7 +1018,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
       security:
         - UserJWT: []
       parameters:
@@ -2810,6 +2837,24 @@ components:
           description: 批量禁用原因；为空时使用 admin_batch_disable。
           example: risk_review
       description: token_ids 和 user_id 至少提供一个，避免误禁用全部 Key。
+    BatchExpireTokensRequest:
+      type: object
+      properties:
+        token_ids:
+          type: array
+          items: { type: integer, format: uint64 }
+          description: 指定要立即过期的 API Key ID 列表。
+        user_id:
+          type: integer
+          format: uint64
+          nullable: true
+          description: 按所属用户批量过期；可与 token_ids 组合取交集。
+        reason:
+          type: string
+          maxLength: 128
+          description: 批量过期原因；为空时使用 admin_batch_expire。
+          example: risk_review
+      description: token_ids 和 user_id 至少提供一个，避免误过期全部 Key。
     Token:
       type: object
       properties:
@@ -2965,6 +3010,16 @@ components:
         matched_count: { type: integer, format: int64 }
         disabled_count: { type: integer, format: int64 }
         reason: { type: string }
+        token_ids:
+          type: array
+          items: { type: integer, format: uint64 }
+    BatchExpireTokensResponse:
+      type: object
+      properties:
+        matched_count: { type: integer, format: int64 }
+        expired_count: { type: integer, format: int64 }
+        reason: { type: string }
+        expired_at: { type: string, format: date-time }
         token_ids:
           type: array
           items: { type: integer, format: uint64 }

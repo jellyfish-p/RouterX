@@ -516,6 +516,95 @@ func TestAdminAPIKeyQueryAndBatchDisable(t *testing.T) {
 	}
 }
 
+func TestAdminAPIKeyBatchExpire(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createAlice := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "alice",
+		"password":     "password123",
+		"display_name": "Alice",
+		"quota":        int64(100),
+	})
+	if createAlice.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createAlice.Code, createAlice.Body.String())
+	}
+	var alice model.User
+	if err := internal.DB.Where("username = ?", "alice").First(&alice).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	rootTokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "root-expire-safe-key",
+		"remain_quota": int64(100),
+	})
+	var rootTokenPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rootTokenResp.Body.Bytes(), &rootTokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	aliceToken, err := service.NewTokenService().Create(alice.ID, "alice-expire-key", 100, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alicePlainKey := aliceToken.Key
+	aliceToken.Key = ""
+
+	noFilterResp := performJSON(r, http.MethodPost, "/v0/admin/token/batch-expire", rootJWT, map[string]interface{}{})
+	if noFilterResp.Code != http.StatusBadRequest {
+		t.Fatalf("batch expire without filters should be rejected, got %d %s", noFilterResp.Code, noFilterResp.Body.String())
+	}
+	batchResp := performJSON(r, http.MethodPost, "/v0/admin/token/batch-expire", rootJWT, map[string]interface{}{
+		"user_id": alice.ID,
+		"reason":  "risk_review",
+	})
+	batchBody := batchResp.Body.String()
+	if batchResp.Code != http.StatusOK || !strings.Contains(batchBody, `"expired_count":1`) || !strings.Contains(batchBody, `"matched_count":1`) {
+		t.Fatalf("batch expire response mismatch: %d %s", batchResp.Code, batchBody)
+	}
+	var aliceRow struct {
+		Status    int
+		ExpiredAt *time.Time
+	}
+	if err := internal.DB.Table("tokens").Select("status, expired_at").Where("id = ?", aliceToken.ID).Scan(&aliceRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if aliceRow.Status != common.TokenStatusEnabled || aliceRow.ExpiredAt == nil || aliceRow.ExpiredAt.After(time.Now().Add(time.Second)) {
+		t.Fatalf("alice key should be expired without being disabled, got %+v", aliceRow)
+	}
+	var rootRow struct {
+		ExpiredAt *time.Time
+	}
+	if err := internal.DB.Table("tokens").Select("expired_at").Where("id = ?", rootTokenPayload.Data.ID).Scan(&rootRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rootRow.ExpiredAt != nil {
+		t.Fatalf("batch expire should not affect other users, got %+v", rootRow)
+	}
+	expiredModels := performJSON(r, http.MethodGet, "/v1/models", "Bearer "+alicePlainKey, nil)
+	if expiredModels.Code != http.StatusUnauthorized {
+		t.Fatalf("expired key should be rejected by relay auth, got %d %s", expiredModels.Code, expiredModels.Body.String())
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=api_key&resource_id=batch", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK || !strings.Contains(auditBody, `"action":"api_key.batch_expired"`) || strings.Contains(auditBody, alicePlainKey) || strings.Contains(auditBody, "sk-") {
+		t.Fatalf("batch expire audit mismatch or leaked key: %d %s", auditResp.Code, auditBody)
+	}
+}
+
 func TestAdminPrivilegeBoundaries(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

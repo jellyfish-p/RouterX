@@ -41,9 +41,9 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 - 普通用户编辑 API Key 时不能修改 `remain_quota` 或 `unlimited`，避免绕过预算上限。
 - 有限 API Key 创建不扣用户余额，`remain_quota` 或目标字段只表示 Key 剩余预算上限；成功调用同时扣用户余额和 Key 预算。
 - `unlimited=true` 或 `remain_quota=-1` 表示 API Key 自身不限额；成功调用仍扣用户额度。
-- API Key 支持用户轮换、泄露上报、单 Key 用量摘要、显式禁用、管理员跨用户脱敏查询和按 `token_ids`/`user_id` 批量禁用。
+- API Key 支持用户轮换、泄露上报、单 Key 用量摘要、显式禁用、管理员跨用户脱敏查询，以及按 `token_ids`/`user_id` 批量禁用和批量过期。
 - `tokens.rotated_from_id` 保存轮换来源，`tokens.revoked_reason` 保存禁用原因；轮换会创建替换 Key、返回新明文一次并禁用旧 Key。
-- API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计，审计摘要不包含完整明文 Key 或哈希。
+- API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计，审计摘要不包含完整明文 Key 或哈希。
 - `tokens.scope_json` 已支持基础模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list、日预算、月预算、并发上限和 RPM/TPM：用户可通过 `PUT /v0/user/token/:id/scope` 写入 `allow_models`、`api_types`、`channel_groups`、`entry_protocols`、`ip_cidrs`、`methods`、`daily_quota`、`monthly_quota`、`max_concurrency`、`rpm` 与 `tpm`，系统在上游调用前返回 `model_not_allowed`、`token_forbidden`、`route_forbidden`、`insufficient_quota` 或 `rate_limit_exceeded` 并写失败日志。
 - API Key 鉴权成功后向请求上下文注入当前用户和当前 Token，供 Relay、限流、日志和计费使用。
 
@@ -255,6 +255,7 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 | 用量摘要 | `GET /v0/user/token/:id/usage` | Key 所属用户或管理员 | 返回该 Key 的调用量、额度消耗、错误和最近使用摘要。 |
 | 作用域扩展 | `PUT /v0/user/token/:id/scope` | 管理员或具备策略权限的用户 | 在已实现 `allow_models`、`api_types`、`channel_groups`、`entry_protocols`、`ip_cidrs`、`methods`、`daily_quota`、`monthly_quota`、`max_concurrency`、`rpm` 和 `tpm` 基础上继续扩展更完整策略快照。 |
 | 批量禁用 | `POST /v0/admin/token/batch-disable` | 管理员 | 按用户、标签、环境、异常条件批量禁用。 |
+| 批量过期 | `POST /v0/admin/token/batch-expire` | 管理员 | 按 `token_ids` 或 `user_id` 立即设置过期时间，必须带筛选条件并写审计。 |
 | 管理查询 | `GET /v0/admin/token` | 管理员 | 跨用户按状态、最近使用、错误、额度和标签检索脱敏摘要。 |
 
 ## 12. 缓存和一致性
@@ -284,6 +285,8 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 | `api_key.disabled` | 主动禁用或风控禁用。 |
 | `api_key.deleted` | 软删除。 |
 | `api_key.leak_reported` | 用户或管理员上报泄露。 |
+| `api_key.batch_disabled` | 管理员批量禁用 Key。 |
+| `api_key.batch_expired` | 管理员批量过期 Key。 |
 | `api_key.quota_limit_set` | 创建或修改 Key 最大消耗额度。 |
 | `api_key.quota_adjusted` | 管理员调整 Key 预算上限或迁移旧额度口径。 |
 | `api_key.quota_limit_denied` | 用户端尝试修改额度或无限标记被拒绝。 |
@@ -357,7 +360,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 
 ### P2 验收
 
-- 管理员已支持跨用户查询和批量禁用；批量过期和异常 Key 风险视图仍待补。
+- 管理员已支持跨用户查询、批量禁用和批量过期；异常 Key 风险视图仍待补。
 - 支持企业团队、服务账号、标签、环境和导出脱敏摘要。
 - 已支持入口协议 allow-list、IP/CIDR allow-list、日预算、月预算、并发上限和 RPM/TPM；更完整策略快照仍待补。
 - 已支持泄露上报和替换建议；泄露窗口分析、自动轮换建议和告警仍待补。

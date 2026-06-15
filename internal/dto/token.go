@@ -37,6 +37,12 @@ type BatchDisableTokensRequest struct {
 	Reason   string `json:"reason"`
 }
 
+type BatchExpireTokensRequest struct {
+	TokenIDs []uint `json:"token_ids"`
+	UserID   *uint  `json:"user_id"`
+	Reason   string `json:"reason"`
+}
+
 type UpdateTokenScopeRequest struct {
 	AllowModels    []string `json:"allow_models"`
 	APITypes       []string `json:"api_types"`
@@ -115,6 +121,14 @@ type BatchDisableTokensResponse struct {
 	DisabledCount int64  `json:"disabled_count"`
 	Reason        string `json:"reason"`
 	TokenIDs      []uint `json:"token_ids"`
+}
+
+type BatchExpireTokensResponse struct {
+	MatchedCount int64     `json:"matched_count"`
+	ExpiredCount int64     `json:"expired_count"`
+	Reason       string    `json:"reason"`
+	ExpiredAt    time.Time `json:"expired_at"`
+	TokenIDs     []uint    `json:"token_ids"`
 }
 
 func TokenFromModel(token model.Token) TokenResponse {

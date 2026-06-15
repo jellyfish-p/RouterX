@@ -340,6 +340,7 @@ Gemini-compatible 错误示例：
 | `api_key.leak_reported` | `POST /v0/user/token/:id/report-leak` |
 | `api_key.scope_updated` | `PUT /v0/user/token/:id/scope` |
 | `api_key.batch_disabled` | `POST /v0/admin/token/batch-disable` |
+| `api_key.batch_expired` | `POST /v0/admin/token/batch-expire` |
 | `api_key.quota_limit_denied` | 用户端尝试通过 `PUT /v0/user/token/:id` 修改额度或无限标记被拒绝 |
 | `setting.create` | `PUT /v0/admin/setting` 新增 key |
 | `setting.update` | `PUT /v0/admin/setting` 修改已有 key |
@@ -535,6 +536,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | GET | `/v0/user/token/:id/usage` | 已实现 | 返回该 Key 的调用数、成功/失败数、额度消耗、总 tokens 和最近调用摘要 |
 | GET | `/v0/admin/token` | 已实现 | 管理员跨用户查询脱敏 API Key 摘要，可按 `user_id` 和 `status` 过滤 |
 | POST | `/v0/admin/token/batch-disable` | 已实现 | 管理员按 `token_ids` 或 `user_id` 批量禁用 Key，必须提供筛选条件，成功后写 `api_key.batch_disabled` 审计 |
+| POST | `/v0/admin/token/batch-expire` | 已实现 | 管理员按 `token_ids` 或 `user_id` 立即过期 Key，必须提供筛选条件，成功后写 `api_key.batch_expired` 审计 |
 
 用户端 API Key 不允许直接编辑最大消耗额度和无限额度标记，避免普通用户绕过预算策略；拒绝记录会写入管理审计，审计摘要不包含完整 API Key 明文或哈希。当前 scope 请求格式：
 

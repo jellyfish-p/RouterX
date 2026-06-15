@@ -24,6 +24,7 @@
 | `TestUserAPIKeyManagementAuditLogs` | API Key 创建、编辑、用户端额度/无限标记编辑拒绝、禁用和删除写入 `api_key.*` 管理审计，审计摘要不泄露 `sk-` 明文，并覆盖审计 `result`/`error_code`/时间范围过滤 |
 | `TestUserAPIKeyAdvancedManagement` | 用户查看单 Key 用量摘要、轮换 Key、泄露上报禁用、轮换链路和禁用原因落库，相关审计不泄露明文 Key |
 | `TestAdminAPIKeyQueryAndBatchDisable` | 管理员跨用户脱敏查询 API Key，批量禁用必须带筛选条件，批量禁用只影响命中 Key 并写 `api_key.batch_disabled` 审计 |
+| `TestAdminAPIKeyBatchExpire` | 管理员批量过期必须带筛选条件，只影响命中 Key，过期后 `/v1` 鉴权拒绝，并写 `api_key.batch_expired` 审计 |
 | `TestAPIKeyModelScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `allow_models` scope；允许模型成功转发，未允许模型返回 `model_not_allowed`，不调用上游、不额外扣费，并写失败日志和 `api_key.scope_updated` 审计 |
 | `TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `api_types` scope；允许 APIType 成功转发，未允许 APIType 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志 |
 | `TestAPIKeyChannelGroupScopeFiltersRelayCandidates` | 用户更新 API Key `channel_groups` scope；候选通道按允许分组过滤，越权 `routerx.route` 返回 `route_forbidden`，不调用上游、不额外扣费，并写失败日志 |
@@ -418,7 +419,7 @@ Gemini-compatible 最小断言：
 | P1 | 通道候选缓存 | 预加载、缓存命中、管理员修改后版本失效、集群实例回源一致 |
 | P1 | 独立日志数据库 | `LOG_SQL_DSN` 写入、日志库故障降级、主库结算最小事实可恢复 |
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
-| P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝和 RPM/TPM 拒绝已覆盖；批量过期、风险视图和缓存失效待补 |
+| P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝和 RPM/TPM 拒绝已覆盖；风险视图和缓存失效待补 |
 | P2 | 支付充值 | Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水和人工修正审计 |
 | P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理、日志清理审计和基础 `/metrics`、Relay/支付/DB/Redis 指标测试已覆盖；继续补 Request ID、结构化日志、HTTP/上游耗时指标、更多管理审计动作和生产 `/ready` |
 

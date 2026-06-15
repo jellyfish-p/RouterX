@@ -372,6 +372,41 @@ func (h *TokenHandler) BatchDisable(c *gin.Context) {
 	common.Success(c, resp)
 }
 
+func (h *TokenHandler) BatchExpire(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.BatchExpireTokensRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "批量过期 API Key 参数无效")
+		return
+	}
+	result, matched, err := h.svc.BatchExpire(service.BatchExpireTokensInput{
+		TokenIDs: req.TokenIDs,
+		UserID:   req.UserID,
+		Reason:   req.Reason,
+	})
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	resp := dto.BatchExpireTokensResponse{
+		MatchedCount: result.MatchedCount,
+		ExpiredCount: result.ExpiredCount,
+		Reason:       result.Reason,
+		ExpiredAt:    result.ExpiredAt,
+		TokenIDs:     result.TokenIDs,
+	}
+	after := tokenBatchExpireAuditSummary(req, resp, matched)
+	if err := h.recordAPIKeyAuditResource(c, operator, "api_key.batch_expired", "batch", nil, after, "success", ""); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, resp)
+}
+
 func (h *TokenHandler) recordAPIKeyAudit(c *gin.Context, operator *model.User, action string, id uint, before, after interface{}) error {
 	return h.recordAPIKeyAuditResult(c, operator, action, id, before, after, "success", "")
 }
@@ -454,6 +489,21 @@ func tokenQuotaDeniedAuditSummary(token *model.Token, req dto.UpdateTokenRequest
 }
 
 func tokenBatchDisableAuditSummary(req dto.BatchDisableTokensRequest, resp dto.BatchDisableTokensResponse, matched []model.Token) map[string]interface{} {
+	tokens := make([]map[string]interface{}, 0, len(matched))
+	for i := range matched {
+		tokens = append(tokens, tokenAuditSummary(&matched[i]))
+	}
+	return map[string]interface{}{
+		"filters": map[string]interface{}{
+			"token_ids": req.TokenIDs,
+			"user_id":   req.UserID,
+		},
+		"result": resp,
+		"tokens": tokens,
+	}
+}
+
+func tokenBatchExpireAuditSummary(req dto.BatchExpireTokensRequest, resp dto.BatchExpireTokensResponse, matched []model.Token) map[string]interface{} {
 	tokens := make([]map[string]interface{}, 0, len(matched))
 	for i := range matched {
 		tokens = append(tokens, tokenAuditSummary(&matched[i]))

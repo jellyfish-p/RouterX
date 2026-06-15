@@ -30,6 +30,7 @@ var (
 	ErrInsufficientUserQuota   = errors.New("insufficient user quota")
 	ErrInsufficientTokenQuota  = errors.New("insufficient token quota")
 	ErrBatchDisableNoFilter    = errors.New("batch disable requires token_ids or user_id")
+	ErrBatchExpireNoFilter     = errors.New("batch expire requires token_ids or user_id")
 	ErrModelNotAllowed         = errors.New("model not allowed by api key scope")
 	ErrAPINotAllowed           = errors.New("api type not allowed by api key scope")
 	ErrChannelGroupNotAllowed  = errors.New("channel group not allowed by api key scope")
@@ -87,11 +88,26 @@ type BatchDisableTokensInput struct {
 	Reason   string
 }
 
+type BatchExpireTokensInput struct {
+	TokenIDs  []uint
+	UserID    *uint
+	Reason    string
+	ExpiredAt time.Time
+}
+
 type BatchDisableTokensResult struct {
 	MatchedCount  int64
 	DisabledCount int64
 	Reason        string
 	TokenIDs      []uint
+}
+
+type BatchExpireTokensResult struct {
+	MatchedCount int64
+	ExpiredCount int64
+	Reason       string
+	ExpiredAt    time.Time
+	TokenIDs     []uint
 }
 
 // ValidateAndGetToken 验证 API Key 有效性：
@@ -881,6 +897,59 @@ func (s *TokenService) BatchDisable(input BatchDisableTokensInput) (BatchDisable
 		DisabledCount: disabledCount,
 		Reason:        reason,
 		TokenIDs:      disabledIDs,
+	}, matched, nil
+}
+
+func (s *TokenService) BatchExpire(input BatchExpireTokensInput) (BatchExpireTokensResult, []model.Token, error) {
+	tokenIDs := uniquePositiveUint(input.TokenIDs)
+	if len(tokenIDs) == 0 && input.UserID == nil {
+		return BatchExpireTokensResult{}, nil, ErrBatchExpireNoFilter
+	}
+	reason := normalizeRevokedReason(input.Reason, "admin_batch_expire")
+	expiredAt := input.ExpiredAt
+	if expiredAt.IsZero() {
+		expiredAt = time.Now()
+	}
+	var matched []model.Token
+	var expiredIDs []uint
+	var expiredCount int64
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		query := tx.Model(&model.Token{})
+		if len(tokenIDs) > 0 {
+			query = query.Where("id IN ?", tokenIDs)
+		}
+		if input.UserID != nil {
+			query = query.Where("user_id = ?", *input.UserID)
+		}
+		if err := query.Order("id ASC").Find(&matched).Error; err != nil {
+			return err
+		}
+		for _, token := range matched {
+			if token.ExpiredAt == nil || token.ExpiredAt.After(expiredAt) {
+				expiredIDs = append(expiredIDs, token.ID)
+			}
+		}
+		if len(expiredIDs) == 0 {
+			return nil
+		}
+		res := tx.Model(&model.Token{}).
+			Where("id IN ?", expiredIDs).
+			Update("expired_at", expiredAt)
+		if res.Error != nil {
+			return res.Error
+		}
+		expiredCount = res.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return BatchExpireTokensResult{}, nil, err
+	}
+	return BatchExpireTokensResult{
+		MatchedCount: int64(len(matched)),
+		ExpiredCount: expiredCount,
+		Reason:       reason,
+		ExpiredAt:    expiredAt,
+		TokenIDs:     expiredIDs,
 	}, matched, nil
 }
 
