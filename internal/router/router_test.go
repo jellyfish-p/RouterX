@@ -2181,6 +2181,18 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 	logs := []model.Log{
 		{UserID: root.ID, TokenID: &tokenID, ChannelID: &channel.ID, Model: "gpt-test", Status: common.LogStatusSuccess, QuotaUsed: 7, TotalTokens: 7, CreatedAt: now.Add(-time.Minute)},
 		{UserID: root.ID, TokenID: &tokenID, ChannelID: &channel.ID, Model: "gpt-test", Status: common.LogStatusFailed, ErrorMsg: "upstream 500", CreatedAt: now},
+		{
+			UserID:          root.ID,
+			TokenID:         &tokenID,
+			ChannelID:       &channel.ID,
+			Model:           "gpt-test",
+			Status:          common.LogStatusFailed,
+			ErrorMsg:        "token rate limit exceeded",
+			ErrorCode:       "rate_limit_exceeded",
+			PolicySnapshot:  `{"scope_result":{"rate_limit":"deny","rate_limit_dimension":"token"}}`,
+			RequestSnapshot: `{"entry_protocol":"openai"}`,
+			CreatedAt:       now.Add(time.Minute),
+		},
 	}
 	if err := internal.DB.Create(&logs).Error; err != nil {
 		t.Fatal(err)
@@ -2207,9 +2219,10 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 		!strings.Contains(body, "routerx_db_up 1") ||
 		!strings.Contains(body, "routerx_redis_up 0") ||
 		!strings.Contains(body, `routerx_logs_total{status="success"} 1`) ||
-		!strings.Contains(body, `routerx_logs_total{status="failed"} 1`) ||
+		!strings.Contains(body, `routerx_logs_total{status="failed"} 2`) ||
 		!strings.Contains(body, "routerx_quota_used_total 7") ||
 		!strings.Contains(body, "routerx_channel_error_count 3") ||
+		!strings.Contains(body, `routerx_rate_limit_rejections_total{dimension="token"} 1`) ||
 		!strings.Contains(body, `routerx_payment_orders_total{provider="stripe",status="paid"} 1`) ||
 		!strings.Contains(body, `routerx_payment_orders_total{provider="epay",status="pending"} 1`) ||
 		!strings.Contains(body, `routerx_payment_events_total{provider="stripe",event_type="checkout.session.completed",processed="true"} 1`) ||

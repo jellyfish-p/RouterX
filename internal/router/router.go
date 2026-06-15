@@ -2,8 +2,10 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -120,6 +122,7 @@ func metricsHandler(c *gin.Context) {
 	writeLabeledCounter(&b, "routerx_logs_total", "Relay logs by status.", extended.Logs)
 	writeCounter(&b, "routerx_quota_used_total", "Total quota recorded in relay logs.", extended.QuotaUsed)
 	writeGauge(&b, "routerx_channel_error_count", "Current sum of channel error counters.", extended.ChannelErrorCount)
+	writeLabeledCounter(&b, "routerx_rate_limit_rejections_total", "Rate limit rejections by dimension.", extended.RateLimitRejections)
 	writeLabeledGauge(&b, "routerx_payment_orders_total", "Payment orders by provider and status.", extended.PaymentOrders)
 	writeLabeledGauge(&b, "routerx_payment_events_total", "Payment events by provider, event type and processed state.", extended.PaymentEvents)
 	c.Data(http.StatusOK, "text/plain; version=0.0.4; charset=utf-8", []byte(b.String()))
@@ -136,13 +139,14 @@ type metricSample struct {
 }
 
 type extendedMetrics struct {
-	DBUp              int64
-	RedisUp           int64
-	Logs              []metricSample
-	QuotaUsed         int64
-	ChannelErrorCount int64
-	PaymentOrders     []metricSample
-	PaymentEvents     []metricSample
+	DBUp                int64
+	RedisUp             int64
+	Logs                []metricSample
+	QuotaUsed           int64
+	ChannelErrorCount   int64
+	RateLimitRejections []metricSample
+	PaymentOrders       []metricSample
+	PaymentEvents       []metricSample
 }
 
 func collectExtendedMetrics() (extendedMetrics, error) {
@@ -186,6 +190,12 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		return extendedMetrics{}, err
 	}
 	metrics.ChannelErrorCount = channelErrors.Value
+
+	rateLimitRejections, err := collectRateLimitRejectionMetrics()
+	if err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.RateLimitRejections = rateLimitRejections
 
 	var orderRows []struct {
 		Provider string
@@ -233,6 +243,65 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		})
 	}
 	return metrics, nil
+}
+
+func collectRateLimitRejectionMetrics() ([]metricSample, error) {
+	var rows []struct {
+		PolicySnapshot string
+	}
+	if err := internal.DB.Model(&model.Log{}).
+		Select("policy_snapshot").
+		Where("status = ? AND error_code = ?", common.LogStatusFailed, "rate_limit_exceeded").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	counts := map[string]int64{}
+	for _, row := range rows {
+		counts[rateLimitDimensionFromPolicySnapshot(row.PolicySnapshot)]++
+	}
+	dimensions := make([]string, 0, len(counts))
+	for dimension := range counts {
+		dimensions = append(dimensions, dimension)
+	}
+	sort.Strings(dimensions)
+	samples := make([]metricSample, 0, len(dimensions))
+	for _, dimension := range dimensions {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{{Name: "dimension", Value: dimension}},
+			Value:  counts[dimension],
+		})
+	}
+	return samples, nil
+}
+
+func rateLimitDimensionFromPolicySnapshot(raw string) string {
+	var snapshot struct {
+		ScopeResult map[string]interface{} `json:"scope_result"`
+	}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return "unknown"
+	}
+	dimension, _ := snapshot.ScopeResult["rate_limit_dimension"].(string)
+	return normalizedRateLimitDimension(dimension)
+}
+
+func normalizedRateLimitDimension(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "global":
+		return "global"
+	case "ip":
+		return "ip"
+	case "token":
+		return "token"
+	case "user":
+		return "user"
+	case "model":
+		return "model"
+	case "channel":
+		return "channel"
+	default:
+		return "unknown"
+	}
 }
 
 func dbUp() int64 {
