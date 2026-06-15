@@ -349,7 +349,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `error_code` | string | 失败时的稳定协议化错误 code，成功调用为空 |
 | `error_source` | string | 失败来源，例如 `upstream`、`quota`、`route` |
 | `upstream_status` | int | 上游 HTTP 状态；非上游错误为 `0` |
-| `route_snapshot` | text/json string | 脱敏路由快照；当前包含请求模型、候选数量、选中通道、provider、分组、优先级和权重 |
+| `route_snapshot` | text/json string | 脱敏路由快照；当前包含请求模型、候选数量、选中通道、provider、分组、优先级、权重和模型重写摘要 |
 | `billing_snapshot` | text/json string | 脱敏计费快照；当前包含结算状态、usage_source、Key 预算前后、用户余额前后和最终扣费 |
 | `content` | text | 请求体快照，需截断和脱敏 |
 | `response` | text | 响应体快照，需截断和脱敏 |
@@ -381,7 +381,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `billing_expression_snapshot` | 本次实际执行的表达式和变量快照 |
 | `multiplier_snapshot` | 用户分组、通道分组、用户分组 x 通道分组倍率快照 |
 | `access_rule_snapshot` | 用户、Token、模型、通道分组访问控制快照 |
-| `route_snapshot.filtered_reasons` / `route_snapshot.retry_attempts` | 后续补齐候选过滤原因、模型重写和重试摘要 |
+| `route_snapshot.filtered_reasons` / `route_snapshot.retry_attempts` | 后续补齐候选过滤原因和重试摘要 |
 | `billing_snapshot.expression` / `billing_snapshot.multiplier` | 后续补齐价格表达式、规则版本和倍率摘要 |
 
 数据生命周期：

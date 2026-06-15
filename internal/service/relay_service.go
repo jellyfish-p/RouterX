@@ -366,7 +366,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	}
 	selected := pickRelayChannelCandidate(candidates)
 	attemptCandidates := orderRelayAttemptCandidates(candidates, selected)
-	ctx = ContextWithRelayRouteSnapshot(ctx, buildRelayRouteSnapshot(reqInfo, candidates, selected))
+	ctx = ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, selected))
 	maxAttempts := 1 + s.relayRetryCount()
 	if maxAttempts > len(attemptCandidates) {
 		maxAttempts = len(attemptCandidates)
@@ -528,7 +528,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		return nil, err
 	}
 	channel := pickRelayChannelCandidate(candidates)
-	ctx = ContextWithRelayRouteSnapshot(ctx, buildRelayRouteSnapshot(reqInfo, candidates, channel))
+	ctx = ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, channel))
 	if !supportsOpenAICompatibleStream(channel.Type) {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "streaming is not supported for selected upstream channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "streaming is not supported for selected upstream channel", Type: "upstream_error", Code: "unsupported_stream_channel"}
@@ -1852,14 +1852,15 @@ func logUsageSource(usage *relay.Usage, status int, quotaUsed int64) string {
 	return ""
 }
 
-func buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channel, selected *model.Channel) string {
+func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channel, selected *model.Channel) string {
+	requestedModel := strings.TrimSpace(reqInfo.Model)
 	snapshot := map[string]interface{}{
 		"schema":          "routerx.snapshot.v1",
 		"kind":            "route",
 		"stage":           "p1",
 		"source":          "relay",
 		"redacted":        true,
-		"requested_model": reqInfo.Model,
+		"requested_model": requestedModel,
 		"candidate_count": len(candidates),
 	}
 	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
@@ -1871,6 +1872,15 @@ func buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channe
 		snapshot["selected_channel_group"] = strings.TrimSpace(selected.ChannelGroup)
 		snapshot["priority"] = selected.Priority
 		snapshot["weight"] = selected.Weight
+		if s != nil && s.channelService != nil {
+			upstreamModel := strings.TrimSpace(s.channelService.ApplyModelRewrite(selected, requestedModel))
+			if requestedModel != "" && upstreamModel != "" && upstreamModel != requestedModel {
+				snapshot["model_rewrite"] = map[string]interface{}{
+					"from": requestedModel,
+					"to":   upstreamModel,
+				}
+			}
+		}
 	}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {

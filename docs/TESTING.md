@@ -384,6 +384,7 @@ Gemini-compatible 最小断言：
 - `key_selection_mode=random` 时 key 来自候选集合。
 - 空值或未知 `key_selection_mode` 归一为 `round_robin`。
 - `model_rewrites` 将客户端模型改写为上游模型。
+- 调用日志 `route_snapshot.model_rewrite` 记录客户端模型和上游模型。
 - 明文密钥不会出现在响应、日志或错误中。
 
 ### `TestUserBillingMatchesLogs`
@@ -413,7 +414,7 @@ Gemini-compatible 最小断言：
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
 | P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Anthropic/Gemini 基础流式、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为、原生字段保真和 Anthropic/Gemini 原生流式路径 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
-| P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 usage_source、基础 route_snapshot 和含预算前后摘要的基础 billing_snapshot；继续补 request、policy、完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
+| P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 usage_source、含模型重写摘要的基础 route_snapshot 和含预算前后摘要的基础 billing_snapshot；继续补 request、policy、完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |
 | P1 | 可靠性 | 已覆盖非流式安全重试、Redis 全局/IP/Token 基础限流和 `error_count` 自动熔断候选过滤；继续补半开恢复、探测任务、更多限流维度和生产 fail-open/fail-closed 策略 |
 | P1 | 运行模式 | SQLite 单镜像无 Redis 可运行；外部数据库无 Redis 不就绪或启动失败 |

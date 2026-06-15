@@ -3539,6 +3539,18 @@ func TestChannelRoutingConfigResolution(t *testing.T) {
 	if upstreamBody["model"] != "upstream-model" {
 		t.Fatalf("model rewrite should be applied before upstream call, got %#v", upstreamBody["model"])
 	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	var routeSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RouteSnapshot), &routeSnapshot); err != nil {
+		t.Fatalf("routing log should store route snapshot JSON, got %q: %v", callLog.RouteSnapshot, err)
+	}
+	modelRewrite, ok := routeSnapshot["model_rewrite"].(map[string]interface{})
+	if !ok || modelRewrite["from"] != "client-model" || modelRewrite["to"] != "upstream-model" {
+		t.Fatalf("route snapshot should record model rewrite: %+v", routeSnapshot)
+	}
 	if strings.Contains(chatResp.Body.String(), "outer-secret") || strings.Contains(chatResp.Body.String(), "upstream-secret") {
 		t.Fatalf("chat response leaked channel secret: %s", chatResp.Body.String())
 	}
