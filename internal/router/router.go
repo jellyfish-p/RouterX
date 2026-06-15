@@ -123,7 +123,7 @@ func metricsHandler(c *gin.Context) {
 	writeLabeledCounter(&b, "routerx_relay_requests_total", "Relay requests by protocol, API type, model and status.", extended.RelayRequests)
 	writeLabeledCounter(&b, "routerx_relay_errors_total", "Relay errors by protocol, API type, code and source.", extended.RelayErrors)
 	writeLabeledCounter(&b, "routerx_tokens_used_total", "Model tokens used by model, provider and usage source.", extended.TokensUsed)
-	writeCounter(&b, "routerx_quota_used_total", "Total quota recorded in relay logs.", extended.QuotaUsed)
+	writeLabeledCounter(&b, "routerx_quota_used_total", "Quota used by model, provider and user group.", extended.QuotaUsed)
 	writeLabeledGauge(&b, "routerx_channel_available", "Channel availability by channel and provider.", extended.ChannelAvailable)
 	writeLabeledGauge(&b, "routerx_channel_error_count", "Channel error counters by channel and provider.", extended.ChannelErrorCounts)
 	writeLabeledCounter(&b, "routerx_rate_limit_rejections_total", "Rate limit rejections by dimension.", extended.RateLimitRejections)
@@ -151,7 +151,7 @@ type extendedMetrics struct {
 	RelayRequests       []metricSample
 	RelayErrors         []metricSample
 	TokensUsed          []metricSample
-	QuotaUsed           int64
+	QuotaUsed           []metricSample
 	ChannelErrorCounts  []metricSample
 	ChannelAvailable    []metricSample
 	RateLimitRejections []metricSample
@@ -201,15 +201,11 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 	}
 	metrics.TokensUsed = tokensUsed
 
-	var quota struct {
-		Value int64
-	}
-	if err := internal.DB.Model(&model.Log{}).
-		Select("COALESCE(SUM(quota_used), 0) AS value").
-		Scan(&quota).Error; err != nil {
+	quotaUsed, err := collectQuotaUsageMetrics()
+	if err != nil {
 		return extendedMetrics{}, err
 	}
-	metrics.QuotaUsed = quota.Value
+	metrics.QuotaUsed = quotaUsed
 
 	channelAvailable, err := collectChannelAvailabilityMetrics()
 	if err != nil {
@@ -402,6 +398,97 @@ func collectTokenUsageMetrics() ([]metricSample, error) {
 		})
 	}
 	return samples, nil
+}
+
+type quotaUsageMetricKey struct {
+	Model     string
+	Provider  string
+	UserGroup string
+}
+
+type quotaUsageMetricRow struct {
+	UserID        uint
+	Model         string
+	QuotaUsed     int64
+	RouteSnapshot string
+}
+
+func collectQuotaUsageMetrics() ([]metricSample, error) {
+	var rows []quotaUsageMetricRow
+	if err := internal.DB.Model(&model.Log{}).
+		Select("user_id, model, quota_used, route_snapshot").
+		Where("status = ? AND quota_used > 0", common.LogStatusSuccess).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	userGroups, err := quotaUsageUserGroups(rows)
+	if err != nil {
+		return nil, err
+	}
+	counts := map[quotaUsageMetricKey]int64{}
+	for _, row := range rows {
+		key := quotaUsageMetricKey{
+			Model:     metricDimensionOrUnknown(row.Model),
+			Provider:  providerFromRouteSnapshot(row.RouteSnapshot),
+			UserGroup: userGroups[row.UserID],
+		}
+		counts[key] += row.QuotaUsed
+	}
+	keys := make([]quotaUsageMetricKey, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Model != keys[j].Model {
+			return keys[i].Model < keys[j].Model
+		}
+		if keys[i].Provider != keys[j].Provider {
+			return keys[i].Provider < keys[j].Provider
+		}
+		return keys[i].UserGroup < keys[j].UserGroup
+	})
+	samples := make([]metricSample, 0, len(keys))
+	for _, key := range keys {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{
+				{Name: "model", Value: key.Model},
+				{Name: "provider", Value: key.Provider},
+				{Name: "user_group", Value: key.UserGroup},
+			},
+			Value: counts[key],
+		})
+	}
+	return samples, nil
+}
+
+func quotaUsageUserGroups(rows []quotaUsageMetricRow) (map[uint]string, error) {
+	userIDs := make([]uint, 0, len(rows))
+	seen := map[uint]struct{}{}
+	for _, row := range rows {
+		if _, ok := seen[row.UserID]; ok {
+			continue
+		}
+		seen[row.UserID] = struct{}{}
+		userIDs = append(userIDs, row.UserID)
+	}
+	labels := make(map[uint]string, len(userIDs))
+	for _, id := range userIDs {
+		// 没有绑定分组或用户记录缺失时，指标统一落到 default 分组，避免暴露 user_id 高基数标签。
+		labels[id] = "default"
+	}
+	if len(userIDs) == 0 {
+		return labels, nil
+	}
+	var users []model.User
+	if err := internal.DB.Preload("Group").Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		if user.Group != nil {
+			labels[user.ID] = metricDimensionOrDefault(user.Group.Name, "default")
+		}
+	}
+	return labels, nil
 }
 
 func providerFromRouteSnapshot(raw string) string {
@@ -705,9 +792,13 @@ func normalizedRateLimitDimension(value string) string {
 }
 
 func metricDimensionOrUnknown(value string) string {
+	return metricDimensionOrDefault(value, "unknown")
+}
+
+func metricDimensionOrDefault(value, fallback string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
-		return "unknown"
+		return fallback
 	}
 	return value
 }

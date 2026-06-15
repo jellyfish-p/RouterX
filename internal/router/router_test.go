@@ -2279,7 +2279,7 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 		!strings.Contains(body, `routerx_relay_requests_total{protocol="openai",api_type="chat",model="gpt-test",status="success"} 1`) ||
 		!strings.Contains(body, `routerx_relay_requests_total{protocol="openai",api_type="chat",model="gpt-test",status="failed"} 2`) ||
 		!strings.Contains(body, `routerx_tokens_used_total{model="gpt-test",provider="openai-compatible",usage_source="upstream"} 7`) ||
-		!strings.Contains(body, "routerx_quota_used_total 7") ||
+		!strings.Contains(body, `routerx_quota_used_total{model="gpt-test",provider="openai-compatible",user_group="default"} 7`) ||
 		!strings.Contains(body, enabledChannelMetric) ||
 		!strings.Contains(body, disabledChannelMetric) ||
 		!strings.Contains(body, enabledChannelErrorsMetric) ||
