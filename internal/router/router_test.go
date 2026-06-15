@@ -4050,6 +4050,9 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if billingSnapshot["billing_status"] != "settled" || billingSnapshot["usage_source"] != common.LogUsageSourceUpstream || billingSnapshot["final_quota_used"] != float64(5) {
 		t.Fatalf("unexpected billing snapshot: %+v", billingSnapshot)
 	}
+	if billingSnapshot["key_budget_before"] != float64(50) || billingSnapshot["key_budget_after"] != float64(45) || billingSnapshot["user_balance_before"] != float64(100) || billingSnapshot["user_balance_after"] != float64(95) {
+		t.Fatalf("billing snapshot should record budget before/after values: %+v", billingSnapshot)
+	}
 
 	billingResp := performJSON(r, http.MethodGet, "/v0/user/billing", rootJWT, nil)
 	if billingResp.Code != http.StatusOK || !strings.Contains(billingResp.Body.String(), `"call_count":1`) || !strings.Contains(billingResp.Body.String(), `"total_quota":5`) || !strings.Contains(billingResp.Body.String(), `"total_tokens":5`) {

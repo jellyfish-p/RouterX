@@ -45,6 +45,7 @@ type RelayRawResult struct {
 type relayUserAgentContextKey struct{}
 type relayRequestIDContextKey struct{}
 type relayRouteSnapshotContextKey struct{}
+type relayBillingSnapshotContextKey struct{}
 
 type contentTypeRelayAdapter interface {
 	DoRequestWithContentType(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error)
@@ -82,6 +83,13 @@ func ContextWithRelayRouteSnapshot(ctx context.Context, snapshot string) context
 	return context.WithValue(ctx, relayRouteSnapshotContextKey{}, strings.TrimSpace(snapshot))
 }
 
+func ContextWithRelayBillingSnapshot(ctx context.Context, snapshot string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, relayBillingSnapshotContextKey{}, strings.TrimSpace(snapshot))
+}
+
 func relayUserAgentFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
@@ -103,6 +111,14 @@ func relayRouteSnapshotFromContext(ctx context.Context) string {
 		return ""
 	}
 	value, _ := ctx.Value(relayRouteSnapshotContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
+func relayBillingSnapshotFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(relayBillingSnapshotContextKey{}).(string)
 	return strings.TrimSpace(value)
 }
 
@@ -443,7 +459,8 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 
 	if rawResponse {
 		quotaUsed := quotaFromUsage(nil)
-		if err := s.tokenService.DeductQuota(token.ID, quotaUsed); err != nil {
+		deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, quotaUsed)
+		if err != nil {
 			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 			return nil, nil, false, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 		}
@@ -452,7 +469,8 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 			contentType = "application/octet-stream"
 		}
 		_ = s.markChannelSuccess(channel, latencyMs)
-		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusSuccess, quotaUsed, "", clientIP)
+		logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(nil, quotaUsed, deduction))
+		_ = s.recordLog(logCtx, token, channel, reqInfo.Model, nil, common.LogStatusSuccess, quotaUsed, "", clientIP)
 		return &RelayRawResult{Body: respBody, ContentType: contentType}, nil, false, nil
 	}
 
@@ -463,12 +481,14 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		return nil, nil, false, &HTTPError{Status: 502, Message: "upstream response conversion failed", Type: "upstream_error", Code: "upstream_conversion_failed"}
 	}
 	quotaUsed := quotaFromUsage(usage)
-	if err := s.tokenService.DeductQuota(token.ID, quotaUsed); err != nil {
+	deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, quotaUsed)
+	if err != nil {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, usage, false, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 	_ = s.markChannelSuccess(channel, latencyMs)
-	_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
+	logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(usage, quotaUsed, deduction))
+	_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
 	return &RelayRawResult{Body: converted, ContentType: "application/json; charset=utf-8", Usage: usage}, usage, false, nil
 }
 
@@ -580,12 +600,14 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 				return usage, err
 			}
 			quotaUsed := quotaFromUsage(usage)
-			if err := s.tokenService.DeductQuota(token.ID, quotaUsed); err != nil {
+			deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, quotaUsed)
+			if err != nil {
 				_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
 				return usage, err
 			}
 			_ = s.markChannelSuccess(channel, latencyMs)
-			_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
+			logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(usage, quotaUsed, deduction))
+			_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
 			return usage, nil
 		},
 	}, nil
@@ -1857,6 +1879,41 @@ func buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channe
 	return string(raw)
 }
 
+func buildRelayBillingSnapshot(usage *relay.Usage, quotaUsed int64, deduction QuotaDeductionResult) string {
+	usageSource := logUsageSource(usage, common.LogStatusSuccess, quotaUsed)
+	payer := "token_and_user"
+	if deduction.TokenUnlimited {
+		payer = "user"
+	}
+	snapshot := map[string]interface{}{
+		"schema":              "routerx.snapshot.v1",
+		"kind":                "billing",
+		"stage":               "p1",
+		"source":              "billing",
+		"redacted":            true,
+		"billing_status":      "settled",
+		"price_source":        "p0_usage",
+		"usage_source":        usageSource,
+		"payer":               payer,
+		"final_quota_used":    quotaUsed,
+		"deduction_result":    "applied",
+		"key_budget_before":   deduction.TokenQuotaBefore,
+		"key_budget_after":    deduction.TokenQuotaAfter,
+		"user_balance_before": deduction.UserQuotaBefore,
+		"user_balance_after":  deduction.UserQuotaAfter,
+	}
+	if usage != nil {
+		snapshot["prompt_tokens"] = usage.PromptTokens
+		snapshot["completion_tokens"] = usage.CompletionTokens
+		snapshot["total_tokens"] = usage.TotalTokens
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
 func routePreferenceSnapshot(route RoutePreference) map[string]interface{} {
 	preference := map[string]interface{}{}
 	if route.ChannelGroup != "" {
@@ -2010,18 +2067,19 @@ func (s *RelayService) recordLog(ctx context.Context, token *model.Token, channe
 		channelID = &id
 	}
 	log := &model.Log{
-		UserID:        token.UserID,
-		TokenID:       tokenID,
-		ChannelID:     channelID,
-		Model:         modelName,
-		Status:        status,
-		QuotaUsed:     quotaUsed,
-		UsageSource:   logUsageSource(usage, status, quotaUsed),
-		ErrorMsg:      errMsg,
-		IP:            ip,
-		UserAgent:     relayUserAgentFromContext(ctx),
-		RequestID:     relayRequestIDFromContext(ctx),
-		RouteSnapshot: relayRouteSnapshotFromContext(ctx),
+		UserID:          token.UserID,
+		TokenID:         tokenID,
+		ChannelID:       channelID,
+		Model:           modelName,
+		Status:          status,
+		QuotaUsed:       quotaUsed,
+		UsageSource:     logUsageSource(usage, status, quotaUsed),
+		ErrorMsg:        errMsg,
+		IP:              ip,
+		UserAgent:       relayUserAgentFromContext(ctx),
+		RequestID:       relayRequestIDFromContext(ctx),
+		RouteSnapshot:   relayRouteSnapshotFromContext(ctx),
+		BillingSnapshot: relayBillingSnapshotFromContext(ctx),
 	}
 	if usage != nil {
 		log.PromptTokens = usage.PromptTokens

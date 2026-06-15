@@ -22,6 +22,14 @@ func NewTokenService() *TokenService {
 	return &TokenService{}
 }
 
+type QuotaDeductionResult struct {
+	TokenQuotaBefore int64
+	TokenQuotaAfter  int64
+	UserQuotaBefore  int64
+	UserQuotaAfter   int64
+	TokenUnlimited   bool
+}
+
 var (
 	ErrInvalidAPIKey           = errors.New("invalid api key")
 	ErrAPIKeyDisabled          = errors.New("api key is disabled")
@@ -981,13 +989,30 @@ func (s *TokenService) Delete(id uint) error {
 // DeductQuota 扣减 Token / User 额度。
 // 先扣 Token.RemainQuota, Token.remain_quota=-1 时只扣 User.Quota。
 func (s *TokenService) DeductQuota(tokenID uint, quota int64) error {
+	_, err := s.DeductQuotaWithSnapshot(tokenID, quota)
+	return err
+}
+
+func (s *TokenService) DeductQuotaWithSnapshot(tokenID uint, quota int64) (QuotaDeductionResult, error) {
+	result := QuotaDeductionResult{}
 	if quota <= 0 {
-		return nil
+		return result, nil
 	}
-	return internal.DB.Transaction(func(tx *gorm.DB) error {
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
 		var token model.Token
 		if err := tx.Preload("User").First(&token, tokenID).Error; err != nil {
 			return err
+		}
+		result.TokenUnlimited = token.Unlimited || token.RemainQuota == common.QuotaUnlimited
+		result.TokenQuotaBefore = token.RemainQuota
+		result.TokenQuotaAfter = token.RemainQuota
+		if result.TokenUnlimited {
+			result.TokenQuotaBefore = common.QuotaUnlimited
+			result.TokenQuotaAfter = common.QuotaUnlimited
+		}
+		if token.User != nil {
+			result.UserQuotaBefore = token.User.Quota
+			result.UserQuotaAfter = token.User.Quota - quota
 		}
 		if token.Unlimited || token.RemainQuota == common.QuotaUnlimited {
 			res := tx.Model(&model.User{}).
@@ -1001,6 +1026,7 @@ func (s *TokenService) DeductQuota(tokenID uint, quota int64) error {
 			}
 			return nil
 		}
+		result.TokenQuotaAfter = token.RemainQuota - quota
 		res := tx.Model(&model.Token{}).
 			Where("id = ? AND status = ? AND remain_quota >= ?", token.ID, common.TokenStatusEnabled, quota).
 			Update("remain_quota", gorm.Expr("remain_quota - ?", quota))
@@ -1021,6 +1047,10 @@ func (s *TokenService) DeductQuota(tokenID uint, quota int64) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return QuotaDeductionResult{}, err
+	}
+	return result, nil
 }
 
 func (s *TokenService) HasAvailableQuota(token *model.Token) bool {
