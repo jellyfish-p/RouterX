@@ -97,7 +97,7 @@
 | `error_code` | `docs/ERRORS.md` 中的稳定 code；成功调用为空 |
 | `error_source` | 失败来源，例如 request、auth、quota、route、channel、upstream、billing、system |
 | `upstream_status` | 上游 HTTP 状态；未调用上游或非上游错误时为空/0 |
-| `route_snapshot` | 脱敏路由快照；当前包含基础选择事实和模型重写摘要 |
+| `route_snapshot` | 脱敏路由快照；当前包含基础选择事实、模型重写摘要和非流式重试摘要 |
 | `billing_snapshot` | 脱敏计费快照；当前包含结算状态、usage_source、Key 预算前后、用户余额前后和最终扣费 |
 | `content` / `response` | 截断和脱敏后的请求/响应快照 |
 | `error_msg` | 脱敏错误摘要 |
@@ -110,7 +110,7 @@
 |------|------|
 | `upstream_provider` | 实际上游 provider |
 | `upstream_model` | 模型重写后的上游模型 |
-| `route_snapshot.filtered_reasons` / `route_snapshot.retry_attempts` | 候选过滤和重试摘要的后续增强 |
+| `route_snapshot.filtered_reasons` | 候选过滤摘要的后续增强 |
 | `billing_snapshot.expression` / `billing_snapshot.multiplier` | 价格表达式、规则版本和倍率摘要的后续增强 |
 | `multiplier_snapshot` | 用户分组、通道分组和额外倍率 |
 | `access_rule_snapshot` | 访问控制事实 |
@@ -242,14 +242,14 @@
 | 通道健康 | 展示通道状态、错误计数、最近错误、延迟和最近成功时间。 |
 | 审计查询 | 超级管理员可按 actor、资源、动作、结果、错误 code 和时间范围查询。 |
 | 指标接口 | `/metrics` 可由 Prometheus 抓取；当前由 `observability.metrics_enabled` 控制启用。 |
-| 诊断详情 | 单次调用能关联 request_id、error_code、含模型重写摘要的基础 route_snapshot 和基础 billing_snapshot；价格表达式版本、倍率和完整路由过滤摘要仍需补齐。 |
+| 诊断详情 | 单次调用能关联 request_id、error_code、含模型重写/重试摘要的基础 route_snapshot 和基础 billing_snapshot；价格表达式版本、倍率和完整路由过滤摘要仍需补齐。 |
 
 ## 阶段边界
 
 | 阶段 | 目标 |
 |------|------|
 | P0 | 调用日志、用户日志、管理员日志、基础账单和基础 dashboard 可用；body 日志默认关闭。 |
-| P1 | 已补调用日志 request_id、error_code、usage_source、error_source、upstream_status、含模型重写摘要的基础 route_snapshot 和含预算前后摘要的基础 billing_snapshot；继续补价格表达式/倍率快照、完整路由过滤摘要和更完整结构化失败事实。 |
+| P1 | 已补调用日志 request_id、error_code、usage_source、error_source、upstream_status、含模型重写/重试摘要的基础 route_snapshot 和含预算前后摘要的基础 billing_snapshot；继续补价格表达式/倍率快照、完整路由过滤摘要和更完整结构化失败事实。 |
 | P2 | 扩展管理审计覆盖、更多 Prometheus 指标、告警、长期保留、导出审计和生产 readiness 指标。 |
 
 ## 测试要求

@@ -6922,6 +6922,31 @@ func TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce(t *testing.T) {
 	if len(logs) != 2 || logs[0].Status != common.LogStatusFailed || logs[1].Status != common.LogStatusSuccess || logs[1].QuotaUsed != 5 {
 		t.Fatalf("retry should record failed attempt and final success, logs=%+v", logs)
 	}
+	var firstRouteSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(logs[0].RouteSnapshot), &firstRouteSnapshot); err != nil {
+		t.Fatalf("failed retry attempt should store route snapshot JSON, got %q: %v", logs[0].RouteSnapshot, err)
+	}
+	if selectedChannelID, ok := firstRouteSnapshot["selected_channel_id"].(float64); !ok || uint(selectedChannelID) != firstChannelPayload.Data.ID {
+		t.Fatalf("failed attempt snapshot should reference failed primary channel: %+v", firstRouteSnapshot)
+	}
+	var secondRouteSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(logs[1].RouteSnapshot), &secondRouteSnapshot); err != nil {
+		t.Fatalf("successful retry attempt should store route snapshot JSON, got %q: %v", logs[1].RouteSnapshot, err)
+	}
+	if selectedChannelID, ok := secondRouteSnapshot["selected_channel_id"].(float64); !ok || uint(selectedChannelID) != secondChannelPayload.Data.ID {
+		t.Fatalf("successful retry snapshot should reference backup channel: %+v", secondRouteSnapshot)
+	}
+	retryAttempts, ok := secondRouteSnapshot["retry_attempts"].([]interface{})
+	if !ok || len(retryAttempts) != 1 {
+		t.Fatalf("successful retry snapshot should record previous retry failure: %+v", secondRouteSnapshot)
+	}
+	firstAttempt, ok := retryAttempts[0].(map[string]interface{})
+	if !ok || firstAttempt["status"] != "failed" || firstAttempt["error_code"] != "upstream_500" || firstAttempt["upstream_status"] != float64(500) {
+		t.Fatalf("retry attempt summary should include stable upstream failure facts: %+v", retryAttempts[0])
+	}
+	if channelID, ok := firstAttempt["channel_id"].(float64); !ok || uint(channelID) != firstChannelPayload.Data.ID {
+		t.Fatalf("retry attempt summary should reference failed primary channel: %+v", firstAttempt)
+	}
 }
 
 func TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold(t *testing.T) {

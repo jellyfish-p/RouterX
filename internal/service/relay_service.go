@@ -366,16 +366,21 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	}
 	selected := pickRelayChannelCandidate(candidates)
 	attemptCandidates := orderRelayAttemptCandidates(candidates, selected)
-	ctx = ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, selected))
 	maxAttempts := 1 + s.relayRetryCount()
 	if maxAttempts > len(attemptCandidates) {
 		maxAttempts = len(attemptCandidates)
 	}
+	retryAttemptCapacity := 0
+	if maxAttempts > 1 {
+		retryAttemptCapacity = maxAttempts - 1
+	}
+	retryAttempts := make([]map[string]interface{}, 0, retryAttemptCapacity)
 	var lastUsage *relay.Usage
 	var lastErr error
 	for i := 0; i < maxAttempts; i++ {
 		channel := attemptCandidates[i]
-		result, usage, retryable, err := s.relayNonStreamAttempt(ctx, token, apiType, reqInfo, body, contentType, clientIP, &channel, rawResponse)
+		attemptCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, &channel, retryAttempts))
+		result, usage, retryable, err := s.relayNonStreamAttempt(attemptCtx, token, apiType, reqInfo, body, contentType, clientIP, &channel, rawResponse)
 		if err == nil {
 			return result, usage, nil
 		}
@@ -384,6 +389,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 		if !retryable {
 			return nil, usage, err
 		}
+		retryAttempts = append(retryAttempts, buildRelayRetryAttemptSnapshot(i+1, &channel, err))
 	}
 	return nil, lastUsage, lastErr
 }
@@ -528,7 +534,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		return nil, err
 	}
 	channel := pickRelayChannelCandidate(candidates)
-	ctx = ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, channel))
+	ctx = ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, channel, nil))
 	if !supportsOpenAICompatibleStream(channel.Type) {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "streaming is not supported for selected upstream channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "streaming is not supported for selected upstream channel", Type: "upstream_error", Code: "unsupported_stream_channel"}
@@ -1852,7 +1858,7 @@ func logUsageSource(usage *relay.Usage, status int, quotaUsed int64) string {
 	return ""
 }
 
-func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channel, selected *model.Channel) string {
+func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channel, selected *model.Channel, retryAttempts []map[string]interface{}) string {
 	requestedModel := strings.TrimSpace(reqInfo.Model)
 	snapshot := map[string]interface{}{
 		"schema":          "routerx.snapshot.v1",
@@ -1865,6 +1871,9 @@ func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candida
 	}
 	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
 		snapshot["route_preference"] = preference
+	}
+	if len(retryAttempts) > 0 {
+		snapshot["retry_attempts"] = retryAttempts
 	}
 	if selected != nil {
 		snapshot["selected_channel_id"] = selected.ID
@@ -1887,6 +1896,44 @@ func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candida
 		return ""
 	}
 	return string(raw)
+}
+
+func buildRelayRetryAttemptSnapshot(attempt int, channel *model.Channel, err error) map[string]interface{} {
+	snapshot := map[string]interface{}{
+		"attempt":   attempt,
+		"status":    "failed",
+		"retryable": true,
+	}
+	if channel != nil {
+		snapshot["channel_id"] = channel.ID
+		snapshot["provider"] = channelProviderName(channel.Type)
+		snapshot["channel_group"] = strings.TrimSpace(channel.ChannelGroup)
+	}
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		if code := strings.TrimSpace(httpErr.Code); code != "" {
+			snapshot["error_code"] = code
+		}
+		if status := upstreamStatusFromHTTPError(httpErr); status > 0 {
+			snapshot["upstream_status"] = status
+		}
+	}
+	return snapshot
+}
+
+func upstreamStatusFromHTTPError(err *HTTPError) int {
+	if err == nil {
+		return 0
+	}
+	code := strings.TrimSpace(err.Code)
+	if !strings.HasPrefix(code, "upstream_") {
+		return 0
+	}
+	status, parseErr := strconv.Atoi(strings.TrimPrefix(code, "upstream_"))
+	if parseErr != nil {
+		return 0
+	}
+	return status
 }
 
 func buildRelayBillingSnapshot(usage *relay.Usage, quotaUsed int64, deduction QuotaDeductionResult) string {
