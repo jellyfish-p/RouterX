@@ -3650,6 +3650,18 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 	if paidCalls != 1 || freeCalls != 0 {
 		t.Fatalf("paid route should not fall back to higher-priority free channel, paid=%d free=%d", paidCalls, freeCalls)
 	}
+	var paidLog model.Log
+	if err := internal.DB.Order("id ASC").First(&paidLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	var paidRouteSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(paidLog.RouteSnapshot), &paidRouteSnapshot); err != nil {
+		t.Fatalf("paid route should store route snapshot JSON, got %q: %v", paidLog.RouteSnapshot, err)
+	}
+	filteredReasons, ok := paidRouteSnapshot["filtered_reasons"].(map[string]interface{})
+	if !ok || filteredReasons["route_preference"] != float64(1) {
+		t.Fatalf("paid route snapshot should record route preference filtering: %+v", paidRouteSnapshot)
+	}
 
 	ignoredResp := chat(map[string]interface{}{"route": map[string]interface{}{"unknown": "keep-compatible"}})
 	if ignoredResp.Code != http.StatusOK || !strings.Contains(ignoredResp.Body.String(), "free") {

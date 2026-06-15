@@ -21,6 +21,12 @@ import (
 const (
 	keySelectionRoundRobin = "round_robin"
 	keySelectionRandom     = "random"
+
+	routeFilterReasonAccessDenied    = "access_denied"
+	routeFilterReasonDisabled        = "disabled"
+	routeFilterReasonHealthBlocked   = "health_blocked"
+	routeFilterReasonModelMismatch   = "model_mismatch"
+	routeFilterReasonRoutePreference = "route_preference"
 )
 
 type ChannelService struct{}
@@ -77,30 +83,43 @@ func (s *ChannelService) SelectChannelWithRoute(modelName string, route RoutePre
 
 // SelectChannelCandidatesWithRoute 返回经过系统过滤和 routerx.route 收窄后的有序候选通道。
 func (s *ChannelService) SelectChannelCandidatesWithRoute(modelName string, route RoutePreference) ([]model.Channel, error) {
+	candidates, _, err := s.SelectChannelCandidatesWithRouteFacts(modelName, route)
+	return candidates, err
+}
+
+// SelectChannelCandidatesWithRouteFacts 同时返回候选和按首个过滤原因汇总的数量，供路由快照解释选择过程。
+func (s *ChannelService) SelectChannelCandidatesWithRouteFacts(modelName string, route RoutePreference) ([]model.Channel, map[string]int, error) {
 	modelName = strings.TrimSpace(modelName)
 	var channels []model.Channel
-	query := internal.DB.Where("status = ?", common.ChannelStatusEnabled)
 	breaker := s.circuitBreakerConfig()
-	if breaker.autoBan {
-		query = query.Where("error_count < ?", breaker.threshold)
+	if err := internal.DB.Order("priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC").Find(&channels).Error; err != nil {
+		return nil, nil, err
 	}
-	if err := query.Order("priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC").Find(&channels).Error; err != nil {
-		return nil, err
-	}
+	filteredReasons := map[string]int{}
 	candidates := make([]model.Channel, 0, len(channels))
 	for _, channel := range channels {
+		if channel.Status != common.ChannelStatusEnabled {
+			addRouteFilterReason(filteredReasons, routeFilterReasonDisabled, 1)
+			continue
+		}
+		if breaker.autoBan && channel.ErrorCount >= breaker.threshold {
+			addRouteFilterReason(filteredReasons, routeFilterReasonHealthBlocked, 1)
+			continue
+		}
 		if !channelSupportsModel(channel.Models, modelName) {
+			addRouteFilterReason(filteredReasons, routeFilterReasonModelMismatch, 1)
 			continue
 		}
 		if !channelMatchesRoute(channel, route) {
+			addRouteFilterReason(filteredReasons, routeFilterReasonRoutePreference, 1)
 			continue
 		}
 		candidates = append(candidates, channel)
 	}
 	if len(candidates) == 0 {
-		return nil, errors.New("no available channel")
+		return nil, filteredReasons, errors.New("no available channel")
 	}
-	return candidates, nil
+	return candidates, filteredReasons, nil
 }
 
 func (s *ChannelService) circuitBreakerConfig() circuitBreakerConfig {

@@ -351,17 +351,26 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 		return nil, nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 
-	candidates, err := s.channelService.SelectChannelCandidatesWithRoute(reqInfo.Model, reqInfo.Route)
+	filteredReasons := map[string]int{}
+	candidates, selectionReasons, err := s.channelService.SelectChannelCandidatesWithRouteFacts(reqInfo.Model, reqInfo.Route)
+	mergeRouteFilterReasons(filteredReasons, selectionReasons)
 	if err != nil {
-		_ = s.recordLog(ctx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
+		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, nil, nil, nil, filteredReasons))
+		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
-	candidates, err = s.filterUserChannelGroupAccess(ctx, token, candidates, reqInfo.Model, clientIP)
+	candidates, removed, err := s.filterUserChannelGroupAccess(ctx, token, candidates, reqInfo.Model, clientIP)
+	addRouteFilterReason(filteredReasons, routeFilterReasonAccessDenied, removed)
 	if err != nil {
+		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, nil, nil, filteredReasons))
+		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, nil, err
 	}
-	candidates, err = s.filterTokenChannelGroupScope(ctx, token, candidates, reqInfo.Model, clientIP)
+	candidates, removed, err = s.filterTokenChannelGroupScope(ctx, token, candidates, reqInfo.Model, clientIP)
+	addRouteFilterReason(filteredReasons, routeFilterReasonAccessDenied, removed)
 	if err != nil {
+		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, nil, nil, filteredReasons))
+		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, nil, err
 	}
 	selected := pickRelayChannelCandidate(candidates)
@@ -379,7 +388,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	var lastErr error
 	for i := 0; i < maxAttempts; i++ {
 		channel := attemptCandidates[i]
-		attemptCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, &channel, retryAttempts))
+		attemptCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, &channel, retryAttempts, filteredReasons))
 		result, usage, retryable, err := s.relayNonStreamAttempt(attemptCtx, token, apiType, reqInfo, body, contentType, clientIP, &channel, rawResponse)
 		if err == nil {
 			return result, usage, nil
@@ -520,21 +529,30 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		return nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 
-	candidates, err := s.channelService.SelectChannelCandidatesWithRoute(reqInfo.Model, reqInfo.Route)
+	filteredReasons := map[string]int{}
+	candidates, selectionReasons, err := s.channelService.SelectChannelCandidatesWithRouteFacts(reqInfo.Model, reqInfo.Route)
+	mergeRouteFilterReasons(filteredReasons, selectionReasons)
 	if err != nil {
-		_ = s.recordLog(ctx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
+		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, nil, nil, nil, filteredReasons))
+		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
-	candidates, err = s.filterUserChannelGroupAccess(ctx, token, candidates, reqInfo.Model, clientIP)
+	candidates, removed, err := s.filterUserChannelGroupAccess(ctx, token, candidates, reqInfo.Model, clientIP)
+	addRouteFilterReason(filteredReasons, routeFilterReasonAccessDenied, removed)
 	if err != nil {
+		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, nil, nil, filteredReasons))
+		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, err
 	}
-	candidates, err = s.filterTokenChannelGroupScope(ctx, token, candidates, reqInfo.Model, clientIP)
+	candidates, removed, err = s.filterTokenChannelGroupScope(ctx, token, candidates, reqInfo.Model, clientIP)
+	addRouteFilterReason(filteredReasons, routeFilterReasonAccessDenied, removed)
 	if err != nil {
+		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, nil, nil, filteredReasons))
+		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, err
 	}
 	channel := pickRelayChannelCandidate(candidates)
-	ctx = ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, channel, nil))
+	ctx = ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, channel, nil, filteredReasons))
 	if !supportsOpenAICompatibleStream(channel.Type) {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "streaming is not supported for selected upstream channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "streaming is not supported for selected upstream channel", Type: "upstream_error", Code: "unsupported_stream_channel"}
@@ -1545,9 +1563,9 @@ func (s *RelayService) enforceTokenRouteChannelGroupScope(ctx context.Context, t
 	return s.enforceTokenChannelGroupValueScope(ctx, token, route.ChannelGroup, modelName, clientIP)
 }
 
-func (s *RelayService) filterTokenChannelGroupScope(ctx context.Context, token *model.Token, candidates []model.Channel, modelName, clientIP string) ([]model.Channel, error) {
+func (s *RelayService) filterTokenChannelGroupScope(ctx context.Context, token *model.Token, candidates []model.Channel, modelName, clientIP string) ([]model.Channel, int, error) {
 	if s.tokenService == nil || len(candidates) == 0 {
-		return candidates, nil
+		return candidates, 0, nil
 	}
 	filtered := make([]model.Channel, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -1555,15 +1573,16 @@ func (s *RelayService) filterTokenChannelGroupScope(ctx context.Context, token *
 			filtered = append(filtered, candidate)
 		}
 	}
+	removed := len(candidates) - len(filtered)
 	if len(filtered) == 0 {
-		return nil, s.channelGroupScopeError(ctx, token, modelName, clientIP)
+		return nil, removed, channelGroupScopeHTTPError()
 	}
-	return filtered, nil
+	return filtered, removed, nil
 }
 
-func (s *RelayService) filterUserChannelGroupAccess(ctx context.Context, token *model.Token, candidates []model.Channel, modelName, clientIP string) ([]model.Channel, error) {
+func (s *RelayService) filterUserChannelGroupAccess(ctx context.Context, token *model.Token, candidates []model.Channel, modelName, clientIP string) ([]model.Channel, int, error) {
 	if len(candidates) == 0 {
-		return candidates, nil
+		return candidates, 0, nil
 	}
 	policy := s.channelGroupAccessPolicy(token)
 	filtered := make([]model.Channel, 0, len(candidates))
@@ -1572,11 +1591,11 @@ func (s *RelayService) filterUserChannelGroupAccess(ctx context.Context, token *
 			filtered = append(filtered, candidate)
 		}
 	}
+	removed := len(candidates) - len(filtered)
 	if len(filtered) == 0 {
-		_ = s.recordLog(ctx, token, nil, modelName, nil, common.LogStatusFailed, 0, "channel group not allowed by user group access", clientIP)
-		return nil, &HTTPError{Status: 403, Message: "channel group is not allowed by user group access", Type: "permission_error", Code: "route_forbidden"}
+		return nil, removed, &HTTPError{Status: 403, Message: "channel group is not allowed by user group access", Type: "permission_error", Code: "route_forbidden"}
 	}
-	return filtered, nil
+	return filtered, removed, nil
 }
 
 func (s *RelayService) channelGroupAccessPolicy(token *model.Token) channelGroupAccessPolicy {
@@ -1736,6 +1755,10 @@ func (s *RelayService) enforceTokenChannelGroupValueScope(ctx context.Context, t
 
 func (s *RelayService) channelGroupScopeError(ctx context.Context, token *model.Token, modelName, clientIP string) error {
 	_ = s.recordLog(ctx, token, nil, modelName, nil, common.LogStatusFailed, 0, "channel group not allowed by api key scope", clientIP)
+	return channelGroupScopeHTTPError()
+}
+
+func channelGroupScopeHTTPError() *HTTPError {
 	return &HTTPError{Status: 403, Message: "channel group is not allowed by api key scope", Type: "permission_error", Code: "route_forbidden"}
 }
 
@@ -1858,7 +1881,7 @@ func logUsageSource(usage *relay.Usage, status int, quotaUsed int64) string {
 	return ""
 }
 
-func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channel, selected *model.Channel, retryAttempts []map[string]interface{}) string {
+func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channel, selected *model.Channel, retryAttempts []map[string]interface{}, filteredReasons map[string]int) string {
 	requestedModel := strings.TrimSpace(reqInfo.Model)
 	snapshot := map[string]interface{}{
 		"schema":          "routerx.snapshot.v1",
@@ -1871,6 +1894,9 @@ func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candida
 	}
 	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
 		snapshot["route_preference"] = preference
+	}
+	if reasons := compactRouteFilterReasons(filteredReasons); len(reasons) > 0 {
+		snapshot["filtered_reasons"] = reasons
 	}
 	if len(retryAttempts) > 0 {
 		snapshot["retry_attempts"] = retryAttempts
@@ -1896,6 +1922,38 @@ func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candida
 		return ""
 	}
 	return string(raw)
+}
+
+func addRouteFilterReason(reasons map[string]int, reason string, count int) {
+	if reasons == nil || count <= 0 {
+		return
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return
+	}
+	reasons[reason] += count
+}
+
+func mergeRouteFilterReasons(target, source map[string]int) {
+	for reason, count := range source {
+		addRouteFilterReason(target, reason, count)
+	}
+}
+
+func compactRouteFilterReasons(reasons map[string]int) map[string]int {
+	result := map[string]int{}
+	for reason, count := range reasons {
+		if count <= 0 {
+			continue
+		}
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			continue
+		}
+		result[reason] = count
+	}
+	return result
 }
 
 func buildRelayRetryAttemptSnapshot(attempt int, channel *model.Channel, err error) map[string]interface{} {
