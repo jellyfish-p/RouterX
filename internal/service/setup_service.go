@@ -191,6 +191,7 @@ func buildDefaultSettings() map[string]map[string]string {
 			"payment.order_expire_minutes":                 "30",
 			"payment.refund.auto_deduct":                   "false",
 			"payment.refund.allow_negative_balance":        "false",
+			"payment.dispute.auto_disable_tokens":          "false",
 			"payment.manual_adjust.require_reason":         "true",
 			"payment.manual_adjust.large_amount_threshold": "0",
 		},

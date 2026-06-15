@@ -158,6 +158,7 @@ P0 补齐这些配置时，应同时补测试：
 | `payment.order_expire_minutes` | `30` | P2 | 支付订单过期时间 |
 | `payment.refund.auto_deduct` | `false` | P2 | 退款成功后是否自动扣回原订单额度 |
 | `payment.refund.allow_negative_balance` | `false` | P2 | 自动扣回是否允许用户余额变成负数 |
+| `payment.dispute.auto_disable_tokens` | `false` | P2 | Stripe 争议/拒付事件成功记录后是否自动禁用该用户已启用 API Key |
 | `payment.manual_adjust.require_reason` | `true` | P2 | 支付人工补账/扣回是否必须填写原因 |
 | `payment.manual_adjust.large_amount_threshold` | `0` | P2 | 大额人工调整阈值，`0` 表示当前不触发额外二次确认 |
 

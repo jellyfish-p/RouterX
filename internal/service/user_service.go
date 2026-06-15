@@ -95,6 +95,7 @@ const (
 	adminAuditActionPaymentOrderPaid        = "payment_order.paid"
 	adminAuditActionPaymentRefundProcessed  = "payment_refund.processed"
 	adminAuditActionPaymentRefundDeducted   = "payment_refund.deducted"
+	adminAuditActionPaymentDisputeCreated   = "payment_dispute.created"
 	adminAuditActionPaymentManualCredit     = "payment_manual_adjust.credit"
 	adminAuditActionPaymentManualDebit      = "payment_manual_adjust.debit"
 )
@@ -1127,6 +1128,9 @@ func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestI
 		if event.Type == "charge.refunded" {
 			return processStripeRefund(tx, &paymentEvent, session, requestID)
 		}
+		if event.Type == "charge.dispute.created" {
+			return processStripeDispute(tx, &paymentEvent, session, requestID)
+		}
 		if event.Type != "checkout.session.completed" || !stripeCheckoutSucceeded(session) {
 			now := time.Now()
 			if err := tx.Model(&paymentEvent).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error; err != nil {
@@ -1322,6 +1326,67 @@ func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeC
 	return nil
 }
 
+// processStripeDispute 只记录争议事实和可选风控动作，订单最终退款/胜诉结果由后续事件或人工处理决定。
+func processStripeDispute(tx *gorm.DB, event *model.PaymentEvent, session stripeCheckoutSession, requestID string) error {
+	orderNo := strings.TrimSpace(session.Metadata["order_no"])
+	paymentIntent := strings.TrimSpace(session.PaymentIntent)
+	if orderNo == "" && paymentIntent == "" {
+		return errors.New("stripe dispute missing order reference")
+	}
+	query := tx.Where("provider = ?", common.PaymentProviderStripe)
+	if orderNo != "" {
+		query = query.Where("order_no = ?", orderNo)
+	} else {
+		query = query.Where("provider_payment_id = ?", paymentIntent)
+	}
+	var order model.PaymentOrder
+	if err := query.First(&order).Error; err != nil {
+		return err
+	}
+	orderAmountMinor, disputeAmountMinor, err := verifyStripeDisputeSnapshot(order, session)
+	if err != nil {
+		return err
+	}
+
+	autoDisableTokens, err := paymentBoolSettingDefault("payment.dispute.auto_disable_tokens", false)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	eventUpdates := map[string]interface{}{"processed": true, "processed_at": &now}
+	if event.OrderNo == "" {
+		eventUpdates["order_no"] = order.OrderNo
+		event.OrderNo = order.OrderNo
+	}
+
+	tokensDisabled := int64(0)
+	if autoDisableTokens {
+		result := tx.Model(&model.Token{}).
+			Where("user_id = ? AND status = ?", order.UserID, common.TokenStatusEnabled).
+			Updates(map[string]interface{}{
+				"status":         common.TokenStatusDisabled,
+				"revoked_reason": "payment_dispute",
+				"updated_at":     now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		tokensDisabled = result.RowsAffected
+	}
+	if err := tx.Model(event).Updates(eventUpdates).Error; err != nil {
+		return err
+	}
+	event.Processed = true
+	event.ProcessedAt = &now
+	return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentDisputeCreated, *event, &order, map[string]interface{}{
+		"amount_disputed":     disputeAmountMinor,
+		"order_amount":        orderAmountMinor,
+		"payment_intent":      paymentIntent,
+		"auto_disable_tokens": autoDisableTokens,
+		"tokens_disabled":     tokensDisabled,
+	})
+}
+
 func verifyStripeSignature(raw []byte, signatureHeader, secret string) bool {
 	var timestamp string
 	signatures := make([]string, 0, 1)
@@ -1409,6 +1474,21 @@ func verifyStripeRefundSnapshot(order model.PaymentOrder, session stripeCheckout
 		return 0, 0, errors.New("stripe refund currency mismatch")
 	}
 	return expectedAmount, refundedAmount, nil
+}
+
+func verifyStripeDisputeSnapshot(order model.PaymentOrder, session stripeCheckoutSession) (int64, int64, error) {
+	expectedAmount, err := decimalAmountToMinorUnits(order.Amount)
+	if err != nil {
+		return 0, 0, err
+	}
+	disputeAmount := session.Amount
+	if disputeAmount <= 0 || disputeAmount > expectedAmount {
+		return 0, 0, errors.New("stripe dispute amount mismatch")
+	}
+	if strings.ToLower(strings.TrimSpace(order.Currency)) != strings.ToLower(strings.TrimSpace(session.Currency)) {
+		return 0, 0, errors.New("stripe dispute currency mismatch")
+	}
+	return expectedAmount, disputeAmount, nil
 }
 
 func proportionalRefundQuota(orderQuota, refundedAmount, orderAmount int64) int64 {

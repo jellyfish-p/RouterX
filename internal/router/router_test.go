@@ -2109,6 +2109,114 @@ func TestStripePartialRefundWebhookRecordsAndDeductsProportionally(t *testing.T)
 	}
 }
 
+func TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "risk key",
+		"remain_quota": int64(100),
+	})
+	if tokenResp.Code != http.StatusOK {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	var tokenPayload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if !tokenPayload.Success || tokenPayload.Data.ID == 0 {
+		t.Fatalf("create token returned invalid payload: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_dispute",
+		Name:      "Disputable credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.dispute.auto_disable_tokens", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	order := createStripePaidOrder(t, r, rootJWT, "quota_dispute", "evt_paid_dispute", "pi_dispute")
+	disputeBody := stripeChargeDisputeCreatedPayload("evt_dispute_1", order, "pi_dispute", 999)
+	disputeResp := performStripeWebhook(r, disputeBody, "whsec_test_secret")
+	if disputeResp.Code != http.StatusOK || strings.TrimSpace(disputeResp.Body.String()) != "success" {
+		t.Fatalf("stripe dispute webhook should return success, got %d %s", disputeResp.Code, disputeResp.Body.String())
+	}
+	var paymentEvent model.PaymentEvent
+	if err := internal.DB.Where("provider = ? AND provider_event_id = ?", common.PaymentProviderStripe, "evt_dispute_1").First(&paymentEvent).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !paymentEvent.Processed || paymentEvent.OrderNo != order.OrderNo || paymentEvent.EventType != "charge.dispute.created" {
+		t.Fatalf("stripe dispute should write processed payment event, got %+v", paymentEvent)
+	}
+	var token model.Token
+	if err := internal.DB.First(&token, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if token.Status != common.TokenStatusDisabled || token.RevokedReason != "payment_dispute" {
+		t.Fatalf("stripe dispute should disable enabled user tokens by policy, got %+v", token)
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("dispute event should not directly mutate user quota, got %d", root.Quota)
+	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_event&resource_id=evt_dispute_1", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_dispute.created"`) ||
+		!strings.Contains(auditBody, "evt_dispute_1") ||
+		!strings.Contains(auditBody, order.OrderNo) ||
+		!strings.Contains(auditBody, "tokens_disabled") {
+		t.Fatalf("stripe dispute should write dispute audit logs, got %d %s", auditResp.Code, auditBody)
+	}
+	duplicateDispute := performStripeWebhook(r, disputeBody, "whsec_test_secret")
+	if duplicateDispute.Code != http.StatusOK || strings.TrimSpace(duplicateDispute.Body.String()) != "success" {
+		t.Fatalf("duplicate stripe dispute should return success, got %d %s", duplicateDispute.Code, duplicateDispute.Body.String())
+	}
+	var disputeAuditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "payment_dispute.created", common.QuotaSourceTypePaymentEvent, "evt_dispute_1").
+		Count(&disputeAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if disputeAuditCount != 1 {
+		t.Fatalf("duplicate stripe dispute must not write duplicate audit logs, got %d", disputeAuditCount)
+	}
+}
+
 func TestChannelExtendedManagement(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -2326,6 +2434,7 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"payment.order_expire_minutes",
 		"payment.refund.auto_deduct",
 		"payment.refund.allow_negative_balance",
+		"payment.dispute.auto_disable_tokens",
 	} {
 		var count int64
 		if err := internal.DB.Model(&model.Setting{}).Where("key = ?", key).Count(&count).Error; err != nil {
@@ -8495,6 +8604,25 @@ func stripeChargeRefundedPayload(eventID string, order model.PaymentOrder, payme
 				"amount":          amountRefunded,
 				"currency":        order.Currency,
 				"payment_intent":  paymentIntent,
+				"metadata": map[string]string{
+					"order_no": order.OrderNo,
+				},
+			},
+		},
+	})
+	return string(raw)
+}
+
+func stripeChargeDisputeCreatedPayload(eventID string, order model.PaymentOrder, paymentIntent string, amount int64) string {
+	raw, _ := json.Marshal(map[string]interface{}{
+		"id":   eventID,
+		"type": "charge.dispute.created",
+		"data": map[string]interface{}{
+			"object": map[string]interface{}{
+				"id":             "dp_" + paymentIntent,
+				"amount":         amount,
+				"currency":       order.Currency,
+				"payment_intent": paymentIntent,
 				"metadata": map[string]string{
 					"order_no": order.OrderNo,
 				},
