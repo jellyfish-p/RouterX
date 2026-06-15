@@ -120,6 +120,7 @@ func metricsHandler(c *gin.Context) {
 	writeGauge(&b, "routerx_db_up", "Database ping status.", extended.DBUp)
 	writeGauge(&b, "routerx_redis_up", "Redis ping status.", extended.RedisUp)
 	writeLabeledCounter(&b, "routerx_logs_total", "Relay logs by status.", extended.Logs)
+	writeLabeledCounter(&b, "routerx_relay_requests_total", "Relay requests by protocol, API type, model and status.", extended.RelayRequests)
 	writeLabeledCounter(&b, "routerx_relay_errors_total", "Relay errors by protocol, API type, code and source.", extended.RelayErrors)
 	writeCounter(&b, "routerx_quota_used_total", "Total quota recorded in relay logs.", extended.QuotaUsed)
 	writeLabeledGauge(&b, "routerx_channel_available", "Channel availability by channel and provider.", extended.ChannelAvailable)
@@ -146,6 +147,7 @@ type extendedMetrics struct {
 	DBUp                int64
 	RedisUp             int64
 	Logs                []metricSample
+	RelayRequests       []metricSample
 	RelayErrors         []metricSample
 	QuotaUsed           int64
 	ChannelErrorCounts  []metricSample
@@ -179,6 +181,12 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 			Value:  row.Count,
 		})
 	}
+	relayRequests, err := collectRelayRequestMetrics()
+	if err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.RelayRequests = relayRequests
+
 	relayErrors, err := collectRelayErrorMetrics()
 	if err != nil {
 		return extendedMetrics{}, err
@@ -270,6 +278,67 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 	}
 	metrics.AuditEvents = auditEvents
 	return metrics, nil
+}
+
+type relayRequestMetricKey struct {
+	Protocol string
+	APIType  string
+	Model    string
+	Status   string
+}
+
+func collectRelayRequestMetrics() ([]metricSample, error) {
+	var rows []struct {
+		Model           string
+		Status          int
+		RequestSnapshot string
+	}
+	if err := internal.DB.Model(&model.Log{}).
+		Select("model, status, request_snapshot").
+		Where("status <> ?", common.LogStatusUnknown).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	counts := map[relayRequestMetricKey]int64{}
+	for _, row := range rows {
+		protocol, apiType := relayRequestMetricDimensions(row.RequestSnapshot)
+		key := relayRequestMetricKey{
+			Protocol: protocol,
+			APIType:  apiType,
+			Model:    metricDimensionOrUnknown(row.Model),
+			Status:   logStatusLabel(row.Status),
+		}
+		counts[key]++
+	}
+	keys := make([]relayRequestMetricKey, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Protocol != keys[j].Protocol {
+			return keys[i].Protocol < keys[j].Protocol
+		}
+		if keys[i].APIType != keys[j].APIType {
+			return keys[i].APIType < keys[j].APIType
+		}
+		if keys[i].Model != keys[j].Model {
+			return keys[i].Model < keys[j].Model
+		}
+		return keys[i].Status < keys[j].Status
+	})
+	samples := make([]metricSample, 0, len(keys))
+	for _, key := range keys {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{
+				{Name: "protocol", Value: key.Protocol},
+				{Name: "api_type", Value: key.APIType},
+				{Name: "model", Value: key.Model},
+				{Name: "status", Value: key.Status},
+			},
+			Value: counts[key],
+		})
+	}
+	return samples, nil
 }
 
 func collectAuditEventMetrics() ([]metricSample, error) {
