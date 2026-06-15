@@ -27,6 +27,7 @@ type Log struct {
 	ErrorCode        string    `gorm:"type:varchar(128);not null;default:''" json:"error_code,omitempty"`
 	ErrorSource      string    `gorm:"type:varchar(64);not null;default:''" json:"error_source,omitempty"`
 	UpstreamStatus   int       `gorm:"not null;default:0" json:"upstream_status,omitempty"`
+	RouteSnapshot    string    `gorm:"type:text" json:"route_snapshot,omitempty"`
 	IP               string    `gorm:"type:varchar(64)" json:"ip"`
 	UserAgent        string    `gorm:"-" json:"-"` // 仅用于生成 Token 上的脱敏 UA 摘要，不持久化原文。
 	RequestID        string    `gorm:"type:varchar(128);index" json:"request_id,omitempty"`

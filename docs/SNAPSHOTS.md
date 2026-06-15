@@ -31,7 +31,7 @@
 
 P0 不能因为快照字段尚未完整而牺牲账单一致性。P1/P2 不能用当前 settings 或当前价格规则倒推历史调用。
 
-当前代码已在 `logs` 中基础落地 `request_id`、`error_code`、`error_source`、`upstream_status` 和 `usage_source`。`usage_source` 目前覆盖 `upstream` 与 `minimum`，`adapter`、`tokenizer` 和 `estimate` 需要随对应能力实现后再写入。
+当前代码已在 `logs` 中基础落地 `request_id`、`error_code`、`error_source`、`upstream_status`、`usage_source` 和基础 `route_snapshot`。`route_snapshot` 目前覆盖请求模型、候选数量、选中通道、provider、分组、优先级和权重；过滤原因、模型重写和重试摘要仍需继续补齐。`usage_source` 目前覆盖 `upstream` 与 `minimum`，`adapter`、`tokenizer` 和 `estimate` 需要随对应能力实现后再写入。
 
 ## 通用封套
 

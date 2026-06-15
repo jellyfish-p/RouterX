@@ -44,6 +44,7 @@ type RelayRawResult struct {
 
 type relayUserAgentContextKey struct{}
 type relayRequestIDContextKey struct{}
+type relayRouteSnapshotContextKey struct{}
 
 type contentTypeRelayAdapter interface {
 	DoRequestWithContentType(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error)
@@ -74,6 +75,13 @@ func ContextWithRelayRequestID(ctx context.Context, requestID string) context.Co
 	return context.WithValue(ctx, relayRequestIDContextKey{}, strings.TrimSpace(requestID))
 }
 
+func ContextWithRelayRouteSnapshot(ctx context.Context, snapshot string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, relayRouteSnapshotContextKey{}, strings.TrimSpace(snapshot))
+}
+
 func relayUserAgentFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
@@ -87,6 +95,14 @@ func relayRequestIDFromContext(ctx context.Context) string {
 		return ""
 	}
 	value, _ := ctx.Value(relayRequestIDContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
+func relayRouteSnapshotFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(relayRouteSnapshotContextKey{}).(string)
 	return strings.TrimSpace(value)
 }
 
@@ -334,6 +350,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	}
 	selected := pickRelayChannelCandidate(candidates)
 	attemptCandidates := orderRelayAttemptCandidates(candidates, selected)
+	ctx = ContextWithRelayRouteSnapshot(ctx, buildRelayRouteSnapshot(reqInfo, candidates, selected))
 	maxAttempts := 1 + s.relayRetryCount()
 	if maxAttempts > len(attemptCandidates) {
 		maxAttempts = len(attemptCandidates)
@@ -491,6 +508,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		return nil, err
 	}
 	channel := pickRelayChannelCandidate(candidates)
+	ctx = ContextWithRelayRouteSnapshot(ctx, buildRelayRouteSnapshot(reqInfo, candidates, channel))
 	if !supportsOpenAICompatibleStream(channel.Type) {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "streaming is not supported for selected upstream channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "streaming is not supported for selected upstream channel", Type: "upstream_error", Code: "unsupported_stream_channel"}
@@ -1812,6 +1830,78 @@ func logUsageSource(usage *relay.Usage, status int, quotaUsed int64) string {
 	return ""
 }
 
+func buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channel, selected *model.Channel) string {
+	snapshot := map[string]interface{}{
+		"schema":          "routerx.snapshot.v1",
+		"kind":            "route",
+		"stage":           "p1",
+		"source":          "relay",
+		"redacted":        true,
+		"requested_model": reqInfo.Model,
+		"candidate_count": len(candidates),
+	}
+	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
+		snapshot["route_preference"] = preference
+	}
+	if selected != nil {
+		snapshot["selected_channel_id"] = selected.ID
+		snapshot["selected_provider"] = channelProviderName(selected.Type)
+		snapshot["selected_channel_group"] = strings.TrimSpace(selected.ChannelGroup)
+		snapshot["priority"] = selected.Priority
+		snapshot["weight"] = selected.Weight
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func routePreferenceSnapshot(route RoutePreference) map[string]interface{} {
+	preference := map[string]interface{}{}
+	if route.ChannelGroup != "" {
+		preference["channel_group"] = route.ChannelGroup
+	}
+	if route.ChannelID != 0 {
+		preference["channel_id"] = route.ChannelID
+	}
+	if route.ChannelName != "" {
+		preference["channel_name"] = route.ChannelName
+	}
+	if route.Provider != "" {
+		preference["provider"] = route.Provider
+	}
+	if len(route.DisabledProvider) > 0 {
+		preference["disabled_providers"] = route.DisabledProvider
+	}
+	return preference
+}
+
+func channelProviderName(channelType int) string {
+	switch channelType {
+	case common.ChannelTypeOpenAI:
+		return "openai"
+	case common.ChannelTypeAzure:
+		return "azure"
+	case common.ChannelTypeClaude:
+		return "anthropic"
+	case common.ChannelTypeGemini:
+		return "gemini"
+	case common.ChannelTypeQwen:
+		return "qwen"
+	case common.ChannelTypeDeepSeek:
+		return "deepseek"
+	case common.ChannelTypeXAI:
+		return "xai"
+	case common.ChannelTypeRouterX:
+		return "routerx"
+	case common.ChannelTypeOpenAICompat:
+		return "openai-compatible"
+	default:
+		return "unknown"
+	}
+}
+
 func orderRelayAttemptCandidates(candidates []model.Channel, selected *model.Channel) []model.Channel {
 	if selected == nil || selected.ID == 0 {
 		return candidates
@@ -1920,17 +2010,18 @@ func (s *RelayService) recordLog(ctx context.Context, token *model.Token, channe
 		channelID = &id
 	}
 	log := &model.Log{
-		UserID:      token.UserID,
-		TokenID:     tokenID,
-		ChannelID:   channelID,
-		Model:       modelName,
-		Status:      status,
-		QuotaUsed:   quotaUsed,
-		UsageSource: logUsageSource(usage, status, quotaUsed),
-		ErrorMsg:    errMsg,
-		IP:          ip,
-		UserAgent:   relayUserAgentFromContext(ctx),
-		RequestID:   relayRequestIDFromContext(ctx),
+		UserID:        token.UserID,
+		TokenID:       tokenID,
+		ChannelID:     channelID,
+		Model:         modelName,
+		Status:        status,
+		QuotaUsed:     quotaUsed,
+		UsageSource:   logUsageSource(usage, status, quotaUsed),
+		ErrorMsg:      errMsg,
+		IP:            ip,
+		UserAgent:     relayUserAgentFromContext(ctx),
+		RequestID:     relayRequestIDFromContext(ctx),
+		RouteSnapshot: relayRouteSnapshotFromContext(ctx),
 	}
 	if usage != nil {
 		log.PromptTokens = usage.PromptTokens

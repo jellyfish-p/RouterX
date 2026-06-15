@@ -4033,14 +4033,24 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if callLog.TokenID == nil || *callLog.TokenID != tokenPayload.Data.ID || callLog.ChannelID == nil {
 		t.Fatalf("success log should reference token and channel: %+v", callLog)
 	}
+	var routeSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RouteSnapshot), &routeSnapshot); err != nil {
+		t.Fatalf("success log should store route snapshot JSON, got %q: %v", callLog.RouteSnapshot, err)
+	}
+	if routeSnapshot["requested_model"] != "gpt-test" || routeSnapshot["selected_channel_group"] != "paid" || routeSnapshot["candidate_count"] != float64(1) {
+		t.Fatalf("unexpected route snapshot: %+v", routeSnapshot)
+	}
+	if selectedChannelID, ok := routeSnapshot["selected_channel_id"].(float64); !ok || uint(selectedChannelID) != *callLog.ChannelID {
+		t.Fatalf("route snapshot should reference selected channel, snapshot=%+v log=%+v", routeSnapshot, callLog)
+	}
 
 	billingResp := performJSON(r, http.MethodGet, "/v0/user/billing", rootJWT, nil)
 	if billingResp.Code != http.StatusOK || !strings.Contains(billingResp.Body.String(), `"call_count":1`) || !strings.Contains(billingResp.Body.String(), `"total_quota":5`) || !strings.Contains(billingResp.Body.String(), `"total_tokens":5`) {
 		t.Fatalf("billing should aggregate successful logs, got %d %s", billingResp.Code, billingResp.Body.String())
 	}
 	logResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
-	if logResp.Code != http.StatusOK || !strings.Contains(logResp.Body.String(), `"usage_source":"upstream"`) {
-		t.Fatalf("user log should expose upstream usage source, got %d %s", logResp.Code, logResp.Body.String())
+	if logResp.Code != http.StatusOK || !strings.Contains(logResp.Body.String(), `"usage_source":"upstream"`) || !strings.Contains(logResp.Body.String(), `"route_snapshot":`) {
+		t.Fatalf("user log should expose upstream usage source and route snapshot, got %d %s", logResp.Code, logResp.Body.String())
 	}
 }
 

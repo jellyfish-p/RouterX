@@ -349,6 +349,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `error_code` | string | 失败时的稳定协议化错误 code，成功调用为空 |
 | `error_source` | string | 失败来源，例如 `upstream`、`quota`、`route` |
 | `upstream_status` | int | 上游 HTTP 状态；非上游错误为 `0` |
+| `route_snapshot` | text/json string | 脱敏路由快照；当前包含请求模型、候选数量、选中通道、provider、分组、优先级和权重 |
 | `content` | text | 请求体快照，需截断和脱敏 |
 | `response` | text | 响应体快照，需截断和脱敏 |
 | `error_msg` | text | 错误信息 |
@@ -380,7 +381,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `billing_expression_snapshot` | 本次实际执行的表达式和变量快照 |
 | `multiplier_snapshot` | 用户分组、通道分组、用户分组 x 通道分组倍率快照 |
 | `access_rule_snapshot` | 用户、Token、模型、通道分组访问控制快照 |
-| `route_snapshot` | 候选过滤、`routerx.route` 处理、最终通道、模型重写和重试摘要 |
+| `route_snapshot.filtered_reasons` / `route_snapshot.retry_attempts` | 后续补齐候选过滤原因、模型重写和重试摘要 |
 
 数据生命周期：
 
@@ -641,6 +642,7 @@ QuotaUnlimited = -1
 | `008_log_request_context` | 新增调用日志 request_id、error_code 和对应索引 |
 | `009_log_usage_source` | 新增调用日志 usage_source 和对应索引 |
 | `010_log_error_facts` | 新增调用日志 error_source、upstream_status 和对应索引 |
+| `011_log_route_snapshot` | 新增调用日志 route_snapshot 脱敏 JSON 字符串 |
 
 重要说明：
 
