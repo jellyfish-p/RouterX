@@ -44,6 +44,7 @@ type RelayRawResult struct {
 
 type relayUserAgentContextKey struct{}
 type relayRequestIDContextKey struct{}
+type relayRequestSnapshotContextKey struct{}
 type relayRouteSnapshotContextKey struct{}
 type relayBillingSnapshotContextKey struct{}
 
@@ -76,6 +77,13 @@ func ContextWithRelayRequestID(ctx context.Context, requestID string) context.Co
 	return context.WithValue(ctx, relayRequestIDContextKey{}, strings.TrimSpace(requestID))
 }
 
+func ContextWithRelayRequestSnapshot(ctx context.Context, snapshot string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, relayRequestSnapshotContextKey{}, strings.TrimSpace(snapshot))
+}
+
 func ContextWithRelayRouteSnapshot(ctx context.Context, snapshot string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -103,6 +111,14 @@ func relayRequestIDFromContext(ctx context.Context) string {
 		return ""
 	}
 	value, _ := ctx.Value(relayRequestIDContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
+func relayRequestSnapshotFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(relayRequestSnapshotContextKey{}).(string)
 	return strings.TrimSpace(value)
 }
 
@@ -340,6 +356,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	if reqInfo.Stream {
 		return nil, nil, &HTTPError{Status: 400, Message: "stream is not supported in P0 relay", Type: "invalid_request_error", Code: "unsupported_stream"}
 	}
+	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshot(ctx, apiType, reqInfo))
 	if err := s.enforceTokenScope(ctx, token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, nil, err
 	}
@@ -518,6 +535,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if !reqInfo.Stream {
 		return nil, &HTTPError{Status: 400, Message: "stream is required", Type: "invalid_request_error", Code: "stream_required"}
 	}
+	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshot(ctx, apiType, reqInfo))
 	if err := s.enforceTokenScope(ctx, token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, err
 	}
@@ -1881,6 +1899,40 @@ func logUsageSource(usage *relay.Usage, status int, quotaUsed int64) string {
 	return ""
 }
 
+func buildRelayRequestSnapshot(ctx context.Context, apiType relay.APIType, reqInfo relayRequestInfo) string {
+	apiTypeName := relayAPITypeScopeName(apiType)
+	snapshot := map[string]interface{}{
+		"schema":           "routerx.snapshot.v1",
+		"kind":             "request",
+		"stage":            "p1",
+		"source":           "relay",
+		"redacted":         true,
+		"request_id":       relayRequestIDFromContext(ctx),
+		"ingress_protocol": relayIngressProtocolFromAPIType(apiType),
+		"api_type":         apiTypeName,
+		"requested_model":  strings.TrimSpace(reqInfo.Model),
+		"stream":           reqInfo.Stream,
+	}
+	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
+		snapshot["routerx_summary"] = map[string]interface{}{
+			"route": preference,
+		}
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func relayIngressProtocolFromAPIType(apiType relay.APIType) string {
+	apiTypeName := relayAPITypeScopeName(apiType)
+	if idx := strings.Index(apiTypeName, "."); idx > 0 {
+		return apiTypeName[:idx]
+	}
+	return strings.TrimSpace(apiTypeName)
+}
+
 func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channel, selected *model.Channel, retryAttempts []map[string]interface{}, filteredReasons map[string]int) string {
 	requestedModel := strings.TrimSpace(reqInfo.Model)
 	snapshot := map[string]interface{}{
@@ -2241,6 +2293,7 @@ func (s *RelayService) recordLog(ctx context.Context, token *model.Token, channe
 		IP:              ip,
 		UserAgent:       relayUserAgentFromContext(ctx),
 		RequestID:       relayRequestIDFromContext(ctx),
+		RequestSnapshot: relayRequestSnapshotFromContext(ctx),
 		RouteSnapshot:   relayRouteSnapshotFromContext(ctx),
 		BillingSnapshot: relayBillingSnapshotFromContext(ctx),
 	}

@@ -26,12 +26,12 @@
 | 阶段 | 快照要求 |
 |------|----------|
 | P0 | 以现有 `logs` 基础字段为主，保证 user、token、channel、model、usage、`quota_used`、status、脱敏错误和扣费事务一致。可用文本摘要记录路由和错误原因。 |
-| P1 | 增加结构化 `request_id`、`error_code`、`route_snapshot`、`policy_snapshot`、`billing_snapshot`、`usage_source` 和关键版本摘要。 |
+| P1 | 增加结构化 `request_id`、`error_code`、`request_snapshot`、`route_snapshot`、`policy_snapshot`、`billing_snapshot`、`usage_source` 和关键版本摘要。 |
 | P2 | 增加审计关联、导出、长期保留、指标追踪、企业账号维度和生产事故证据链。 |
 
 P0 不能因为快照字段尚未完整而牺牲账单一致性。P1/P2 不能用当前 settings 或当前价格规则倒推历史调用。
 
-当前代码已在 `logs` 中基础落地 `request_id`、`error_code`、`error_source`、`upstream_status`、`usage_source`、基础 `route_snapshot` 和基础 `billing_snapshot`。`route_snapshot` 目前覆盖请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要。`billing_snapshot` 目前覆盖结算状态、usage_source、P0 计费表达式摘要、默认倍率摘要、Key 预算前后、用户余额前后和最终扣费；商业价格规则 ID、规则版本和业务倍率仍需继续补齐。`usage_source` 目前覆盖 `upstream` 与 `minimum`，`adapter`、`tokenizer` 和 `estimate` 需要随对应能力实现后再写入。
+当前代码已在 `logs` 中基础落地 `request_id`、`error_code`、`error_source`、`upstream_status`、`usage_source`、基础 `request_snapshot`、基础 `route_snapshot` 和基础 `billing_snapshot`。`request_snapshot` 目前覆盖 request_id、入口协议、API 类型、请求模型、stream 标记和安全的 `routerx.route` 摘要。`route_snapshot` 目前覆盖请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要。`billing_snapshot` 目前覆盖结算状态、usage_source、P0 计费表达式摘要、默认倍率摘要、Key 预算前后、用户余额前后和最终扣费；商业价格规则 ID、规则版本和业务倍率仍需继续补齐。`usage_source` 目前覆盖 `upstream` 与 `minimum`，`adapter`、`tokenizer` 和 `estimate` 需要随对应能力实现后再写入。
 
 ## 通用封套
 

@@ -4057,6 +4057,22 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if callLog.TokenID == nil || *callLog.TokenID != tokenPayload.Data.ID || callLog.ChannelID == nil {
 		t.Fatalf("success log should reference token and channel: %+v", callLog)
 	}
+	var requestSnapshotRaw string
+	if err := internal.DB.Model(&model.Log{}).Select("request_snapshot").Where("id = ?", callLog.ID).Scan(&requestSnapshotRaw).Error; err != nil {
+		t.Fatal(err)
+	}
+	var requestSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(requestSnapshotRaw), &requestSnapshot); err != nil {
+		t.Fatalf("success log should store request snapshot JSON, got %q: %v", requestSnapshotRaw, err)
+	}
+	if requestSnapshot["kind"] != "request" ||
+		requestSnapshot["ingress_protocol"] != "openai" ||
+		requestSnapshot["api_type"] != "openai.chat" ||
+		requestSnapshot["requested_model"] != "gpt-test" ||
+		requestSnapshot["stream"] != false ||
+		requestSnapshot["request_id"] != callLog.RequestID {
+		t.Fatalf("unexpected request snapshot: %+v log=%+v", requestSnapshot, callLog)
+	}
 	var routeSnapshot map[string]interface{}
 	if err := json.Unmarshal([]byte(callLog.RouteSnapshot), &routeSnapshot); err != nil {
 		t.Fatalf("success log should store route snapshot JSON, got %q: %v", callLog.RouteSnapshot, err)

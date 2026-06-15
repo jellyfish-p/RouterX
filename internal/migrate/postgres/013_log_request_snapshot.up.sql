@@ -1,0 +1,1 @@
+ALTER TABLE logs ADD COLUMN request_snapshot TEXT NOT NULL DEFAULT '';

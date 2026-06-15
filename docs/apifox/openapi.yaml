@@ -3170,6 +3170,9 @@ components:
         upstream_status:
           type: integer
           description: 上游 HTTP 状态；未调用上游或非上游错误时为 0/省略。
+        request_snapshot:
+          type: string
+          description: 脱敏请求快照 JSON 字符串；当前包含 request_id、入口协议、API 类型、请求模型、stream 标记和安全路由摘要。
         route_snapshot:
           type: string
           description: 脱敏路由快照 JSON 字符串；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要。
