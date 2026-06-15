@@ -66,7 +66,7 @@
 | `TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields` | Anthropic/Gemini 非流式成功响应、usage、扣费和非文本 content/parts 降级 |
 | `TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini embedContent 转 OpenAI-compatible Embeddings 上游，返回 Gemini `embedding.values` 外形，usage 写日志和扣费 |
 | `TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini batchEmbedContents 转 OpenAI-compatible Embeddings 批量 input，上游 embedding list 返回 Gemini `embeddings[].values` 外形，usage 写日志和扣费 |
-| `TestRateLimitUsesSettingsAndEntryProtocolErrorShape` | Redis Token 限流读取 `rate_limit.*`，本地 429 不调用上游，并返回入口协议兼容错误 |
+| `TestRateLimitUsesSettingsAndEntryProtocolErrorShape` | Redis Token 限流读取 `rate_limit.*`，本地 429 不调用上游，返回入口协议兼容错误，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model 在本地失败且不污染通道和账单 |
 | `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
 | `TestUserBillingMatchesLogs` | 多次成功/失败混合后，用户账单、日志、余额和 Key 预算一致 |
@@ -414,7 +414,7 @@ Gemini-compatible 最小断言：
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
 | P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Anthropic/Gemini 基础流式、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为、原生字段保真和 Anthropic/Gemini 原生流式路径 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
-| P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝和无可用候选拒绝分支 policy_snapshot、基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含 P0 表达式/默认倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
+| P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝和 Redis Token 限流拒绝分支 policy_snapshot、基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含 P0 表达式/默认倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |
 | P1 | 可靠性 | 已覆盖非流式安全重试、Redis 全局/IP/Token 基础限流和 `error_count` 自动熔断候选过滤；继续补半开恢复、探测任务、更多限流维度和生产 fail-open/fail-closed 策略 |
 | P1 | 运行模式 | SQLite 单镜像无 Redis 可运行；外部数据库无 Redis 不就绪或启动失败 |

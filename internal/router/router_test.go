@@ -3183,6 +3183,24 @@ func TestRateLimitUsesSettingsAndEntryProtocolErrorShape(t *testing.T) {
 	if storedToken.RemainQuota != 48 {
 		t.Fatalf("only the successful request should deduct quota, got %d", storedToken.RemainQuota)
 	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%rate limit%").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("rate limit rejection should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "rate_limit_exceeded" ||
+		policySnapshot["quota_precheck"] != "rate_limit_exceeded" ||
+		scopeResult["rate_limit"] != "deny" ||
+		scopeResult["rate_limit_dimension"] != "token" {
+		t.Fatalf("unexpected rate limit policy snapshot: %+v", policySnapshot)
+	}
 }
 
 func TestRelayPrecheckRejectsBeforeUpstream(t *testing.T) {

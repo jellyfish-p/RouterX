@@ -34,18 +34,18 @@ func RateLimit() gin.HandlerFunc {
 		}
 		now := time.Now().Unix() / 60
 		if cfg.globalPerMin > 0 && exceeded(fmt.Sprintf("rl:global:%d", now), cfg.globalPerMin) {
-			writeRateLimitError(c)
+			writeRateLimitError(c, "global")
 			c.Abort()
 			return
 		}
 		if cfg.perIPPerMin > 0 && exceeded(fmt.Sprintf("rl:ip:%s:%d", c.ClientIP(), now), cfg.perIPPerMin) {
-			writeRateLimitError(c)
+			writeRateLimitError(c, "ip")
 			c.Abort()
 			return
 		}
 		if token, ok := CurrentAPIToken(c); ok {
 			if cfg.perTokenPerMin > 0 && exceeded(fmt.Sprintf("rl:token:%d:%d", token.ID, now), cfg.perTokenPerMin) {
-				writeRateLimitError(c)
+				writeRateLimitError(c, "token")
 				c.Abort()
 				return
 			}
@@ -80,7 +80,8 @@ func loadRateLimitConfig() rateLimitConfig {
 	return cfg
 }
 
-func writeRateLimitError(c *gin.Context) {
+func writeRateLimitError(c *gin.Context, dimension string) {
+	recordRateLimitDeniedPolicyLog(c, dimension)
 	switch entryProtocol(c) {
 	case "anthropic":
 		c.JSON(http.StatusTooManyRequests, common.AnthropicError("rate limit exceeded", "rate_limit_error"))
@@ -91,6 +92,16 @@ func writeRateLimitError(c *gin.Context) {
 	default:
 		common.FailWithStatus(c, http.StatusTooManyRequests, "请求过于频繁")
 	}
+}
+
+func recordRateLimitDeniedPolicyLog(c *gin.Context, dimension string) {
+	token, ok := CurrentAPIToken(c)
+	if !ok {
+		return
+	}
+	scopeResult := policyDeniedScopeResult("rate_limit")
+	scopeResult["rate_limit_dimension"] = dimension
+	service.NewTokenService().RecordScopeDeniedPolicyLog(token, dimension+" rate limit exceeded", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"), "rate_limit_exceeded", "rate_limit_exceeded", scopeResult)
 }
 
 func exceeded(key string, limit int64) bool {

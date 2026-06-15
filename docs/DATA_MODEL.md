@@ -350,7 +350,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `error_source` | string | 失败来源，例如 `upstream`、`quota`、`route` |
 | `upstream_status` | int | 上游 HTTP 状态；非上游错误为 `0` |
 | `request_snapshot` | text/json string | 脱敏请求快照；当前包含 request_id、入口协议、API 类型、请求模型、stream 标记和安全路由摘要 |
-| `policy_snapshot` | text/json string | 脱敏策略快照；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝和无可用候选 `no_available_channel` 拒绝摘要 |
+| `policy_snapshot` | text/json string | 脱敏策略快照；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要 |
 | `route_snapshot` | text/json string | 脱敏路由快照；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要 |
 | `billing_snapshot` | text/json string | 脱敏计费快照；当前包含结算状态、usage_source、P0 计费表达式摘要、默认倍率摘要、Key 预算前后、用户余额前后和最终扣费 |
 | `content` | text | 请求体快照，需截断和脱敏 |
