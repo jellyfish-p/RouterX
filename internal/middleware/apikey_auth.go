@@ -110,6 +110,7 @@ func authenticateAPIKey(c *gin.Context) bool {
 		return false
 	}
 	if !tokenSvc.HasAvailableQuota(token) {
+		tokenSvc.RecordScopeDeniedPolicyLog(token, "insufficient quota", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"), "insufficient_quota", "unavailable", policyDeniedScopeResult("quota"))
 		writeProtocolAuthError(c, http.StatusTooManyRequests, "insufficient quota", "insufficient_quota", "insufficient_quota")
 		return false
 	}

@@ -397,6 +397,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	addRouteFilterReason(filteredReasons, routeFilterReasonAccessDenied, removed)
 	if err != nil {
 		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, nil, nil, filteredReasons))
+		logCtx = ContextWithRelayPolicySnapshot(logCtx, buildRelayUserGroupAccessDenyPolicySnapshot(ctx, token))
 		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, nil, err
 	}
@@ -577,6 +578,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	addRouteFilterReason(filteredReasons, routeFilterReasonAccessDenied, removed)
 	if err != nil {
 		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, nil, nil, filteredReasons))
+		logCtx = ContextWithRelayPolicySnapshot(logCtx, buildRelayUserGroupAccessDenyPolicySnapshot(ctx, token))
 		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, err
 	}
@@ -2047,6 +2049,15 @@ func buildRelayPolicyDenySnapshot(ctx context.Context, token *model.Token, rejec
 		return ""
 	}
 	return string(raw)
+}
+
+func buildRelayUserGroupAccessDenyPolicySnapshot(ctx context.Context, token *model.Token) string {
+	return buildRelayPolicyDenySnapshot(ctx, token, "route_forbidden", "available", map[string]interface{}{
+		"api_type":                 "allow",
+		"model":                    "allow",
+		"channel_group":            "allow",
+		"user_group_channel_group": "deny",
+	})
 }
 
 func tokenStatusSnapshot(status int) string {

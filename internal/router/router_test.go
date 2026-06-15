@@ -166,6 +166,7 @@ func TestP0BackendFlow(t *testing.T) {
 	})
 	var emptyTokenPayload struct {
 		Data struct {
+			ID  uint   `json:"id"`
 			Key string `json:"key"`
 		} `json:"data"`
 	}
@@ -178,6 +179,23 @@ func TestP0BackendFlow(t *testing.T) {
 	exhaustedModels := performJSON(r, http.MethodGet, "/v1/models", "Bearer "+emptyTokenPayload.Data.Key, nil)
 	if exhaustedModels.Code != http.StatusTooManyRequests || strings.Contains(exhaustedModels.Body.String(), `"success"`) {
 		t.Fatalf("expected exhausted api key 429 with OpenAI error, got %d %s", exhaustedModels.Code, exhaustedModels.Body.String())
+	}
+	var exhaustedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, emptyTokenPayload.Data.ID, "%insufficient quota%").First(&exhaustedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	var exhaustedPolicySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(exhaustedLog.PolicySnapshot), &exhaustedPolicySnapshot); err != nil {
+		t.Fatalf("exhausted api key should store policy snapshot JSON, got %q: %v", exhaustedLog.PolicySnapshot, err)
+	}
+	exhaustedScopeResult, ok := exhaustedPolicySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		exhaustedPolicySnapshot["kind"] != "policy" ||
+		exhaustedPolicySnapshot["access_decision"] != "deny" ||
+		exhaustedPolicySnapshot["reject_code"] != "insufficient_quota" ||
+		exhaustedPolicySnapshot["quota_precheck"] != "unavailable" ||
+		exhaustedScopeResult["quota"] != "deny" {
+		t.Fatalf("unexpected exhausted api key policy snapshot: %+v", exhaustedPolicySnapshot)
 	}
 	if err := internal.DB.Model(&model.User{}).Where("username = ?", "admin").Update("status", common.UserStatusDisabled).Error; err != nil {
 		t.Fatal(err)
@@ -3245,7 +3263,7 @@ func TestRelayPrecheckRejectsBeforeUpstream(t *testing.T) {
 		t.Fatalf("invalid key should be rejected before upstream, got %d %s", invalidKeyResp.Code, invalidKeyResp.Body.String())
 	}
 
-	_, exhaustedKey := createToken("exhausted", 0)
+	exhaustedTokenID, exhaustedKey := createToken("exhausted", 0)
 	exhaustedResp := chat(exhaustedKey)
 	if exhaustedResp.Code != http.StatusTooManyRequests {
 		t.Fatalf("exhausted key should be rejected before upstream, got %d %s", exhaustedResp.Code, exhaustedResp.Body.String())
@@ -3309,12 +3327,19 @@ func TestRelayPrecheckRejectsBeforeUpstream(t *testing.T) {
 	if noChannelToken.RemainQuota != 10 {
 		t.Fatalf("channel precheck should not deduct token budget, got %d", noChannelToken.RemainQuota)
 	}
-	var failedLogs int64
-	if err := internal.DB.Model(&model.Log{}).Where("status = ?", common.LogStatusFailed).Count(&failedLogs).Error; err != nil {
+	var noChannelFailedLogs int64
+	if err := internal.DB.Model(&model.Log{}).Where("status = ? AND token_id = ?", common.LogStatusFailed, noChannelTokenID).Count(&noChannelFailedLogs).Error; err != nil {
 		t.Fatal(err)
 	}
-	if failedLogs != 1 {
-		t.Fatalf("relay precheck should write one failed log for the routed no-channel rejection, got %d", failedLogs)
+	if noChannelFailedLogs != 1 {
+		t.Fatalf("relay precheck should write one failed log for the routed no-channel rejection, got %d", noChannelFailedLogs)
+	}
+	var quotaFailedLogs int64
+	if err := internal.DB.Model(&model.Log{}).Where("status = ? AND token_id IN ?", common.LogStatusFailed, []uint{exhaustedTokenID, zeroUserTokenID}).Count(&quotaFailedLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if quotaFailedLogs != 2 {
+		t.Fatalf("quota precheck rejections should write failed logs, got %d", quotaFailedLogs)
 	}
 }
 
@@ -3724,6 +3749,7 @@ func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
 	})
 	var tokenPayload struct {
 		Data struct {
+			ID  uint   `json:"id"`
 			Key string `json:"key"`
 		} `json:"data"`
 	}
@@ -3779,6 +3805,28 @@ func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
 	}
 	if defaultCalls != 1 || paidCalls != 0 {
 		t.Fatalf("forbidden user group route must not call upstream, default=%d paid=%d", defaultCalls, paidCalls)
+	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-access").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "user group access") {
+		t.Fatalf("user group access denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("user group access denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "route_forbidden" ||
+		policySnapshot["quota_precheck"] != "available" ||
+		scopeResult["api_type"] != "allow" ||
+		scopeResult["model"] != "allow" ||
+		scopeResult["user_group_channel_group"] != "deny" {
+		t.Fatalf("unexpected user group access policy snapshot: %+v", policySnapshot)
 	}
 }
 
