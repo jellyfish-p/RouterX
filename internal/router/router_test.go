@@ -7321,10 +7321,17 @@ func TestRelayFailureLogPersistsRequestIDAndErrorCode(t *testing.T) {
 	if callLog.RequestID != requestID || callLog.ErrorCode != "upstream_400" {
 		t.Fatalf("failed relay log should persist request_id and error_code, got %+v", callLog)
 	}
+	if callLog.ErrorSource != "upstream" || callLog.UpstreamStatus != http.StatusBadRequest {
+		t.Fatalf("failed relay log should persist upstream failure facts, got %+v", callLog)
+	}
 	logResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
 	logBody := logResp.Body.String()
-	if logResp.Code != http.StatusOK || !strings.Contains(logBody, `"request_id":"`+requestID+`"`) || !strings.Contains(logBody, `"error_code":"upstream_400"`) {
-		t.Fatalf("user log API should expose request_id and error_code, got %d %s", logResp.Code, logBody)
+	if logResp.Code != http.StatusOK ||
+		!strings.Contains(logBody, `"request_id":"`+requestID+`"`) ||
+		!strings.Contains(logBody, `"error_code":"upstream_400"`) ||
+		!strings.Contains(logBody, `"error_source":"upstream"`) ||
+		!strings.Contains(logBody, `"upstream_status":400`) {
+		t.Fatalf("user log API should expose request_id, error_code and upstream failure facts, got %d %s", logResp.Code, logBody)
 	}
 }
 

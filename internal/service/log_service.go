@@ -7,6 +7,7 @@ import (
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +29,8 @@ func (s *LogService) Record(log *model.Log) error {
 		log.CreatedAt = time.Now()
 	}
 	log.ErrorCode = normalizeLogErrorCode(log)
+	log.ErrorSource = normalizeLogErrorSource(log)
+	log.UpstreamStatus = normalizeLogUpstreamStatus(log)
 	return internal.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(log).Error; err != nil {
 			return err
@@ -90,6 +93,76 @@ func normalizeLogErrorCode(log *model.Log) string {
 		return "no_available_channel"
 	}
 	return "relay_failed"
+}
+
+func normalizeLogErrorSource(log *model.Log) string {
+	if log == nil || log.Status != common.LogStatusFailed {
+		return ""
+	}
+	if source := strings.TrimSpace(log.ErrorSource); source != "" {
+		return source
+	}
+	code := normalizeLogErrorCode(log)
+	msg := strings.ToLower(strings.TrimSpace(log.ErrorMsg))
+	switch {
+	case strings.Contains(msg, "secret decrypt"):
+		return common.LogErrorSourceChannel
+	case strings.HasPrefix(code, "upstream_") || strings.Contains(msg, "upstream request") || strings.Contains(msg, "upstream response") || strings.Contains(msg, "upstream timeout"):
+		return common.LogErrorSourceUpstream
+	case code == "insufficient_quota" || code == "rate_limit_exceeded":
+		return common.LogErrorSourceQuota
+	case code == "no_available_channel" || code == "route_forbidden":
+		return common.LogErrorSourceRoute
+	case code == "token_forbidden" || code == "model_not_allowed":
+		return common.LogErrorSourceAuth
+	case strings.Contains(msg, "invalid request") || strings.Contains(msg, "bad request"):
+		return common.LogErrorSourceRequest
+	case strings.Contains(msg, "deduct") || strings.Contains(msg, "billing"):
+		return common.LogErrorSourceBilling
+	default:
+		return common.LogErrorSourceSystem
+	}
+}
+
+func normalizeLogUpstreamStatus(log *model.Log) int {
+	if log == nil || log.Status != common.LogStatusFailed {
+		return 0
+	}
+	if log.UpstreamStatus > 0 {
+		return log.UpstreamStatus
+	}
+	if status := upstreamStatusFromCode(normalizeLogErrorCode(log)); status > 0 {
+		return status
+	}
+	return upstreamStatusFromMessage(log.ErrorMsg)
+}
+
+func upstreamStatusFromCode(code string) int {
+	code = strings.TrimSpace(code)
+	if !strings.HasPrefix(code, "upstream_") {
+		return 0
+	}
+	status, err := strconv.Atoi(strings.TrimPrefix(code, "upstream_"))
+	if err != nil {
+		return 0
+	}
+	return status
+}
+
+func upstreamStatusFromMessage(message string) int {
+	msg := strings.ToLower(strings.TrimSpace(message))
+	if !strings.Contains(msg, "upstream returned status") {
+		return 0
+	}
+	fields := strings.Fields(msg)
+	if len(fields) == 0 {
+		return 0
+	}
+	status, err := strconv.Atoi(fields[len(fields)-1])
+	if err != nil {
+		return 0
+	}
+	return status
 }
 
 // List 日志分页查询, 支持多维筛选。

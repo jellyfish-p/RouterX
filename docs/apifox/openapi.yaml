@@ -3163,6 +3163,13 @@ components:
         error_code:
           type: string
           description: 稳定错误 code；成功调用为空。
+        error_source:
+          type: string
+          description: 失败来源；成功调用为空。
+          enum: ["", request, auth, quota, route, channel, upstream, billing, system]
+        upstream_status:
+          type: integer
+          description: 上游 HTTP 状态；未调用上游或非上游错误时为 0/省略。
         error_msg: { type: string }
         ip: { type: string }
         created_at: { type: string, format: date-time }

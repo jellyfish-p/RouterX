@@ -52,6 +52,18 @@ const (
 	LogUsageSourceMinimum  = "minimum"
 )
 
+// 模型调用失败来源。
+const (
+	LogErrorSourceRequest  = "request"
+	LogErrorSourceAuth     = "auth"
+	LogErrorSourceQuota    = "quota"
+	LogErrorSourceRoute    = "route"
+	LogErrorSourceChannel  = "channel"
+	LogErrorSourceUpstream = "upstream"
+	LogErrorSourceBilling  = "billing"
+	LogErrorSourceSystem   = "system"
+)
+
 // 充值码状态
 const (
 	RedemCodeStatusUnused   = 0

@@ -347,6 +347,8 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `status` | int | `0` 未知，`1` 成功，`2` 失败 |
 | `request_id` | nullable string | HTTP 请求追踪 ID |
 | `error_code` | string | 失败时的稳定协议化错误 code，成功调用为空 |
+| `error_source` | string | 失败来源，例如 `upstream`、`quota`、`route` |
+| `upstream_status` | int | 上游 HTTP 状态；非上游错误为 `0` |
 | `content` | text | 请求体快照，需截断和脱敏 |
 | `response` | text | 响应体快照，需截断和脱敏 |
 | `error_msg` | text | 错误信息 |
@@ -362,10 +364,12 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 - `idx_logs_request_id`
 - `idx_logs_error_code`
 - `idx_logs_usage_source`
+- `idx_logs_error_source`
+- `idx_logs_upstream_status`
 
 目标账单快照字段：
 
-当前 `logs` 已保存基础 usage、`usage_source`、`quota_used`、状态和错误信息。商业级计费增强需要继续补充以下字段，或拆分出独立账单事实表，但必须保证历史账单可还原：
+当前 `logs` 已保存基础 usage、`usage_source`、`quota_used`、状态和结构化错误事实。商业级计费增强需要继续补充以下字段，或拆分出独立账单事实表，但必须保证历史账单可还原：
 
 | 字段 | 说明 |
 |------|------|
@@ -636,6 +640,7 @@ QuotaUnlimited = -1
 | `007_token_last_usage_summary` | 新增 API Key 最近来源摘要、最近模型和最近错误 code |
 | `008_log_request_context` | 新增调用日志 request_id、error_code 和对应索引 |
 | `009_log_usage_source` | 新增调用日志 usage_source 和对应索引 |
+| `010_log_error_facts` | 新增调用日志 error_source、upstream_status 和对应索引 |
 
 重要说明：
 
@@ -652,7 +657,7 @@ QuotaUnlimited = -1
 | `user_identities` | `(user_id, method)` | 用户身份列表和绑定检查 |
 | `tokens` | `key` unique | API Key SHA256 哈希鉴权 |
 | `channels` | `idx`、`type`、`priority`、`status`、`deleted_at` | 排序、筛选、路由选择和软删除过滤 |
-| `logs` | `user_id`、`token_id`、`channel_id`、`created_at`、`request_id`、`error_code`、`usage_source` | 日志查询、统计和链路排障 |
+| `logs` | `user_id`、`token_id`、`channel_id`、`created_at`、`request_id`、`error_code`、`usage_source`、`error_source`、`upstream_status` | 日志查询、统计和链路排障 |
 | `settings` | `key` unique | 配置读取 |
 | `admin_audit_logs` | `actor_user_id + created_at`、`resource_type + resource_id`、`action`、`request_id` | 管理审计查询和链路追踪 |
 
