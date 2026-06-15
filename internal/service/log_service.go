@@ -3,6 +3,7 @@ package service
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"routerx/internal"
 	"routerx/internal/common"
@@ -31,6 +32,7 @@ func (s *LogService) Record(log *model.Log) error {
 	log.ErrorCode = normalizeLogErrorCode(log)
 	log.ErrorSource = normalizeLogErrorSource(log)
 	log.UpstreamStatus = normalizeLogUpstreamStatus(log)
+	log.BillingSnapshot = normalizeLogBillingSnapshot(log)
 	return internal.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(log).Error; err != nil {
 			return err
@@ -163,6 +165,50 @@ func upstreamStatusFromMessage(message string) int {
 		return 0
 	}
 	return status
+}
+
+func normalizeLogBillingSnapshot(log *model.Log) string {
+	if log == nil {
+		return ""
+	}
+	if log.Status != common.LogStatusSuccess || log.QuotaUsed <= 0 {
+		return strings.TrimSpace(log.BillingSnapshot)
+	}
+	if snapshot := strings.TrimSpace(log.BillingSnapshot); snapshot != "" {
+		return snapshot
+	}
+	usageSource := strings.TrimSpace(log.UsageSource)
+	if usageSource == "" {
+		usageSource = common.LogUsageSourceMinimum
+		if log.TotalTokens > 0 {
+			usageSource = common.LogUsageSourceUpstream
+		}
+	}
+	payer := "user"
+	if log.TokenID != nil && *log.TokenID > 0 {
+		payer = "token_and_user"
+	}
+	snapshot := map[string]interface{}{
+		"schema":            "routerx.snapshot.v1",
+		"kind":              "billing",
+		"stage":             "p1",
+		"source":            "billing",
+		"redacted":          true,
+		"billing_status":    "settled",
+		"price_source":      "p0_usage",
+		"usage_source":      usageSource,
+		"payer":             payer,
+		"prompt_tokens":     log.PromptTokens,
+		"completion_tokens": log.CompletionTokens,
+		"total_tokens":      log.TotalTokens,
+		"final_quota_used":  log.QuotaUsed,
+		"deduction_result":  "applied",
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 // List 日志分页查询, 支持多维筛选。

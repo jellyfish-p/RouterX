@@ -3173,6 +3173,9 @@ components:
         route_snapshot:
           type: string
           description: 脱敏路由快照 JSON 字符串；当前包含请求模型、候选数量、选中通道、provider、分组、优先级和权重。
+        billing_snapshot:
+          type: string
+          description: 脱敏计费快照 JSON 字符串；当前包含结算状态、usage_source、最终扣费和基础 token 事实。
         error_msg: { type: string }
         ip: { type: string }
         created_at: { type: string, format: date-time }

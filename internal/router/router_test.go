@@ -4043,14 +4043,24 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if selectedChannelID, ok := routeSnapshot["selected_channel_id"].(float64); !ok || uint(selectedChannelID) != *callLog.ChannelID {
 		t.Fatalf("route snapshot should reference selected channel, snapshot=%+v log=%+v", routeSnapshot, callLog)
 	}
+	var billingSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.BillingSnapshot), &billingSnapshot); err != nil {
+		t.Fatalf("success log should store billing snapshot JSON, got %q: %v", callLog.BillingSnapshot, err)
+	}
+	if billingSnapshot["billing_status"] != "settled" || billingSnapshot["usage_source"] != common.LogUsageSourceUpstream || billingSnapshot["final_quota_used"] != float64(5) {
+		t.Fatalf("unexpected billing snapshot: %+v", billingSnapshot)
+	}
 
 	billingResp := performJSON(r, http.MethodGet, "/v0/user/billing", rootJWT, nil)
 	if billingResp.Code != http.StatusOK || !strings.Contains(billingResp.Body.String(), `"call_count":1`) || !strings.Contains(billingResp.Body.String(), `"total_quota":5`) || !strings.Contains(billingResp.Body.String(), `"total_tokens":5`) {
 		t.Fatalf("billing should aggregate successful logs, got %d %s", billingResp.Code, billingResp.Body.String())
 	}
 	logResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
-	if logResp.Code != http.StatusOK || !strings.Contains(logResp.Body.String(), `"usage_source":"upstream"`) || !strings.Contains(logResp.Body.String(), `"route_snapshot":`) {
-		t.Fatalf("user log should expose upstream usage source and route snapshot, got %d %s", logResp.Code, logResp.Body.String())
+	if logResp.Code != http.StatusOK ||
+		!strings.Contains(logResp.Body.String(), `"usage_source":"upstream"`) ||
+		!strings.Contains(logResp.Body.String(), `"route_snapshot":`) ||
+		!strings.Contains(logResp.Body.String(), `"billing_snapshot":`) {
+		t.Fatalf("user log should expose upstream usage source, route snapshot and billing snapshot, got %d %s", logResp.Code, logResp.Body.String())
 	}
 }
 

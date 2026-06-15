@@ -350,6 +350,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `error_source` | string | 失败来源，例如 `upstream`、`quota`、`route` |
 | `upstream_status` | int | 上游 HTTP 状态；非上游错误为 `0` |
 | `route_snapshot` | text/json string | 脱敏路由快照；当前包含请求模型、候选数量、选中通道、provider、分组、优先级和权重 |
+| `billing_snapshot` | text/json string | 脱敏计费快照；当前包含结算状态、usage_source、token 事实和最终扣费 |
 | `content` | text | 请求体快照，需截断和脱敏 |
 | `response` | text | 响应体快照，需截断和脱敏 |
 | `error_msg` | text | 错误信息 |
@@ -370,11 +371,10 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 
 目标账单快照字段：
 
-当前 `logs` 已保存基础 usage、`usage_source`、`quota_used`、状态和结构化错误事实。商业级计费增强需要继续补充以下字段，或拆分出独立账单事实表，但必须保证历史账单可还原：
+当前 `logs` 已保存基础 usage、`usage_source`、`quota_used`、`billing_snapshot`、状态和结构化错误事实。商业级计费增强需要继续补充以下字段，或拆分出独立账单事实表，但必须保证历史账单可还原：
 
 | 字段 | 说明 |
 |------|------|
-| `billing_status` | `pending`、`settled`、`failed`、`compensating` 等结算状态 |
 | `billing_expression_id` | 使用的模型价格或通道价格规则 ID |
 | `billing_expression_version` | 使用的价格规则版本 |
 | `billing_expression_source` | `model_prices`、`channel_model_prices` 或最低计费规则 |
@@ -643,6 +643,7 @@ QuotaUnlimited = -1
 | `009_log_usage_source` | 新增调用日志 usage_source 和对应索引 |
 | `010_log_error_facts` | 新增调用日志 error_source、upstream_status 和对应索引 |
 | `011_log_route_snapshot` | 新增调用日志 route_snapshot 脱敏 JSON 字符串 |
+| `012_log_billing_snapshot` | 新增调用日志 billing_snapshot 脱敏 JSON 字符串 |
 
 重要说明：
 
