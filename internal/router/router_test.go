@@ -2172,6 +2172,15 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 	if err := internal.DB.Create(&channel).Error; err != nil {
 		t.Fatal(err)
 	}
+	disabledChannel := model.Channel{
+		Type:   common.ChannelTypeClaude,
+		Name:   "metrics-disabled-channel",
+		Models: "claude-test",
+		Status: common.ChannelStatusManualOff,
+	}
+	if err := internal.DB.Create(&disabledChannel).Error; err != nil {
+		t.Fatal(err)
+	}
 	token, err := service.NewTokenService().Create(root.ID, "metrics-key", 100, false, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -2215,6 +2224,8 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 
 	resp := performJSON(r, http.MethodGet, "/metrics", "", nil)
 	body := resp.Body.String()
+	enabledChannelMetric := fmt.Sprintf(`routerx_channel_available{channel_id="%d",provider="openai-compatible"} 1`, channel.ID)
+	disabledChannelMetric := fmt.Sprintf(`routerx_channel_available{channel_id="%d",provider="anthropic"} 0`, disabledChannel.ID)
 	if resp.Code != http.StatusOK ||
 		!strings.Contains(body, "routerx_db_up 1") ||
 		!strings.Contains(body, "routerx_redis_up 0") ||
@@ -2222,6 +2233,8 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 		!strings.Contains(body, `routerx_logs_total{status="failed"} 2`) ||
 		!strings.Contains(body, "routerx_quota_used_total 7") ||
 		!strings.Contains(body, "routerx_channel_error_count 3") ||
+		!strings.Contains(body, enabledChannelMetric) ||
+		!strings.Contains(body, disabledChannelMetric) ||
 		!strings.Contains(body, `routerx_rate_limit_rejections_total{dimension="token"} 1`) ||
 		!strings.Contains(body, `routerx_payment_orders_total{provider="stripe",status="paid"} 1`) ||
 		!strings.Contains(body, `routerx_payment_orders_total{provider="epay",status="pending"} 1`) ||

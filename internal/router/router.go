@@ -121,6 +121,7 @@ func metricsHandler(c *gin.Context) {
 	writeGauge(&b, "routerx_redis_up", "Redis ping status.", extended.RedisUp)
 	writeLabeledCounter(&b, "routerx_logs_total", "Relay logs by status.", extended.Logs)
 	writeCounter(&b, "routerx_quota_used_total", "Total quota recorded in relay logs.", extended.QuotaUsed)
+	writeLabeledGauge(&b, "routerx_channel_available", "Channel availability by channel and provider.", extended.ChannelAvailable)
 	writeGauge(&b, "routerx_channel_error_count", "Current sum of channel error counters.", extended.ChannelErrorCount)
 	writeLabeledCounter(&b, "routerx_rate_limit_rejections_total", "Rate limit rejections by dimension.", extended.RateLimitRejections)
 	writeLabeledGauge(&b, "routerx_payment_orders_total", "Payment orders by provider and status.", extended.PaymentOrders)
@@ -144,6 +145,7 @@ type extendedMetrics struct {
 	Logs                []metricSample
 	QuotaUsed           int64
 	ChannelErrorCount   int64
+	ChannelAvailable    []metricSample
 	RateLimitRejections []metricSample
 	PaymentOrders       []metricSample
 	PaymentEvents       []metricSample
@@ -190,6 +192,12 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		return extendedMetrics{}, err
 	}
 	metrics.ChannelErrorCount = channelErrors.Value
+
+	channelAvailable, err := collectChannelAvailabilityMetrics()
+	if err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.ChannelAvailable = channelAvailable
 
 	rateLimitRejections, err := collectRateLimitRejectionMetrics()
 	if err != nil {
@@ -243,6 +251,60 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		})
 	}
 	return metrics, nil
+}
+
+func collectChannelAvailabilityMetrics() ([]metricSample, error) {
+	var rows []struct {
+		ID     uint
+		Type   int
+		Status int
+	}
+	if err := internal.DB.Model(&model.Channel{}).
+		Select("id, type, status").
+		Order("id ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	samples := make([]metricSample, 0, len(rows))
+	for _, row := range rows {
+		value := int64(0)
+		if row.Status == common.ChannelStatusEnabled {
+			value = 1
+		}
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{
+				{Name: "channel_id", Value: strconv.FormatUint(uint64(row.ID), 10)},
+				{Name: "provider", Value: channelMetricProviderName(row.Type)},
+			},
+			Value: value,
+		})
+	}
+	return samples, nil
+}
+
+func channelMetricProviderName(channelType int) string {
+	switch channelType {
+	case common.ChannelTypeOpenAI:
+		return "openai"
+	case common.ChannelTypeAzure:
+		return "azure"
+	case common.ChannelTypeClaude:
+		return "anthropic"
+	case common.ChannelTypeGemini:
+		return "gemini"
+	case common.ChannelTypeQwen:
+		return "qwen"
+	case common.ChannelTypeDeepSeek:
+		return "deepseek"
+	case common.ChannelTypeXAI:
+		return "xai"
+	case common.ChannelTypeRouterX:
+		return "routerx"
+	case common.ChannelTypeOpenAICompat:
+		return "openai-compatible"
+	default:
+		return "unknown"
+	}
 }
 
 func collectRateLimitRejectionMetrics() ([]metricSample, error) {
