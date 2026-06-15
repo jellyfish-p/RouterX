@@ -440,6 +440,11 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 }
 
 func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.Token, apiType relay.APIType, reqInfo relayRequestInfo, body []byte, contentType string, clientIP string, channel *model.Channel, rawResponse bool) (*RelayRawResult, *relay.Usage, bool, error) {
+	relayStart := time.Now()
+	defer func() {
+		s.recordRelayDuration(apiType, channel, time.Since(relayStart))
+	}()
+
 	adapter, err := s.GetAdapter(channel.Type)
 	if err != nil {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
@@ -476,6 +481,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	resp, err := doRelayAdapterRequest(reqCtx, adapter, target.BaseURL, endpoint, target.APIKey, outBody, outContentType)
 	latencyMs := int(time.Since(start).Milliseconds())
 	if err != nil {
+		s.recordUpstreamDuration(channel, "failed", time.Since(start))
 		_ = s.markChannelFailure(channel, latencyMs)
 		if errors.Is(err, errUnsupportedMultipart) {
 			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "multipart relay is not supported for selected upstream channel", clientIP)
@@ -492,11 +498,13 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
 	if err != nil {
+		s.recordUpstreamDuration(channel, "failed", time.Since(start))
 		_ = s.markChannelFailure(channel, latencyMs)
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response read failed", clientIP)
 		return nil, nil, true, &HTTPError{Status: 502, Message: "upstream response read failed", Type: "upstream_error", Code: "upstream_response_failed"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		s.recordUpstreamDuration(channel, "failed", time.Since(start))
 		_ = s.markChannelFailure(channel, latencyMs)
 		message := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, message, clientIP)
@@ -507,6 +515,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 			Code:    fmt.Sprintf("upstream_%d", resp.StatusCode),
 		}
 	}
+	s.recordUpstreamDuration(channel, "success", time.Since(start))
 
 	if rawResponse {
 		quotaUsed := quotaFromUsage(nil)
@@ -619,11 +628,14 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 
 	endpoint := adapter.GetAPIEndpoint(apiType, upstreamModel)
 	reqCtx, cancel := context.WithTimeout(ctx, s.relayTimeout())
+	relayStart := time.Now()
 	start := time.Now()
 	resp, err := adapter.DoRequest(reqCtx, target.BaseURL, endpoint, target.APIKey, outBody)
 	if err != nil {
 		cancel()
 		latencyMs := int(time.Since(start).Milliseconds())
+		s.recordRelayDuration(apiType, channel, time.Since(relayStart))
+		s.recordUpstreamDuration(channel, "failed", time.Since(start))
 		_ = s.markChannelFailure(channel, latencyMs)
 		if errors.Is(err, context.DeadlineExceeded) {
 			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream timeout", clientIP)
@@ -636,6 +648,8 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		cancel()
 		defer resp.Body.Close()
 		latencyMs := int(time.Since(start).Milliseconds())
+		s.recordRelayDuration(apiType, channel, time.Since(relayStart))
+		s.recordUpstreamDuration(channel, "failed", time.Since(start))
 		_ = s.markChannelFailure(channel, latencyMs)
 		message := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, message, clientIP)
@@ -651,9 +665,13 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if contentType == "" {
 		contentType = "text/event-stream"
 	}
+	s.recordUpstreamDuration(channel, "success", time.Since(start))
 	return &RelayStreamResult{
 		ContentType: contentType,
 		forward: func(write func([]byte) error, flush func()) (*relay.Usage, error) {
+			defer func() {
+				s.recordRelayDuration(apiType, channel, time.Since(relayStart))
+			}()
 			defer cancel()
 			defer resp.Body.Close()
 			usage, err := forwardOpenAIStream(resp.Body, write, flush)

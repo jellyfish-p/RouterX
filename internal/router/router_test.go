@@ -2174,6 +2174,81 @@ func TestMetricsEndpointIncludesHTTPMetrics(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpointIncludesRelayDurationMetrics(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "chatcmpl-metrics",
+			"object": "chat.completion",
+			"model": "gpt-test",
+			"choices": [
+				{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+			],
+			"usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+		}`))
+	}))
+	defer upstream.Close()
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("observability.metrics_enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":      "metrics-sdk",
+		"unlimited": true,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "metrics-compat",
+		"models":   "gpt-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model":    "gpt-test",
+		"messages": []map[string]string{{"role": "user", "content": "hello"}},
+	})
+	if chatResp.Code != http.StatusOK {
+		t.Fatalf("chat completion failed: %d %s", chatResp.Code, chatResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodGet, "/metrics", "", nil)
+	body := resp.Body.String()
+	if resp.Code != http.StatusOK ||
+		!strings.Contains(body, `routerx_relay_duration_seconds_count{protocol="openai",api_type="chat",provider="openai-compatible"} 1`) ||
+		!strings.Contains(body, `routerx_upstream_duration_seconds_count{provider="openai-compatible",channel_id="1",status="success"} 1`) {
+		t.Fatalf("metrics should include relay and upstream duration histograms, got %d %s", resp.Code, body)
+	}
+}
+
 func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	r := newTestRouter(t)

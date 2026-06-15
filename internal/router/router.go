@@ -35,6 +35,7 @@ func SetupRouter(
 	setupH *handler.SetupHandler,
 ) *gin.Engine {
 	middleware.ResetHTTPMetrics()
+	service.ResetRelayMetrics()
 
 	r := gin.New()
 
@@ -123,6 +124,8 @@ func metricsHandler(c *gin.Context) {
 	writeGauge(&b, "routerx_redis_up", "Redis ping status.", extended.RedisUp)
 	writeLabeledCounter(&b, "routerx_http_requests_total", "HTTP requests by method, path group and status.", extended.HTTPRequests)
 	writeLabeledHistogram(&b, "routerx_http_request_duration_seconds", "HTTP request duration in seconds by method and path group.", extended.HTTPRequestDurations)
+	writeLabeledHistogram(&b, "routerx_relay_duration_seconds", "Relay duration in seconds by protocol, API type and provider.", extended.RelayDurations)
+	writeLabeledHistogram(&b, "routerx_upstream_duration_seconds", "Upstream duration in seconds by provider, channel and status.", extended.UpstreamDurations)
 	writeLabeledCounter(&b, "routerx_logs_total", "Relay logs by status.", extended.Logs)
 	writeLabeledCounter(&b, "routerx_relay_requests_total", "Relay requests by protocol, API type, model and status.", extended.RelayRequests)
 	writeLabeledCounter(&b, "routerx_relay_errors_total", "Relay errors by protocol, API type, code and source.", extended.RelayErrors)
@@ -165,6 +168,8 @@ type extendedMetrics struct {
 	RedisUp              int64
 	HTTPRequests         []metricSample
 	HTTPRequestDurations []metricHistogramSample
+	RelayDurations       []metricHistogramSample
+	UpstreamDurations    []metricHistogramSample
 	Logs                 []metricSample
 	RelayRequests        []metricSample
 	RelayErrors          []metricSample
@@ -187,6 +192,9 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 	httpRequests, httpRequestDurations := collectHTTPMetrics()
 	metrics.HTTPRequests = httpRequests
 	metrics.HTTPRequestDurations = httpRequestDurations
+	relayDurations, upstreamDurations := collectRelayDurationMetrics()
+	metrics.RelayDurations = relayDurations
+	metrics.UpstreamDurations = upstreamDurations
 
 	var logRows []struct {
 		Status int
@@ -340,6 +348,49 @@ func collectHTTPMetrics() ([]metricSample, []metricHistogramSample) {
 		})
 	}
 	return requests, durations
+}
+
+func collectRelayDurationMetrics() ([]metricHistogramSample, []metricHistogramSample) {
+	relayRows, upstreamRows := service.RelayMetricsSnapshot()
+	relaySamples := make([]metricHistogramSample, 0, len(relayRows))
+	for _, row := range relayRows {
+		relaySamples = append(relaySamples, metricHistogramSample{
+			Labels: []metricLabel{
+				{Name: "protocol", Value: row.Protocol},
+				{Name: "api_type", Value: row.APIType},
+				{Name: "provider", Value: row.Provider},
+			},
+			Buckets: serviceBucketsToMetricBuckets(row.Buckets),
+			Sum:     row.SumSeconds,
+			Count:   row.Count,
+		})
+	}
+
+	upstreamSamples := make([]metricHistogramSample, 0, len(upstreamRows))
+	for _, row := range upstreamRows {
+		upstreamSamples = append(upstreamSamples, metricHistogramSample{
+			Labels: []metricLabel{
+				{Name: "provider", Value: row.Provider},
+				{Name: "channel_id", Value: row.ChannelID},
+				{Name: "status", Value: row.Status},
+			},
+			Buckets: serviceBucketsToMetricBuckets(row.Buckets),
+			Sum:     row.SumSeconds,
+			Count:   row.Count,
+		})
+	}
+	return relaySamples, upstreamSamples
+}
+
+func serviceBucketsToMetricBuckets(buckets []service.HistogramBucket) []metricHistogramBucket {
+	result := make([]metricHistogramBucket, 0, len(buckets))
+	for _, bucket := range buckets {
+		result = append(result, metricHistogramBucket{
+			Le:    bucket.Le,
+			Count: bucket.Count,
+		})
+	}
+	return result
 }
 
 type relayRequestMetricKey struct {
