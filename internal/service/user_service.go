@@ -1224,7 +1224,8 @@ func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeC
 	if err := query.First(&order).Error; err != nil {
 		return err
 	}
-	if err := verifyStripeRefundSnapshot(order, session); err != nil {
+	orderAmountMinor, refundedAmountMinor, err := verifyStripeRefundSnapshot(order, session)
+	if err != nil {
 		return err
 	}
 
@@ -1247,13 +1248,21 @@ func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeC
 	if order.Status != common.PaymentOrderStatusPaid {
 		return errors.New("payment order is not paid")
 	}
+	refundStatus := common.PaymentOrderStatusRefunded
+	refundType := "full"
+	refundQuota := order.Quota
+	if refundedAmountMinor < orderAmountMinor {
+		refundStatus = common.PaymentOrderStatusPartiallyRefunded
+		refundType = "partial"
+		refundQuota = proportionalRefundQuota(order.Quota, refundedAmountMinor, orderAmountMinor)
+	}
 	if err := tx.Model(&order).Updates(map[string]interface{}{
-		"status":     common.PaymentOrderStatusRefunded,
+		"status":     refundStatus,
 		"updated_at": now,
 	}).Error; err != nil {
 		return err
 	}
-	order.Status = common.PaymentOrderStatusRefunded
+	order.Status = refundStatus
 
 	autoDeduct, err := paymentBoolSettingDefault("payment.refund.auto_deduct", false)
 	if err != nil {
@@ -1269,15 +1278,19 @@ func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeC
 		if err := tx.Select("id", "quota").First(&user, order.UserID).Error; err != nil {
 			return err
 		}
-		if allowNegative || user.Quota >= order.Quota {
+		if refundQuota > 0 && (allowNegative || user.Quota >= refundQuota) {
+			reason := "stripe refund deduct"
+			if refundType == "partial" {
+				reason = "stripe partial refund deduct"
+			}
 			if _, _, err := applyQuotaChange(tx, quotaChange{
 				UserID:         order.UserID,
-				Amount:         -order.Quota,
+				Amount:         -refundQuota,
 				Type:           common.QuotaTransactionTypeRefundDeduct,
 				SourceType:     common.QuotaSourceTypeRefund,
 				SourceID:       event.ProviderEventID,
 				IdempotencyKey: "refund:" + event.ProviderEventID,
-				Reason:         "stripe refund deduct",
+				Reason:         reason,
 				RequestID:      requestID,
 				AllowNegative:  allowNegative,
 			}); err != nil {
@@ -1292,10 +1305,13 @@ func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeC
 	event.Processed = true
 	event.ProcessedAt = &now
 	refundSummary := map[string]interface{}{
-		"amount_refunded": session.AmountRefunded,
+		"amount_refunded": refundedAmountMinor,
+		"order_amount":    orderAmountMinor,
 		"auto_deduct":     autoDeduct,
 		"allow_negative":  allowNegative,
 		"deducted":        deducted,
+		"refund_quota":    refundQuota,
+		"refund_type":     refundType,
 	}
 	if err := recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentRefundProcessed, *event, &order, refundSummary); err != nil {
 		return err
@@ -1377,22 +1393,32 @@ func verifyStripeOrderSnapshot(order model.PaymentOrder, session stripeCheckoutS
 	return nil
 }
 
-func verifyStripeRefundSnapshot(order model.PaymentOrder, session stripeCheckoutSession) error {
+func verifyStripeRefundSnapshot(order model.PaymentOrder, session stripeCheckoutSession) (int64, int64, error) {
 	expectedAmount, err := decimalAmountToMinorUnits(order.Amount)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	refundedAmount := session.AmountRefunded
 	if refundedAmount == 0 {
 		refundedAmount = session.Amount
 	}
-	if expectedAmount != refundedAmount {
-		return errors.New("stripe refund amount mismatch")
+	if refundedAmount <= 0 || refundedAmount > expectedAmount {
+		return 0, 0, errors.New("stripe refund amount mismatch")
 	}
 	if strings.ToLower(strings.TrimSpace(order.Currency)) != strings.ToLower(strings.TrimSpace(session.Currency)) {
-		return errors.New("stripe refund currency mismatch")
+		return 0, 0, errors.New("stripe refund currency mismatch")
 	}
-	return nil
+	return expectedAmount, refundedAmount, nil
+}
+
+func proportionalRefundQuota(orderQuota, refundedAmount, orderAmount int64) int64 {
+	if orderQuota <= 0 || refundedAmount <= 0 || orderAmount <= 0 {
+		return 0
+	}
+	if refundedAmount >= orderAmount {
+		return orderQuota
+	}
+	return orderQuota * refundedAmount / orderAmount
 }
 
 func paymentBoolSettingDefault(key string, fallback bool) (bool, error) {

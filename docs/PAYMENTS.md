@@ -242,7 +242,7 @@ Stripe 要求：
 - 非成功事件可以记录为 `ignored`，不能入账。
 - 退款事件先记录为 refund fact；是否扣回额度由退款策略决定。
 
-当前基础实现已注册 `POST /v0/payment/stripe/webhook`，支持 `checkout.session.completed` 成功事件、`Stripe-Signature` 校验、订单 metadata 校验、金额/币种快照校验、`payment_events` 幂等、`quota_transactions` 入账，并写入 `payment_webhook.processed` 和 `payment_order.paid` 审计摘要。`charge.refunded` 全额退款事件会记录 `payment_refund.processed`，自动扣回成功时额外记录 `payment_refund.deducted`。真实 Stripe Checkout Session 创建仍是后续能力，当前用户创建订单接口返回本地安全 checkout 占位链接。
+当前基础实现已注册 `POST /v0/payment/stripe/webhook`，支持 `checkout.session.completed` 成功事件、`Stripe-Signature` 校验、订单 metadata 校验、金额/币种快照校验、`payment_events` 幂等、`quota_transactions` 入账，并写入 `payment_webhook.processed` 和 `payment_order.paid` 审计摘要。`charge.refunded` 全额或部分退款事件会记录 `payment_refund.processed`，自动扣回成功时额外记录 `payment_refund.deducted`。真实 Stripe Checkout Session 创建仍是后续能力，当前用户创建订单接口返回本地安全 checkout 占位链接。
 
 ## 6. 易支付契约
 
@@ -315,11 +315,11 @@ user submits code
 - 管理员可通过 `/v0/admin/redem` 生成随机充值码或导入指定充值码，并可作废未使用充值码；这些管理操作会写入 `redem_code.*` 管理审计，完整兑换码只进入脱敏摘要。
 - 管理员可通过 `/v0/admin/payment/products` 创建、更新、启用和禁用支付商品；用户侧只展示启用商品，禁用商品不能创建新订单；支付商品管理成功操作会写入 `admin_audit_logs`。
 - 用户侧支付商品列表和本地 `pending` 订单创建/查询已具备基础实现；创建订单要求对应 provider 已在 settings 启用，并会写 `payment_order.create` 管理审计，摘要不保存 checkout URL。易支付网关、商户号、回调 URL 和 `PAYMENT_EPAY_KEY` 配置齐全时会返回签名收银台 URL；pending 订单不会入账。
-- Stripe webhook 已支持 `checkout.session.completed` 签名校验、金额/币种/metadata 校验、`payment_events` 幂等、入账审计和入账；`charge.refunded` 全额退款事件可幂等记录订单退款状态，写入退款审计，并可按 settings 自动扣回额度。
+- Stripe webhook 已支持 `checkout.session.completed` 签名校验、金额/币种/metadata 校验、`payment_events` 幂等、入账审计和入账；`charge.refunded` 全额或部分退款事件可幂等记录订单退款状态，写入退款审计，并可按 settings 全额或比例扣回额度。
 - 易支付异步通知已支持 MD5 签名校验、金额校验、`payment_events` 幂等记录、订单置为 `paid`、`quota_transactions` 入账、用户额度增加和基础 webhook/入账审计；重复通知不重复入账。
 - 易支付同步返回页已支持本地订单状态只读展示，不作为入账依据。
 - 支付相关人工补账/扣回已支持 `POST /v0/admin/payment/adjustments`，会写 `manual_credit` 或 `manual_debit` 额度流水，并在同一事务中写 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 审计。
-- 充值码批次/备注/过期策略、真实 provider 会话创建、部分退款、争议和更完整的人工退款流程仍属于后续增强，不能把当前实现误写成完整支付闭环。
+- 充值码批次/备注/过期策略、真实 provider 会话创建、争议和更完整的人工退款流程仍属于后续增强，不能把当前实现误写成完整支付闭环。
 
 要求：
 
@@ -358,10 +358,10 @@ user submits code
 
 当前基础实现：
 
-- Stripe `charge.refunded` 全额退款事件会校验原订单金额和币种，写入 `payment_events` 幂等事实，并将订单置为 `refunded`。
+- Stripe `charge.refunded` 退款事件会校验原订单金额和币种，写入 `payment_events` 幂等事实；全额退款将订单置为 `refunded`，部分退款将订单置为 `partially_refunded`。
 - 默认 `payment.refund.auto_deduct=false`，退款只记录订单状态，不扣用户额度。
 - 退款处理成功会写入 `payment_refund.processed` 管理审计，摘要记录 provider、event_id、订单号、金额、币种、额度和扣回策略快照。
-- 开启 `payment.refund.auto_deduct=true` 后，如果用户余额足够，写入 `quota_transactions(type=refund_deduct, source_type=refund)` 并扣回原订单额度，同时写入 `payment_refund.deducted` 审计；重复退款事件不重复扣回。
+- 开启 `payment.refund.auto_deduct=true` 后，如果用户余额足够，写入 `quota_transactions(type=refund_deduct, source_type=refund)` 并扣回原订单额度或按退款金额比例扣回额度，同时写入 `payment_refund.deducted` 审计；重复退款事件不重复扣回。
 - `payment.refund.allow_negative_balance=false` 时余额不足不会自动扣成负数，需转人工处理。
 
 ## 9. 人工补账和扣回
@@ -512,7 +512,7 @@ receive webhook
 - 人工补账和扣回。
 - 支付 settings 和密钥引用变更。
 
-当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建，Stripe/易支付 webhook 入账，Stripe 全额退款和扣回，支付相关人工补账/扣回，以及充值码生成、导入、作废、兑换的成功审计；部分退款、争议、更完整人工退款流程和更多失败分支审计仍需继续补齐。
+当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建，Stripe/易支付 webhook 入账，Stripe 全额/部分退款和扣回，支付相关人工补账/扣回，以及充值码生成、导入、作废、兑换的成功审计；争议、更完整人工退款流程和更多失败分支审计仍需继续补齐。
 
 审计字段：
 

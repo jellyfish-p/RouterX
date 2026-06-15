@@ -349,8 +349,8 @@ Gemini-compatible 错误示例：
 | `payment_order.create` | `POST /v0/user/payment/orders` |
 | `payment_webhook.processed` | `POST /v0/payment/stripe/webhook`、`POST /v0/payment/epay/notify` |
 | `payment_order.paid` | 支付 provider 成功回调入账 |
-| `payment_refund.processed` | `POST /v0/payment/stripe/webhook` 处理全额退款事件 |
-| `payment_refund.deducted` | Stripe 全额退款按 settings 自动扣回额度 |
+| `payment_refund.processed` | `POST /v0/payment/stripe/webhook` 处理全额或部分退款事件 |
+| `payment_refund.deducted` | Stripe 全额或部分退款按 settings 自动扣回额度 |
 | `payment_manual_adjust.credit` | `POST /v0/admin/payment/adjustments` 人工补账 |
 | `payment_manual_adjust.debit` | `POST /v0/admin/payment/adjustments` 人工扣回 |
 | `api_key.created` | `POST /v0/user/token` |
@@ -592,7 +592,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额退款事件、退款审计和可选自动扣回；易支付异步通知已支持 MD5 签名、金额校验、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回并写流水与审计。真实 Stripe Checkout Session 创建、部分退款和争议处理仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计和可选自动扣回；易支付异步通知已支持 MD5 签名、金额校验、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回并写流水与审计。真实 Stripe Checkout Session 创建、争议处理和更完整人工退款流程仍属于后续能力。
 
 用户鉴权接口：
 
@@ -607,7 +607,7 @@ Provider 回调接口：
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
-| POST | `/v0/payment/stripe/webhook` | Stripe 签名 | 基础实现；Stripe Checkout webhook，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，全额退款时写 `payment_refund.*` 审计，返回纯文本 `success` |
+| POST | `/v0/payment/stripe/webhook` | Stripe 签名 | 基础实现；Stripe Checkout webhook，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，全额或部分退款时写 `payment_refund.*` 审计，返回纯文本 `success` |
 | POST | `/v0/payment/epay/notify` | 易支付签名 | 基础实现；易支付异步通知，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，返回纯文本 `success` |
 | GET | `/v0/payment/epay/return` | 无，仅读状态 | 基础实现；易支付同步返回页，只读取本地订单状态，不入账 |
 
@@ -677,7 +677,8 @@ Provider 回调接口：
 | `paid` | 支付成功，额度已入账 |
 | `failed` | 支付失败或通知校验失败 |
 | `closed` | 超时关闭或用户取消 |
-| `refunded` | 已退款，是否扣回额度由后续策略决定 |
+| `refunded` | 已全额退款，是否扣回额度由退款策略决定 |
+| `partially_refunded` | 已部分退款，自动扣回开启时按退款金额比例扣回额度 |
 
 Stripe Webhook 要求：
 
@@ -685,7 +686,7 @@ Stripe Webhook 要求：
 - 只在 `checkout.session.completed` 或可信成功事件后入账。
 - 校验 `metadata.order_no`、金额、货币和订单状态。
 - 同一个 Stripe event id 必须幂等处理。
-- `charge.refunded` 全额退款事件会把订单置为 `refunded`；开启 `payment.refund.auto_deduct=true` 时按策略扣回额度并写 `refund_deduct` 流水。
+- `charge.refunded` 全额退款事件会把订单置为 `refunded`；部分退款事件会把订单置为 `partially_refunded`。开启 `payment.refund.auto_deduct=true` 时按全额或比例策略扣回额度并写 `refund_deduct` 流水。
 
 易支付通知要求：
 

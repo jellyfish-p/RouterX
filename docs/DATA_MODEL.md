@@ -437,7 +437,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `amount` | decimal/string | 本地订单金额 |
 | `currency` | string | 货币 |
 | `quota` | int64 | 本订单最终入账基础额度单位，包含赠送额度 |
-| `status` | string/int | `pending`、`paid`、`failed`、`closed`、`refunded` |
+| `status` | string/int | `pending`、`paid`、`failed`、`closed`、`refunded`、`partially_refunded` |
 | `provider_order_id` | nullable string | provider 会话或订单 ID，如 Stripe Checkout Session ID |
 | `provider_payment_id` | nullable string | provider 支付流水号 |
 | `checkout_url` | nullable text | 支付跳转地址，过期后不可继续使用 |
@@ -550,7 +550,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 
 ### `admin_audit_logs`
 
-统一管理审计日志表，记录管理端高风险操作的可复核摘要。当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、scope 更新、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、全额退款扣回、支付人工补账/扣回，settings 批量更新，用户调额，充值码生成、导入、作废、兑换，通道创建、编辑、启用、禁用、删除、测试、拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及按时间清理调用日志审计，后续继续扩展到价格、日志导出、支付失败分支和更多拒绝操作。
+统一管理审计日志表，记录管理端高风险操作的可复核摘要。当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、scope 更新、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、全额/部分退款扣回、支付人工补账/扣回，settings 批量更新，用户调额，充值码生成、导入、作废、兑换，通道创建、编辑、启用、禁用、删除、测试、拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及按时间清理调用日志审计，后续继续扩展到价格、日志导出、支付失败分支和更多拒绝操作。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|

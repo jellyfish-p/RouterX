@@ -694,7 +694,7 @@ paths:
     post:
       tags: [Payment Webhook]
       summary: Stripe Webhook 异步通知
-      description: 基础实现；使用 PAYMENT_STRIPE_WEBHOOK_SECRET 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计。charge.refunded 全额退款事件会校验金额和币种，将 paid 订单置为 refunded，写 payment_refund.processed；payment.refund.auto_deduct=true 且扣回成功时写 refund_deduct 流水和 payment_refund.deducted 审计。重复事件幂等返回 success。
+      description: 基础实现；使用 PAYMENT_STRIPE_WEBHOOK_SECRET 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计。charge.refunded 全额或部分退款事件会校验金额和币种，将 paid 订单置为 refunded 或 partially_refunded，写 payment_refund.processed；payment.refund.auto_deduct=true 且扣回成功时写 refund_deduct 流水和 payment_refund.deducted 审计，部分退款按退款金额比例扣回。重复事件幂等返回 success。
       parameters:
         - name: Stripe-Signature
           in: header
@@ -1040,7 +1040,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe 全额退款和扣回、支付人工补账/扣回，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe 全额/部分退款和扣回、支付人工补账/扣回，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
       security:
         - UserJWT: []
       parameters:
@@ -2608,7 +2608,7 @@ components:
         provider: { type: string }
         status:
           type: string
-          enum: [pending, paid, failed, closed, refunded]
+          enum: [pending, paid, failed, closed, refunded, partially_refunded]
         product_id: { type: string }
         amount: { type: string }
         currency: { type: string }
@@ -2668,7 +2668,7 @@ components:
                 amount_refunded:
                   type: integer
                   format: int64
-                  description: Stripe minor unit 退款金额；当前基础实现按全额退款处理。
+                  description: Stripe minor unit 退款金额；等于订单金额时为全额退款，小于订单金额时记录为部分退款并按比例扣回。
                 currency:
                   type: string
                   example: usd

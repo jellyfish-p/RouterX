@@ -95,11 +95,12 @@ const (
 	PaymentProviderStripe = "stripe"
 	PaymentProviderEpay   = "epay"
 
-	PaymentOrderStatusPending  = "pending"
-	PaymentOrderStatusPaid     = "paid"
-	PaymentOrderStatusFailed   = "failed"
-	PaymentOrderStatusClosed   = "closed"
-	PaymentOrderStatusRefunded = "refunded"
+	PaymentOrderStatusPending           = "pending"
+	PaymentOrderStatusPaid              = "paid"
+	PaymentOrderStatusFailed            = "failed"
+	PaymentOrderStatusClosed            = "closed"
+	PaymentOrderStatusRefunded          = "refunded"
+	PaymentOrderStatusPartiallyRefunded = "partially_refunded"
 )
 
 // 未限制额度标记

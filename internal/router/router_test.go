@@ -2036,6 +2036,79 @@ func TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota(t *testing.T) {
 	}
 }
 
+func TestStripePartialRefundWebhookRecordsAndDeductsProportionally(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_partial_refund",
+		Name:      "Partially refundable credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.refund.auto_deduct", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	order := createStripePaidOrder(t, r, rootJWT, "quota_partial_refund", "evt_paid_partial_refund", "pi_partial_refund")
+	refundBody := stripeChargeRefundedPayload("evt_partial_refund_1", order, "pi_partial_refund", 500)
+	refundResp := performStripeWebhook(r, refundBody, "whsec_test_secret")
+	if refundResp.Code != http.StatusOK || strings.TrimSpace(refundResp.Body.String()) != "success" {
+		t.Fatalf("stripe partial refund webhook should return success, got %d %s", refundResp.Code, refundResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 50 {
+		t.Fatalf("partial refund should deduct proportional quota once, got %d", root.Quota)
+	}
+	if err := internal.DB.First(&order, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != common.PaymentOrderStatusPartiallyRefunded {
+		t.Fatalf("partial refund should mark order partially_refunded, got %+v", order)
+	}
+	var refundTx model.QuotaTransaction
+	if err := internal.DB.Where("type = ? AND source_id = ?", common.QuotaTransactionTypeRefundDeduct, "evt_partial_refund_1").First(&refundTx).Error; err != nil {
+		t.Fatalf("partial refund should write refund deduct transaction: %v", err)
+	}
+	if refundTx.Amount != -50 || refundTx.BalanceBefore != 100 || refundTx.BalanceAfter != 50 || refundTx.Reason != "stripe partial refund deduct" {
+		t.Fatalf("unexpected partial refund deduct transaction: %+v", refundTx)
+	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_event&resource_id=evt_partial_refund_1", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_refund.processed"`) ||
+		!strings.Contains(auditBody, `"action":"payment_refund.deducted"`) ||
+		!strings.Contains(auditBody, "partial") ||
+		!strings.Contains(auditBody, "evt_partial_refund_1") ||
+		!strings.Contains(auditBody, order.OrderNo) {
+		t.Fatalf("partial refund should write payment event audit logs, got %d %s", auditResp.Code, auditBody)
+	}
+}
+
 func TestChannelExtendedManagement(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
