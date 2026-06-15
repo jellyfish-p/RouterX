@@ -4632,6 +4632,20 @@ func TestAPIKeyIPScopeRejectsBeforeRelay(t *testing.T) {
 	if failedLog.QuotaUsed != 0 {
 		t.Fatalf("ip scope denial should write a zero-quota failed log, got %+v", failedLog)
 	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("ip scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "token_forbidden" ||
+		policySnapshot["quota_precheck"] != "not_evaluated" ||
+		scopeResult["ip"] != "deny" ||
+		scopeResult["api_type"] != "not_evaluated" {
+		t.Fatalf("unexpected ip scope denial policy snapshot: %+v", policySnapshot)
+	}
 }
 
 func TestAPIKeyMethodScopeRejectsBeforeRelay(t *testing.T) {
@@ -4739,6 +4753,20 @@ func TestAPIKeyMethodScopeRejectsBeforeRelay(t *testing.T) {
 	}
 	if failedLog.QuotaUsed != 0 {
 		t.Fatalf("method scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("method scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "token_forbidden" ||
+		policySnapshot["quota_precheck"] != "not_evaluated" ||
+		scopeResult["method"] != "deny" ||
+		scopeResult["api_type"] != "not_evaluated" {
+		t.Fatalf("unexpected method scope denial policy snapshot: %+v", policySnapshot)
 	}
 }
 
@@ -5082,6 +5110,20 @@ func TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight(t *testing.T) {
 	if failedLog.QuotaUsed != 0 {
 		t.Fatalf("concurrency scope denial should write a zero-quota failed log, got %+v", failedLog)
 	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("concurrency scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "rate_limit_exceeded" ||
+		policySnapshot["quota_precheck"] != "rate_limit_exceeded" ||
+		scopeResult["max_concurrency"] != "deny" ||
+		scopeResult["api_type"] != "not_evaluated" {
+		t.Fatalf("unexpected concurrency scope denial policy snapshot: %+v", policySnapshot)
+	}
 }
 
 func TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay(t *testing.T) {
@@ -5176,6 +5218,20 @@ func TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay(t *testing.T) {
 	if failedLog.QuotaUsed != 0 {
 		t.Fatalf("rpm scope denial should write a zero-quota failed log, got %+v", failedLog)
 	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("rpm scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "rate_limit_exceeded" ||
+		policySnapshot["quota_precheck"] != "rate_limit_exceeded" ||
+		scopeResult["rpm"] != "deny" ||
+		scopeResult["api_type"] != "not_evaluated" {
+		t.Fatalf("unexpected rpm scope denial policy snapshot: %+v", policySnapshot)
+	}
 }
 
 func TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed(t *testing.T) {
@@ -5269,6 +5325,21 @@ func TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed(t *testing.T) {
 	}
 	if failedLog.QuotaUsed != 0 {
 		t.Fatalf("tpm scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("tpm scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "rate_limit_exceeded" ||
+		policySnapshot["quota_precheck"] != "rate_limit_exceeded" ||
+		scopeResult["tpm"] != "deny" ||
+		scopeResult["api_type"] != "allow" ||
+		scopeResult["model"] != "allow" {
+		t.Fatalf("unexpected tpm scope denial policy snapshot: %+v", policySnapshot)
 	}
 }
 
@@ -5469,6 +5540,20 @@ func TestAPIKeyEntryProtocolScopeRejectsBeforeRelay(t *testing.T) {
 	}
 	if failedLog.QuotaUsed != 0 {
 		t.Fatalf("entry protocol scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("entry protocol scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["kind"] != "policy" ||
+		policySnapshot["access_decision"] != "deny" ||
+		policySnapshot["reject_code"] != "token_forbidden" ||
+		policySnapshot["quota_precheck"] != "not_evaluated" ||
+		scopeResult["entry_protocol"] != "deny" ||
+		scopeResult["api_type"] != "not_evaluated" {
+		t.Fatalf("unexpected entry protocol scope denial policy snapshot: %+v", policySnapshot)
 	}
 }
 

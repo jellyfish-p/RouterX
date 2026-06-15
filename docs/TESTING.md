@@ -28,15 +28,15 @@
 | `TestAPIKeyModelScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `allow_models` scope；允许模型成功转发，未允许模型返回 `model_not_allowed`，不调用上游、不额外扣费，并写失败日志、拒绝分支 `policy_snapshot` 和 `api_key.scope_updated` 审计 |
 | `TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `api_types` scope；允许 APIType 成功转发，未允许 APIType 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyChannelGroupScopeFiltersRelayCandidates` | 用户更新 API Key `channel_groups` scope；候选通道按允许分组过滤，越权 `routerx.route` 返回 `route_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
-| `TestAPIKeyEntryProtocolScopeRejectsBeforeRelay` | 用户更新 API Key `entry_protocols` scope；允许入口协议成功转发，未允许入口协议按当前协议错误外形返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志 |
+| `TestAPIKeyEntryProtocolScopeRejectsBeforeRelay` | 用户更新 API Key `entry_protocols` scope；允许入口协议成功转发，未允许入口协议按当前协议错误外形返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestUserGroupChannelGroupAccessFiltersRelayCandidates` | 默认用户分组只能访问 settings 允许的通道分组；更高优先级的未授权通道会被过滤，越权 `routerx.route` 返回 `route_forbidden` 且不调用上游 |
-| `TestAPIKeyIPScopeRejectsBeforeRelay` | 用户更新 API Key `ip_cidrs` scope；允许 IP 成功转发，未允许 IP 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志 |
-| `TestAPIKeyMethodScopeRejectsBeforeRelay` | 用户更新 API Key `methods` scope；允许方法路径成功转发，未允许方法路径返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志 |
+| `TestAPIKeyIPScopeRejectsBeforeRelay` | 用户更新 API Key `ip_cidrs` scope；允许 IP 成功转发，未允许 IP 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyMethodScopeRejectsBeforeRelay` | 用户更新 API Key `methods` scope；允许方法路径成功转发，未允许方法路径返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed` | 用户更新 API Key `daily_quota` scope；当日成功日志已消耗额度达到上限后返回 `insufficient_quota`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed` | 用户更新 API Key `monthly_quota` scope；当月成功日志已消耗额度达到上限后返回 `insufficient_quota`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
-| `TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight` | 用户更新 API Key `max_concurrency` scope；同一 Key 在途请求达到上限后返回 `rate_limit_exceeded`，不调用第二个上游、不额外扣费，原在途请求结束后可继续成功 |
-| `TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay` | 用户更新 API Key `rpm` scope；当前分钟请求数达到上限后返回 `rate_limit_exceeded`，不调用上游、不额外扣费，并写失败日志 |
-| `TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed` | 用户更新 API Key `tpm` scope；当前分钟成功日志的模型 token 达到上限后返回 `rate_limit_exceeded`，不调用上游、不额外扣费，并写失败日志 |
+| `TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight` | 用户更新 API Key `max_concurrency` scope；同一 Key 在途请求达到上限后返回 `rate_limit_exceeded`，不调用第二个上游、不额外扣费，原在途请求结束后可继续成功，并写拒绝分支 `policy_snapshot` |
+| `TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay` | 用户更新 API Key `rpm` scope；当前分钟请求数达到上限后返回 `rate_limit_exceeded`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed` | 用户更新 API Key `tpm` scope；当前分钟成功日志的模型 token 达到上限后返回 `rate_limit_exceeded`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAdminPrivilegeBoundaries` | 管理员和超级管理员权限边界、设置脱敏、管理员不能越权管理同级或自己 |
 | `TestAdminAccountManagementAuditLogs` | 超级管理员创建、编辑、禁用和删除管理员写入 `admin.*` 审计，普通管理员越权访问超级管理员接口写 `admin.denied`，审计摘要不泄露密码 |
 | `TestAdminUserManagementAuditLogs` | 管理员创建、编辑、禁用和删除普通用户写入 `user.*` 审计，用户接口拒绝角色变更写 `user.denied`，审计摘要不泄露密码 |
@@ -414,7 +414,7 @@ Gemini-compatible 最小断言：
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
 | P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Anthropic/Gemini 基础流式、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为、原生字段保真和 Anthropic/Gemini 原生流式路径 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
-| P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功和部分拒绝分支 policy_snapshot、基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含 P0 表达式/默认倍率/预算前后摘要的基础 billing_snapshot；继续补 IP/method/entry protocol/RPM/TPM/并发等更多拒绝分支 policy、完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
+| P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功和 API Key scope 拒绝分支 policy_snapshot、基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含 P0 表达式/默认倍率/预算前后摘要的基础 billing_snapshot；继续补基础余额预检、用户分组访问控制、完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |
 | P1 | 可靠性 | 已覆盖非流式安全重试、Redis 全局/IP/Token 基础限流和 `error_count` 自动熔断候选过滤；继续补半开恢复、探测任务、更多限流维度和生产 fail-open/fail-closed 策略 |
 | P1 | 运行模式 | SQLite 单镜像无 Redis 可运行；外部数据库无 Redis 不就绪或启动失败 |

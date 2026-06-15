@@ -1844,7 +1844,13 @@ func (s *RelayService) enforceTokenTPMScope(ctx context.Context, token *model.To
 		return nil
 	}
 	if err := s.tokenService.CheckTPMScope(token); err != nil {
-		_ = s.recordLog(ctx, token, nil, modelName, nil, common.LogStatusFailed, 0, "tpm limit exceeded by api key scope", clientIP)
+		logCtx := ContextWithRelayPolicySnapshot(ctx, buildRelayPolicyDenySnapshot(ctx, token, "rate_limit_exceeded", "rate_limit_exceeded", map[string]interface{}{
+			"api_type":      "allow",
+			"model":         "allow",
+			"channel_group": "not_evaluated",
+			"tpm":           "deny",
+		}))
+		_ = s.recordLog(logCtx, token, nil, modelName, nil, common.LogStatusFailed, 0, "tpm limit exceeded by api key scope", clientIP)
 		return &HTTPError{Status: 429, Message: "rate limit exceeded", Type: "rate_limit_error", Code: "rate_limit_exceeded"}
 	}
 	return nil
