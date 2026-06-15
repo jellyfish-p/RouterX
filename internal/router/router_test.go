@@ -1232,6 +1232,116 @@ func TestAdminPaymentManualAdjustmentWritesManualTransactionAndAudit(t *testing.
 	}
 }
 
+func TestAdminPaymentManualRefundMarksOrderAndDeductsQuota(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username": "alice",
+		"password": "password123",
+		"quota":    100,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	var alice model.User
+	if err := internal.DB.Where("username = ?", "alice").First(&alice).Error; err != nil {
+		t.Fatal(err)
+	}
+	order := model.PaymentOrder{
+		OrderNo:   "PAYREFUND1000",
+		UserID:    alice.ID,
+		ProductID: "quota_manual_refund",
+		Provider:  common.PaymentProviderStripe,
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Status:    common.PaymentOrderStatusPaid,
+	}
+	if err := internal.DB.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	refundResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refunds", rootJWT, map[string]interface{}{
+		"order_no":        order.OrderNo,
+		"refund_quota":    40,
+		"reason":          "customer refund",
+		"idempotency_key": "manual-refund-1",
+	})
+	refundBody := refundResp.Body.String()
+	if refundResp.Code != http.StatusOK ||
+		!strings.Contains(refundBody, `"order_status":"partially_refunded"`) ||
+		!strings.Contains(refundBody, `"balance_after":60`) {
+		t.Fatalf("manual refund should deduct quota and mark partial refund, got %d %s", refundResp.Code, refundBody)
+	}
+	if err := internal.DB.First(&alice, alice.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if alice.Quota != 60 {
+		t.Fatalf("manual refund should deduct user quota, got %d", alice.Quota)
+	}
+	if err := internal.DB.First(&order, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != common.PaymentOrderStatusPartiallyRefunded {
+		t.Fatalf("manual partial refund should mark order partially_refunded, got %+v", order)
+	}
+	var quotaTx model.QuotaTransaction
+	if err := internal.DB.Where("idempotency_key = ?", "manual-refund-1").First(&quotaTx).Error; err != nil {
+		t.Fatalf("manual refund should write quota transaction: %v", err)
+	}
+	if quotaTx.UserID != alice.ID ||
+		quotaTx.Type != common.QuotaTransactionTypeRefundDeduct ||
+		quotaTx.Amount != -40 ||
+		quotaTx.BalanceBefore != 100 ||
+		quotaTx.BalanceAfter != 60 ||
+		quotaTx.SourceType != common.QuotaSourceTypeRefund ||
+		quotaTx.SourceID != order.OrderNo {
+		t.Fatalf("unexpected manual refund quota transaction: %+v", quotaTx)
+	}
+	if quotaTx.ActorUserID == nil || *quotaTx.ActorUserID != root.ID || quotaTx.Reason != "customer refund" {
+		t.Fatalf("manual refund quota transaction should include actor and reason: %+v", quotaTx)
+	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo, rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_refund.manual"`) ||
+		!strings.Contains(auditBody, order.OrderNo) ||
+		!strings.Contains(auditBody, "customer refund") ||
+		!strings.Contains(auditBody, "manual-refund-1") {
+		t.Fatalf("manual refund should write payment refund audit log, got %d %s", auditResp.Code, auditBody)
+	}
+	duplicateResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refunds", rootJWT, map[string]interface{}{
+		"order_no":        order.OrderNo,
+		"refund_quota":    40,
+		"reason":          "customer refund",
+		"idempotency_key": "manual-refund-1",
+	})
+	if duplicateResp.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate manual refund idempotency key should fail, got %d %s", duplicateResp.Code, duplicateResp.Body.String())
+	}
+	var txCount int64
+	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("idempotency_key = ?", "manual-refund-1").Count(&txCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if txCount != 1 {
+		t.Fatalf("duplicate manual refund must not write duplicate transactions, got %d", txCount)
+	}
+}
+
 func TestRedemCodeBatchNoteAndExpirationPolicy(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

@@ -31,13 +31,13 @@
 - 充值码生成、导入、作废和兑换会写入 `redem_code.*` 管理审计摘要，完整兑换码不会明文写入审计摘要。
 - 支付订单创建会写入 `payment_order.create` 管理审计摘要，checkout URL 不会写入审计摘要。
 - 支付 provider 成功回调会写入 `payment_webhook.processed` 和 `payment_order.paid` 管理审计摘要；Stripe 全额或部分退款会写入 `payment_refund.processed`，自动扣回成功时写入 `payment_refund.deducted`；Stripe 争议/拒付事件会写入 `payment_dispute.created`，并在自动禁用策略开启时记录禁用的 API Key 数量。
-- 支付相关人工补账/扣回会写入 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 管理审计摘要，并记录原因、幂等键和前后余额。
+- 支付相关人工补账/扣回会写入 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 管理审计摘要，并记录原因、幂等键和前后余额；人工退款会写入 `payment_refund.manual`，记录订单、退款额度、订单状态、原因、幂等键和前后余额。
 - 通道创建、编辑、启用、禁用、删除、测试和拉取模型会写入 `channel.*` 管理审计摘要，下游密钥只记录数量或是否配置。
 - 管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝会写入 `admin.*` 管理审计摘要，密码不会写入审计摘要。
 - 管理员按 `before` 清理调用日志会写入 `log.clear` 管理审计摘要，记录清理截止时间。
 - HTTP Logger 中间件已经记录基础访问日志。
 
-这些能力构成 P0 的可见闭环，并补上了 API Key 管理、用户管理、支付商品管理、支付入账/退款回调、支付人工修正、settings 变更、用户调额、充值码管理、通道管理、管理员账号管理和日志清理审计的基础切片。商业级增强需要继续补更完整的审计覆盖、结构化字段、指标、告警、追踪和保留策略。
+这些能力构成 P0 的可见闭环，并补上了 API Key 管理、用户管理、支付商品管理、支付入账/退款回调、支付人工修正与人工退款、settings 变更、用户调额、充值码管理、通道管理、管理员账号管理和日志清理审计的基础切片。商业级增强需要继续补更完整的审计覆盖、结构化字段、指标、告警、追踪和保留策略。
 
 ## 观测事实分层
 

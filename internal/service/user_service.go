@@ -97,6 +97,7 @@ const (
 	adminAuditActionPaymentOrderPaid        = "payment_order.paid"
 	adminAuditActionPaymentRefundProcessed  = "payment_refund.processed"
 	adminAuditActionPaymentRefundDeducted   = "payment_refund.deducted"
+	adminAuditActionPaymentRefundManual     = "payment_refund.manual"
 	adminAuditActionPaymentDisputeCreated   = "payment_dispute.created"
 	adminAuditActionPaymentManualCredit     = "payment_manual_adjust.credit"
 	adminAuditActionPaymentManualDebit      = "payment_manual_adjust.debit"
@@ -156,6 +157,25 @@ type PaymentManualAdjustmentResult struct {
 	OrderNo        string `json:"order_no,omitempty"`
 	Amount         int64  `json:"amount"`
 	Type           string `json:"type"`
+	BalanceBefore  int64  `json:"balance_before"`
+	BalanceAfter   int64  `json:"balance_after"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type PaymentManualRefundInput struct {
+	OrderNo        string
+	RefundQuota    int64
+	Reason         string
+	IdempotencyKey string
+	IP             string
+	UserAgent      string
+}
+
+type PaymentManualRefundResult struct {
+	UserID         uint   `json:"user_id"`
+	OrderNo        string `json:"order_no"`
+	RefundQuota    int64  `json:"refund_quota"`
+	OrderStatus    string `json:"order_status"`
 	BalanceBefore  int64  `json:"balance_before"`
 	BalanceAfter   int64  `json:"balance_after"`
 	IdempotencyKey string `json:"idempotency_key"`
@@ -480,6 +500,144 @@ func (s *UserService) ApplyPaymentManualAdjustment(operatorID uint, operatorRole
 			OrderNo:        orderNo,
 			Amount:         input.Amount,
 			Type:           adjustmentType,
+			BalanceBefore:  balanceBefore,
+			BalanceAfter:   balanceAfter,
+			IdempotencyKey: idempotencyKey,
+		}
+		return nil
+	})
+	return result, err
+}
+
+// ApplyPaymentManualRefund 记录管理员确认后的支付退款。
+// 该接口面向已经在线下或 provider 侧完成的退款事实，负责扣回额度、更新订单状态和留下审计证据。
+func (s *UserService) ApplyPaymentManualRefund(operatorID uint, operatorRole int, input PaymentManualRefundInput, requestID string) (*PaymentManualRefundResult, error) {
+	orderNo := strings.TrimSpace(input.OrderNo)
+	if orderNo == "" {
+		return nil, errors.New("order_no is required")
+	}
+	if input.RefundQuota <= 0 {
+		return nil, errors.New("refund_quota must be positive")
+	}
+	reason := strings.TrimSpace(input.Reason)
+	requireReason, err := paymentBoolSettingDefault("payment.manual_adjust.require_reason", true)
+	if err != nil {
+		return nil, err
+	}
+	if requireReason && reason == "" {
+		return nil, errors.New("reason is required")
+	}
+	if reason == "" {
+		reason = "payment manual refund"
+	}
+	idempotencyKey := strings.TrimSpace(input.IdempotencyKey)
+	if idempotencyKey == "" {
+		return nil, errors.New("idempotency_key is required")
+	}
+
+	var orderSnapshot model.PaymentOrder
+	if err := internal.DB.Where("order_no = ?", orderNo).First(&orderSnapshot).Error; err != nil {
+		return nil, err
+	}
+	if err := s.ensureNormalUserTarget(operatorID, operatorRole, orderSnapshot.UserID); err != nil {
+		return nil, err
+	}
+	allowNegative, err := paymentBoolSettingDefault("payment.refund.allow_negative_balance", false)
+	if err != nil {
+		return nil, err
+	}
+
+	actorID := operatorID
+	var result *PaymentManualRefundResult
+	err = internal.DB.Transaction(func(tx *gorm.DB) error {
+		var existing model.QuotaTransaction
+		err := tx.Where("idempotency_key = ?", idempotencyKey).First(&existing).Error
+		switch {
+		case err == nil:
+			return errors.New("idempotency_key has already been used")
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return err
+		}
+
+		var order model.PaymentOrder
+		if err := tx.Where("order_no = ?", orderNo).First(&order).Error; err != nil {
+			return err
+		}
+		if order.Status != common.PaymentOrderStatusPaid {
+			return errors.New("payment order is not paid")
+		}
+		if input.RefundQuota > order.Quota {
+			return errors.New("refund_quota exceeds order quota")
+		}
+
+		refundStatus := common.PaymentOrderStatusRefunded
+		if input.RefundQuota < order.Quota {
+			refundStatus = common.PaymentOrderStatusPartiallyRefunded
+		}
+		balanceBefore, balanceAfter, err := applyQuotaChange(tx, quotaChange{
+			UserID:         order.UserID,
+			Amount:         -input.RefundQuota,
+			Type:           common.QuotaTransactionTypeRefundDeduct,
+			SourceType:     common.QuotaSourceTypeRefund,
+			SourceID:       order.OrderNo,
+			IdempotencyKey: idempotencyKey,
+			Reason:         reason,
+			ActorUserID:    &actorID,
+			RequestID:      requestID,
+			AllowNegative:  allowNegative,
+		})
+		if err != nil {
+			return err
+		}
+
+		now := time.Now()
+		if err := tx.Model(&order).Updates(map[string]interface{}{
+			"status":     refundStatus,
+			"updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		order.Status = refundStatus
+
+		summary := map[string]interface{}{
+			"user_id":         order.UserID,
+			"order_no":        order.OrderNo,
+			"refund_quota":    input.RefundQuota,
+			"order_quota":     order.Quota,
+			"order_status":    refundStatus,
+			"reason":          reason,
+			"balance_before":  balanceBefore,
+			"balance_after":   balanceAfter,
+			"idempotency_key": idempotencyKey,
+			"allow_negative":  allowNegative,
+			"provider":        order.Provider,
+			"payment_amount":  order.Amount,
+			"currency":        order.Currency,
+		}
+		afterSummary, err := json.Marshal(summary)
+		if err != nil {
+			return err
+		}
+		if err := recordAdminAuditLogWithDB(tx, AdminAuditRecordInput{
+			RequestID:    requestID,
+			ActorUserID:  operatorID,
+			ActorRole:    operatorRole,
+			Action:       adminAuditActionPaymentRefundManual,
+			ResourceType: common.QuotaSourceTypePaymentOrder,
+			ResourceID:   order.OrderNo,
+			AfterSummary: string(afterSummary),
+			Result:       "success",
+			IP:           input.IP,
+			UserAgent:    input.UserAgent,
+		}); err != nil {
+			return err
+		}
+
+		result = &PaymentManualRefundResult{
+			UserID:         order.UserID,
+			OrderNo:        order.OrderNo,
+			RefundQuota:    input.RefundQuota,
+			OrderStatus:    refundStatus,
 			BalanceBefore:  balanceBefore,
 			BalanceAfter:   balanceAfter,
 			IdempotencyKey: idempotencyKey,

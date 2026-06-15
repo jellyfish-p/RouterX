@@ -290,6 +290,7 @@ Gemini-compatible 错误示例：
 | PATCH | `/v0/admin/payment/products/:id/disable` | 基础实现 | 禁用商品；禁用后用户侧不可见且不能创建新订单，成功后写管理审计 |
 | PATCH | `/v0/admin/payment/products/:id/enable` | 基础实现 | 启用商品，成功后写管理审计 |
 | POST | `/v0/admin/payment/adjustments` | 基础实现 | 支付相关人工补账或扣回；写 `manual_credit`/`manual_debit` 额度流水和 `payment_manual_adjust.*` 管理审计，默认必须填写原因 |
+| POST | `/v0/admin/payment/refunds` | 基础实现 | 管理员确认支付退款后扣回额度，订单置为 `refunded` 或 `partially_refunded`，写 `refund_deduct` 流水和 `payment_refund.manual` 审计 |
 
 创建/更新支付商品请求：
 
@@ -321,6 +322,19 @@ Gemini-compatible 错误示例：
 ```
 
 `amount` 为正数时写 `manual_credit`，负数时写 `manual_debit`；`order_no` 可关联原支付订单，`idempotency_key` 用于防止同一人工动作重复改变余额。
+
+支付人工退款请求：
+
+```json
+{
+  "order_no": "RX202606150001",
+  "refund_quota": 40000000,
+  "reason": "customer refund",
+  "idempotency_key": "refund-ticket-1234"
+}
+```
+
+`refund_quota` 必须大于 0 且不能超过订单入账额度；仅支持对 `paid` 订单人工落账退款。全额退款会将订单置为 `refunded`，部分退款会置为 `partially_refunded`；接口会写 `quota_transactions(type=refund_deduct, source_type=refund, source_id=<order_no>)`，并通过 `idempotency_key` 防止重复扣回。
 
 ### 管理审计
 
@@ -356,6 +370,7 @@ Gemini-compatible 错误示例：
 | `payment_order.paid` | 支付 provider 成功回调入账 |
 | `payment_refund.processed` | `POST /v0/payment/stripe/webhook` 处理全额或部分退款事件 |
 | `payment_refund.deducted` | Stripe 全额或部分退款按 settings 自动扣回额度 |
+| `payment_refund.manual` | `POST /v0/admin/payment/refunds` 管理员人工确认退款并扣回额度 |
 | `payment_dispute.created` | `POST /v0/payment/stripe/webhook` 处理 Stripe 争议/拒付事件，可按 settings 禁用 API Key |
 | `payment_manual_adjust.credit` | `POST /v0/admin/payment/adjustments` 人工补账 |
 | `payment_manual_adjust.debit` | `POST /v0/admin/payment/adjustments` 人工扣回 |
@@ -598,7 +613,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe secret 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议事件记录和可选 API Key 禁用；易支付异步通知已支持 MD5 签名、金额校验、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回并写流水与审计。完整争议生命周期和更完整人工退款流程仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、订单列表和详情；Stripe secret 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议事件记录和可选 API Key 禁用；易支付异步通知已支持 MD5 签名、金额校验、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回和人工退款落账并写流水与审计。完整争议生命周期和 provider 侧自动发起退款流程仍属于后续能力。
 
 用户鉴权接口：
 
