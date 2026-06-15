@@ -1232,6 +1232,85 @@ func TestAdminPaymentManualAdjustmentWritesManualTransactionAndAudit(t *testing.
 	}
 }
 
+func TestRedemCodeBatchNoteAndExpirationPolicy(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	future := time.Now().Add(24 * time.Hour).Unix()
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/redem", rootJWT, map[string]interface{}{
+		"quota":      33,
+		"codes":      []string{"BATCH-CODE-1"},
+		"batch_no":   "launch-2026",
+		"note":       "private beta",
+		"expired_at": future,
+	})
+	createBody := createResp.Body.String()
+	if createResp.Code != http.StatusOK ||
+		!strings.Contains(createBody, `"batch_no":"launch-2026"`) ||
+		!strings.Contains(createBody, `"note":"private beta"`) ||
+		!strings.Contains(createBody, `"expired_at"`) {
+		t.Fatalf("redem code create should return batch, note and expiry, got %d %s", createResp.Code, createBody)
+	}
+	var stored struct {
+		BatchNo   string
+		Note      string
+		ExpiredAt *time.Time
+	}
+	if err := internal.DB.Table("redem_codes").Select("batch_no, note, expired_at").Where("code = ?", "BATCH-CODE-1").Scan(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.BatchNo != "launch-2026" || stored.Note != "private beta" || stored.ExpiredAt == nil {
+		t.Fatalf("redem code metadata should be stored, got %+v", stored)
+	}
+
+	listResp := performJSON(r, http.MethodGet, "/v0/admin/redem?batch_no=launch-2026", rootJWT, nil)
+	if listResp.Code != http.StatusOK || !strings.Contains(listResp.Body.String(), "BATCH-CODE-1") {
+		t.Fatalf("admin should filter redem codes by batch_no, got %d %s", listResp.Code, listResp.Body.String())
+	}
+	pastCreate := performJSON(r, http.MethodPost, "/v0/admin/redem", rootJWT, map[string]interface{}{
+		"quota":      10,
+		"codes":      []string{"PAST-CODE-1"},
+		"expired_at": time.Now().Add(-time.Hour).Unix(),
+	})
+	if pastCreate.Code != http.StatusBadRequest {
+		t.Fatalf("redem code creation should reject past expired_at, got %d %s", pastCreate.Code, pastCreate.Body.String())
+	}
+
+	expiredAt := time.Now().Add(-time.Hour)
+	if err := internal.DB.Exec(
+		"INSERT INTO redem_codes (code, quota, status, batch_no, note, expired_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		"EXPIRED-CODE-1", int64(44), common.RedemCodeStatusUnused, "legacy", "expired fixture", expiredAt, time.Now(),
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+	expiredRedeem := performJSON(r, http.MethodPost, "/v0/user/redem", rootJWT, map[string]interface{}{
+		"code": "EXPIRED-CODE-1",
+	})
+	if expiredRedeem.Code != http.StatusBadRequest {
+		t.Fatalf("expired redem code should not be redeemable, got %d %s", expiredRedeem.Code, expiredRedeem.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 0 {
+		t.Fatalf("expired redem code must not grant quota, got %d", root.Quota)
+	}
+}
+
 func TestAdminManagesRedemCodes(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

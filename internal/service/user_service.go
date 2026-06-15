@@ -489,8 +489,8 @@ func (s *UserService) ApplyPaymentManualAdjustment(operatorID uint, operatorRole
 	return result, err
 }
 
-// ListRedemCodes 查询充值码列表，供管理员按状态或 code 关键字检索。
-func (s *UserService) ListRedemCodes(operatorRole int, page, pageSize int, status *int, keyword string) ([]model.RedemCode, int64, error) {
+// ListRedemCodes 查询充值码列表，供管理员按状态、批次或关键字检索。
+func (s *UserService) ListRedemCodes(operatorRole int, page, pageSize int, status *int, keyword, batchNo string) ([]model.RedemCode, int64, error) {
 	if operatorRole < common.RoleAdmin {
 		return nil, 0, errors.New("admin role required")
 	}
@@ -502,8 +502,12 @@ func (s *UserService) ListRedemCodes(operatorRole int, page, pageSize int, statu
 	if status != nil {
 		query = query.Where("status = ?", *status)
 	}
+	if batchNo = strings.TrimSpace(batchNo); batchNo != "" {
+		query = query.Where("batch_no = ?", batchNo)
+	}
 	if keyword = strings.TrimSpace(keyword); keyword != "" {
-		query = query.Where("code LIKE ?", "%"+keyword+"%")
+		like := "%" + keyword + "%"
+		query = query.Where("code LIKE ? OR batch_no LIKE ? OR note LIKE ?", like, like, like)
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -542,7 +546,7 @@ func (s *UserService) GetRedemCodeByCode(code string) (*model.RedemCode, error) 
 }
 
 // CreateRedemCodes 生成随机充值码，或导入管理员提供的指定充值码。
-func (s *UserService) CreateRedemCodes(operatorRole int, quota int64, count int, codes []string) ([]model.RedemCode, error) {
+func (s *UserService) CreateRedemCodes(operatorRole int, quota int64, count int, codes []string, batchNo, note string, expiredAtUnix *int64) ([]model.RedemCode, error) {
 	if operatorRole < common.RoleAdmin {
 		return nil, errors.New("admin role required")
 	}
@@ -560,6 +564,22 @@ func (s *UserService) CreateRedemCodes(operatorRole int, quota int64, count int,
 	}
 	if count > 100 {
 		return nil, errors.New("redem code count must be at most 100")
+	}
+	batchNo = strings.TrimSpace(batchNo)
+	if len(batchNo) > 64 {
+		return nil, errors.New("redem code batch_no length must be at most 64")
+	}
+	note = strings.TrimSpace(note)
+	if len(note) > 256 {
+		return nil, errors.New("redem code note length must be at most 256")
+	}
+	var expiredAt *time.Time
+	if expiredAtUnix != nil && *expiredAtUnix > 0 {
+		t := time.Unix(*expiredAtUnix, 0)
+		if !t.After(time.Now()) {
+			return nil, errors.New("redem code expired_at must be in the future")
+		}
+		expiredAt = &t
 	}
 
 	created := make([]model.RedemCode, 0, count)
@@ -581,9 +601,12 @@ func (s *UserService) CreateRedemCodes(operatorRole int, quota int64, count int,
 		}
 		for _, code := range normalized {
 			created = append(created, model.RedemCode{
-				Code:   code,
-				Quota:  quota,
-				Status: common.RedemCodeStatusUnused,
+				Code:      code,
+				Quota:     quota,
+				Status:    common.RedemCodeStatusUnused,
+				BatchNo:   batchNo,
+				Note:      note,
+				ExpiredAt: expiredAt,
 			})
 		}
 		return tx.Create(&created).Error
@@ -1680,9 +1703,13 @@ func (s *UserService) RedeemCode(userID uint, code string, requestID string) (in
 			return err
 		}
 		now := time.Now()
+		if redem.ExpiredAt != nil && !redem.ExpiredAt.After(now) {
+			return errors.New("redem code is expired")
+		}
 		usedBy := userID
 		res := tx.Model(&model.RedemCode{}).
 			Where("id = ? AND status = ?", redem.ID, common.RedemCodeStatusUnused).
+			Where("expired_at IS NULL OR expired_at > ?", now).
 			Updates(map[string]interface{}{
 				"status":  common.RedemCodeStatusUsed,
 				"used_by": usedBy,

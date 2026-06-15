@@ -551,7 +551,7 @@ paths:
     post:
       tags: [User Usage]
       summary: 使用充值码
-      description: 基础实现；兑换未使用充值码，事务内标记 redem_codes used/used_by/used_at、增加当前用户 quota，并写入 quota_transactions 幂等流水和 redem_code.redeem 管理审计。审计摘要只保存脱敏兑换码、额度、使用人和兑换后余额；充值码批次/备注/过期策略仍以 docs/PAYMENTS.md 后续契约为准。
+      description: 基础实现；兑换未使用且未过期的充值码，事务内标记 redem_codes used/used_by/used_at、增加当前用户 quota，并写入 quota_transactions 幂等流水和 redem_code.redeem 管理审计。审计摘要只保存脱敏兑换码、额度、使用人和兑换后余额；已使用、已作废、已过期或不存在的充值码不会入账。
       security:
         - UserJWT: []
       requestBody:
@@ -974,7 +974,7 @@ paths:
     get:
       tags: [Admin Redem]
       summary: 充值码列表
-      description: 管理员查看充值码，可按状态和 code 关键字过滤。状态：0 未使用，1 已使用，2 已作废。
+      description: 管理员查看充值码，可按状态、code/batch/note 关键字和 batch_no 过滤。状态：0 未使用，1 已使用，2 已作废。
       security:
         - UserJWT: []
       parameters:
@@ -982,6 +982,11 @@ paths:
         - $ref: "#/components/parameters/PageSize"
         - $ref: "#/components/parameters/Status"
         - $ref: "#/components/parameters/Keyword"
+        - name: batch_no
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按充值码批次号精确过滤。
       responses:
         "200":
           description: 充值码分页列表。
@@ -997,7 +1002,7 @@ paths:
     post:
       tags: [Admin Redem]
       summary: 生成或导入充值码
-      description: codes 为空时按 count 生成随机充值码；codes 非空时导入指定充值码。count 默认 1，单次最多 100。成功后按每个充值码写入 redem_code.create 管理审计。
+      description: codes 为空时按 count 生成随机充值码；codes 非空时导入指定充值码。count 默认 1，单次最多 100。可写入 batch_no、note 和未来 expired_at；成功后按每个充值码写入 redem_code.create 管理审计。
       security:
         - UserJWT: []
       requestBody:
@@ -2725,6 +2730,19 @@ components:
             minLength: 4
             maxLength: 64
           description: 指定要导入的充值码；非空时按此列表创建。
+        batch_no:
+          type: string
+          maxLength: 64
+          description: 可选批次号，用于运营发放和筛选。
+        note:
+          type: string
+          maxLength: 256
+          description: 可选备注，仅管理端可见，会进入脱敏审计摘要。
+        expired_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: Unix 秒；为空或 0 表示不过期，非空时必须是未来时间。
     RedemCodeInfo:
       type: object
       properties:
@@ -2734,6 +2752,9 @@ components:
         status:
           type: integer
           description: "0=unused, 1=used, 2=disabled"
+        batch_no: { type: string }
+        note: { type: string }
+        expired_at: { type: string, format: date-time, nullable: true }
         used_by: { type: integer, format: uint64, nullable: true }
         created_at: { type: string, format: date-time }
         used_at: { type: string, format: date-time, nullable: true }

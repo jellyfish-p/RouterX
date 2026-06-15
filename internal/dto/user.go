@@ -21,6 +21,7 @@ type RedemCodeListRequest struct {
 	PageSize int    `form:"page_size" binding:"omitempty,min=1,max=100"`
 	Status   *int   `form:"status"`
 	Keyword  string `form:"keyword"`
+	BatchNo  string `form:"batch_no"`
 }
 
 // CreateUserRequest 创建用户请求 (Admin)
@@ -89,9 +90,12 @@ func UserModelInfosFromNames(names []string) []UserModelInfo {
 }
 
 type CreateRedemCodesRequest struct {
-	Quota int64    `json:"quota" binding:"required"`
-	Count int      `json:"count"`
-	Codes []string `json:"codes"`
+	Quota     int64    `json:"quota" binding:"required"`
+	Count     int      `json:"count"`
+	Codes     []string `json:"codes"`
+	BatchNo   string   `json:"batch_no"`
+	Note      string   `json:"note"`
+	ExpiredAt *int64   `json:"expired_at"`
 }
 
 type RedemCodeInfo struct {
@@ -99,6 +103,9 @@ type RedemCodeInfo struct {
 	Code      string     `json:"code"`
 	Quota     int64      `json:"quota"`
 	Status    int        `json:"status"`
+	BatchNo   string     `json:"batch_no,omitempty"`
+	Note      string     `json:"note,omitempty"`
+	ExpiredAt *time.Time `json:"expired_at,omitempty"`
 	UsedBy    *uint      `json:"used_by,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UsedAt    *time.Time `json:"used_at,omitempty"`
@@ -113,6 +120,9 @@ func RedemCodeInfoFromModel(code *model.RedemCode) RedemCodeInfo {
 		Code:      code.Code,
 		Quota:     code.Quota,
 		Status:    code.Status,
+		BatchNo:   code.BatchNo,
+		Note:      code.Note,
+		ExpiredAt: code.ExpiredAt,
 		UsedBy:    code.UsedBy,
 		CreatedAt: code.CreatedAt,
 		UsedAt:    code.UsedAt,

@@ -92,10 +92,14 @@ CREATE TABLE IF NOT EXISTS redem_codes (
     code VARCHAR(64) NOT NULL,
     quota BIGINT NOT NULL,
     status INT NOT NULL DEFAULT 0,
+    batch_no VARCHAR(64) NOT NULL DEFAULT '',
+    note VARCHAR(256) NOT NULL DEFAULT '',
+    expired_at DATETIME(3),
     used_by INT UNSIGNED,
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     used_at DATETIME(3),
     UNIQUE INDEX idx_redem_codes_code (code),
+    INDEX idx_redem_codes_batch_no (batch_no),
     FOREIGN KEY (used_by) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

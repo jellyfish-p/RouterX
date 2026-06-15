@@ -259,8 +259,8 @@ Gemini-compatible 错误示例：
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
-| GET | `/v0/admin/redem` | 基础实现 | 充值码列表，支持 `page`、`page_size`、`status`、`keyword` |
-| POST | `/v0/admin/redem` | 基础实现 | 生成随机充值码，或通过 `codes` 导入指定充值码，成功后按码写管理审计 |
+| GET | `/v0/admin/redem` | 基础实现 | 充值码列表，支持 `page`、`page_size`、`status`、`keyword`、`batch_no` |
+| POST | `/v0/admin/redem` | 基础实现 | 生成随机充值码，或通过 `codes` 导入指定充值码；支持 `batch_no`、`note`、未来 `expired_at`，成功后按码写管理审计 |
 | PATCH | `/v0/admin/redem/:id/disable` | 基础实现 | 作废未使用充值码；作废后用户不可兑换，成功后写管理审计 |
 
 创建/导入充值码请求：
@@ -269,9 +269,14 @@ Gemini-compatible 错误示例：
 {
   "quota": 100000000,
   "count": 10,
-  "codes": ["OFFLINE-CREDIT-1"]
+  "codes": ["OFFLINE-CREDIT-1"],
+  "batch_no": "launch-2026",
+  "note": "private beta invite",
+  "expired_at": 1798761600
 }
 ```
+
+`expired_at` 使用 Unix 秒；为空或 `0` 表示不过期，非空时必须是未来时间。用户兑换已过期充值码会失败，不改变余额，也不会写入额度流水。
 
 当 `codes` 为空时按 `count` 生成随机充值码，`count` 默认 1，最大 100；当 `codes` 非空时导入指定码。
 
@@ -588,7 +593,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 |------|------|----------|------|
 | GET | `/v0/user/log` | 已实现 | 当前用户调用日志 |
 | GET | `/v0/user/billing` | 基础实现 | 当前用户账单统计 |
-| POST | `/v0/user/redem` | 基础实现 | 使用未兑换充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水与 `redem_code.redeem` 管理审计 |
+| POST | `/v0/user/redem` | 基础实现 | 使用未兑换且未过期的充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水与 `redem_code.redeem` 管理审计 |
 | GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露的可用模型列表；价格表未接入时 `pricing_ready=false` |
 
 ### 支付接口

@@ -85,10 +85,14 @@ CREATE TABLE IF NOT EXISTS redem_codes (
     code TEXT NOT NULL UNIQUE,
     quota INTEGER NOT NULL,
     status INTEGER NOT NULL DEFAULT 0,
+    batch_no TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    expired_at DATETIME,
     used_by INTEGER REFERENCES users(id),
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     used_at DATETIME
 );
+CREATE INDEX IF NOT EXISTS idx_redem_codes_batch_no ON redem_codes(batch_no);
 
 CREATE TABLE IF NOT EXISTS quota_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

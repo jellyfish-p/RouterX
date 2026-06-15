@@ -238,7 +238,7 @@ func (h *UserHandler) ListRedemCodes(c *gin.Context) {
 	}
 	var req dto.RedemCodeListRequest
 	_ = c.ShouldBindQuery(&req)
-	codes, total, err := h.svc.ListRedemCodes(operator.Role, req.Page, req.PageSize, req.Status, req.Keyword)
+	codes, total, err := h.svc.ListRedemCodes(operator.Role, req.Page, req.PageSize, req.Status, req.Keyword, req.BatchNo)
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
@@ -259,7 +259,7 @@ func (h *UserHandler) CreateRedemCodes(c *gin.Context) {
 		common.FailWithStatus(c, 400, "充值码参数无效")
 		return
 	}
-	codes, err := h.svc.CreateRedemCodes(operator.Role, req.Quota, req.Count, req.Codes)
+	codes, err := h.svc.CreateRedemCodes(operator.Role, req.Quota, req.Count, req.Codes, req.BatchNo, req.Note, req.ExpiredAt)
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
@@ -580,11 +580,14 @@ func redemCodeAuditSummary(code *model.RedemCode) map[string]interface{} {
 		return nil
 	}
 	return map[string]interface{}{
-		"id":      code.ID,
-		"code":    common.RedactSecret(code.Code),
-		"quota":   code.Quota,
-		"status":  code.Status,
-		"used_by": code.UsedBy,
+		"id":         code.ID,
+		"code":       common.RedactSecret(code.Code),
+		"quota":      code.Quota,
+		"status":     code.Status,
+		"batch_no":   code.BatchNo,
+		"note":       code.Note,
+		"expired_at": code.ExpiredAt,
+		"used_by":    code.UsedBy,
 	}
 }
 
