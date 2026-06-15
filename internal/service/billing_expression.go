@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/expr-lang/expr"
@@ -21,6 +22,7 @@ type relayBillingResult struct {
 	PriceSource        string
 	ExpressionSource   string
 	ExpressionSnapshot map[string]interface{}
+	MultiplierSnapshot map[string]interface{}
 }
 
 type relayBillingPriceRule struct {
@@ -35,18 +37,26 @@ type relayBillingPriceRule struct {
 	RuleVersion     int64
 }
 
-func (s *RelayService) calculateRelayBilling(channel *model.Channel, modelName string, usage *relay.Usage) relayBillingResult {
-	fallbackQuota := quotaFromUsage(usage)
-	usageSource := logUsageSource(usage, common.LogStatusSuccess, fallbackQuota)
+type relayBillingMultiplier struct {
+	EffectiveRatio float64
+	Snapshot       map[string]interface{}
+}
+
+func (s *RelayService) calculateRelayBilling(token *model.Token, channel *model.Channel, modelName string, usage *relay.Usage) relayBillingResult {
+	baseQuota := quotaFromUsage(usage)
+	multiplier := s.calculateRelayBillingMultiplier(token, channel)
+	quotaUsed := applyRelayBillingMultiplier(baseQuota, multiplier.EffectiveRatio)
+	usageSource := logUsageSource(usage, common.LogStatusSuccess, quotaUsed)
 	fallbackSource := "p0_usage"
 	if usageSource == common.LogUsageSourceMinimum {
 		fallbackSource = "minimum"
 	}
 	fallback := relayBillingResult{
-		QuotaUsed:          fallbackQuota,
+		QuotaUsed:          quotaUsed,
 		PriceSource:        fallbackSource,
 		ExpressionSource:   fallbackSource,
-		ExpressionSnapshot: buildP0BillingExpressionSnapshot(usage, usageSource, fallbackQuota),
+		ExpressionSnapshot: buildP0BillingExpressionSnapshot(usage, usageSource, baseQuota),
+		MultiplierSnapshot: multiplier.Snapshot,
 	}
 
 	// 价格规则由管理员维护。运行时如果规则缺失、表达式无效或数据库读取失败，
@@ -55,10 +65,11 @@ func (s *RelayService) calculateRelayBilling(channel *model.Channel, modelName s
 	if err != nil || rule == nil {
 		return fallback
 	}
-	quotaUsed, variables, err := evaluateRelayBillingExpression(rule, usage)
+	baseQuota, variables, err := evaluateRelayBillingExpression(rule, usage)
 	if err != nil {
 		return fallback
 	}
+	quotaUsed = applyRelayBillingMultiplier(baseQuota, multiplier.EffectiveRatio)
 	return relayBillingResult{
 		QuotaUsed:        quotaUsed,
 		PriceSource:      rule.Source,
@@ -70,11 +81,12 @@ func (s *RelayService) calculateRelayBilling(channel *model.Channel, modelName s
 			"model":        rule.Model,
 			"price_mode":   rule.PriceMode,
 			"expression":   rule.PriceExpression,
-			"base_quota":   quotaUsed,
+			"base_quota":   baseQuota,
 			"unit_tokens":  normalizedBillingUnitTokens(rule.UnitTokens),
 			"rule_version": rule.RuleVersion,
 			"variables":    variables,
 		},
+		MultiplierSnapshot: multiplier.Snapshot,
 	}
 }
 
@@ -244,4 +256,186 @@ func nonNegativeQuota(value float64) (int64, error) {
 		return 0, errors.New("billing quota exceeds int64")
 	}
 	return int64(math.Ceil(value)), nil
+}
+
+func (s *RelayService) calculateRelayBillingMultiplier(token *model.Token, channel *model.Channel) relayBillingMultiplier {
+	userGroupKeys := userGroupAccessKeys(token)
+	userGroup := "default"
+	if len(userGroupKeys) > 0 {
+		userGroup = userGroupKeys[0]
+	}
+	channelGroup := "default"
+	if channel != nil {
+		channelGroup = normalizeChannelGroupName(channel.ChannelGroup)
+	}
+
+	defaultRatio := s.billingDefaultRatio()
+	userGroupRatio := billingRatioForKeys(s.billingRatioMap("billing.user_group_ratios"), userGroupKeys, 1)
+	channelGroupRatio := billingRatioForKeys(s.billingRatioMap("billing.channel_group_ratios"), []string{channelGroup}, 1)
+	userGroupChannelRatio, hasUserGroupChannelRatio := billingNestedRatioForKeys(s.billingNestedRatioMap("billing.user_group_channel_ratios"), userGroupKeys, channelGroup, 1)
+	ratioMode := "separate_factors"
+	effectiveRatio := defaultRatio * userGroupRatio * channelGroupRatio
+	if hasUserGroupChannelRatio {
+		// 组合倍率表达“这个用户分组使用这个通道分组”的最终业务倍率，
+		// 避免把用户分组倍率和通道分组倍率重复叠加一次。
+		ratioMode = "user_group_channel_override"
+		effectiveRatio = defaultRatio * userGroupChannelRatio
+	}
+	if !validPositiveRatio(effectiveRatio) {
+		effectiveRatio = 1
+	}
+
+	return relayBillingMultiplier{
+		EffectiveRatio: effectiveRatio,
+		Snapshot: map[string]interface{}{
+			"source":                   "settings",
+			"default_ratio":            defaultRatio,
+			"user_group":               userGroup,
+			"user_group_ratio":         userGroupRatio,
+			"channel_group":            channelGroup,
+			"channel_group_ratio":      channelGroupRatio,
+			"user_group_channel_ratio": userGroupChannelRatio,
+			"ratio_mode":               ratioMode,
+			"effective_ratio":          effectiveRatio,
+		},
+	}
+}
+
+func (s *RelayService) billingDefaultRatio() float64 {
+	if s == nil || s.settingService == nil {
+		return 1
+	}
+	raw, err := s.settingService.Get("billing.default_ratio")
+	if err != nil {
+		return 1
+	}
+	ratio, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || !validPositiveRatio(ratio) {
+		return 1
+	}
+	return ratio
+}
+
+func (s *RelayService) billingRatioMap(key string) map[string]float64 {
+	if s == nil || s.settingService == nil {
+		return nil
+	}
+	raw, err := s.settingService.Get(key)
+	if err != nil {
+		return nil
+	}
+	values := map[string]float64{}
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return nil
+	}
+	normalized := make(map[string]float64, len(values))
+	for key, ratio := range values {
+		key = strings.TrimSpace(key)
+		if key == "" || !validPositiveRatio(ratio) {
+			continue
+		}
+		normalized[key] = ratio
+	}
+	return normalized
+}
+
+func (s *RelayService) billingNestedRatioMap(key string) map[string]map[string]float64 {
+	if s == nil || s.settingService == nil {
+		return nil
+	}
+	raw, err := s.settingService.Get(key)
+	if err != nil {
+		return nil
+	}
+	values := map[string]map[string]float64{}
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return nil
+	}
+	normalized := make(map[string]map[string]float64, len(values))
+	for userGroup, channelRatios := range values {
+		userGroup = strings.TrimSpace(userGroup)
+		if userGroup == "" {
+			continue
+		}
+		cleanChannelRatios := make(map[string]float64, len(channelRatios))
+		for channelGroup, ratio := range channelRatios {
+			channelGroup = normalizeChannelGroupName(channelGroup)
+			if !validPositiveRatio(ratio) {
+				continue
+			}
+			cleanChannelRatios[channelGroup] = ratio
+		}
+		if len(cleanChannelRatios) > 0 {
+			normalized[userGroup] = cleanChannelRatios
+		}
+	}
+	return normalized
+}
+
+func billingRatioForKeys(values map[string]float64, keys []string, fallback float64) float64 {
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if ratio, ok := values[key]; ok && validPositiveRatio(ratio) {
+			return ratio
+		}
+	}
+	if ratio, ok := values["default"]; ok && validPositiveRatio(ratio) {
+		return ratio
+	}
+	return fallback
+}
+
+func billingNestedRatioForKeys(values map[string]map[string]float64, userGroupKeys []string, channelGroup string, fallback float64) (float64, bool) {
+	channelGroup = normalizeChannelGroupName(channelGroup)
+	for _, userGroup := range userGroupKeys {
+		userGroup = strings.TrimSpace(userGroup)
+		if userGroup == "" {
+			continue
+		}
+		if channelRatios, ok := values[userGroup]; ok {
+			if ratio, ok := channelRatios[channelGroup]; ok && validPositiveRatio(ratio) {
+				return ratio, true
+			}
+			if ratio, ok := channelRatios["default"]; ok && validPositiveRatio(ratio) {
+				return ratio, true
+			}
+		}
+	}
+	if channelRatios, ok := values["default"]; ok {
+		if ratio, ok := channelRatios[channelGroup]; ok && validPositiveRatio(ratio) {
+			return ratio, true
+		}
+		if ratio, ok := channelRatios["default"]; ok && validPositiveRatio(ratio) {
+			return ratio, true
+		}
+	}
+	return fallback, false
+}
+
+func applyRelayBillingMultiplier(baseQuota int64, effectiveRatio float64) int64 {
+	if baseQuota <= 0 {
+		return 0
+	}
+	if !validPositiveRatio(effectiveRatio) {
+		effectiveRatio = 1
+	}
+	quota := int64(math.Ceil(float64(baseQuota) * effectiveRatio))
+	if quota < 1 {
+		return 1
+	}
+	return quota
+}
+
+func validPositiveRatio(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func billingMultiplierSnapshot(billing relayBillingResult) map[string]interface{} {
+	if billing.MultiplierSnapshot == nil {
+		return defaultMultiplierSnapshot()
+	}
+	return billing.MultiplierSnapshot
 }

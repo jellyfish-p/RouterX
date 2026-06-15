@@ -378,7 +378,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `request_snapshot` | text/json string | 脱敏请求快照；当前包含 request_id、入口协议、API 类型、请求模型、stream 标记和安全路由摘要 |
 | `policy_snapshot` | text/json string | 脱敏策略快照；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要 |
 | `route_snapshot` | text/json string | 脱敏路由快照；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要 |
-| `billing_snapshot` | text/json string | 脱敏计费快照；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式摘要、默认倍率摘要、Key 预算前后、用户余额前后和最终扣费 |
+| `billing_snapshot` | text/json string | 脱敏计费快照；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式摘要、规则 ID/版本、倍率摘要、Key 预算前后、用户余额前后和最终扣费 |
 | `content` | text | 请求体快照，需截断和脱敏 |
 | `response` | text | 响应体快照，需截断和脱敏 |
 | `error_msg` | text | 错误信息 |
@@ -399,7 +399,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 
 目标账单快照字段：
 
-当前 `logs` 已保存基础 usage、`usage_source`、`quota_used`、`billing_snapshot`、状态和结构化错误事实，其中基础 `billing_snapshot` 已包含 P0 计费表达式摘要、默认倍率摘要、Key 预算前后、用户余额前后和最终扣费。商业级计费增强需要继续补充以下字段，或拆分出独立账单事实表，但必须保证历史账单可还原：
+当前 `logs` 已保存基础 usage、`usage_source`、`quota_used`、`billing_snapshot`、状态和结构化错误事实，其中基础 `billing_snapshot` 已包含价格表达式或 P0 回退表达式摘要、规则 ID/版本、倍率快照、Key 预算前后、用户余额前后和最终扣费。商业级计费增强可以继续补充以下字段，或拆分出独立账单事实表，但必须保证历史账单可还原：
 
 | 字段 | 说明 |
 |------|------|
@@ -407,9 +407,9 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `billing_expression_version` | 使用的价格规则版本 |
 | `billing_expression_source` | 当前可为 `channel_model_prices`、`model_prices`、`p0_usage` 或 `minimum` |
 | `billing_expression_snapshot` | 当前已记录实际执行的价格规则表达式、变量、规则 ID、规则版本和 `base_quota`；无规则时记录 usage/minimum 回退表达式摘要 |
-| `multiplier_snapshot` | 后续补用户分组、通道分组、用户分组 x 通道分组业务倍率；当前 P0 为默认 `1.0` |
+| `multiplier_snapshot` | 当前已记录默认倍率、用户分组倍率、通道分组倍率、用户分组 x 通道分组组合覆盖倍率、倍率模式和最终 `effective_ratio` |
 | `access_rule_snapshot` | 用户、Token、模型、通道分组访问控制快照 |
-| `billing_snapshot.expression` / `billing_snapshot.multiplier` | 后续补齐商业价格规则版本和业务倍率摘要 |
+| `billing_snapshot.expression` / `billing_snapshot.multiplier` | 当前基础快照已覆盖价格规则版本和业务倍率摘要；后续可拆成独立列或独立账单事实表 |
 
 数据生命周期：
 

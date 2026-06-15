@@ -247,6 +247,10 @@ func validateSettingValue(key, value string) error {
 		}
 	case "billing.default_user_channel_group_access":
 		return validateStringArrayJSONSetting(key, value)
+	case "billing.user_group_ratios", "billing.channel_group_ratios", "billing.model_group_ratios":
+		return validatePositiveRatioMapSetting(key, value)
+	case "billing.user_group_channel_ratios":
+		return validateNestedPositiveRatioMapSetting(key, value)
 	case "billing.user_group_channel_group_access":
 		return validateChannelGroupAccessSetting(key, value)
 	case "payment.currency":
@@ -311,6 +315,43 @@ func validateStringArrayJSONSetting(key, value string) error {
 	for _, item := range values {
 		if strings.TrimSpace(item) == "" {
 			return errors.New(key + " cannot contain empty values")
+		}
+	}
+	return nil
+}
+
+func validatePositiveRatioMapSetting(key, value string) error {
+	var values map[string]float64
+	if err := json.Unmarshal([]byte(value), &values); err != nil {
+		return errors.New(key + " must be a JSON object")
+	}
+	for name, ratio := range values {
+		if strings.TrimSpace(name) == "" {
+			return errors.New(key + " cannot contain empty keys")
+		}
+		if !validPositiveRatio(ratio) {
+			return errors.New(key + " values must be positive numbers")
+		}
+	}
+	return nil
+}
+
+func validateNestedPositiveRatioMapSetting(key, value string) error {
+	var values map[string]map[string]float64
+	if err := json.Unmarshal([]byte(value), &values); err != nil {
+		return errors.New(key + " must be a nested JSON object")
+	}
+	for outerKey, innerValues := range values {
+		if strings.TrimSpace(outerKey) == "" {
+			return errors.New(key + " cannot contain empty outer keys")
+		}
+		for innerKey, ratio := range innerValues {
+			if strings.TrimSpace(innerKey) == "" {
+				return errors.New(key + " cannot contain empty inner keys")
+			}
+			if !validPositiveRatio(ratio) {
+				return errors.New(key + " values must be positive numbers")
+			}
 		}
 	}
 	return nil

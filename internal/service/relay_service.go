@@ -526,7 +526,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	s.recordUpstreamDuration(channel, "success", time.Since(start))
 
 	if rawResponse {
-		billing := s.calculateRelayBilling(channel, reqInfo.Model, nil)
+		billing := s.calculateRelayBilling(token, channel, reqInfo.Model, nil)
 		deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 		if err != nil {
 			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
@@ -548,7 +548,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response conversion failed", clientIP)
 		return nil, nil, false, &HTTPError{Status: 502, Message: "upstream response conversion failed", Type: "upstream_error", Code: "upstream_conversion_failed"}
 	}
-	billing := s.calculateRelayBilling(channel, reqInfo.Model, usage)
+	billing := s.calculateRelayBilling(token, channel, reqInfo.Model, usage)
 	deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 	if err != nil {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
@@ -697,7 +697,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 				_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, "stream forwarding failed", clientIP)
 				return usage, err
 			}
-			billing := s.calculateRelayBilling(channel, reqInfo.Model, usage)
+			billing := s.calculateRelayBilling(token, channel, reqInfo.Model, usage)
 			deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 			if err != nil {
 				_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
@@ -2329,7 +2329,7 @@ func buildRelayBillingSnapshot(usage *relay.Usage, billing relayBillingResult, d
 		"price_source":                priceSource,
 		"billing_expression_source":   expressionSource,
 		"billing_expression_snapshot": expressionSnapshot,
-		"multiplier_snapshot":         defaultMultiplierSnapshot(),
+		"multiplier_snapshot":         billingMultiplierSnapshot(billing),
 		"usage_source":                usageSource,
 		"payer":                       payer,
 		"final_quota_used":            quotaUsed,
@@ -2385,9 +2385,13 @@ func buildP0BillingExpressionSnapshot(usage *relay.Usage, usageSource string, qu
 func defaultMultiplierSnapshot() map[string]interface{} {
 	return map[string]interface{}{
 		"source":                   "p0_default",
+		"default_ratio":            1.0,
+		"user_group":               "default",
 		"user_group_ratio":         1.0,
+		"channel_group":            "default",
 		"channel_group_ratio":      1.0,
 		"user_group_channel_ratio": 1.0,
+		"ratio_mode":               "separate_factors",
 		"effective_ratio":          1.0,
 	}
 }

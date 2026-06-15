@@ -191,7 +191,7 @@ Scope 合成规则：
 | 模型价格 | 计算倍率前的基础费用。 | `docs/BILLING.md` |
 | 用户分组倍率 | 对基础费用做折扣或加价。 | `docs/BILLING.md` |
 | 通道分组倍率 | 对不同套餐或成本通道做折扣或加价。 | `docs/BILLING.md` |
-| 用户分组 x 通道分组倍率 | 对特定用户分组使用特定通道分组做额外倍率。 | `docs/BILLING.md` |
+| 用户分组 x 通道分组倍率 | 对特定用户分组使用特定通道分组做组合覆盖倍率。 | `docs/BILLING.md` |
 
 结算事实链：
 
@@ -200,7 +200,7 @@ access allowed
     -> route selected
     -> usage resolved
     -> base_quota from price expression
-    -> effective_ratio from settings and groups
+    -> effective_ratio from settings (combination override or separate group factors)
     -> quota_used
     -> conditional deduction
     -> log snapshots
@@ -241,7 +241,7 @@ access allowed
 | `policy_snapshot` | 用户状态、API Key 状态、scope 命中、访问控制结果和拒绝原因摘要。 |
 | `route_snapshot` | 候选通道、过滤原因、`routerx.route` 处理结果、最终通道和模型重写。 |
 | `access_rule_snapshot` | 用户分组、通道分组、模型/API 类型访问判断和规则版本。 |
-| `multiplier_snapshot` | 用户分组倍率、通道分组倍率和组合倍率。 |
+| `multiplier_snapshot` | 用户分组倍率、通道分组倍率、组合覆盖倍率、倍率模式和最终 `effective_ratio`。 |
 | `rate_limit_snapshot` | 命中的限流维度、窗口、阈值和剩余量摘要。 |
 | `billing_expression_snapshot` | 价格表达式、变量和基础费用。 |
 

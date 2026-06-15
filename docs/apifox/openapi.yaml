@@ -3824,7 +3824,7 @@ components:
           description: 脱敏路由快照 JSON 字符串；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要。
         billing_snapshot:
           type: string
-          description: 脱敏计费快照 JSON 字符串；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式、默认倍率、最终扣费、Key 预算前后和用户余额前后摘要。
+          description: 脱敏计费快照 JSON 字符串；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式、规则 ID/版本、倍率快照、最终扣费、Key 预算前后和用户余额前后摘要。
         error_msg: { type: string }
         ip: { type: string }
         created_at: { type: string, format: date-time }
@@ -3865,12 +3865,15 @@ components:
         updated_at: { type: string, format: date-time }
     BatchSetSettingsRequest:
       type: object
-      description: 顶层对象为 key/value 字符串映射；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，易支付退款请求地址可设置 payment.epay.refund_url。
+      description: 顶层对象为 key/value 字符串映射；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；倍率相关 key 包括 billing.user_group_ratios='{"vip":0.8}'、billing.channel_group_ratios='{"premium":1.2}' 和 billing.user_group_channel_ratios='{"vip":{"premium":0.9}}'，组合倍率命中时覆盖用户分组倍率和通道分组倍率的乘积；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，易支付退款请求地址可设置 payment.epay.refund_url。
       additionalProperties:
         type: string
       example:
         billing.default_user_channel_group_access: '["default"]'
         billing.user_group_channel_group_access: '{"vip":{"allow":["premium"],"deny":["experimental"]}}'
+        billing.user_group_ratios: '{"vip":0.8}'
+        billing.channel_group_ratios: '{"premium":1.2}'
+        billing.user_group_channel_ratios: '{"vip":{"premium":0.9}}'
         payment.dispute.auto_disable_tokens: "true"
         payment.epay.refund_url: "https://pay.example.com/refund"
     ChatCompletionRequest:

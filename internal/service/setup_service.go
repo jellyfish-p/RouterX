@@ -178,6 +178,10 @@ func buildDefaultSettings() map[string]map[string]string {
 			"billing.default_ratio":                     "1.0",
 			"billing.bootstrap_admin_quota":             "100000000",
 			"billing.default_user_channel_group_access": `["default"]`,
+			"billing.user_group_ratios":                 `{}`,
+			"billing.channel_group_ratios":              `{}`,
+			"billing.model_group_ratios":                `{}`,
+			"billing.user_group_channel_ratios":         `{}`,
 			"billing.user_group_channel_group_access":   `{}`,
 		},
 		"payment": {

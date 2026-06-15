@@ -3413,8 +3413,13 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"observability.audit_enabled",
 		"observability.request_id_header",
 		"ready.production_strict",
+		"billing.default_ratio",
 		"billing.bootstrap_admin_quota",
 		"billing.default_user_channel_group_access",
+		"billing.user_group_ratios",
+		"billing.channel_group_ratios",
+		"billing.model_group_ratios",
+		"billing.user_group_channel_ratios",
 		"billing.user_group_channel_group_access",
 		"payment.stripe.enabled",
 		"payment.epay.enabled",
@@ -3820,6 +3825,24 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badGroupAccess.Code != http.StatusBadRequest {
 		t.Fatalf("user group channel group access should reject empty channel groups, got %d %s", badGroupAccess.Code, badGroupAccess.Body.String())
+	}
+	badUserGroupRatio := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"billing.user_group_ratios": `{"vip":0}`,
+	})
+	if badUserGroupRatio.Code != http.StatusBadRequest {
+		t.Fatalf("user group ratios should reject zero values, got %d %s", badUserGroupRatio.Code, badUserGroupRatio.Body.String())
+	}
+	badChannelGroupRatio := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"billing.channel_group_ratios": `{"paid":-1}`,
+	})
+	if badChannelGroupRatio.Code != http.StatusBadRequest {
+		t.Fatalf("channel group ratios should reject negative values, got %d %s", badChannelGroupRatio.Code, badChannelGroupRatio.Body.String())
+	}
+	badNestedRatio := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"billing.user_group_channel_ratios": `{"vip":{"paid":0}}`,
+	})
+	if badNestedRatio.Code != http.StatusBadRequest {
+		t.Fatalf("user group channel ratios should reject zero nested values, got %d %s", badNestedRatio.Code, badNestedRatio.Body.String())
 	}
 
 	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
@@ -6109,6 +6132,206 @@ func TestChatCompletionUsesModelPriceExpressionForBilling(t *testing.T) {
 	expressionSnapshot, ok = billingSnapshot["billing_expression_snapshot"].(map[string]interface{})
 	if !ok || expressionSnapshot["source"] != "channel_model_prices" || expressionSnapshot["expression"] != "total_tokens * channel_multiplier" || expressionSnapshot["base_quota"] != float64(20) || expressionSnapshot["rule_version"] != float64(9) {
 		t.Fatalf("billing expression snapshot should record channel price expression: %+v", billingSnapshot)
+	}
+}
+
+func TestChatCompletionAppliesBillingMultipliers(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "chatcmpl-ratio",
+			"object": "chat.completion",
+			"model": "gpt-ratio",
+			"choices": [
+				{"index": 0, "message": {"role": "assistant", "content": "ratio ok"}, "finish_reason": "stop"}
+			],
+			"usage": {"prompt_tokens": 4, "completion_tokens": 6, "total_tokens": 10}
+		}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := service.NewSettingService().Set("billing.default_user_channel_group_access", `["paid"]`); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("billing.user_group_ratios", `{"vip":0.5}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("billing.channel_group_ratios", `{"paid":4}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("billing.user_group_channel_ratios", `{"vip":{"paid":1.5}}`); err != nil {
+		t.Fatal(err)
+	}
+
+	vipGroup := model.Group{Name: "vip", Ratio: 1}
+	if err := internal.DB.Create(&vipGroup).Error; err != nil {
+		t.Fatal(err)
+	}
+	createUserResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "ratio-user",
+		"password":     "password123",
+		"display_name": "Ratio User",
+		"role":         common.RoleUser,
+		"quota":        100,
+		"group_id":     vipGroup.ID,
+	})
+	if createUserResp.Code != http.StatusOK {
+		t.Fatalf("create ratio user failed: %d %s", createUserResp.Code, createUserResp.Body.String())
+	}
+	userJWT := loginBearer(t, r, "ratio-user", "password123")
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
+		"name":         "ratio-key",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create ratio token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "ratio-channel",
+		"models":   "gpt-ratio",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+		"group":    "paid",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create ratio channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+	if err := internal.DB.Create(&model.ModelPrice{
+		Model:           "gpt-ratio",
+		PriceMode:       "token",
+		PriceExpression: "total_tokens",
+		UnitTokens:      1,
+		RuleVersion:     1,
+		Enabled:         true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-ratio",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"channel_group": "paid"},
+		},
+	})
+	if chatResp.Code != http.StatusOK {
+		t.Fatalf("chat completion failed: %d %s", chatResp.Code, chatResp.Body.String())
+	}
+
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 35 {
+		t.Fatalf("token budget should be deducted by base quota and effective multiplier, got %d", storedToken.RemainQuota)
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "ratio-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Quota != 85 {
+		t.Fatalf("user quota should be deducted by base quota and effective multiplier, got %d", user.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ?", common.LogStatusSuccess, tokenPayload.Data.ID, "gpt-ratio").First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.QuotaUsed != 15 || callLog.TotalTokens != 10 {
+		t.Fatalf("success log should record multiplier-adjusted quota and upstream usage, got %+v", callLog)
+	}
+	var billingSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.BillingSnapshot), &billingSnapshot); err != nil {
+		t.Fatalf("success log should store billing snapshot JSON, got %q: %v", callLog.BillingSnapshot, err)
+	}
+	if billingSnapshot["final_quota_used"] != float64(15) {
+		t.Fatalf("billing snapshot should record multiplier-adjusted final quota: %+v", billingSnapshot)
+	}
+	expressionSnapshot, ok := billingSnapshot["billing_expression_snapshot"].(map[string]interface{})
+	if !ok || expressionSnapshot["base_quota"] != float64(10) {
+		t.Fatalf("billing expression snapshot should keep pre-multiplier base quota: %+v", billingSnapshot)
+	}
+	multiplierSnapshot, ok := billingSnapshot["multiplier_snapshot"].(map[string]interface{})
+	if !ok ||
+		multiplierSnapshot["user_group"] != "vip" ||
+		multiplierSnapshot["channel_group"] != "paid" ||
+		multiplierSnapshot["user_group_ratio"] != float64(0.5) ||
+		multiplierSnapshot["channel_group_ratio"] != float64(4) ||
+		multiplierSnapshot["user_group_channel_ratio"] != float64(1.5) ||
+		multiplierSnapshot["ratio_mode"] != "user_group_channel_override" ||
+		multiplierSnapshot["effective_ratio"] != float64(1.5) {
+		t.Fatalf("billing snapshot should record combination override multiplier inputs: %+v", billingSnapshot)
+	}
+
+	if err := service.NewSettingService().Set("billing.user_group_channel_ratios", `{}`); err != nil {
+		t.Fatal(err)
+	}
+	secondChatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-ratio",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello again"},
+		},
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"channel_group": "paid"},
+		},
+	})
+	if secondChatResp.Code != http.StatusOK {
+		t.Fatalf("second chat completion failed: %d %s", secondChatResp.Code, secondChatResp.Body.String())
+	}
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 15 {
+		t.Fatalf("token budget should use separate user/channel factors when no combination override exists, got %d", storedToken.RemainQuota)
+	}
+	if err := internal.DB.Where("username = ?", "ratio-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Quota != 65 {
+		t.Fatalf("user quota should use separate user/channel factors when no combination override exists, got %d", user.Quota)
+	}
+	callLog = model.Log{}
+	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ?", common.LogStatusSuccess, tokenPayload.Data.ID, "gpt-ratio").Order("id DESC").First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.QuotaUsed != 20 || callLog.TotalTokens != 10 {
+		t.Fatalf("second success log should record separately multiplied quota and upstream usage, got %+v", callLog)
+	}
+	if err := json.Unmarshal([]byte(callLog.BillingSnapshot), &billingSnapshot); err != nil {
+		t.Fatalf("second success log should store billing snapshot JSON, got %q: %v", callLog.BillingSnapshot, err)
+	}
+	multiplierSnapshot, ok = billingSnapshot["multiplier_snapshot"].(map[string]interface{})
+	if !ok ||
+		multiplierSnapshot["user_group_ratio"] != float64(0.5) ||
+		multiplierSnapshot["channel_group_ratio"] != float64(4) ||
+		multiplierSnapshot["user_group_channel_ratio"] != float64(1) ||
+		multiplierSnapshot["ratio_mode"] != "separate_factors" ||
+		multiplierSnapshot["effective_ratio"] != float64(2) {
+		t.Fatalf("billing snapshot should record separate multiplier inputs: %+v", billingSnapshot)
 	}
 }
 

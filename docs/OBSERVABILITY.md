@@ -104,7 +104,7 @@
 | `request_snapshot` | 脱敏请求快照；当前包含入口协议、API 类型、请求模型、stream 标记和安全路由摘要 |
 | `policy_snapshot` | 脱敏策略快照；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要 |
 | `route_snapshot` | 脱敏路由快照；当前包含基础选择事实、候选过滤原因、模型重写摘要和非流式重试摘要 |
-| `billing_snapshot` | 脱敏计费快照；当前包含结算状态、usage_source、P0 计费表达式摘要、默认倍率摘要、Key 预算前后、用户余额前后和最终扣费 |
+| `billing_snapshot` | 脱敏计费快照；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式摘要、规则 ID/版本、倍率摘要、Key 预算前后、用户余额前后和最终扣费 |
 | `content` / `response` | 截断和脱敏后的请求/响应快照 |
 | `error_msg` | 脱敏错误摘要 |
 | `ip` | 调用方 IP |
@@ -116,8 +116,8 @@
 |------|------|
 | `upstream_provider` | 实际上游 provider |
 | `upstream_model` | 模型重写后的上游模型 |
-| `billing_snapshot.expression` / `billing_snapshot.multiplier` | 商业价格规则版本和业务倍率摘要的后续增强 |
-| `multiplier_snapshot` | 用户分组、通道分组和额外倍率 |
+| `billing_snapshot.expression` / `billing_snapshot.multiplier` | 商业价格规则版本和业务倍率摘要 |
+| `multiplier_snapshot` | 用户分组倍率、通道分组倍率、组合覆盖倍率、倍率模式和最终 `effective_ratio` |
 | `access_rule_snapshot` | 访问控制事实 |
 | `key_budget_snapshot` | API Key 最大消耗额度、调用前后剩余预算或累计已用 |
 | `retry_count` | 本次调用重试次数 |
@@ -247,14 +247,14 @@
 | 通道健康 | 展示通道状态、错误计数、最近错误、延迟和最近成功时间。 |
 | 审计查询 | 超级管理员可按 actor、资源、动作、结果、错误 code 和时间范围查询。 |
 | 指标接口 | `/metrics` 可由 Prometheus 抓取；当前由 `observability.metrics_enabled` 控制启用。 |
-| 诊断详情 | 单次调用能关联 request_id、error_code、基础 request_snapshot、基础 policy_snapshot、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/默认倍率的基础 billing_snapshot；业务倍率和更完整结构化失败事实仍需补齐。 |
+| 诊断详情 | 单次调用能关联 request_id、error_code、基础 request_snapshot、基础 policy_snapshot、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式、规则版本、业务倍率、预算前后的基础 billing_snapshot；更完整结构化失败事实仍需补齐。 |
 
 ## 阶段边界
 
 | 阶段 | 目标 |
 |------|------|
 | P0 | 调用日志、用户日志、管理员日志、基础账单和基础 dashboard 可用；body 日志默认关闭。 |
-| P1 | 已补调用日志 request_id、error_code、usage_source、error_source、upstream_status、基础 request_snapshot、覆盖成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝和 Redis Token 限流拒绝分支的基础 policy_snapshot、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/默认倍率/预算前后摘要的基础 billing_snapshot；继续补业务倍率快照和更完整结构化失败事实。 |
+| P1 | 已补调用日志 request_id、error_code、usage_source、error_source、upstream_status、基础 request_snapshot、覆盖成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝和 Redis Token 限流拒绝分支的基础 policy_snapshot、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/规则版本/业务倍率/预算前后摘要的基础 billing_snapshot；继续补更完整结构化失败事实。 |
 | P2 | 扩展管理审计覆盖、更多 Prometheus 指标、告警、长期保留、导出审计和生产 readiness 指标。 |
 
 ## 测试要求
