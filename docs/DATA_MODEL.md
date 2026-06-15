@@ -344,6 +344,8 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `total_tokens` | int | 总 token 数 |
 | `quota_used` | int64 | 本次消耗额度 |
 | `status` | int | `0` 未知，`1` 成功，`2` 失败 |
+| `request_id` | nullable string | HTTP 请求追踪 ID |
+| `error_code` | string | 失败时的稳定协议化错误 code，成功调用为空 |
 | `content` | text | 请求体快照，需截断和脱敏 |
 | `response` | text | 响应体快照，需截断和脱敏 |
 | `error_msg` | text | 错误信息 |
@@ -356,6 +358,8 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 - `idx_logs_token_id`
 - `idx_logs_channel_id`
 - `idx_logs_created_at`
+- `idx_logs_request_id`
+- `idx_logs_error_code`
 
 目标账单快照字段：
 
@@ -626,6 +630,10 @@ QuotaUnlimited = -1
 | `002_user_identities` | 拆出 `user_identities`，迁移本地用户名密码身份，`users` 增加 `phone` 并移除 `password_hash` |
 | `003_channel_routing_config` | 扩展通道路由配置，增加排序、多 base URL、多 key、上游数组、模型重写、通道分组和扩展配置 |
 | `004_admin_audit_logs` | 新增统一管理审计日志表和 actor、resource、action、request_id 索引 |
+| `005_token_advanced_management` | 新增 API Key 轮换、禁用原因和最近使用摘要基础字段 |
+| `006_token_scope` | 新增 API Key scope JSON 字段 |
+| `007_token_last_usage_summary` | 新增 API Key 最近来源摘要、最近模型和最近错误 code |
+| `008_log_request_context` | 新增调用日志 request_id、error_code 和对应索引 |
 
 重要说明：
 
@@ -642,7 +650,7 @@ QuotaUnlimited = -1
 | `user_identities` | `(user_id, method)` | 用户身份列表和绑定检查 |
 | `tokens` | `key` unique | API Key SHA256 哈希鉴权 |
 | `channels` | `idx`、`type`、`priority`、`status`、`deleted_at` | 排序、筛选、路由选择和软删除过滤 |
-| `logs` | `user_id`、`token_id`、`channel_id`、`created_at` | 日志查询和统计 |
+| `logs` | `user_id`、`token_id`、`channel_id`、`created_at`、`request_id`、`error_code` | 日志查询、统计和链路排障 |
 | `settings` | `key` unique | 配置读取 |
 | `admin_audit_logs` | `actor_user_id + created_at`、`resource_type + resource_id`、`action`、`request_id` | 管理审计查询和链路追踪 |
 

@@ -761,7 +761,7 @@ func (t *tokenConcurrencyTracker) acquire(tokenID uint, limit int64) (func(), er
 	}, nil
 }
 
-func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, clientIP, userAgent string) {
+func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, clientIP, userAgent, requestID string) {
 	if token == nil {
 		return
 	}
@@ -775,6 +775,7 @@ func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, client
 		ErrorMsg:  errorMsg,
 		IP:        clientIP,
 		UserAgent: userAgent,
+		RequestID: requestID,
 	})
 }
 

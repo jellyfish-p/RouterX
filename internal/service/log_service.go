@@ -27,6 +27,7 @@ func (s *LogService) Record(log *model.Log) error {
 	if log.CreatedAt.IsZero() {
 		log.CreatedAt = time.Now()
 	}
+	log.ErrorCode = normalizeLogErrorCode(log)
 	return internal.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(log).Error; err != nil {
 			return err
@@ -44,7 +45,7 @@ func updateTokenLastUsageSummary(tx *gorm.DB, log *model.Log) error {
 		"last_used_ip_hash":    usageSourceHash(log.IP),
 		"last_user_agent_hash": usageSourceHash(log.UserAgent),
 		"last_model":           strings.TrimSpace(log.Model),
-		"last_error_code":      tokenLastErrorCode(log.Status, log.ErrorMsg),
+		"last_error_code":      normalizeLogErrorCode(log),
 	}).Error
 }
 
@@ -57,11 +58,14 @@ func usageSourceHash(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func tokenLastErrorCode(status int, errorMsg string) string {
-	if status != common.LogStatusFailed {
+func normalizeLogErrorCode(log *model.Log) string {
+	if log == nil || log.Status != common.LogStatusFailed {
 		return ""
 	}
-	msg := strings.ToLower(strings.TrimSpace(errorMsg))
+	if code := strings.TrimSpace(log.ErrorCode); code != "" {
+		return code
+	}
+	msg := strings.ToLower(strings.TrimSpace(log.ErrorMsg))
 	switch {
 	case msg == "":
 		return "unknown_error"

@@ -7247,6 +7247,77 @@ func TestChatCompletionUpstreamBadRequestMapping(t *testing.T) {
 	}
 }
 
+func TestRelayFailureLogPersistsRequestIDAndErrorCode(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"bad upstream request","type":"invalid_request_error","code":"bad_request"}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "request-id-log",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create request id token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "request-id-log-channel",
+		"models":   "gpt-request-id-log",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create request id channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	requestID := "req-test-relay-failure"
+	chatResp := performRawWithHeaders(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, `{"model":"gpt-request-id-log","messages":[{"role":"user","content":"hello"}]}`, map[string]string{
+		"X-Request-Id": requestID,
+	})
+	if chatResp.Code != http.StatusBadRequest || !strings.Contains(chatResp.Body.String(), `"code":"upstream_400"`) {
+		t.Fatalf("upstream 400 should map to OpenAI-compatible 400, got %d %s", chatResp.Code, chatResp.Body.String())
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.RequestID != requestID || callLog.ErrorCode != "upstream_400" {
+		t.Fatalf("failed relay log should persist request_id and error_code, got %+v", callLog)
+	}
+	logResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
+	logBody := logResp.Body.String()
+	if logResp.Code != http.StatusOK || !strings.Contains(logBody, `"request_id":"`+requestID+`"`) || !strings.Contains(logBody, `"error_code":"upstream_400"`) {
+		t.Fatalf("user log API should expose request_id and error_code, got %d %s", logResp.Code, logBody)
+	}
+}
+
 func TestChatCompletionUpstreamErrorStatusMapping(t *testing.T) {
 	cases := []struct {
 		name           string

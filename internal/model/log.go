@@ -23,7 +23,9 @@ type Log struct {
 	Content          string    `gorm:"type:text" json:"content,omitempty"`  // 请求体 (截断)
 	Response         string    `gorm:"type:text" json:"response,omitempty"` // 响应体 (截断)
 	ErrorMsg         string    `gorm:"type:text" json:"error_msg,omitempty"`
+	ErrorCode        string    `gorm:"type:varchar(128);not null;default:''" json:"error_code,omitempty"`
 	IP               string    `gorm:"type:varchar(64)" json:"ip"`
 	UserAgent        string    `gorm:"-" json:"-"` // 仅用于生成 Token 上的脱敏 UA 摘要，不持久化原文。
+	RequestID        string    `gorm:"type:varchar(128);index" json:"request_id,omitempty"`
 	CreatedAt        time.Time `gorm:"not null;index" json:"created_at"`
 }

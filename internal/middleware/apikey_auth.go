@@ -85,27 +85,27 @@ func authenticateAPIKey(c *gin.Context) bool {
 	}
 	// 入口协议 scope 在 relay 解析前执行，确保拒绝响应仍保持当前协议的错误外形。
 	if err := tokenSvc.CheckEntryProtocolScope(token, entryProtocol(c)); err != nil {
-		tokenSvc.RecordScopeDeniedLog(token, "entry protocol not allowed by api key scope", c.ClientIP(), c.GetHeader("User-Agent"))
+		tokenSvc.RecordScopeDeniedLog(token, "entry protocol not allowed by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"))
 		writeProtocolAuthError(c, http.StatusForbidden, "entry protocol is not allowed by api key scope", "permission_error", "token_forbidden")
 		return false
 	}
 	if err := tokenSvc.CheckIPScope(token, c.ClientIP()); err != nil {
-		tokenSvc.RecordScopeDeniedLog(token, "ip not allowed by api key scope", c.ClientIP(), c.GetHeader("User-Agent"))
+		tokenSvc.RecordScopeDeniedLog(token, "ip not allowed by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"))
 		writeProtocolAuthError(c, http.StatusForbidden, "ip is not allowed by api key scope", "permission_error", "token_forbidden")
 		return false
 	}
 	if err := tokenSvc.CheckMethodScope(token, c.Request.Method, c.Request.URL.Path); err != nil {
-		tokenSvc.RecordScopeDeniedLog(token, "method not allowed by api key scope", c.ClientIP(), c.GetHeader("User-Agent"))
+		tokenSvc.RecordScopeDeniedLog(token, "method not allowed by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"))
 		writeProtocolAuthError(c, http.StatusForbidden, "method is not allowed by api key scope", "permission_error", "token_forbidden")
 		return false
 	}
 	if err := tokenSvc.CheckDailyQuotaScope(token); err != nil {
-		tokenSvc.RecordScopeDeniedLog(token, "daily quota exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"))
+		tokenSvc.RecordScopeDeniedLog(token, "daily quota exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"))
 		writeProtocolAuthError(c, http.StatusTooManyRequests, "daily quota exceeded", "insufficient_quota", "insufficient_quota")
 		return false
 	}
 	if err := tokenSvc.CheckMonthlyQuotaScope(token); err != nil {
-		tokenSvc.RecordScopeDeniedLog(token, "monthly quota exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"))
+		tokenSvc.RecordScopeDeniedLog(token, "monthly quota exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"))
 		writeProtocolAuthError(c, http.StatusTooManyRequests, "monthly quota exceeded", "insufficient_quota", "insufficient_quota")
 		return false
 	}
@@ -130,7 +130,7 @@ func acquireAPIKeyConcurrency(c *gin.Context) (func(), bool) {
 	tokenSvc := service.NewTokenService()
 	release, err := tokenSvc.AcquireConcurrencyScope(token)
 	if err != nil {
-		tokenSvc.RecordScopeDeniedLog(token, "concurrency limit exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"))
+		tokenSvc.RecordScopeDeniedLog(token, "concurrency limit exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"))
 		writeProtocolAuthError(c, http.StatusTooManyRequests, "concurrency limit exceeded", "rate_limit_error", "rate_limit_exceeded")
 		return nil, false
 	}
@@ -144,7 +144,7 @@ func enforceAPIKeyRPMScope(c *gin.Context) bool {
 	}
 	tokenSvc := service.NewTokenService()
 	if err := tokenSvc.CheckRPMScope(token); err != nil {
-		tokenSvc.RecordScopeDeniedLog(token, "rpm limit exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"))
+		tokenSvc.RecordScopeDeniedLog(token, "rpm limit exceeded by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"))
 		writeProtocolAuthError(c, http.StatusTooManyRequests, "rate limit exceeded", "rate_limit_error", "rate_limit_exceeded")
 		return false
 	}

@@ -300,7 +300,8 @@ func (h *RelayHandler) listModelsForRequest(c *gin.Context) ([]byte, error) {
 }
 
 func relayRequestContext(c *gin.Context) context.Context {
-	return service.ContextWithRelayUserAgent(c.Request.Context(), c.GetHeader("User-Agent"))
+	ctx := service.ContextWithRelayUserAgent(c.Request.Context(), c.GetHeader("User-Agent"))
+	return service.ContextWithRelayRequestID(ctx, c.GetString("request_id"))
 }
 
 func writeRelayError(c *gin.Context, err error) {

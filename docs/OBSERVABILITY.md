@@ -13,7 +13,7 @@
 
 当前代码已经具备以下基础：
 
-- `logs` 表保存模型调用日志，包含 user、token、channel、model、usage、quota、status、error 和 IP。
+- `logs` 表保存模型调用日志，包含 user、token、channel、model、usage、quota、status、request_id、error_code、error 和 IP。
 - `LogService.Record` 写入调用日志。
 - `GET /v0/user/log` 查询当前用户日志。
 - `GET /v0/user/billing` 聚合当前用户成功调用的次数、token 和额度。
@@ -70,7 +70,7 @@
 | 多层 RouterX | 传递 `X-RouterX-Hop` 和 `X-RouterX-Chain`，防止循环并保留链路摘要。 |
 | 日志 | HTTP 日志、调用日志、审计日志和系统错误日志都写 request_id。 |
 
-P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关联；P1/P2 应补齐结构化 `request_id` 字段。
+当前 HTTP 请求上下文、模型调用日志和管理审计已持久化 `request_id`；上游透传、系统错误日志和跨实例追踪仍需按目标规则继续补齐。
 
 ## 模型调用日志
 
@@ -92,6 +92,8 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 | `prompt_tokens` / `completion_tokens` / `total_tokens` | usage |
 | `quota_used` | 本次消耗额度 |
 | `status` | 成功或失败 |
+| `request_id` | 串联访问日志、调用日志和审计 |
+| `error_code` | `docs/ERRORS.md` 中的稳定 code；成功调用为空 |
 | `content` / `response` | 截断和脱敏后的请求/响应快照 |
 | `error_msg` | 脱敏错误摘要 |
 | `ip` | 调用方 IP |
@@ -101,8 +103,6 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 
 | 字段 | 语义 |
 |------|------|
-| `request_id` | 串联访问日志、调用日志和审计 |
-| `error_code` | `docs/ERRORS.md` 中的稳定 code |
 | `error_source` | request、auth、quota、route、channel、upstream、billing、system |
 | `upstream_status` | 上游 HTTP 状态 |
 | `upstream_provider` | 实际上游 provider |
@@ -247,7 +247,7 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 | 阶段 | 目标 |
 |------|------|
 | P0 | 调用日志、用户日志、管理员日志、基础账单和基础 dashboard 可用；body 日志默认关闭。 |
-| P1 | 补 request_id、error_code、route_snapshot、billing_snapshot、usage_source 和结构化失败事实。 |
+| P1 | 已补调用日志 request_id 和 error_code；继续补 route_snapshot、billing_snapshot、usage_source 和结构化失败事实。 |
 | P2 | 扩展管理审计覆盖、更多 Prometheus 指标、告警、长期保留、导出审计和生产 readiness 指标。 |
 
 ## 测试要求
@@ -255,7 +255,7 @@ P0 可以先用 HTTP 日志和调用日志的时间、user、token、channel 关
 | 测试方向 | 断言 |
 |----------|------|
 | 成功调用日志 | success 日志包含 user、token、channel、model、usage、quota_used。 |
-| 失败调用日志 | failed 日志包含 error_code 或脱敏 error_msg，预检失败不调用上游。 |
+| 失败调用日志 | failed 日志包含 request_id、error_code 和脱敏 error_msg，预检失败不调用上游。 |
 | 用户日志隔离 | 用户只能看到自己的日志。 |
 | 管理日志筛选 | 管理员可按 user、token、channel、model、status、时间筛选。 |
 | 账单一致 | 用户账单聚合等于成功日志事实；启用独立日志库时主库结算最小事实可恢复。 |

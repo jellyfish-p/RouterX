@@ -43,6 +43,7 @@ type RelayRawResult struct {
 }
 
 type relayUserAgentContextKey struct{}
+type relayRequestIDContextKey struct{}
 
 type contentTypeRelayAdapter interface {
 	DoRequestWithContentType(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error)
@@ -66,11 +67,26 @@ func ContextWithRelayUserAgent(ctx context.Context, userAgent string) context.Co
 	return context.WithValue(ctx, relayUserAgentContextKey{}, strings.TrimSpace(userAgent))
 }
 
+func ContextWithRelayRequestID(ctx context.Context, requestID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, relayRequestIDContextKey{}, strings.TrimSpace(requestID))
+}
+
 func relayUserAgentFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
 	value, _ := ctx.Value(relayUserAgentContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
+func relayRequestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(relayRequestIDContextKey{}).(string)
 	return strings.TrimSpace(value)
 }
 
@@ -1903,6 +1919,7 @@ func (s *RelayService) recordLog(ctx context.Context, token *model.Token, channe
 		ErrorMsg:  errMsg,
 		IP:        ip,
 		UserAgent: relayUserAgentFromContext(ctx),
+		RequestID: relayRequestIDFromContext(ctx),
 	}
 	if usage != nil {
 		log.PromptTokens = usage.PromptTokens

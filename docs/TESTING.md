@@ -88,6 +88,7 @@
 | `TestChatCompletionUpstreamBadRequestMapping` | 下游 400 错误映射、失败日志和密钥不泄露 |
 | `TestChatCompletionUpstreamErrorStatusMapping` | 下游 401/403/429/5xx 错误映射、失败日志、通道错误计数和不扣费 |
 | `TestChatCompletionUpstreamTimeoutMapping` | 下游超时错误映射、失败日志、通道错误计数和不扣费 |
+| `TestRelayFailureLogPersistsRequestIDAndErrorCode` | 下游失败时调用日志和用户日志接口持久化 `request_id` 与稳定 `error_code` |
 | `TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce` | 非流式 5xx 按 `relay.retry_count` 换候选通道，最终只按成功 usage 扣费一次 |
 | `TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus` | 下游 400 不触发候选通道重试 |
 | `TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold` | `relay.error_ban_threshold` 生效后跳过达到阈值的故障通道 |
@@ -177,7 +178,7 @@ P0 OpenAI-compatible Chat 成功响应示例：
 
 - 预检失败时下游请求计数为 0。
 - 默认不增加 `quota_used`。
-- `logs.status=failed`，`error_msg` 是脱敏摘要。
+- `logs.status=failed`，`request_id` 可关联本次请求，`error_code` 为稳定错误 code，`error_msg` 是脱敏摘要。
 - 若尚未选中通道，`logs.channel_id` 可以为空。
 - 下游密钥、用户 API Key、数据库 DSN 不出现在 `content`、`response`、`error_msg` 或接口响应中。
 
@@ -421,7 +422,7 @@ Gemini-compatible 最小断言：
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝和 RPM/TPM 拒绝已覆盖；风险视图和缓存失效待补 |
 | P2 | 支付充值 | Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水和人工修正审计 |
-| P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理、日志清理审计和基础 `/metrics`、Relay/支付/DB/Redis 指标测试已覆盖；继续补 Request ID、结构化日志、HTTP/上游耗时指标、更多管理审计动作和生产 `/ready` |
+| P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理、日志清理审计、调用日志 request_id/error_code 和基础 `/metrics`、Relay/支付/DB/Redis 指标测试已覆盖；继续补更完整结构化日志、HTTP/上游耗时指标、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
 

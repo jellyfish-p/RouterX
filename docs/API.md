@@ -459,6 +459,8 @@ Gemini-compatible 错误示例：
 | `start_at` | string | 开始时间 |
 | `end_at` | string | 结束时间 |
 
+日志响应字段至少包含 `user_id`、`token_id`、`channel_id`、`model`、usage、`quota_used`、`status`、`request_id`、`error_code`、`error_msg`、`ip` 和 `created_at`。`request_id` 用于关联 HTTP 访问日志和审计日志；`error_code` 成功调用为空，失败调用按 `docs/ERRORS.md` 使用稳定 code。
+
 删除日志目标要求：
 
 - 必须支持时间范围。

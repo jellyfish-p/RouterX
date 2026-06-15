@@ -3152,6 +3152,13 @@ components:
         total_tokens: { type: integer }
         quota_used: { type: integer, format: int64 }
         status: { type: integer, description: "1=success, 2=failed" }
+        request_id:
+          type: string
+          nullable: true
+          description: HTTP 请求追踪 ID，用于关联访问日志、调用日志和审计日志。
+        error_code:
+          type: string
+          description: 稳定错误 code；成功调用为空。
         error_msg: { type: string }
         ip: { type: string }
         created_at: { type: string, format: date-time }
