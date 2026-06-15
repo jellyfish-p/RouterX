@@ -390,6 +390,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	mergeRouteFilterReasons(filteredReasons, selectionReasons)
 	if err != nil {
 		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, nil, nil, nil, filteredReasons))
+		logCtx = ContextWithRelayPolicySnapshot(logCtx, buildRelayNoAvailableChannelPolicySnapshot(ctx, token))
 		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
@@ -571,6 +572,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	mergeRouteFilterReasons(filteredReasons, selectionReasons)
 	if err != nil {
 		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, nil, nil, nil, filteredReasons))
+		logCtx = ContextWithRelayPolicySnapshot(logCtx, buildRelayNoAvailableChannelPolicySnapshot(ctx, token))
 		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
@@ -2057,6 +2059,15 @@ func buildRelayUserGroupAccessDenyPolicySnapshot(ctx context.Context, token *mod
 		"model":                    "allow",
 		"channel_group":            "allow",
 		"user_group_channel_group": "deny",
+	})
+}
+
+func buildRelayNoAvailableChannelPolicySnapshot(ctx context.Context, token *model.Token) string {
+	return buildRelayPolicyDenySnapshot(ctx, token, "no_available_channel", "available", map[string]interface{}{
+		"api_type":        "allow",
+		"model":           "allow",
+		"channel_group":   "allow",
+		"route_candidate": "deny",
 	})
 }
 

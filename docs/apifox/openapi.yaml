@@ -3175,7 +3175,7 @@ components:
           description: 脱敏请求快照 JSON 字符串；当前包含 request_id、入口协议、API 类型、请求模型、stream 标记和安全路由摘要。
         policy_snapshot:
           type: string
-          description: 脱敏策略快照 JSON 字符串；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝和用户分组 x 通道分组访问控制拒绝摘要。
+          description: 脱敏策略快照 JSON 字符串；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝和无可用候选 no_available_channel 拒绝摘要。
         route_snapshot:
           type: string
           description: 脱敏路由快照 JSON 字符串；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要。

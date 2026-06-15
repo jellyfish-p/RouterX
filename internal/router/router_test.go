@@ -3627,6 +3627,7 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 	})
 	var tokenPayload struct {
 		Data struct {
+			ID  uint   `json:"id"`
 			Key string `json:"key"`
 		} `json:"data"`
 	}
@@ -3707,6 +3708,25 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 	noCandidate := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": "internal"}})
 	if noCandidate.Code != http.StatusBadGateway || !strings.Contains(noCandidate.Body.String(), `"code":"no_available_channel"`) {
 		t.Fatalf("route with no candidates should return no_available_channel, got %d %s", noCandidate.Code, noCandidate.Body.String())
+	}
+	var noCandidateLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg = ?", common.LogStatusFailed, tokenPayload.Data.ID, "no available channel").First(&noCandidateLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	var noCandidatePolicySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(noCandidateLog.PolicySnapshot), &noCandidatePolicySnapshot); err != nil {
+		t.Fatalf("no-candidate route should store policy snapshot JSON, got %q: %v", noCandidateLog.PolicySnapshot, err)
+	}
+	noCandidateScopeResult, ok := noCandidatePolicySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		noCandidatePolicySnapshot["kind"] != "policy" ||
+		noCandidatePolicySnapshot["access_decision"] != "deny" ||
+		noCandidatePolicySnapshot["reject_code"] != "no_available_channel" ||
+		noCandidatePolicySnapshot["quota_precheck"] != "available" ||
+		noCandidateScopeResult["api_type"] != "allow" ||
+		noCandidateScopeResult["model"] != "allow" ||
+		noCandidateScopeResult["route_candidate"] != "deny" {
+		t.Fatalf("unexpected no-candidate policy snapshot: %+v", noCandidatePolicySnapshot)
 	}
 	if paidCalls != 1 || freeCalls != 1 {
 		t.Fatalf("invalid or empty route results must not call upstream, paid=%d free=%d", paidCalls, freeCalls)
