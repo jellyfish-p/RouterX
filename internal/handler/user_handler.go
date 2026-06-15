@@ -256,6 +256,33 @@ func (h *UserHandler) CreatePaymentManualRefund(c *gin.Context) {
 	common.Success(c, result)
 }
 
+// POST /v0/admin/payment/refund-requests — 向支付 provider 发起退款请求
+func (h *UserHandler) CreatePaymentProviderRefundRequest(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.PaymentProviderRefundRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "退款请求参数无效")
+		return
+	}
+	result, err := h.svc.CreatePaymentProviderRefundRequest(operator.ID, operator.Role, service.PaymentProviderRefundRequestInput{
+		OrderNo:        req.OrderNo,
+		RefundAmount:   req.RefundAmount,
+		Reason:         req.Reason,
+		IdempotencyKey: req.IdempotencyKey,
+		IP:             c.ClientIP(),
+		UserAgent:      c.GetHeader("User-Agent"),
+	}, c.GetString("request_id"))
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	common.Success(c, result)
+}
+
 // GET /v0/admin/redem — 充值码列表
 func (h *UserHandler) ListRedemCodes(c *gin.Context) {
 	operator, ok := currentUser(c)

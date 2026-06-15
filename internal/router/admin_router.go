@@ -43,6 +43,7 @@ func setupAdminRoutes(
 			authRequired.PATCH("/payment/products/:id/enable", userH.EnablePaymentProduct)
 			authRequired.POST("/payment/adjustments", userH.CreatePaymentManualAdjustment)
 			authRequired.POST("/payment/refunds", userH.CreatePaymentManualRefund)
+			authRequired.POST("/payment/refund-requests", userH.CreatePaymentProviderRefundRequest)
 			authRequired.GET("/token", tokenH.AdminList)
 			authRequired.POST("/token/batch-disable", tokenH.BatchDisable)
 			authRequired.POST("/token/batch-expire", tokenH.BatchExpire)

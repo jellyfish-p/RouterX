@@ -440,7 +440,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `amount` | decimal/string | 本地订单金额 |
 | `currency` | string | 货币 |
 | `quota` | int64 | 本订单最终入账基础额度单位，包含赠送额度 |
-| `status` | string/int | `pending`、`paid`、`failed`、`closed`、`refunded`、`partially_refunded` |
+| `status` | string/int | `pending`、`paid`、`failed`、`closed`、`refund_pending`、`refund_failed`、`refunded`、`partially_refunded` |
 | `provider_order_id` | nullable string | provider 会话或订单 ID，如 Stripe Checkout Session ID |
 | `provider_payment_id` | nullable string | provider 支付流水号 |
 | `checkout_url` | nullable text | 支付跳转地址，过期后不可继续使用 |
@@ -476,6 +476,39 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 
 - `idx_payment_events_provider_event_id`，唯一索引 `(provider, provider_event_id)`。
 - `idx_payment_events_order_no`，按订单查询事件。
+
+### `payment_refund_requests`
+
+RouterX 主动向 provider 发起的退款请求表。它记录出站退款请求，不替代 provider webhook 事实；最终退款状态仍由 `payment_events` 中的可信退款事件确认。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | uint | 主键 |
+| `order_no` | string | RouterX 本地订单号 |
+| `user_id` | uint | 订单所属用户 |
+| `provider` | string | 当前基础实现支持 `stripe` |
+| `provider_refund_id` | string | provider 退款对象 ID，例如 Stripe `re_...` |
+| `amount` | decimal/string | 本次请求退款金额 |
+| `amount_minor` | int64 | 本次请求退款的货币最小单位金额 |
+| `currency` | string | 货币 |
+| `refund_quota` | int64 | 按订单金额比例推导的退款额度 |
+| `status` | string | provider 请求状态或本地收尾状态，例如 `pending`、`succeeded`、`refunded`、`partially_refunded` |
+| `idempotency_key` | string | 管理端发起退款请求的幂等键，唯一 |
+| `reason` | text | 退款原因 |
+| `actor_user_id` | uint | 发起退款请求的管理员 |
+| `request_id` | nullable string | HTTP 请求 ID |
+| `created_at` | time | 创建时间 |
+| `updated_at` | time | 更新时间 |
+
+索引：
+
+- `idx_payment_refund_requests_order_no`
+- `idx_payment_refund_requests_user_id`
+- `idx_payment_refund_requests_provider`
+- `idx_payment_refund_requests_provider_refund_id`
+- `idx_payment_refund_requests_status`
+- `idx_payment_refund_requests_actor_user_id`
+- `idx_payment_refund_requests_idempotency_key`，唯一索引。
 
 ### `quota_transactions`
 
@@ -554,7 +587,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 
 ### `admin_audit_logs`
 
-统一管理审计日志表，记录管理端高风险操作的可复核摘要。当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、scope 更新、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、全额/部分退款扣回、Stripe 争议事件、支付人工补账/扣回、支付人工退款，settings 批量更新，用户调额，充值码生成、导入、作废、兑换，通道创建、编辑、启用、禁用、删除、测试、拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及按时间清理调用日志审计，后续继续扩展到价格、日志导出、支付失败分支和更多拒绝操作。
+统一管理审计日志表，记录管理端高风险操作的可复核摘要。当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、scope 更新、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、全额/部分退款扣回、Stripe 争议事件、支付人工补账/扣回、支付人工退款、Stripe provider 退款请求，settings 批量更新，用户调额，充值码生成、导入、作废、兑换，通道创建、编辑、启用、禁用、删除、测试、拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及按时间清理调用日志审计，后续继续扩展到价格、日志导出、支付失败分支和更多拒绝操作。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -653,6 +686,7 @@ QuotaUnlimited = -1
 | `012_log_billing_snapshot` | 新增调用日志 billing_snapshot 脱敏 JSON 字符串 |
 | `013_log_request_snapshot` | 新增调用日志 request_snapshot 脱敏 JSON 字符串 |
 | `014_log_policy_snapshot` | 新增调用日志 policy_snapshot 脱敏 JSON 字符串 |
+| `015_payment_refund_requests` | 新增 provider 退款请求表和订单、provider、状态、幂等键索引 |
 
 重要说明：
 

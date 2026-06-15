@@ -1045,7 +1045,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理审计。
       security:
         - UserJWT: []
       parameters:
@@ -1055,7 +1055,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、payment_order.create、payment_webhook.processed、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_manual_adjust.debit、channel.update、log.clear 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、payment_order.create、payment_webhook.processed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_manual_adjust.debit、channel.update、log.clear 或 admin.denied。
         - name: resource_type
           in: query
           required: false
@@ -1270,6 +1270,33 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/PaymentManualRefundResult"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/payment/refund-requests:
+    post:
+      tags: [Admin Payment]
+      summary: 发起 Stripe provider 退款请求
+      description: 管理员向 Stripe 发起 provider 退款请求；仅接受 Stripe paid 订单，订单必须已保存 provider_payment_id。refund_amount 为空时按订单全额退款，非空时必须大于 0 且不超过订单金额。成功后写 payment_refund_requests、订单进入 refund_pending，并写 payment_refund.requested 管理审计；最终 refunded 或 partially_refunded 状态仍由 Stripe charge.refunded webhook 确认。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentProviderRefundRequest"
+      responses:
+        "200":
+          description: Stripe provider 退款请求已受理。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentProviderRefundRequestResult"
         "400":
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/admin:
@@ -2618,6 +2645,56 @@ components:
           format: int64
         idempotency_key:
           type: string
+    PaymentProviderRefundRequest:
+      type: object
+      required: [order_no, reason, idempotency_key]
+      properties:
+        order_no:
+          type: string
+          description: 本地支付订单号；订单必须是 Stripe paid 状态且已保存 provider_payment_id。
+          example: RX202606150001
+        refund_amount:
+          type: string
+          description: 退款金额；为空时按订单全额退款，非空时必须大于 0 且不能超过订单金额。
+          example: "5.00"
+        reason:
+          type: string
+          description: 发起 provider 退款的原因；默认策略要求必填，会写入 Stripe metadata 和管理审计。
+          example: customer requested partial refund
+        idempotency_key:
+          type: string
+          description: 幂等键；会作为 Stripe Idempotency-Key，并在本地 payment_refund_requests 中唯一记录。
+          example: refund-ticket-5678
+    PaymentProviderRefundRequestResult:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: uint64
+        order_no:
+          type: string
+        provider:
+          type: string
+          enum: [stripe]
+        provider_refund_id:
+          type: string
+          example: re_123
+        refund_amount:
+          type: string
+          example: "5.00"
+        refund_amount_minor:
+          type: integer
+          format: int64
+          description: 退款金额的货币最小单位。
+        refund_quota:
+          type: integer
+          format: int64
+          description: 按订单金额比例推导的退款额度。
+        order_status:
+          type: string
+          enum: [refund_pending]
+        idempotency_key:
+          type: string
     AdminAuditLogInfo:
       type: object
       properties:
@@ -2683,7 +2760,7 @@ components:
         provider: { type: string }
         status:
           type: string
-          enum: [pending, paid, failed, closed, refunded, partially_refunded]
+          enum: [pending, paid, failed, closed, refund_pending, refund_failed, refunded, partially_refunded]
         product_id: { type: string }
         amount: { type: string }
         currency: { type: string }

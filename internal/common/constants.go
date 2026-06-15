@@ -99,6 +99,8 @@ const (
 	PaymentOrderStatusPaid              = "paid"
 	PaymentOrderStatusFailed            = "failed"
 	PaymentOrderStatusClosed            = "closed"
+	PaymentOrderStatusRefundPending     = "refund_pending"
+	PaymentOrderStatusRefundFailed      = "refund_failed"
 	PaymentOrderStatusRefunded          = "refunded"
 	PaymentOrderStatusPartiallyRefunded = "partially_refunded"
 )

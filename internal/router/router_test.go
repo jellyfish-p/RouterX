@@ -1342,6 +1342,170 @@ func TestAdminPaymentManualRefundMarksOrderAndDeductsQuota(t *testing.T) {
 	}
 }
 
+func TestAdminStripeRefundRequestCreatesProviderRefundAndPendingOrder(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
+
+	var refundAPICalls int32
+	stripeAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		atomic.AddInt32(&refundAPICalls, 1)
+		if req.Method != http.MethodPost || req.URL.Path != "/v1/refunds" {
+			t.Fatalf("unexpected stripe refund request: %s %s", req.Method, req.URL.Path)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer sk_test_refund" {
+			t.Fatalf("stripe refund should use secret key authorization, got %q", got)
+		}
+		if got := req.Header.Get("Idempotency-Key"); got != "refund-request-1" {
+			t.Fatalf("stripe refund should send idempotency key, got %q", got)
+		}
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		expected := map[string]string{
+			"payment_intent":            "pi_refund_request_1",
+			"amount":                    "500",
+			"metadata[order_no]":        "PAYREFREQ1000",
+			"metadata[idempotency_key]": "refund-request-1",
+			"metadata[reason]":          "customer requested partial refund",
+		}
+		for key, want := range expected {
+			if got := req.Form.Get(key); got != want {
+				t.Fatalf("stripe refund form %s = %q, want %q", key, got, want)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"re_refund_request_1","status":"pending"}`))
+	}))
+	defer stripeAPI.Close()
+	t.Setenv("PAYMENT_STRIPE_SECRET_KEY", "sk_test_refund")
+	t.Setenv("PAYMENT_STRIPE_API_BASE", stripeAPI.URL)
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createUserResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username": "alice",
+		"password": "password123",
+		"quota":    100,
+	})
+	if createUserResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createUserResp.Code, createUserResp.Body.String())
+	}
+	var alice model.User
+	if err := internal.DB.Where("username = ?", "alice").First(&alice).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_refund_request",
+		Name:      "Refund request credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	paymentIntent := "pi_refund_request_1"
+	paidAt := time.Now()
+	order := model.PaymentOrder{
+		OrderNo:           "PAYREFREQ1000",
+		UserID:            alice.ID,
+		ProductID:         "quota_refund_request",
+		Provider:          common.PaymentProviderStripe,
+		Amount:            "9.99",
+		Currency:          "usd",
+		Quota:             100,
+		Status:            common.PaymentOrderStatusPaid,
+		ProviderPaymentID: &paymentIntent,
+		PaidAt:            &paidAt,
+	}
+	if err := internal.DB.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	refundResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refund-requests", rootJWT, map[string]interface{}{
+		"order_no":        order.OrderNo,
+		"refund_amount":   "5.00",
+		"reason":          "customer requested partial refund",
+		"idempotency_key": "refund-request-1",
+	})
+	refundBody := refundResp.Body.String()
+	if refundResp.Code != http.StatusOK ||
+		!strings.Contains(refundBody, `"provider_refund_id":"re_refund_request_1"`) ||
+		!strings.Contains(refundBody, `"order_status":"refund_pending"`) ||
+		!strings.Contains(refundBody, `"refund_quota":50`) {
+		t.Fatalf("stripe refund request should create provider refund and pending order, got %d %s", refundResp.Code, refundBody)
+	}
+	if atomic.LoadInt32(&refundAPICalls) != 1 {
+		t.Fatalf("stripe refund API should be called once, got %d", refundAPICalls)
+	}
+	if err := internal.DB.First(&order, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != "refund_pending" {
+		t.Fatalf("stripe refund request should mark order refund_pending, got %+v", order)
+	}
+	var refundRequest struct {
+		OrderNo          string
+		Provider         string
+		ProviderRefundID string
+		Amount           string
+		AmountMinor      int64
+		Currency         string
+		RefundQuota      int64
+		Status           string
+		IdempotencyKey   string
+		Reason           string
+		ActorUserID      uint
+	}
+	if err := internal.DB.Table("payment_refund_requests").Where("idempotency_key = ?", "refund-request-1").First(&refundRequest).Error; err != nil {
+		t.Fatalf("stripe refund request should be recorded: %v", err)
+	}
+	if refundRequest.OrderNo != order.OrderNo ||
+		refundRequest.Provider != common.PaymentProviderStripe ||
+		refundRequest.ProviderRefundID != "re_refund_request_1" ||
+		refundRequest.Amount != "5.00" ||
+		refundRequest.AmountMinor != 500 ||
+		refundRequest.Currency != "usd" ||
+		refundRequest.RefundQuota != 50 ||
+		refundRequest.Status != "pending" ||
+		refundRequest.Reason != "customer requested partial refund" ||
+		refundRequest.ActorUserID == 0 {
+		t.Fatalf("unexpected refund request record: %+v", refundRequest)
+	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo, rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_refund.requested"`) ||
+		!strings.Contains(auditBody, "re_refund_request_1") ||
+		!strings.Contains(auditBody, "refund-request-1") {
+		t.Fatalf("stripe refund request should write audit log, got %d %s", auditResp.Code, auditBody)
+	}
+
+	webhookBody := stripeChargeRefundedPayload("evt_refund_requested_1", order, "pi_refund_request_1", 500)
+	webhookResp := performStripeWebhook(r, webhookBody, "whsec_test_secret")
+	if webhookResp.Code != http.StatusOK || strings.TrimSpace(webhookResp.Body.String()) != "success" {
+		t.Fatalf("stripe refund webhook should finalize pending refund, got %d %s", webhookResp.Code, webhookResp.Body.String())
+	}
+	if err := internal.DB.First(&order, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != common.PaymentOrderStatusPartiallyRefunded {
+		t.Fatalf("stripe refund webhook should finalize pending refund, got %+v", order)
+	}
+}
+
 func TestRedemCodeBatchNoteAndExpirationPolicy(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -8759,6 +8923,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		&model.PaymentProduct{},
 		&model.PaymentOrder{},
 		&model.PaymentEvent{},
+		&model.PaymentRefundRequest{},
 		&model.AdminAuditLog{},
 		&model.Setting{},
 	); err != nil {
