@@ -49,6 +49,7 @@
 | `TestAdminAuditRequiresSuperAdmin` | 普通管理员不能查询管理审计日志，超级管理员边界由路由层拦截 |
 | `TestUserListsAvailableModels` | 用户查看当前启用通道的去重模型列表，禁用通道模型不可见，未配置系统价格时返回 `minimum_usage` 和 `pricing_ready=false` |
 | `TestAdminModelPriceManagementUpdatesUserModelPricing` | 管理员创建、更新、启用和禁用系统模型价格；用户侧模型列表随启用价格返回版本化 `price_rule`，禁用后回退 `minimum_usage`，并写 `model_price.*` 审计 |
+| `TestAdminChannelModelPriceControlsUserModelPricingAndVisibility` | 管理员创建、更新、启用和禁用通道模型价格覆盖；通道级价格优先于系统价格，`user_enabled=false` 会隐藏普通用户模型，并写 `channel_model_price.*` 审计 |
 | `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品；未启用 provider 拒绝下单，启用后创建本地 pending 订单并写 `payment_order.create` 管理审计，订单按 settings 过期且不入账 |
 | `TestStripeOrderCreatesCheckoutSessionWhenConfigured` | Stripe secret、测试 API base 和绝对 return_url 齐全时创建 Checkout Session，表单 metadata/金额/货币可复核，并保存 session id/url |
 | `TestEpayOrderBuildsSignedCheckoutURL` | 易支付网关配置齐全时创建订单返回签名收银台 URL，参数和签名可复核 |

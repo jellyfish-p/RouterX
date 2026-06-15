@@ -43,6 +43,7 @@ func main() {
 		&model.RedemCode{},
 		&model.QuotaTransaction{},
 		&model.ModelPrice{},
+		&model.ChannelModelPrice{},
 		&model.PaymentProduct{},
 		&model.PaymentOrder{},
 		&model.PaymentEvent{},

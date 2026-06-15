@@ -27,9 +27,9 @@
 
 ## 当前实现边界
 
-当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口、含 P0 usage/minimum 表达式和默认倍率的基础 `billing_snapshot`，基于 settings 的用户分组 x 通道分组访问控制，以及系统模型价格表 `model_prices` 的管理端 API、规则版本和用户侧模型价格就绪状态展示。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；通道级价格覆盖、商业级表达式接入热路径、业务倍率、访问控制快照和更多事件仍属于目标增强。
+当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口、含 P0 usage/minimum 表达式和默认倍率的基础 `billing_snapshot`，基于 settings 的用户分组 x 通道分组访问控制，系统模型价格表 `model_prices` 的管理端 API、规则版本和用户侧模型价格就绪状态展示，以及通道模型价格覆盖 `channel_model_prices` 的管理端 API、规则版本、普通用户可见性和用户侧通道级价格状态展示。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；商业级表达式接入热路径、业务倍率、访问控制快照和更多事件仍属于目标增强。
 
-文档中的 `channel_model_prices`、商业级 `billing_*_snapshot` 等字段仍是目标设计，不应误读为当前迁移已经全部存在。`model_prices` 当前已经落库并用于管理端维护和 `/v0/user/models` 价格状态展示，但当前 P0 调用热路径仍只解释 usage/minimum 基础扣费和默认倍率；实现时应按阶段先保证 P0 基础日志和扣费一致，再补 P1 价格表达式执行和快照。调用事实快照的统一字段、脱敏和测试要求以 `docs/SNAPSHOTS.md` 为准。
+文档中的商业级 `billing_*_snapshot` 等字段仍是目标设计，不应误读为当前迁移已经全部存在。`model_prices` 和 `channel_model_prices` 当前已经落库并用于管理端维护和 `/v0/user/models` 价格状态/可见性展示，但当前 P0 调用热路径仍只解释 usage/minimum 基础扣费和默认倍率；实现时应按阶段先保证 P0 基础日志和扣费一致，再补 P1 价格表达式执行和快照。调用事实快照的统一字段、脱敏和测试要求以 `docs/SNAPSHOTS.md` 为准。
 
 ## 额度单位
 
@@ -179,7 +179,7 @@ P0 扣费顺序：
 
 配置要求：
 
-- 系统模型价格创建、更新、启用和禁用当前已写入 `model_price.*` 管理审计；通道级模型价格覆盖、普通用户可用开关、通道分组倍率、用户分组 x 通道分组倍率、用户分组通道/模型分组访问配置、计费规则版本变更也必须记录审计日志。
+- 系统模型价格创建、更新、启用和禁用当前已写入 `model_price.*` 管理审计；通道级模型价格覆盖创建、更新、启用和禁用当前已写入 `channel_model_price.*` 管理审计，`user_enabled` 变更随更新审计记录；通道分组倍率、用户分组 x 通道分组倍率、用户分组通道/模型分组访问配置、计费规则版本变更也必须记录审计日志。
 - 每次计费规则变更必须生成新的 `rule_version` 或表达式版本，已完成请求不受新规则影响。
 - `billing.bootstrap_admin_quota` 只解决开箱验证体验，不代表正式运营赠送策略；生产运营应通过商品、充值码、管理员额度调整或支付入账管理用户额度。
 
@@ -211,6 +211,8 @@ P0 扣费顺序：
 #### `channel_model_prices`
 
 通道级模型价格覆盖表，优先级高于 `model_prices`。
+
+当前已实现后台管理 API：`GET/POST /v0/admin/channel-model-prices`、`PUT /v0/admin/channel-model-prices/:id`、`PATCH /v0/admin/channel-model-prices/:id/disable|enable`。当默认可见通道存在启用覆盖时，`/v0/user/models` 返回 `channel_model_price:<price_mode>:v<rule_version>`；`user_enabled=false` 时该通道不再向普通用户贡献该模型可见性。表达式尚未接入实际调用扣费热路径。
 
 | 字段 | 说明 |
 |------|------|

@@ -359,6 +359,11 @@ Provider 退款请求：
 | PUT | `/v0/admin/model-prices/:id` | 基础实现 | 更新系统模型价格；每次更新递增 `rule_version` 并写 `model_price.update` 管理审计 |
 | PATCH | `/v0/admin/model-prices/:id/disable` | 基础实现 | 禁用系统模型价格；用户侧模型列表回退到 `minimum_usage`，成功后写 `model_price.disable` 管理审计 |
 | PATCH | `/v0/admin/model-prices/:id/enable` | 基础实现 | 启用系统模型价格；用户侧模型列表返回版本化价格规则，成功后写 `model_price.enable` 管理审计 |
+| GET | `/v0/admin/channel-model-prices` | 基础实现 | 通道模型价格覆盖列表，支持 `page`、`page_size`、`keyword`、`channel_id`、`enabled`、`user_enabled` |
+| POST | `/v0/admin/channel-model-prices` | 基础实现 | 创建通道模型价格覆盖；`channel_id + model` 唯一，成功后 `rule_version=1` 并写 `channel_model_price.create` 管理审计 |
+| PUT | `/v0/admin/channel-model-prices/:id` | 基础实现 | 更新通道模型价格覆盖；每次更新递增 `rule_version` 并写 `channel_model_price.update` 管理审计 |
+| PATCH | `/v0/admin/channel-model-prices/:id/disable` | 基础实现 | 禁用价格覆盖但不改变普通用户可见性；用户侧可回退系统价格，成功后写 `channel_model_price.disable` 管理审计 |
+| PATCH | `/v0/admin/channel-model-prices/:id/enable` | 基础实现 | 启用价格覆盖；用户侧优先展示通道级版本化价格规则，成功后写 `channel_model_price.enable` 管理审计 |
 
 创建/更新系统模型价格请求：
 
@@ -377,6 +382,27 @@ Provider 退款请求：
 ```
 
 `price_mode` 当前允许 `request`、`token`、`second`、`tiered`。系统模型价格已经用于 `/v0/user/models` 的 `pricing_ready` 和 `price_rule` 展示；调用热路径仍按 P0 usage/minimum 规则扣费，后续再把表达式接入 `billing_snapshot`。
+
+创建/更新通道模型价格覆盖请求：
+
+```json
+{
+  "channel_id": 12,
+  "model": "gpt-4o-mini",
+  "enabled": true,
+  "user_enabled": true,
+  "price_mode": "token",
+  "override_mode": "override",
+  "price_expression": "prompt_tokens * prompt_price + completion_tokens * completion_price",
+  "variables_json": {
+    "prompt_price": 1,
+    "completion_price": 2
+  },
+  "unit_tokens": 1000
+}
+```
+
+`override_mode` 当前允许 `override` 和 `merge_variables`。`user_enabled=false` 表示该通道下该模型不向普通用户暴露；如果没有其他可见通道提供该模型，`/v0/user/models` 不再返回该模型。通道级启用价格覆盖优先于系统模型价格展示，禁用覆盖后会回退到启用的系统模型价格或 `minimum_usage`。
 
 ### 管理审计
 
@@ -411,6 +437,10 @@ Provider 退款请求：
 | `model_price.update` | `PUT /v0/admin/model-prices/:id` |
 | `model_price.disable` | `PATCH /v0/admin/model-prices/:id/disable` |
 | `model_price.enable` | `PATCH /v0/admin/model-prices/:id/enable` |
+| `channel_model_price.create` | `POST /v0/admin/channel-model-prices` |
+| `channel_model_price.update` | `PUT /v0/admin/channel-model-prices/:id` |
+| `channel_model_price.disable` | `PATCH /v0/admin/channel-model-prices/:id/disable` |
+| `channel_model_price.enable` | `PATCH /v0/admin/channel-model-prices/:id/enable` |
 | `payment_order.create` | `POST /v0/user/payment/orders` |
 | `payment_webhook.processed` | `POST /v0/payment/stripe/webhook`、`POST /v0/payment/epay/notify` |
 | `payment_order.paid` | 支付 provider 成功回调入账 |
@@ -659,7 +689,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | GET | `/v0/user/log` | 已实现 | 当前用户调用日志 |
 | GET | `/v0/user/billing` | 基础实现 | 当前用户账单统计 |
 | POST | `/v0/user/redem` | 基础实现 | 使用未兑换且未过期的充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水与 `redem_code.redeem` 管理审计 |
-| GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露的可用模型列表；命中启用 `model_prices` 时返回 `pricing_ready=true` 和 `model_price:<price_mode>:v<rule_version>`，否则返回 `minimum_usage` |
+| GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露且未被 `channel_model_prices.user_enabled=false` 隐藏的可用模型列表；通道级价格优先返回 `channel_model_price:<price_mode>:v<rule_version>`，否则命中启用 `model_prices` 时返回 `model_price:<price_mode>:v<rule_version>`，再否则返回 `minimum_usage` |
 
 ### 支付接口
 

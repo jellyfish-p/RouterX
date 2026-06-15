@@ -1969,6 +1969,171 @@ func TestAdminModelPriceManagementUpdatesUserModelPricing(t *testing.T) {
 	}
 }
 
+func TestAdminChannelModelPriceControlsUserModelPricingAndVisibility(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	channel := model.Channel{Idx: 1, Type: common.ChannelTypeOpenAICompat, Name: "priced-channel", Models: "gpt-overridden,gpt-blocked", Status: common.ChannelStatusEnabled}
+	if err := internal.DB.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	systemPrice := performJSON(r, http.MethodPost, "/v0/admin/model-prices", rootJWT, map[string]interface{}{
+		"model":            "gpt-overridden",
+		"price_mode":       "token",
+		"price_expression": "prompt_tokens + completion_tokens",
+		"unit_tokens":      1000,
+		"enabled":          true,
+	})
+	if systemPrice.Code != http.StatusOK {
+		t.Fatalf("admin should create fallback system price, got %d %s", systemPrice.Code, systemPrice.Body.String())
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/channel-model-prices", rootJWT, map[string]interface{}{
+		"channel_id":       channel.ID,
+		"model":            "gpt-overridden",
+		"enabled":          true,
+		"user_enabled":     true,
+		"price_mode":       "request",
+		"override_mode":    "override",
+		"price_expression": "request_price",
+		"variables_json": map[string]interface{}{
+			"request_price": 2,
+		},
+		"unit_tokens": 1,
+	})
+	var createPayload struct {
+		Data struct {
+			ID          uint   `json:"id"`
+			ChannelID   uint   `json:"channel_id"`
+			Model       string `json:"model"`
+			PriceMode   string `json:"price_mode"`
+			RuleVersion int64  `json:"rule_version"`
+			Enabled     bool   `json:"enabled"`
+			UserEnabled bool   `json:"user_enabled"`
+		} `json:"data"`
+	}
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("admin should create channel model price, got %d %s", createResp.Code, createResp.Body.String())
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createPayload); err != nil {
+		t.Fatal(err)
+	}
+	if createPayload.Data.ID == 0 ||
+		createPayload.Data.ChannelID != channel.ID ||
+		createPayload.Data.Model != "gpt-overridden" ||
+		createPayload.Data.PriceMode != "request" ||
+		createPayload.Data.RuleVersion != 1 ||
+		!createPayload.Data.Enabled ||
+		!createPayload.Data.UserEnabled {
+		t.Fatalf("admin should create channel model price with initial version, got %d %s", createResp.Code, createResp.Body.String())
+	}
+
+	blockedResp := performJSON(r, http.MethodPost, "/v0/admin/channel-model-prices", rootJWT, map[string]interface{}{
+		"channel_id":       channel.ID,
+		"model":            "gpt-blocked",
+		"enabled":          true,
+		"user_enabled":     false,
+		"price_mode":       "token",
+		"override_mode":    "override",
+		"price_expression": "prompt_tokens + completion_tokens",
+		"unit_tokens":      1000,
+	})
+	if blockedResp.Code != http.StatusOK {
+		t.Fatalf("admin should create hidden channel model price, got %d %s", blockedResp.Code, blockedResp.Body.String())
+	}
+
+	assertUserModelPricing := func(modelID, priceRule string, ready bool, visible bool) {
+		t.Helper()
+		resp := performJSON(r, http.MethodGet, "/v0/user/models", rootJWT, nil)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("user models failed: %d %s", resp.Code, resp.Body.String())
+		}
+		var payload struct {
+			Data struct {
+				Models []struct {
+					ID           string `json:"id"`
+					PriceRule    string `json:"price_rule"`
+					PricingReady bool   `json:"pricing_ready"`
+				} `json:"models"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range payload.Data.Models {
+			if item.ID == modelID {
+				if !visible {
+					t.Fatalf("model %s should be hidden, got %s", modelID, resp.Body.String())
+				}
+				if item.PriceRule != priceRule || item.PricingReady != ready {
+					t.Fatalf("model %s pricing mismatch, got rule=%s ready=%v in %s", modelID, item.PriceRule, item.PricingReady, resp.Body.String())
+				}
+				return
+			}
+		}
+		if visible {
+			t.Fatalf("model %s not found in %s", modelID, resp.Body.String())
+		}
+	}
+	assertUserModelPricing("gpt-overridden", "channel_model_price:request:v1", true, true)
+	assertUserModelPricing("gpt-blocked", "", false, false)
+
+	updateResp := performJSON(r, http.MethodPut, "/v0/admin/channel-model-prices/"+uintString(createPayload.Data.ID), rootJWT, map[string]interface{}{
+		"channel_id":       channel.ID,
+		"model":            "gpt-overridden",
+		"enabled":          true,
+		"user_enabled":     true,
+		"price_mode":       "second",
+		"override_mode":    "override",
+		"price_expression": "seconds * second_price",
+		"variables_json": map[string]interface{}{
+			"second_price": 3,
+		},
+		"unit_tokens": 1,
+	})
+	if updateResp.Code != http.StatusOK || !strings.Contains(updateResp.Body.String(), `"price_mode":"second"`) || !strings.Contains(updateResp.Body.String(), `"rule_version":2`) {
+		t.Fatalf("admin should update channel model price and bump version, got %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	assertUserModelPricing("gpt-overridden", "channel_model_price:second:v2", true, true)
+
+	adminList := performJSON(r, http.MethodGet, "/v0/admin/channel-model-prices?channel_id="+uintString(channel.ID)+"&keyword=gpt-overridden", rootJWT, nil)
+	if adminList.Code != http.StatusOK || !strings.Contains(adminList.Body.String(), `"model":"gpt-overridden"`) || !strings.Contains(adminList.Body.String(), `"channel_id":`+uintString(channel.ID)) {
+		t.Fatalf("admin should list channel model prices, got %d %s", adminList.Code, adminList.Body.String())
+	}
+
+	disableResp := performJSON(r, http.MethodPatch, "/v0/admin/channel-model-prices/"+uintString(createPayload.Data.ID)+"/disable", rootJWT, nil)
+	if disableResp.Code != http.StatusOK {
+		t.Fatalf("admin should disable channel model price, got %d %s", disableResp.Code, disableResp.Body.String())
+	}
+	assertUserModelPricing("gpt-overridden", "model_price:token:v1", true, true)
+
+	enableResp := performJSON(r, http.MethodPatch, "/v0/admin/channel-model-prices/"+uintString(createPayload.Data.ID)+"/enable", rootJWT, nil)
+	if enableResp.Code != http.StatusOK {
+		t.Fatalf("admin should enable channel model price, got %d %s", enableResp.Code, enableResp.Body.String())
+	}
+	assertUserModelPricing("gpt-overridden", "channel_model_price:second:v4", true, true)
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=channel_model_price&resource_id="+uintString(channel.ID)+":gpt-overridden", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"channel_model_price.create"`) ||
+		!strings.Contains(auditBody, `"action":"channel_model_price.update"`) ||
+		!strings.Contains(auditBody, `"action":"channel_model_price.disable"`) ||
+		!strings.Contains(auditBody, `"action":"channel_model_price.enable"`) {
+		t.Fatalf("channel model price management should write audit logs, got %d %s", auditResp.Code, auditBody)
+	}
+}
+
 func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -9310,6 +9475,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		&model.RedemCode{},
 		&model.QuotaTransaction{},
 		&model.ModelPrice{},
+		&model.ChannelModelPrice{},
 		&model.PaymentProduct{},
 		&model.PaymentOrder{},
 		&model.PaymentEvent{},

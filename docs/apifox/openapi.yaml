@@ -8,7 +8,7 @@ info:
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message。
-    - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -582,7 +582,7 @@ paths:
     get:
       tags: [User Usage]
       summary: 当前用户可用模型
-      description: 基础实现；返回启用通道暴露的去重模型列表。命中启用 model_prices 时，price_rule 返回 model_price:<price_mode>:v<rule_version> 且 pricing_ready=true；未配置或已禁用时回退 minimum_usage。
+      description: 基础实现；返回启用通道暴露且未被 channel_model_prices.user_enabled=false 隐藏的去重模型列表。默认可见通道命中启用 channel_model_prices 时，price_rule 返回 channel_model_price:<price_mode>:v<rule_version>；否则命中启用 model_prices 时返回 model_price:<price_mode>:v<rule_version>；都未命中时回退 minimum_usage。
       security:
         - UserJWT: []
       responses:
@@ -1057,12 +1057,12 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、model_price.create、payment_order.create、payment_webhook.processed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、channel.update、log.clear 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_webhook.processed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、channel.update、log.clear 或 admin.denied。
         - name: resource_type
           in: query
           required: false
           schema: { type: string }
-          description: 资源类型过滤，例如 api_key、user、payment_product、model_price、payment_order、payment_event、channel、log 或 admin。
+          description: 资源类型过滤，例如 api_key、user、payment_product、model_price、channel_model_price、payment_order、payment_event、channel、log 或 admin。
         - name: resource_id
           in: query
           required: false
@@ -1322,6 +1322,127 @@ paths:
       tags: [Admin Billing]
       summary: 启用系统模型价格
       description: 启用后用户侧 /v0/user/models 对应模型返回版本化 price_rule；rule_version 递增。成功后写入 model_price.enable 管理审计。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/channel-model-prices:
+    get:
+      tags: [Admin Billing]
+      summary: 通道模型价格覆盖列表
+      description: 管理员查看通道级模型价格覆盖；可按模型名/价格模式关键字、channel_id、enabled 和 user_enabled 过滤。该表当前用于用户侧模型可见性和价格状态展示，表达式尚未接入调用扣费热路径。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Keyword"
+        - name: channel_id
+          in: query
+          required: false
+          schema: { type: integer, format: uint64 }
+          description: 按通道 ID 过滤。
+        - name: enabled
+          in: query
+          required: false
+          schema: { type: boolean }
+          description: 是否只查看启用或禁用价格覆盖。
+        - name: user_enabled
+          in: query
+          required: false
+          schema: { type: boolean }
+          description: 是否只查看普通用户可见或隐藏的通道模型。
+      responses:
+        "200":
+          description: 通道模型价格覆盖分页列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChannelModelPriceAdminPage"
+    post:
+      tags: [Admin Billing]
+      summary: 创建通道模型价格覆盖
+      description: 创建通道级模型价格覆盖；channel_id + model 唯一，且模型必须属于该通道 models。成功后写入 channel_model_price.create 管理审计，resource_id 为 channel_id:model。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertChannelModelPriceRequest"
+      responses:
+        "200":
+          description: 通道模型价格覆盖创建成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChannelModelPriceAdminInfo"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/channel-model-prices/{id}:
+    put:
+      tags: [Admin Billing]
+      summary: 更新通道模型价格覆盖
+      description: 更新通道级模型价格覆盖；每次更新 rule_version 递增。成功后写入 channel_model_price.update 管理审计，resource_id 为 channel_id:model。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertChannelModelPriceRequest"
+      responses:
+        "200":
+          description: 通道模型价格覆盖更新成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChannelModelPriceAdminInfo"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/channel-model-prices/{id}/disable:
+    patch:
+      tags: [Admin Billing]
+      summary: 禁用通道模型价格覆盖
+      description: 禁用后该通道模型的价格状态可回退到启用的系统模型价格或 minimum_usage，但不改变 user_enabled 可见性；rule_version 递增。成功后写入 channel_model_price.disable 管理审计。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/channel-model-prices/{id}/enable:
+    patch:
+      tags: [Admin Billing]
+      summary: 启用通道模型价格覆盖
+      description: 启用后用户侧 /v0/user/models 可优先返回通道级版本化 price_rule；rule_version 递增。成功后写入 channel_model_price.enable 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -2592,11 +2713,11 @@ components:
         name: { type: string }
         price_rule:
           type: string
-          description: 未配置启用系统价格时为 minimum_usage；命中启用 model_prices 时为 model_price:<price_mode>:v<rule_version>。
-          example: model_price:token:v1
+          description: 未配置启用价格时为 minimum_usage；命中启用 channel_model_prices 时为 channel_model_price:<price_mode>:v<rule_version>，否则命中启用 model_prices 时为 model_price:<price_mode>:v<rule_version>。
+          example: channel_model_price:token:v1
         pricing_ready:
           type: boolean
-          description: true 表示已命中启用 model_prices；false 表示当前模型仍按 P0 minimum_usage 状态展示。
+          description: true 表示已命中启用 channel_model_prices 或 model_prices；false 表示当前模型仍按 P0 minimum_usage 状态展示。
     UserModelListResult:
       type: object
       properties:
@@ -2667,6 +2788,87 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/ModelPriceAdminInfo"
+    UpsertChannelModelPriceRequest:
+      type: object
+      required: [channel_id, model, price_mode, price_expression]
+      properties:
+        channel_id:
+          type: integer
+          format: uint64
+          description: 所属通道 ID；模型必须属于该通道 models。
+          example: 12
+        model:
+          type: string
+          description: 通道中的模型名，channel_id + model 必须唯一。
+          example: gpt-4o-mini
+        enabled:
+          type: boolean
+          description: 创建时未传默认为 true；更新时未传则保留原状态。
+        user_enabled:
+          type: boolean
+          description: 创建时未传默认为 true；false 表示该通道模型不向普通用户展示。
+        price_mode:
+          type: string
+          enum: [request, token, second, tiered]
+          description: 价格模板类型。
+          example: token
+        override_mode:
+          type: string
+          enum: [override, merge_variables]
+          description: 覆盖模式；未传默认为 override。
+          example: override
+        price_expression:
+          type: string
+          description: 通道级价格表达式；当前先保存和展示，后续接入扣费热路径。
+          example: prompt_tokens * prompt_price + completion_tokens * completion_price
+        variables_json:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: 通道级表达式变量。
+          example:
+            prompt_price: 1
+            completion_price: 2
+        unit_tokens:
+          type: integer
+          format: int64
+          description: token 计价单位；未传或为 0 时服务端默认 1000。
+          example: 1000
+    ChannelModelPriceAdminInfo:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        channel_id: { type: integer, format: uint64 }
+        model: { type: string }
+        enabled: { type: boolean }
+        user_enabled: { type: boolean }
+        price_mode:
+          type: string
+          enum: [request, token, second, tiered]
+        override_mode:
+          type: string
+          enum: [override, merge_variables]
+        price_expression: { type: string }
+        variables_json:
+          type: object
+          nullable: true
+          additionalProperties: true
+        unit_tokens: { type: integer, format: int64 }
+        rule_version:
+          type: integer
+          format: int64
+          description: 规则版本；创建为 1，更新、启用、禁用都会递增。
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ChannelModelPriceAdminPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/ChannelModelPriceAdminInfo"
     PaymentProductInfo:
       type: object
       properties:

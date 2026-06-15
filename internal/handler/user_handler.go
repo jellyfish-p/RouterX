@@ -395,6 +395,24 @@ func (h *UserHandler) ListModelPricesAdmin(c *gin.Context) {
 	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.ModelPriceAdminInfosFromModels(prices)})
 }
 
+// GET /v0/admin/channel-model-prices — 通道模型价格覆盖列表
+func (h *UserHandler) ListChannelModelPricesAdmin(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.ChannelModelPriceListRequest
+	_ = c.ShouldBindQuery(&req)
+	prices, total, err := h.svc.ListChannelModelPricesAdmin(operator.Role, req.Page, req.PageSize, req.Keyword, req.ChannelID, req.Enabled, req.UserEnabled)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	page, pageSize := pageValues(req.Page, req.PageSize)
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.ChannelModelPriceAdminInfosFromModels(prices)})
+}
+
 // GET /v0/admin/audit — 管理审计日志列表
 func (h *UserHandler) ListAdminAuditLogs(c *gin.Context) {
 	operator, ok := currentUser(c)
@@ -469,6 +487,38 @@ func (h *UserHandler) CreateModelPrice(c *gin.Context) {
 	common.Success(c, dto.ModelPriceAdminInfoFromModel(price))
 }
 
+// POST /v0/admin/channel-model-prices — 创建通道模型价格覆盖
+func (h *UserHandler) CreateChannelModelPrice(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.UpsertChannelModelPriceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "通道模型价格参数无效")
+		return
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	userEnabled := true
+	if req.UserEnabled != nil {
+		userEnabled = *req.UserEnabled
+	}
+	price, err := h.svc.CreateChannelModelPrice(operator.Role, channelModelPriceFromRequest(req, enabled, userEnabled))
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAuditString(c, operator, "channel_model_price.create", "channel_model_price", channelModelPriceResourceID(price), nil, channelModelPriceAuditSummary(price)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.ChannelModelPriceAdminInfoFromModel(price))
+}
+
 // PUT /v0/admin/payment/products/:id — 更新支付商品
 func (h *UserHandler) UpdatePaymentProduct(c *gin.Context) {
 	operator, ok := currentUser(c)
@@ -533,6 +583,39 @@ func (h *UserHandler) UpdateModelPrice(c *gin.Context) {
 		return
 	}
 	common.Success(c, dto.ModelPriceAdminInfoFromModel(price))
+}
+
+// PUT /v0/admin/channel-model-prices/:id — 更新通道模型价格覆盖
+func (h *UserHandler) UpdateChannelModelPrice(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	var req dto.UpsertChannelModelPriceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "通道模型价格参数无效")
+		return
+	}
+	before, err := h.svc.GetChannelModelPriceAdmin(operator.Role, id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	price, err := h.svc.UpdateChannelModelPrice(operator.Role, id, channelModelPriceFromRequest(req, false, false), req.Enabled, req.UserEnabled)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAuditString(c, operator, "channel_model_price.update", "channel_model_price", channelModelPriceResourceID(price), channelModelPriceAuditSummary(before), channelModelPriceAuditSummary(price)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.ChannelModelPriceAdminInfoFromModel(price))
 }
 
 // PATCH /v0/admin/payment/products/:id/disable — 禁用支付商品
@@ -633,23 +716,67 @@ func (h *UserHandler) setModelPriceEnabled(c *gin.Context, enabled bool) {
 	common.SuccessMsg(c, "模型价格已禁用")
 }
 
+// PATCH /v0/admin/channel-model-prices/:id/disable — 禁用通道模型价格覆盖
+func (h *UserHandler) DisableChannelModelPrice(c *gin.Context) {
+	h.setChannelModelPriceEnabled(c, false)
+}
+
+// PATCH /v0/admin/channel-model-prices/:id/enable — 启用通道模型价格覆盖
+func (h *UserHandler) EnableChannelModelPrice(c *gin.Context) {
+	h.setChannelModelPriceEnabled(c, true)
+}
+
+func (h *UserHandler) setChannelModelPriceEnabled(c *gin.Context, enabled bool) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	before, err := h.svc.GetChannelModelPriceAdmin(operator.Role, id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.svc.SetChannelModelPriceEnabled(operator.Role, id, enabled); err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	after, err := h.svc.GetChannelModelPriceAdmin(operator.Role, id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	action := "channel_model_price.disable"
+	if enabled {
+		action = "channel_model_price.enable"
+	}
+	if err := h.recordAdminAuditString(c, operator, action, "channel_model_price", channelModelPriceResourceID(after), channelModelPriceAuditSummary(before), channelModelPriceAuditSummary(after)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	if enabled {
+		common.SuccessMsg(c, "通道模型价格已启用")
+		return
+	}
+	common.SuccessMsg(c, "通道模型价格已禁用")
+}
+
 // GET /v0/user/models — 当前用户可用模型列表
 func (h *UserHandler) Models(c *gin.Context) {
 	if _, ok := currentUser(c); !ok {
 		common.FailWithStatus(c, 401, "未登录或登录已过期")
 		return
 	}
-	models, err := h.svc.ListAvailableModels()
+	models, channelPrices, prices, err := h.svc.ListAvailableModelsWithPrices()
 	if err != nil {
 		common.FailWithStatus(c, 500, "查询模型失败")
 		return
 	}
-	prices, err := h.svc.ListEnabledModelPrices(models)
-	if err != nil {
-		common.FailWithStatus(c, 500, "查询模型价格失败")
-		return
-	}
-	common.Success(c, dto.UserModelListResult{Models: dto.UserModelInfosFromNamesAndPrices(models, prices)})
+	common.Success(c, dto.UserModelListResult{Models: dto.UserModelInfosFromNamesAndPriceMaps(models, channelPrices, prices)})
 }
 
 func paymentProductFromRequest(req dto.UpsertPaymentProductRequest, enabled bool) model.PaymentProduct {
@@ -673,6 +800,20 @@ func modelPriceFromRequest(req dto.UpsertModelPriceRequest, enabled bool) model.
 		VariablesJSON:   req.VariablesJSON,
 		UnitTokens:      req.UnitTokens,
 		Enabled:         enabled,
+	}
+}
+
+func channelModelPriceFromRequest(req dto.UpsertChannelModelPriceRequest, enabled, userEnabled bool) model.ChannelModelPrice {
+	return model.ChannelModelPrice{
+		ChannelID:       req.ChannelID,
+		Model:           req.Model,
+		Enabled:         enabled,
+		UserEnabled:     userEnabled,
+		PriceMode:       req.PriceMode,
+		OverrideMode:    req.OverrideMode,
+		PriceExpression: req.PriceExpression,
+		VariablesJSON:   req.VariablesJSON,
+		UnitTokens:      req.UnitTokens,
 	}
 }
 
@@ -744,6 +885,31 @@ func modelPriceAuditSummary(price *model.ModelPrice) map[string]interface{} {
 		"unit_tokens":      price.UnitTokens,
 		"rule_version":     price.RuleVersion,
 		"enabled":          price.Enabled,
+	}
+}
+
+func channelModelPriceResourceID(price *model.ChannelModelPrice) string {
+	if price == nil {
+		return ""
+	}
+	return strconv.FormatUint(uint64(price.ChannelID), 10) + ":" + price.Model
+}
+
+func channelModelPriceAuditSummary(price *model.ChannelModelPrice) map[string]interface{} {
+	if price == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"id":               price.ID,
+		"channel_id":       price.ChannelID,
+		"model":            price.Model,
+		"enabled":          price.Enabled,
+		"user_enabled":     price.UserEnabled,
+		"price_mode":       price.PriceMode,
+		"override_mode":    price.OverrideMode,
+		"price_expression": price.PriceExpression,
+		"unit_tokens":      price.UnitTokens,
+		"rule_version":     price.RuleVersion,
 	}
 }
 

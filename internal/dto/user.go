@@ -82,11 +82,18 @@ func UserModelInfosFromNames(names []string) []UserModelInfo {
 }
 
 func UserModelInfosFromNamesAndPrices(names []string, prices map[string]model.ModelPrice) []UserModelInfo {
+	return UserModelInfosFromNamesAndPriceMaps(names, nil, prices)
+}
+
+func UserModelInfosFromNamesAndPriceMaps(names []string, channelPrices map[string]model.ChannelModelPrice, prices map[string]model.ModelPrice) []UserModelInfo {
 	items := make([]UserModelInfo, 0, len(names))
 	for _, name := range names {
 		priceRule := "minimum_usage"
 		pricingReady := false
-		if price, ok := prices[name]; ok && price.Enabled {
+		if price, ok := channelPrices[name]; ok && price.Enabled && price.UserEnabled {
+			priceRule = fmt.Sprintf("channel_model_price:%s:v%d", price.PriceMode, price.RuleVersion)
+			pricingReady = true
+		} else if price, ok := prices[name]; ok && price.Enabled {
 			priceRule = fmt.Sprintf("model_price:%s:v%d", price.PriceMode, price.RuleVersion)
 			pricingReady = true
 		}

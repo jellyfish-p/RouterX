@@ -114,6 +114,11 @@ var allowedModelPriceModes = map[string]struct{}{
 	"tiered":  {},
 }
 
+var allowedChannelModelPriceOverrideModes = map[string]struct{}{
+	"override":        {},
+	"merge_variables": {},
+}
+
 func recordPaymentEventAudit(tx *gorm.DB, requestID, action string, event model.PaymentEvent, order *model.PaymentOrder, extra map[string]interface{}) error {
 	summary := map[string]interface{}{
 		"provider":        event.Provider,
@@ -996,7 +1001,68 @@ func (s *UserService) DisableRedemCode(operatorRole int, id uint) error {
 
 // ListAvailableModels 返回普通用户当前可见的启用通道模型集合。
 func (s *UserService) ListAvailableModels() ([]string, error) {
-	return NewChannelService().ListModels()
+	models, _, _, err := s.ListAvailableModelsWithPrices()
+	return models, err
+}
+
+// ListAvailableModelsWithPrices 返回普通用户模型列表所需的可见模型和价格状态。
+// 通道级规则同时携带 user_enabled，可在不删除通道模型的情况下隐藏普通用户入口。
+func (s *UserService) ListAvailableModelsWithPrices() ([]string, map[string]model.ChannelModelPrice, map[string]model.ModelPrice, error) {
+	var channels []model.Channel
+	if err := internal.DB.
+		Where("status = ?", common.ChannelStatusEnabled).
+		Order("priority DESC, idx ASC, id ASC").
+		Find(&channels).Error; err != nil {
+		return nil, nil, nil, err
+	}
+	if len(channels) == 0 {
+		return []string{}, map[string]model.ChannelModelPrice{}, map[string]model.ModelPrice{}, nil
+	}
+
+	channelIDs := make([]uint, 0, len(channels))
+	for _, channel := range channels {
+		channelIDs = append(channelIDs, channel.ID)
+	}
+	var channelPrices []model.ChannelModelPrice
+	if err := internal.DB.Where("channel_id IN ?", channelIDs).Find(&channelPrices).Error; err != nil {
+		return nil, nil, nil, err
+	}
+	channelPriceByChannelModel := make(map[string]model.ChannelModelPrice, len(channelPrices))
+	for _, price := range channelPrices {
+		channelPriceByChannelModel[channelModelPriceKey(price.ChannelID, price.Model)] = price
+	}
+
+	visible := map[string]struct{}{}
+	channelPricesByModel := map[string]model.ChannelModelPrice{}
+	for _, channel := range channels {
+		for _, modelName := range splitModels(channel.Models) {
+			if modelName == "" || modelName == "*" {
+				continue
+			}
+			price, hasChannelPrice := channelPriceByChannelModel[channelModelPriceKey(channel.ID, modelName)]
+			if hasChannelPrice && !price.UserEnabled {
+				continue
+			}
+			if _, seen := visible[modelName]; seen {
+				continue
+			}
+			visible[modelName] = struct{}{}
+			if hasChannelPrice && price.Enabled {
+				channelPricesByModel[modelName] = price
+			}
+		}
+	}
+
+	modelNames := make([]string, 0, len(visible))
+	for modelName := range visible {
+		modelNames = append(modelNames, modelName)
+	}
+	sort.Strings(modelNames)
+	modelPrices, err := s.ListEnabledModelPrices(modelNames)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return modelNames, channelPricesByModel, modelPrices, nil
 }
 
 // ListEnabledModelPrices 返回启用中的系统模型价格，用于用户侧模型列表展示价格状态。
@@ -1029,6 +1095,188 @@ func (s *UserService) ListEnabledModelPrices(modelNames []string) (map[string]mo
 		pricesByModel[price.Model] = price
 	}
 	return pricesByModel, nil
+}
+
+func channelModelPriceKey(channelID uint, modelName string) string {
+	return strconv.FormatUint(uint64(channelID), 10) + ":" + strings.TrimSpace(modelName)
+}
+
+// ListChannelModelPricesAdmin 返回管理端通道模型价格覆盖列表。
+func (s *UserService) ListChannelModelPricesAdmin(operatorRole int, page, pageSize int, keyword string, channelID *uint, enabled, userEnabled *bool) ([]model.ChannelModelPrice, int64, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, 0, errors.New("admin role required")
+	}
+	page, pageSize = normalizePage(page, pageSize)
+	query := internal.DB.Model(&model.ChannelModelPrice{})
+	if strings.TrimSpace(keyword) != "" {
+		like := "%" + strings.TrimSpace(keyword) + "%"
+		query = query.Where("model LIKE ? OR price_mode LIKE ? OR override_mode LIKE ?", like, like, like)
+	}
+	if channelID != nil {
+		query = query.Where("channel_id = ?", *channelID)
+	}
+	if enabled != nil {
+		query = query.Where("enabled = ?", *enabled)
+	}
+	if userEnabled != nil {
+		query = query.Where("user_enabled = ?", *userEnabled)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var prices []model.ChannelModelPrice
+	err := query.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&prices).Error
+	return prices, total, err
+}
+
+func (s *UserService) GetChannelModelPriceAdmin(operatorRole int, id uint) (*model.ChannelModelPrice, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	if id == 0 {
+		return nil, errors.New("channel model price is required")
+	}
+	var price model.ChannelModelPrice
+	if err := internal.DB.First(&price, id).Error; err != nil {
+		return nil, err
+	}
+	return &price, nil
+}
+
+func (s *UserService) CreateChannelModelPrice(operatorRole int, price model.ChannelModelPrice) (*model.ChannelModelPrice, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	normalized, err := normalizeChannelModelPrice(price)
+	if err != nil {
+		return nil, err
+	}
+	normalized.RuleVersion = 1
+	var existing int64
+	if err := internal.DB.Model(&model.ChannelModelPrice{}).Where("channel_id = ? AND model = ?", normalized.ChannelID, normalized.Model).Count(&existing).Error; err != nil {
+		return nil, err
+	}
+	if existing > 0 {
+		return nil, errors.New("channel model price already exists")
+	}
+	if err := internal.DB.Create(&normalized).Error; err != nil {
+		return nil, err
+	}
+	return &normalized, nil
+}
+
+func (s *UserService) UpdateChannelModelPrice(operatorRole int, id uint, price model.ChannelModelPrice, enabled, userEnabled *bool) (*model.ChannelModelPrice, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	if id == 0 {
+		return nil, errors.New("channel model price is required")
+	}
+	normalized, err := normalizeChannelModelPrice(price)
+	if err != nil {
+		return nil, err
+	}
+	var current model.ChannelModelPrice
+	if err := internal.DB.First(&current, id).Error; err != nil {
+		return nil, err
+	}
+	var duplicate int64
+	if err := internal.DB.Model(&model.ChannelModelPrice{}).
+		Where("channel_id = ? AND model = ? AND id <> ?", normalized.ChannelID, normalized.Model, id).
+		Count(&duplicate).Error; err != nil {
+		return nil, err
+	}
+	if duplicate > 0 {
+		return nil, errors.New("channel model price already exists")
+	}
+	updates := map[string]interface{}{
+		"channel_id":       normalized.ChannelID,
+		"model":            normalized.Model,
+		"price_mode":       normalized.PriceMode,
+		"override_mode":    normalized.OverrideMode,
+		"price_expression": normalized.PriceExpression,
+		"variables_json":   normalized.VariablesJSON,
+		"unit_tokens":      normalized.UnitTokens,
+		"rule_version":     current.RuleVersion + 1,
+	}
+	if enabled != nil {
+		updates["enabled"] = *enabled
+	}
+	if userEnabled != nil {
+		updates["user_enabled"] = *userEnabled
+	}
+	if err := internal.DB.Model(&current).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	if err := internal.DB.First(&current, id).Error; err != nil {
+		return nil, err
+	}
+	return &current, nil
+}
+
+func (s *UserService) SetChannelModelPriceEnabled(operatorRole int, id uint, enabled bool) error {
+	if operatorRole < common.RoleAdmin {
+		return errors.New("admin role required")
+	}
+	if id == 0 {
+		return errors.New("channel model price is required")
+	}
+	res := internal.DB.Model(&model.ChannelModelPrice{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"enabled":      enabled,
+			"rule_version": gorm.Expr("rule_version + ?", 1),
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return errors.New("channel model price not found")
+	}
+	return nil
+}
+
+func normalizeChannelModelPrice(price model.ChannelModelPrice) (model.ChannelModelPrice, error) {
+	price.Model = strings.TrimSpace(price.Model)
+	price.PriceMode = strings.ToLower(strings.TrimSpace(price.PriceMode))
+	price.OverrideMode = strings.ToLower(strings.TrimSpace(price.OverrideMode))
+	price.PriceExpression = strings.TrimSpace(price.PriceExpression)
+	if price.ChannelID == 0 {
+		return model.ChannelModelPrice{}, errors.New("channel_id is required")
+	}
+	if price.Model == "" {
+		return model.ChannelModelPrice{}, errors.New("model is required")
+	}
+	if _, ok := allowedModelPriceModes[price.PriceMode]; !ok {
+		return model.ChannelModelPrice{}, errors.New("channel model price mode is invalid")
+	}
+	if price.OverrideMode == "" {
+		price.OverrideMode = "override"
+	}
+	if _, ok := allowedChannelModelPriceOverrideModes[price.OverrideMode]; !ok {
+		return model.ChannelModelPrice{}, errors.New("channel model price override_mode is invalid")
+	}
+	if price.PriceExpression == "" {
+		return model.ChannelModelPrice{}, errors.New("channel model price expression is required")
+	}
+	if price.UnitTokens == 0 {
+		price.UnitTokens = 1000
+	}
+	if price.UnitTokens < 0 {
+		return model.ChannelModelPrice{}, errors.New("channel model price unit_tokens must be positive")
+	}
+	if len(price.VariablesJSON) > 0 && !json.Valid(price.VariablesJSON) {
+		return model.ChannelModelPrice{}, errors.New("channel model price variables_json must be valid json")
+	}
+	var channel model.Channel
+	if err := internal.DB.First(&channel, price.ChannelID).Error; err != nil {
+		return model.ChannelModelPrice{}, err
+	}
+	if !channelSupportsModel(channel.Models, price.Model) {
+		return model.ChannelModelPrice{}, errors.New("channel does not expose model")
+	}
+	return price, nil
 }
 
 // ListModelPricesAdmin 返回管理端系统模型价格列表，可按模型名/模式过滤。
