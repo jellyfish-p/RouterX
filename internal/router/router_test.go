@@ -2141,6 +2141,37 @@ func TestMetricsEndpointRequiresSettingAndExposesPrometheusText(t *testing.T) {
 		!strings.Contains(body, "routerx_ready 1") {
 		t.Fatalf("metrics should expose prometheus text when enabled, got %d %s", enabledResp.Code, body)
 	}
+	if strings.Contains(body, "\nrouterx_users_total\n") {
+		t.Fatalf("metrics should not emit bare metric family names without values: %s", body)
+	}
+}
+
+func TestMetricsEndpointIncludesHTTPMetrics(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("observability.metrics_enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	healthResp := performJSON(r, http.MethodGet, "/health", "", nil)
+	if healthResp.Code != http.StatusOK {
+		t.Fatalf("health check failed: %d %s", healthResp.Code, healthResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodGet, "/metrics", "", nil)
+	body := resp.Body.String()
+	if resp.Code != http.StatusOK ||
+		!strings.Contains(body, `routerx_http_requests_total{method="GET",path_group="/health",status="200"} 1`) ||
+		!strings.Contains(body, `routerx_http_request_duration_seconds_count{method="GET",path_group="/health"} 1`) {
+		t.Fatalf("metrics should include HTTP request counters and duration histograms, got %d %s", resp.Code, body)
+	}
 }
 
 func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.T) {

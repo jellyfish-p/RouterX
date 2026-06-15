@@ -34,6 +34,8 @@ func SetupRouter(
 	settingH *handler.SettingHandler,
 	setupH *handler.SetupHandler,
 ) *gin.Engine {
+	middleware.ResetHTTPMetrics()
+
 	r := gin.New()
 
 	// 全局中间件
@@ -119,6 +121,8 @@ func metricsHandler(c *gin.Context) {
 	writeCounter(&b, "routerx_today_quota_total", "Quota used since local midnight.", todayQuota)
 	writeGauge(&b, "routerx_db_up", "Database ping status.", extended.DBUp)
 	writeGauge(&b, "routerx_redis_up", "Redis ping status.", extended.RedisUp)
+	writeLabeledCounter(&b, "routerx_http_requests_total", "HTTP requests by method, path group and status.", extended.HTTPRequests)
+	writeLabeledHistogram(&b, "routerx_http_request_duration_seconds", "HTTP request duration in seconds by method and path group.", extended.HTTPRequestDurations)
 	writeLabeledCounter(&b, "routerx_logs_total", "Relay logs by status.", extended.Logs)
 	writeLabeledCounter(&b, "routerx_relay_requests_total", "Relay requests by protocol, API type, model and status.", extended.RelayRequests)
 	writeLabeledCounter(&b, "routerx_relay_errors_total", "Relay errors by protocol, API type, code and source.", extended.RelayErrors)
@@ -144,21 +148,35 @@ type metricSample struct {
 	Value  int64
 }
 
+type metricHistogramBucket struct {
+	Le    string
+	Count int64
+}
+
+type metricHistogramSample struct {
+	Labels  []metricLabel
+	Buckets []metricHistogramBucket
+	Sum     float64
+	Count   int64
+}
+
 type extendedMetrics struct {
-	DBUp                int64
-	RedisUp             int64
-	Logs                []metricSample
-	RelayRequests       []metricSample
-	RelayErrors         []metricSample
-	TokensUsed          []metricSample
-	QuotaUsed           []metricSample
-	ChannelErrorCounts  []metricSample
-	ChannelAvailable    []metricSample
-	RateLimitRejections []metricSample
-	BillingFailures     []metricSample
-	PaymentOrders       []metricSample
-	PaymentEvents       []metricSample
-	AuditEvents         []metricSample
+	DBUp                 int64
+	RedisUp              int64
+	HTTPRequests         []metricSample
+	HTTPRequestDurations []metricHistogramSample
+	Logs                 []metricSample
+	RelayRequests        []metricSample
+	RelayErrors          []metricSample
+	TokensUsed           []metricSample
+	QuotaUsed            []metricSample
+	ChannelErrorCounts   []metricSample
+	ChannelAvailable     []metricSample
+	RateLimitRejections  []metricSample
+	BillingFailures      []metricSample
+	PaymentOrders        []metricSample
+	PaymentEvents        []metricSample
+	AuditEvents          []metricSample
 }
 
 func collectExtendedMetrics() (extendedMetrics, error) {
@@ -166,6 +184,10 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		DBUp:    dbUp(),
 		RedisUp: redisUp(),
 	}
+	httpRequests, httpRequestDurations := collectHTTPMetrics()
+	metrics.HTTPRequests = httpRequests
+	metrics.HTTPRequestDurations = httpRequestDurations
+
 	var logRows []struct {
 		Status int
 		Count  int64
@@ -282,6 +304,42 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 	}
 	metrics.AuditEvents = auditEvents
 	return metrics, nil
+}
+
+func collectHTTPMetrics() ([]metricSample, []metricHistogramSample) {
+	requestRows, durationRows := middleware.HTTPMetricsSnapshot()
+	requests := make([]metricSample, 0, len(requestRows))
+	for _, row := range requestRows {
+		requests = append(requests, metricSample{
+			Labels: []metricLabel{
+				{Name: "method", Value: row.Method},
+				{Name: "path_group", Value: row.PathGroup},
+				{Name: "status", Value: row.Status},
+			},
+			Value: row.Count,
+		})
+	}
+
+	durations := make([]metricHistogramSample, 0, len(durationRows))
+	for _, row := range durationRows {
+		buckets := make([]metricHistogramBucket, 0, len(row.Buckets))
+		for _, bucket := range row.Buckets {
+			buckets = append(buckets, metricHistogramBucket{
+				Le:    bucket.Le,
+				Count: bucket.Count,
+			})
+		}
+		durations = append(durations, metricHistogramSample{
+			Labels: []metricLabel{
+				{Name: "method", Value: row.Method},
+				{Name: "path_group", Value: row.PathGroup},
+			},
+			Buckets: buckets,
+			Sum:     row.SumSeconds,
+			Count:   row.Count,
+		})
+	}
+	return requests, durations
 }
 
 type relayRequestMetricKey struct {
@@ -865,6 +923,19 @@ func writeLabeledCounter(b *strings.Builder, name, help string, samples []metric
 	}
 }
 
+func writeLabeledHistogram(b *strings.Builder, name, help string, samples []metricHistogramSample) {
+	writeMetricHeader(b, name, help, "histogram")
+	for _, sample := range samples {
+		for _, bucket := range sample.Buckets {
+			labels := append([]metricLabel{}, sample.Labels...)
+			labels = append(labels, metricLabel{Name: "le", Value: bucket.Le})
+			writeMetricSample(b, name+"_bucket", labels, bucket.Count)
+		}
+		writeMetricFloatSample(b, name+"_sum", sample.Labels, sample.Sum)
+		writeMetricSample(b, name+"_count", sample.Labels, sample.Count)
+	}
+}
+
 func writeMetricHeader(b *strings.Builder, name, help, metricType string) {
 	b.WriteString("# HELP ")
 	b.WriteString(name)
@@ -876,12 +947,25 @@ func writeMetricHeader(b *strings.Builder, name, help, metricType string) {
 	b.WriteByte(' ')
 	b.WriteString(metricType)
 	b.WriteByte('\n')
+}
+
+func writeMetricFloatSample(b *strings.Builder, name string, labels []metricLabel, value float64) {
 	b.WriteString(name)
+	writeMetricLabels(b, labels)
+	b.WriteByte(' ')
+	b.WriteString(strconv.FormatFloat(value, 'f', -1, 64))
 	b.WriteByte('\n')
 }
 
 func writeMetricSample(b *strings.Builder, name string, labels []metricLabel, value int64) {
 	b.WriteString(name)
+	writeMetricLabels(b, labels)
+	b.WriteByte(' ')
+	b.WriteString(strconv.FormatInt(value, 10))
+	b.WriteByte('\n')
+}
+
+func writeMetricLabels(b *strings.Builder, labels []metricLabel) {
 	if len(labels) > 0 {
 		b.WriteByte('{')
 		for i, label := range labels {
@@ -895,9 +979,6 @@ func writeMetricSample(b *strings.Builder, name string, labels []metricLabel, va
 		}
 		b.WriteByte('}')
 	}
-	b.WriteByte(' ')
-	b.WriteString(strconv.FormatInt(value, 10))
-	b.WriteByte('\n')
 }
 
 func escapeMetricLabel(value string) string {
