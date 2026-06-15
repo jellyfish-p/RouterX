@@ -745,12 +745,12 @@ func (t *tokenConcurrencyTracker) acquire(tokenID uint, limit int64) (func(), er
 	}, nil
 }
 
-func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, clientIP string) {
+func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, clientIP, userAgent string) {
 	if token == nil {
 		return
 	}
 	tokenID := token.ID
-	_ = internal.DB.Create(&model.Log{
+	_ = NewLogService().Record(&model.Log{
 		UserID:    token.UserID,
 		TokenID:   &tokenID,
 		Model:     "",
@@ -758,7 +758,8 @@ func (s *TokenService) RecordScopeDeniedLog(token *model.Token, errorMsg, client
 		QuotaUsed: 0,
 		ErrorMsg:  errorMsg,
 		IP:        clientIP,
-	}).Error
+		UserAgent: userAgent,
+	})
 }
 
 func ParseTokenScope(raw model.JSONValue) (TokenScope, error) {

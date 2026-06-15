@@ -42,6 +42,8 @@ type RelayRawResult struct {
 	Usage       *relay.Usage
 }
 
+type relayUserAgentContextKey struct{}
+
 type contentTypeRelayAdapter interface {
 	DoRequestWithContentType(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error)
 }
@@ -55,6 +57,21 @@ func (r *RelayStreamResult) Forward(write func([]byte) error, flush func()) (*re
 
 func NewRelayService(ch *ChannelService, tokenSvc *TokenService, logSvc *LogService, settingSvc *SettingService) *RelayService {
 	return &RelayService{channelService: ch, tokenService: tokenSvc, logService: logSvc, settingService: settingSvc}
+}
+
+func ContextWithRelayUserAgent(ctx context.Context, userAgent string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, relayUserAgentContextKey{}, strings.TrimSpace(userAgent))
+}
+
+func relayUserAgentFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(relayUserAgentContextKey{}).(string)
+	return strings.TrimSpace(value)
 }
 
 type HTTPError struct {
@@ -275,27 +292,27 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	if reqInfo.Stream {
 		return nil, nil, &HTTPError{Status: 400, Message: "stream is not supported in P0 relay", Type: "invalid_request_error", Code: "unsupported_stream"}
 	}
-	if err := s.enforceTokenScope(token, apiType, reqInfo.Model, clientIP); err != nil {
+	if err := s.enforceTokenScope(ctx, token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, nil, err
 	}
-	if err := s.enforceTokenRouteChannelGroupScope(token, reqInfo.Route, reqInfo.Model, clientIP); err != nil {
+	if err := s.enforceTokenRouteChannelGroupScope(ctx, token, reqInfo.Route, reqInfo.Model, clientIP); err != nil {
 		return nil, nil, err
 	}
 	if !s.tokenService.HasAvailableQuota(token) {
-		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
+		_ = s.recordLog(ctx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 		return nil, nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 
 	candidates, err := s.channelService.SelectChannelCandidatesWithRoute(reqInfo.Model, reqInfo.Route)
 	if err != nil {
-		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
+		_ = s.recordLog(ctx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
-	candidates, err = s.filterUserChannelGroupAccess(token, candidates, reqInfo.Model, clientIP)
+	candidates, err = s.filterUserChannelGroupAccess(ctx, token, candidates, reqInfo.Model, clientIP)
 	if err != nil {
 		return nil, nil, err
 	}
-	candidates, err = s.filterTokenChannelGroupScope(token, candidates, reqInfo.Model, clientIP)
+	candidates, err = s.filterTokenChannelGroupScope(ctx, token, candidates, reqInfo.Model, clientIP)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -325,12 +342,12 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.Token, apiType relay.APIType, reqInfo relayRequestInfo, body []byte, contentType string, clientIP string, channel *model.Channel, rawResponse bool) (*RelayRawResult, *relay.Usage, bool, error) {
 	adapter, err := s.GetAdapter(channel.Type)
 	if err != nil {
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, nil, false, &HTTPError{Status: 502, Message: "unsupported upstream channel", Type: "upstream_error", Code: "unsupported_channel"}
 	}
 	target, err := s.channelService.ResolveUpstream(channel)
 	if err != nil {
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream secret decrypt failed", clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream secret decrypt failed", clientIP)
 		return nil, nil, false, &HTTPError{Status: 502, Message: "upstream channel secret is not available", Type: "upstream_error", Code: "upstream_secret_error"}
 	}
 	upstreamModel := s.channelService.ApplyModelRewrite(channel, reqInfo.Model)
@@ -361,14 +378,14 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	if err != nil {
 		_ = s.markChannelFailure(channel, latencyMs)
 		if errors.Is(err, errUnsupportedMultipart) {
-			_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "multipart relay is not supported for selected upstream channel", clientIP)
+			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "multipart relay is not supported for selected upstream channel", clientIP)
 			return nil, nil, false, &HTTPError{Status: 502, Message: "multipart relay is not supported for selected upstream channel", Type: "upstream_error", Code: "unsupported_multipart_channel"}
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream timeout", clientIP)
+			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream timeout", clientIP)
 			return nil, nil, true, &HTTPError{Status: 504, Message: "upstream request timed out", Type: "upstream_error", Code: "upstream_timeout"}
 		}
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream request failed", clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream request failed", clientIP)
 		return nil, nil, true, &HTTPError{Status: 502, Message: "upstream request failed", Type: "upstream_error", Code: "upstream_request_failed"}
 	}
 	defer resp.Body.Close()
@@ -376,13 +393,13 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
 	if err != nil {
 		_ = s.markChannelFailure(channel, latencyMs)
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response read failed", clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response read failed", clientIP)
 		return nil, nil, true, &HTTPError{Status: 502, Message: "upstream response read failed", Type: "upstream_error", Code: "upstream_response_failed"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_ = s.markChannelFailure(channel, latencyMs)
 		message := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, message, clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, message, clientIP)
 		return nil, nil, retryableUpstreamStatus(resp.StatusCode), &HTTPError{
 			Status:  clientStatusFromUpstream(resp.StatusCode),
 			Message: message,
@@ -394,7 +411,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	if rawResponse {
 		quotaUsed := quotaFromUsage(nil)
 		if err := s.tokenService.DeductQuota(token.ID, quotaUsed); err != nil {
-			_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
+			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 			return nil, nil, false, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 		}
 		contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
@@ -402,23 +419,23 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 			contentType = "application/octet-stream"
 		}
 		_ = s.markChannelSuccess(channel, latencyMs)
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusSuccess, quotaUsed, "", clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusSuccess, quotaUsed, "", clientIP)
 		return &RelayRawResult{Body: respBody, ContentType: contentType}, nil, false, nil
 	}
 
 	converted, usage, err := adapter.ConvertResponse(apiType, respBody)
 	if err != nil {
 		_ = s.markChannelFailure(channel, latencyMs)
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response conversion failed", clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response conversion failed", clientIP)
 		return nil, nil, false, &HTTPError{Status: 502, Message: "upstream response conversion failed", Type: "upstream_error", Code: "upstream_conversion_failed"}
 	}
 	quotaUsed := quotaFromUsage(usage)
 	if err := s.tokenService.DeductQuota(token.ID, quotaUsed); err != nil {
-		_ = s.recordLog(token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, usage, false, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 	_ = s.markChannelSuccess(channel, latencyMs)
-	_ = s.recordLog(token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
+	_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
 	return &RelayRawResult{Body: converted, ContentType: "application/json; charset=utf-8", Usage: usage}, usage, false, nil
 }
 
@@ -433,43 +450,43 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if !reqInfo.Stream {
 		return nil, &HTTPError{Status: 400, Message: "stream is required", Type: "invalid_request_error", Code: "stream_required"}
 	}
-	if err := s.enforceTokenScope(token, apiType, reqInfo.Model, clientIP); err != nil {
+	if err := s.enforceTokenScope(ctx, token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, err
 	}
-	if err := s.enforceTokenRouteChannelGroupScope(token, reqInfo.Route, reqInfo.Model, clientIP); err != nil {
+	if err := s.enforceTokenRouteChannelGroupScope(ctx, token, reqInfo.Route, reqInfo.Model, clientIP); err != nil {
 		return nil, err
 	}
 	if !s.tokenService.HasAvailableQuota(token) {
-		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
+		_ = s.recordLog(ctx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 		return nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 
 	candidates, err := s.channelService.SelectChannelCandidatesWithRoute(reqInfo.Model, reqInfo.Route)
 	if err != nil {
-		_ = s.recordLog(token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
+		_ = s.recordLog(ctx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
-	candidates, err = s.filterUserChannelGroupAccess(token, candidates, reqInfo.Model, clientIP)
+	candidates, err = s.filterUserChannelGroupAccess(ctx, token, candidates, reqInfo.Model, clientIP)
 	if err != nil {
 		return nil, err
 	}
-	candidates, err = s.filterTokenChannelGroupScope(token, candidates, reqInfo.Model, clientIP)
+	candidates, err = s.filterTokenChannelGroupScope(ctx, token, candidates, reqInfo.Model, clientIP)
 	if err != nil {
 		return nil, err
 	}
 	channel := pickRelayChannelCandidate(candidates)
 	if !supportsOpenAICompatibleStream(channel.Type) {
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "streaming is not supported for selected upstream channel", clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "streaming is not supported for selected upstream channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "streaming is not supported for selected upstream channel", Type: "upstream_error", Code: "unsupported_stream_channel"}
 	}
 	adapter, err := s.GetAdapter(channel.Type)
 	if err != nil {
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, &HTTPError{Status: 502, Message: "unsupported upstream channel", Type: "upstream_error", Code: "unsupported_channel"}
 	}
 	target, err := s.channelService.ResolveUpstream(channel)
 	if err != nil {
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream secret decrypt failed", clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream secret decrypt failed", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "upstream channel secret is not available", Type: "upstream_error", Code: "upstream_secret_error"}
 	}
 	upstreamModel := s.channelService.ApplyModelRewrite(channel, reqInfo.Model)
@@ -491,10 +508,10 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		latencyMs := int(time.Since(start).Milliseconds())
 		_ = s.markChannelFailure(channel, latencyMs)
 		if errors.Is(err, context.DeadlineExceeded) {
-			_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream timeout", clientIP)
+			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream timeout", clientIP)
 			return nil, &HTTPError{Status: 504, Message: "upstream request timed out", Type: "upstream_error", Code: "upstream_timeout"}
 		}
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream request failed", clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream request failed", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "upstream request failed", Type: "upstream_error", Code: "upstream_request_failed"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -503,7 +520,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		latencyMs := int(time.Since(start).Milliseconds())
 		_ = s.markChannelFailure(channel, latencyMs)
 		message := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
-		_ = s.recordLog(token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, message, clientIP)
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, message, clientIP)
 		return nil, &HTTPError{
 			Status:  clientStatusFromUpstream(resp.StatusCode),
 			Message: message,
@@ -525,16 +542,16 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 			latencyMs := int(time.Since(start).Milliseconds())
 			if err != nil {
 				_ = s.markChannelFailure(channel, latencyMs)
-				_ = s.recordLog(token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, "stream forwarding failed", clientIP)
+				_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, "stream forwarding failed", clientIP)
 				return usage, err
 			}
 			quotaUsed := quotaFromUsage(usage)
 			if err := s.tokenService.DeductQuota(token.ID, quotaUsed); err != nil {
-				_ = s.recordLog(token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
+				_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
 				return usage, err
 			}
 			_ = s.markChannelSuccess(channel, latencyMs)
-			_ = s.recordLog(token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
+			_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, quotaUsed, "", clientIP)
 			return usage, nil
 		},
 	}, nil
@@ -1446,27 +1463,27 @@ func (s *RelayService) relayRetryCount() int {
 }
 
 func (s *RelayService) CheckTokenAPIScope(token *model.Token, apiType relay.APIType, clientIP string) error {
-	return s.enforceTokenAPIScope(token, apiType, "", clientIP)
+	return s.enforceTokenAPIScope(context.Background(), token, apiType, "", clientIP)
 }
 
-func (s *RelayService) enforceTokenScope(token *model.Token, apiType relay.APIType, modelName, clientIP string) error {
-	if err := s.enforceTokenAPIScope(token, apiType, modelName, clientIP); err != nil {
+func (s *RelayService) enforceTokenScope(ctx context.Context, token *model.Token, apiType relay.APIType, modelName, clientIP string) error {
+	if err := s.enforceTokenAPIScope(ctx, token, apiType, modelName, clientIP); err != nil {
 		return err
 	}
-	if err := s.enforceTokenModelScope(token, modelName, clientIP); err != nil {
+	if err := s.enforceTokenModelScope(ctx, token, modelName, clientIP); err != nil {
 		return err
 	}
-	return s.enforceTokenTPMScope(token, modelName, clientIP)
+	return s.enforceTokenTPMScope(ctx, token, modelName, clientIP)
 }
 
-func (s *RelayService) enforceTokenRouteChannelGroupScope(token *model.Token, route RoutePreference, modelName, clientIP string) error {
+func (s *RelayService) enforceTokenRouteChannelGroupScope(ctx context.Context, token *model.Token, route RoutePreference, modelName, clientIP string) error {
 	if strings.TrimSpace(route.ChannelGroup) == "" {
 		return nil
 	}
-	return s.enforceTokenChannelGroupValueScope(token, route.ChannelGroup, modelName, clientIP)
+	return s.enforceTokenChannelGroupValueScope(ctx, token, route.ChannelGroup, modelName, clientIP)
 }
 
-func (s *RelayService) filterTokenChannelGroupScope(token *model.Token, candidates []model.Channel, modelName, clientIP string) ([]model.Channel, error) {
+func (s *RelayService) filterTokenChannelGroupScope(ctx context.Context, token *model.Token, candidates []model.Channel, modelName, clientIP string) ([]model.Channel, error) {
 	if s.tokenService == nil || len(candidates) == 0 {
 		return candidates, nil
 	}
@@ -1477,12 +1494,12 @@ func (s *RelayService) filterTokenChannelGroupScope(token *model.Token, candidat
 		}
 	}
 	if len(filtered) == 0 {
-		return nil, s.channelGroupScopeError(token, modelName, clientIP)
+		return nil, s.channelGroupScopeError(ctx, token, modelName, clientIP)
 	}
 	return filtered, nil
 }
 
-func (s *RelayService) filterUserChannelGroupAccess(token *model.Token, candidates []model.Channel, modelName, clientIP string) ([]model.Channel, error) {
+func (s *RelayService) filterUserChannelGroupAccess(ctx context.Context, token *model.Token, candidates []model.Channel, modelName, clientIP string) ([]model.Channel, error) {
 	if len(candidates) == 0 {
 		return candidates, nil
 	}
@@ -1494,7 +1511,7 @@ func (s *RelayService) filterUserChannelGroupAccess(token *model.Token, candidat
 		}
 	}
 	if len(filtered) == 0 {
-		_ = s.recordLog(token, nil, modelName, nil, common.LogStatusFailed, 0, "channel group not allowed by user group access", clientIP)
+		_ = s.recordLog(ctx, token, nil, modelName, nil, common.LogStatusFailed, 0, "channel group not allowed by user group access", clientIP)
 		return nil, &HTTPError{Status: 403, Message: "channel group is not allowed by user group access", Type: "permission_error", Code: "route_forbidden"}
 	}
 	return filtered, nil
@@ -1645,22 +1662,22 @@ func userGroupAccessKeys(token *model.Token) []string {
 	return keys
 }
 
-func (s *RelayService) enforceTokenChannelGroupValueScope(token *model.Token, channelGroup, modelName, clientIP string) error {
+func (s *RelayService) enforceTokenChannelGroupValueScope(ctx context.Context, token *model.Token, channelGroup, modelName, clientIP string) error {
 	if s.tokenService == nil {
 		return nil
 	}
 	if err := s.tokenService.CheckChannelGroupScope(token, channelGroup); err != nil {
-		return s.channelGroupScopeError(token, modelName, clientIP)
+		return s.channelGroupScopeError(ctx, token, modelName, clientIP)
 	}
 	return nil
 }
 
-func (s *RelayService) channelGroupScopeError(token *model.Token, modelName, clientIP string) error {
-	_ = s.recordLog(token, nil, modelName, nil, common.LogStatusFailed, 0, "channel group not allowed by api key scope", clientIP)
+func (s *RelayService) channelGroupScopeError(ctx context.Context, token *model.Token, modelName, clientIP string) error {
+	_ = s.recordLog(ctx, token, nil, modelName, nil, common.LogStatusFailed, 0, "channel group not allowed by api key scope", clientIP)
 	return &HTTPError{Status: 403, Message: "channel group is not allowed by api key scope", Type: "permission_error", Code: "route_forbidden"}
 }
 
-func (s *RelayService) enforceTokenAPIScope(token *model.Token, apiType relay.APIType, modelName, clientIP string) error {
+func (s *RelayService) enforceTokenAPIScope(ctx context.Context, token *model.Token, apiType relay.APIType, modelName, clientIP string) error {
 	if s.tokenService == nil {
 		return nil
 	}
@@ -1669,29 +1686,29 @@ func (s *RelayService) enforceTokenAPIScope(token *model.Token, apiType relay.AP
 		return nil
 	}
 	if err := s.tokenService.CheckAPIScope(token, scopeName); err != nil {
-		_ = s.recordLog(token, nil, modelName, nil, common.LogStatusFailed, 0, "api type not allowed by api key scope", clientIP)
+		_ = s.recordLog(ctx, token, nil, modelName, nil, common.LogStatusFailed, 0, "api type not allowed by api key scope", clientIP)
 		return &HTTPError{Status: 403, Message: "api type is not allowed by api key scope", Type: "permission_error", Code: "token_forbidden"}
 	}
 	return nil
 }
 
-func (s *RelayService) enforceTokenModelScope(token *model.Token, modelName, clientIP string) error {
+func (s *RelayService) enforceTokenModelScope(ctx context.Context, token *model.Token, modelName, clientIP string) error {
 	if s.tokenService == nil || strings.TrimSpace(modelName) == "" {
 		return nil
 	}
 	if err := s.tokenService.CheckModelScope(token, modelName); err != nil {
-		_ = s.recordLog(token, nil, modelName, nil, common.LogStatusFailed, 0, "model not allowed by api key scope", clientIP)
+		_ = s.recordLog(ctx, token, nil, modelName, nil, common.LogStatusFailed, 0, "model not allowed by api key scope", clientIP)
 		return &HTTPError{Status: 403, Message: "model is not allowed by api key scope", Type: "permission_error", Code: "model_not_allowed"}
 	}
 	return nil
 }
 
-func (s *RelayService) enforceTokenTPMScope(token *model.Token, modelName, clientIP string) error {
+func (s *RelayService) enforceTokenTPMScope(ctx context.Context, token *model.Token, modelName, clientIP string) error {
 	if s.tokenService == nil {
 		return nil
 	}
 	if err := s.tokenService.CheckTPMScope(token); err != nil {
-		_ = s.recordLog(token, nil, modelName, nil, common.LogStatusFailed, 0, "tpm limit exceeded by api key scope", clientIP)
+		_ = s.recordLog(ctx, token, nil, modelName, nil, common.LogStatusFailed, 0, "tpm limit exceeded by api key scope", clientIP)
 		return &HTTPError{Status: 429, Message: "rate limit exceeded", Type: "rate_limit_error", Code: "rate_limit_exceeded"}
 	}
 	return nil
@@ -1862,7 +1879,7 @@ func upstreamErrorType(status int) string {
 	return "upstream_error"
 }
 
-func (s *RelayService) recordLog(token *model.Token, channel *model.Channel, modelName string, usage *relay.Usage, status int, quotaUsed int64, errMsg, ip string) error {
+func (s *RelayService) recordLog(ctx context.Context, token *model.Token, channel *model.Channel, modelName string, usage *relay.Usage, status int, quotaUsed int64, errMsg, ip string) error {
 	if s.logService == nil || token == nil {
 		return nil
 	}
@@ -1885,6 +1902,7 @@ func (s *RelayService) recordLog(token *model.Token, channel *model.Channel, mod
 		QuotaUsed: quotaUsed,
 		ErrorMsg:  errMsg,
 		IP:        ip,
+		UserAgent: relayUserAgentFromContext(ctx),
 	}
 	if usage != nil {
 		log.PromptTokens = usage.PromptTokens

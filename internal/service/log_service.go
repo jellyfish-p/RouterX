@@ -1,11 +1,16 @@
 package service
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
+	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type LogService struct{}
@@ -22,7 +27,65 @@ func (s *LogService) Record(log *model.Log) error {
 	if log.CreatedAt.IsZero() {
 		log.CreatedAt = time.Now()
 	}
-	return internal.DB.Create(log).Error
+	return internal.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(log).Error; err != nil {
+			return err
+		}
+		return updateTokenLastUsageSummary(tx, log)
+	})
+}
+
+func updateTokenLastUsageSummary(tx *gorm.DB, log *model.Log) error {
+	if log == nil || log.TokenID == nil || *log.TokenID == 0 {
+		return nil
+	}
+	return tx.Model(&model.Token{}).Where("id = ?", *log.TokenID).Updates(map[string]interface{}{
+		"last_used_at":         log.CreatedAt,
+		"last_used_ip_hash":    usageSourceHash(log.IP),
+		"last_user_agent_hash": usageSourceHash(log.UserAgent),
+		"last_model":           strings.TrimSpace(log.Model),
+		"last_error_code":      tokenLastErrorCode(log.Status, log.ErrorMsg),
+	}).Error
+}
+
+func usageSourceHash(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func tokenLastErrorCode(status int, errorMsg string) string {
+	if status != common.LogStatusFailed {
+		return ""
+	}
+	msg := strings.ToLower(strings.TrimSpace(errorMsg))
+	switch {
+	case msg == "":
+		return "unknown_error"
+	case strings.Contains(msg, "insufficient quota"):
+		return "insufficient_quota"
+	case strings.Contains(msg, "rpm limit") || strings.Contains(msg, "tpm limit") || strings.Contains(msg, "concurrency limit"):
+		return "rate_limit_exceeded"
+	case strings.Contains(msg, "timeout"):
+		return "upstream_timeout"
+	case strings.Contains(msg, "upstream returned status"):
+		fields := strings.Fields(msg)
+		if len(fields) > 0 {
+			return "upstream_" + fields[len(fields)-1]
+		}
+	case strings.Contains(msg, "model not allowed"):
+		return "model_not_allowed"
+	case strings.Contains(msg, "channel group not allowed"):
+		return "route_forbidden"
+	case strings.Contains(msg, "api key scope"):
+		return "token_forbidden"
+	case strings.Contains(msg, "no available channel"):
+		return "no_available_channel"
+	}
+	return "relay_failed"
 }
 
 // List 日志分页查询, 支持多维筛选。

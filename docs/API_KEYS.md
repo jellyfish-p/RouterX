@@ -47,7 +47,7 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 - `tokens.scope_json` 已支持基础模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list、日预算、月预算、并发上限和 RPM/TPM：用户可通过 `PUT /v0/user/token/:id/scope` 写入 `allow_models`、`api_types`、`channel_groups`、`entry_protocols`、`ip_cidrs`、`methods`、`daily_quota`、`monthly_quota`、`max_concurrency`、`rpm` 与 `tpm`，系统在上游调用前返回 `model_not_allowed`、`token_forbidden`、`route_forbidden`、`insufficient_quota` 或 `rate_limit_exceeded` 并写失败日志。
 - API Key 鉴权成功后向请求上下文注入当前用户和当前 Token，供 Relay、限流、日志和计费使用。
 
-当前代码事实是后续目标能力的基础，额度语义以 `docs/DECISIONS.md` 的 RXD-009/RXD-010 为目标口径；后续仍需补 `quota_limit`/`quota_used` 目标字段、持久化最近使用来源摘要和风险视图等更完整策略。
+当前代码事实是后续目标能力的基础，额度语义以 `docs/DECISIONS.md` 的 RXD-009/RXD-010 为目标口径；后续仍需补 `quota_limit`/`quota_used` 目标字段、风险视图等更完整策略。
 
 ## 4. 身份边界
 
@@ -142,6 +142,11 @@ User JWT 登录
 | `rotated_from_id` | 轮换来源 Key，用于解释迁移链路。 |
 | `revoked_reason` | 禁用原因，例如用户主动、泄露、轮换或风控。 |
 | `scope_json` | API Key 收窄策略 JSON；当前支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`entry_protocols` 入口协议 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list、`daily_quota` 日预算、`monthly_quota` 月预算、`max_concurrency` 并发上限、`rpm` 每分钟请求上限和 `tpm` 每分钟模型 token 上限。 |
+| `last_used_at` | 最近成功或失败调用时间。 |
+| `last_used_ip_hash` | 最近来源 IP 的 SHA-256 摘要，不保存到 API Key 响应原文。 |
+| `last_user_agent_hash` | 最近 User-Agent 的 SHA-256 摘要，不保存到 API Key 响应原文。 |
+| `last_model` | 最近请求模型名，便于用户识别业务来源。 |
+| `last_error_code` | 最近失败的协议化错误 code；最近调用成功时为空。 |
 | `created_at` / `updated_at` / `deleted_at` | 创建、更新和软删除时间。 |
 
 ### 目标增强字段
@@ -152,13 +157,8 @@ User JWT 登录
 |------|------|
 | `prefix` | 可展示的短摘要，例如 `sk-abc...wxyz`，只用于识别，不用于鉴权。 |
 | `hash_version` | 哈希算法或迁移版本，支持未来升级。 |
-| `last_used_at` | 最近成功或失败鉴权使用时间。 |
-| `last_used_ip_hash` | 最近使用来源 IP 的哈希摘要。 |
-| `last_user_agent_hash` | 最近使用 User-Agent 的哈希摘要。 |
 | `quota_limit` | 目标字段。Key 最大消耗额度；`null` 或 `-1` 表示不限 Key 自身额度。 |
 | `quota_used` | 目标字段。Key 已累计消耗额度，用于和 `quota_limit` 计算剩余预算。 |
-| `last_model` | 最近请求模型名，便于用户识别业务来源。 |
-| `last_error_code` | 最近失败 code，便于排障。 |
 | `metadata_json` | 环境、应用名、团队、标签、外部系统关联 ID 等非安全元数据。 |
 | `created_by_user_id` | 创建动作的登录用户。 |
 | `updated_by_user_id` | 最近一次管理动作的登录用户。 |
@@ -241,7 +241,7 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 
 - 用户只能操作自己的 API Key。
 - 用户端编辑不能调整 `remain_quota`、`quota_limit`、`quota_used`、`unlimited`、所属用户或哈希字段。
-- 列表和详情只展示脱敏摘要、状态、额度、过期时间和目标最近使用字段。
+- 列表和详情只展示脱敏摘要、状态、额度、过期时间和最近使用字段。
 
 ### 目标增强接口
 
@@ -349,7 +349,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 
 ### P1 验收
 
-- API Key 用量摘要支持调用量、成功/失败数、额度消耗、最近模型和最近错误；持久化脱敏来源摘要仍待补。
+- API Key 用量摘要支持调用量、成功/失败数、额度消耗、最近模型和最近错误；Key 列表/详情持久化展示最近时间、模型、错误 code、IP 摘要和 User-Agent 摘要。
 - 已支持轮换动作：创建新 Key、保留旧 Key 关联、禁用旧 Key、审计完整。
 - 支持按 Key 查看用量摘要和过滤日志；账单、错误和限流事件的统一视图仍待补。
 - 已支持基础作用域：模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list、日预算、月预算、并发上限和 RPM/TPM。

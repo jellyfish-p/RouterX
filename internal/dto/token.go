@@ -66,18 +66,23 @@ type TokenScopeResponse struct {
 }
 
 type TokenResponse struct {
-	ID            uint                `json:"id"`
-	UserID        uint                `json:"user_id"`
-	Name          string              `json:"name"`
-	Status        int                 `json:"status"`
-	ExpiredAt     *time.Time          `json:"expired_at,omitempty"`
-	RemainQuota   int64               `json:"remain_quota"`
-	Unlimited     bool                `json:"unlimited"`
-	RotatedFromID *uint               `json:"rotated_from_id,omitempty"`
-	RevokedReason string              `json:"revoked_reason,omitempty"`
-	Scope         *TokenScopeResponse `json:"scope,omitempty"`
-	CreatedAt     time.Time           `json:"created_at"`
-	UpdatedAt     time.Time           `json:"updated_at"`
+	ID                uint                `json:"id"`
+	UserID            uint                `json:"user_id"`
+	Name              string              `json:"name"`
+	Status            int                 `json:"status"`
+	ExpiredAt         *time.Time          `json:"expired_at,omitempty"`
+	RemainQuota       int64               `json:"remain_quota"`
+	Unlimited         bool                `json:"unlimited"`
+	RotatedFromID     *uint               `json:"rotated_from_id,omitempty"`
+	RevokedReason     string              `json:"revoked_reason,omitempty"`
+	Scope             *TokenScopeResponse `json:"scope,omitempty"`
+	LastUsedAt        *time.Time          `json:"last_used_at,omitempty"`
+	LastUsedIPHash    string              `json:"last_used_ip_hash,omitempty"`
+	LastUserAgentHash string              `json:"last_user_agent_hash,omitempty"`
+	LastModel         string              `json:"last_model,omitempty"`
+	LastErrorCode     string              `json:"last_error_code,omitempty"`
+	CreatedAt         time.Time           `json:"created_at"`
+	UpdatedAt         time.Time           `json:"updated_at"`
 }
 
 type CreateTokenResponse struct {
@@ -114,18 +119,23 @@ type BatchDisableTokensResponse struct {
 
 func TokenFromModel(token model.Token) TokenResponse {
 	return TokenResponse{
-		ID:            token.ID,
-		UserID:        token.UserID,
-		Name:          token.Name,
-		Status:        token.Status,
-		ExpiredAt:     token.ExpiredAt,
-		RemainQuota:   token.RemainQuota,
-		Unlimited:     token.Unlimited,
-		RotatedFromID: token.RotatedFromID,
-		RevokedReason: token.RevokedReason,
-		Scope:         TokenScopeFromJSON(token.ScopeJSON),
-		CreatedAt:     token.CreatedAt,
-		UpdatedAt:     token.UpdatedAt,
+		ID:                token.ID,
+		UserID:            token.UserID,
+		Name:              token.Name,
+		Status:            token.Status,
+		ExpiredAt:         token.ExpiredAt,
+		RemainQuota:       token.RemainQuota,
+		Unlimited:         token.Unlimited,
+		RotatedFromID:     token.RotatedFromID,
+		RevokedReason:     token.RevokedReason,
+		Scope:             TokenScopeFromJSON(token.ScopeJSON),
+		LastUsedAt:        token.LastUsedAt,
+		LastUsedIPHash:    token.LastUsedIPHash,
+		LastUserAgentHash: token.LastUserAgentHash,
+		LastModel:         token.LastModel,
+		LastErrorCode:     token.LastErrorCode,
+		CreatedAt:         token.CreatedAt,
+		UpdatedAt:         token.UpdatedAt,
 	}
 }
 

@@ -215,6 +215,11 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `rotated_from_id` | nullable uint | 轮换来源 Token ID |
 | `revoked_reason` | string | 禁用原因，例如 `rotated`、`reported_leak`、`admin_batch_disable` |
 | `scope_json` | json | API Key 收窄策略；当前支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`entry_protocols` 入口协议 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list、`daily_quota` 日预算、`monthly_quota` 月预算、`max_concurrency` 并发上限、`rpm` 每分钟请求上限和 `tpm` 每分钟模型 token 上限 |
+| `last_used_at` | nullable time | 最近成功或失败调用时间 |
+| `last_used_ip_hash` | string | 最近来源 IP 的 SHA-256 摘要 |
+| `last_user_agent_hash` | string | 最近 User-Agent 的 SHA-256 摘要 |
+| `last_model` | string | 最近请求模型名 |
+| `last_error_code` | string | 最近失败的协议化错误 code，最近调用成功时为空 |
 | `created_at` | time | 创建时间 |
 | `updated_at` | time | 更新时间 |
 | `deleted_at` | nullable time | 软删除 |
@@ -239,13 +244,8 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 |------|------|
 | `prefix` | 可展示的短摘要，用于用户识别和工单排障，不用于鉴权。 |
 | `hash_version` | 哈希算法或迁移版本。 |
-| `last_used_at` | 最近使用时间。 |
-| `last_used_ip_hash` | 最近来源 IP 哈希摘要。 |
-| `last_user_agent_hash` | 最近 User-Agent 哈希摘要。 |
 | `quota_limit` | Key 最大消耗额度，`null` 或 `-1` 表示不限 Key 自身额度。 |
 | `quota_used` | Key 累计已消耗额度，用于计算剩余预算并支持历史统计。 |
-| `last_model` | 最近请求模型名。 |
-| `last_error_code` | 最近失败 code。 |
 | `metadata_json` | 环境、应用、团队、标签和外部关联 ID 等非安全元数据。 |
 | `created_by_user_id` | 创建操作者。 |
 | `updated_by_user_id` | 最近管理操作者。 |

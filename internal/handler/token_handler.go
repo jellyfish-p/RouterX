@@ -419,18 +419,23 @@ func tokenAuditSummary(token *model.Token) map[string]interface{} {
 	}
 	info := dto.TokenFromModel(*token)
 	return map[string]interface{}{
-		"id":              info.ID,
-		"user_id":         info.UserID,
-		"name":            info.Name,
-		"status":          info.Status,
-		"expired_at":      info.ExpiredAt,
-		"remain_quota":    info.RemainQuota,
-		"unlimited":       info.Unlimited,
-		"rotated_from_id": info.RotatedFromID,
-		"revoked_reason":  info.RevokedReason,
-		"scope":           info.Scope,
-		"created_at":      info.CreatedAt,
-		"updated_at":      info.UpdatedAt,
+		"id":                   info.ID,
+		"user_id":              info.UserID,
+		"name":                 info.Name,
+		"status":               info.Status,
+		"expired_at":           info.ExpiredAt,
+		"remain_quota":         info.RemainQuota,
+		"unlimited":            info.Unlimited,
+		"rotated_from_id":      info.RotatedFromID,
+		"revoked_reason":       info.RevokedReason,
+		"scope":                info.Scope,
+		"last_used_at":         info.LastUsedAt,
+		"last_used_ip_hash":    info.LastUsedIPHash,
+		"last_user_agent_hash": info.LastUserAgentHash,
+		"last_model":           info.LastModel,
+		"last_error_code":      info.LastErrorCode,
+		"created_at":           info.CreatedAt,
+		"updated_at":           info.UpdatedAt,
 	}
 }
 

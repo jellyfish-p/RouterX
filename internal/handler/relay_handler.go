@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -44,7 +45,7 @@ func (h *RelayHandler) relayOpenAI(c *gin.Context, apiType relay.APIType) {
 		return
 	}
 	if openAIAPIAllowsMultipart(apiType) && requestIsMultipart(c.GetHeader("Content-Type")) {
-		resp, _, err := h.svc.RelayMultipart(c.Request.Context(), token, apiType, body, c.GetHeader("Content-Type"), c.ClientIP())
+		resp, _, err := h.svc.RelayMultipart(relayRequestContext(c), token, apiType, body, c.GetHeader("Content-Type"), c.ClientIP())
 		if err != nil {
 			writeRelayError(c, err)
 			return
@@ -53,7 +54,7 @@ func (h *RelayHandler) relayOpenAI(c *gin.Context, apiType relay.APIType) {
 		return
 	}
 	if openAIAPIAllowsStream(apiType) && requestWantsStream(body) {
-		result, err := h.svc.RelayStream(c.Request.Context(), token, apiType, body, c.ClientIP())
+		result, err := h.svc.RelayStream(relayRequestContext(c), token, apiType, body, c.ClientIP())
 		if err != nil {
 			writeRelayError(c, err)
 			return
@@ -70,7 +71,7 @@ func (h *RelayHandler) relayOpenAI(c *gin.Context, apiType relay.APIType) {
 		})
 		return
 	}
-	resp, _, err := h.svc.Relay(c.Request.Context(), token, apiType, body, c.ClientIP())
+	resp, _, err := h.svc.Relay(relayRequestContext(c), token, apiType, body, c.ClientIP())
 	if err != nil {
 		writeRelayError(c, err)
 		return
@@ -122,7 +123,7 @@ func (h *RelayHandler) AudioSpeech(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
 		return
 	}
-	result, err := h.svc.RelayRaw(c.Request.Context(), token, relay.APIAudioSpeech, body, c.ClientIP())
+	result, err := h.svc.RelayRaw(relayRequestContext(c), token, relay.APIAudioSpeech, body, c.ClientIP())
 	if err != nil {
 		writeRelayError(c, err)
 		return
@@ -179,7 +180,7 @@ func (h *RelayHandler) AnthropicMessages(c *gin.Context) {
 		return
 	}
 	if requestWantsStream(body) {
-		result, err := h.svc.RelayAnthropicMessagesStream(c.Request.Context(), token, body, c.ClientIP())
+		result, err := h.svc.RelayAnthropicMessagesStream(relayRequestContext(c), token, body, c.ClientIP())
 		if err != nil {
 			writeAnthropicRelayError(c, err)
 			return
@@ -196,7 +197,7 @@ func (h *RelayHandler) AnthropicMessages(c *gin.Context) {
 		})
 		return
 	}
-	resp, _, err := h.svc.RelayAnthropicMessages(c.Request.Context(), token, body, c.ClientIP())
+	resp, _, err := h.svc.RelayAnthropicMessages(relayRequestContext(c), token, body, c.ClientIP())
 	if err != nil {
 		writeAnthropicRelayError(c, err)
 		return
@@ -233,7 +234,7 @@ func (h *RelayHandler) GeminiModelAction(c *gin.Context) {
 			return
 		}
 		if action == "embedContent" {
-			resp, _, err := h.svc.RelayGeminiEmbedContent(c.Request.Context(), token, modelName, body, c.ClientIP())
+			resp, _, err := h.svc.RelayGeminiEmbedContent(relayRequestContext(c), token, modelName, body, c.ClientIP())
 			if err != nil {
 				writeGeminiRelayError(c, err)
 				return
@@ -242,7 +243,7 @@ func (h *RelayHandler) GeminiModelAction(c *gin.Context) {
 			return
 		}
 		if action == "batchEmbedContents" {
-			resp, _, err := h.svc.RelayGeminiBatchEmbedContents(c.Request.Context(), token, modelName, body, c.ClientIP())
+			resp, _, err := h.svc.RelayGeminiBatchEmbedContents(relayRequestContext(c), token, modelName, body, c.ClientIP())
 			if err != nil {
 				writeGeminiRelayError(c, err)
 				return
@@ -251,7 +252,7 @@ func (h *RelayHandler) GeminiModelAction(c *gin.Context) {
 			return
 		}
 		if action == "streamGenerateContent" {
-			result, err := h.svc.RelayGeminiGenerateContentStream(c.Request.Context(), token, modelName, body, c.ClientIP())
+			result, err := h.svc.RelayGeminiGenerateContentStream(relayRequestContext(c), token, modelName, body, c.ClientIP())
 			if err != nil {
 				writeGeminiRelayError(c, err)
 				return
@@ -268,7 +269,7 @@ func (h *RelayHandler) GeminiModelAction(c *gin.Context) {
 			})
 			return
 		}
-		resp, _, err := h.svc.RelayGeminiGenerateContent(c.Request.Context(), token, modelName, body, action == "streamGenerateContent", c.ClientIP())
+		resp, _, err := h.svc.RelayGeminiGenerateContent(relayRequestContext(c), token, modelName, body, action == "streamGenerateContent", c.ClientIP())
 		if err != nil {
 			writeGeminiRelayError(c, err)
 			return
@@ -296,6 +297,10 @@ func (h *RelayHandler) listModelsForRequest(c *gin.Context) ([]byte, error) {
 	default:
 		return h.svc.ListModels()
 	}
+}
+
+func relayRequestContext(c *gin.Context) context.Context {
+	return service.ContextWithRelayUserAgent(c.Request.Context(), c.GetHeader("User-Agent"))
 }
 
 func writeRelayError(c *gin.Context, err error) {

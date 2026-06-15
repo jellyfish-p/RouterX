@@ -2830,6 +2830,27 @@ components:
           description: 禁用原因；启用 Key 通常为空。
         scope:
           $ref: "#/components/schemas/TokenScope"
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 最近一次成功或失败调用时间。
+        last_used_ip_hash:
+          type: string
+          description: 最近来源 IP 的 SHA-256 摘要；不返回原始 IP。
+          example: "b1f0c2d3e4f506172839405162738495a6b7c8d9e0f11223344556677889900a"
+        last_user_agent_hash:
+          type: string
+          description: 最近 User-Agent 的 SHA-256 摘要；不返回原始 User-Agent。
+          example: "a2f0c2d3e4f506172839405162738495b6c7d8e9f0011223344556677889900b"
+        last_model:
+          type: string
+          description: 最近请求模型名。
+          example: gpt-4o-mini
+        last_error_code:
+          type: string
+          description: 最近失败的协议化错误 code；最近调用成功时为空。
+          example: rate_limit_exceeded
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     TokenScope:
