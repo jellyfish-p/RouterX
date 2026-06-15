@@ -56,6 +56,7 @@
 | `TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota` | Stripe 全额退款 webhook 幂等记录订单退款状态；默认不扣额度，开启自动扣回后写 refund_deduct 流水和退款/扣回审计且不重复扣 |
 | `TestStripePartialRefundWebhookRecordsAndDeductsProportionally` | Stripe 部分退款 webhook 记录 `partially_refunded` 状态；开启自动扣回后按退款金额比例写 refund_deduct 流水和退款/扣回审计 |
 | `TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy` | Stripe 争议 webhook 幂等记录争议事件和 `payment_dispute.created` 审计；开启自动禁用策略后禁用用户已启用 API Key，且不直接改用户额度 |
+| `TestStripeDisputeLifecycleUpdatesDisputeFact` | Stripe 争议 created/closed 生命周期写入并更新 `payment_disputes`，按 dispute id 写 `payment_dispute.*` 审计，重复事件不重复审计 |
 | `TestAdminPaymentManualAdjustmentRequiresReason` | 支付人工补账/扣回默认要求填写原因，缺少原因不改变用户余额 |
 | `TestAdminPaymentManualAdjustmentWritesManualTransactionAndAudit` | 管理员通过支付人工修正接口扣回额度，写 `manual_debit` 流水、关联订单、记录操作者/原因/幂等键并写支付订单审计 |
 | `TestAdminPaymentManualRefundMarksOrderAndDeductsQuota` | 管理员通过支付人工退款接口扣回额度，订单置为 `partially_refunded` 或 `refunded`，写 `refund_deduct` 流水、原因、操作者、幂等键和 `payment_refund.manual` 审计 |
@@ -430,7 +431,7 @@ Gemini-compatible 最小断言：
 | P1 | 独立日志数据库 | `LOG_SQL_DSN` 写入、日志库故障降级、主库结算最小事实可恢复 |
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝和 RPM/TPM 拒绝已覆盖；风险视图和缓存失效待补 |
-| P2 | 支付充值 | 充值码批次/备注/过期策略、Stripe Checkout Session 创建、Stripe provider 退款请求、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账审计、Stripe 全额/部分退款和扣回审计、Stripe 争议事件和可选 API Key 禁用审计、支付人工补账/扣回审计、支付人工退款落账审计；完整争议生命周期和非 Stripe provider 侧自动发起退款流程待补 |
+| P2 | 支付充值 | 充值码批次/备注/过期策略、Stripe Checkout Session 创建、Stripe provider 退款请求、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回审计、支付人工退款落账审计；非 Stripe provider 侧自动发起退款流程待补 |
 | P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理、日志清理审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status 和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis 指标测试已覆盖；继续补更完整结构化日志、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定

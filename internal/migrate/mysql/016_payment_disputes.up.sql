@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS payment_disputes (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    provider VARCHAR(32) NOT NULL,
+    provider_dispute_id VARCHAR(128) NOT NULL,
+    order_no VARCHAR(64) NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    provider_payment_id VARCHAR(128) NOT NULL,
+    amount_minor BIGINT NOT NULL,
+    currency VARCHAR(16) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    reason VARCHAR(128) NOT NULL DEFAULT '',
+    funds_status VARCHAR(32) NOT NULL DEFAULT '',
+    last_event_id VARCHAR(128) NOT NULL,
+    last_event_type VARCHAR(128) NOT NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3),
+    UNIQUE INDEX idx_payment_disputes_provider_dispute (provider, provider_dispute_id),
+    INDEX idx_payment_disputes_order_no (order_no),
+    INDEX idx_payment_disputes_user_id (user_id),
+    INDEX idx_payment_disputes_provider_payment_id (provider_payment_id),
+    INDEX idx_payment_disputes_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

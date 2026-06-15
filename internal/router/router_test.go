@@ -2662,6 +2662,109 @@ func TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy(t *testing.T)
 	}
 }
 
+func TestStripeDisputeLifecycleUpdatesDisputeFact(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_dispute_lifecycle",
+		Name:      "Dispute lifecycle credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	order := createStripePaidOrder(t, r, rootJWT, "quota_dispute_lifecycle", "evt_paid_dispute_lifecycle", "pi_dispute_lifecycle")
+	createdBody := stripeChargeDisputePayload("evt_dispute_lifecycle_created", "charge.dispute.created", order, "pi_dispute_lifecycle", "dp_lifecycle_1", "needs_response", 999)
+	createdResp := performStripeWebhook(r, createdBody, "whsec_test_secret")
+	if createdResp.Code != http.StatusOK || strings.TrimSpace(createdResp.Body.String()) != "success" {
+		t.Fatalf("stripe dispute created webhook should return success, got %d %s", createdResp.Code, createdResp.Body.String())
+	}
+	var disputeFact struct {
+		Provider          string
+		ProviderDisputeID string
+		OrderNo           string
+		UserID            uint
+		ProviderPaymentID string
+		AmountMinor       int64
+		Currency          string
+		Status            string
+		Reason            string
+		LastEventType     string
+		LastEventID       string
+		FundsStatus       string
+	}
+	if err := internal.DB.Table("payment_disputes").Where("provider_dispute_id = ?", "dp_lifecycle_1").First(&disputeFact).Error; err != nil {
+		t.Fatalf("stripe dispute created should write dispute fact: %v", err)
+	}
+	if disputeFact.Provider != common.PaymentProviderStripe ||
+		disputeFact.OrderNo != order.OrderNo ||
+		disputeFact.UserID != order.UserID ||
+		disputeFact.ProviderPaymentID != "pi_dispute_lifecycle" ||
+		disputeFact.AmountMinor != 999 ||
+		disputeFact.Currency != "usd" ||
+		disputeFact.Status != "needs_response" ||
+		disputeFact.LastEventType != "charge.dispute.created" ||
+		disputeFact.LastEventID != "evt_dispute_lifecycle_created" {
+		t.Fatalf("unexpected dispute fact after created event: %+v", disputeFact)
+	}
+
+	closedBody := stripeChargeDisputePayload("evt_dispute_lifecycle_closed", "charge.dispute.closed", order, "pi_dispute_lifecycle", "dp_lifecycle_1", "won", 999)
+	closedResp := performStripeWebhook(r, closedBody, "whsec_test_secret")
+	if closedResp.Code != http.StatusOK || strings.TrimSpace(closedResp.Body.String()) != "success" {
+		t.Fatalf("stripe dispute closed webhook should return success, got %d %s", closedResp.Code, closedResp.Body.String())
+	}
+	if err := internal.DB.Table("payment_disputes").Where("provider_dispute_id = ?", "dp_lifecycle_1").First(&disputeFact).Error; err != nil {
+		t.Fatalf("stripe dispute closed should keep dispute fact: %v", err)
+	}
+	if disputeFact.Status != "won" ||
+		disputeFact.LastEventType != "charge.dispute.closed" ||
+		disputeFact.LastEventID != "evt_dispute_lifecycle_closed" ||
+		disputeFact.FundsStatus != "" {
+		t.Fatalf("unexpected dispute fact after closed event: %+v", disputeFact)
+	}
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_dispute&resource_id=dp_lifecycle_1", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_dispute.created"`) ||
+		!strings.Contains(auditBody, `"action":"payment_dispute.closed"`) ||
+		!strings.Contains(auditBody, "dp_lifecycle_1") ||
+		!strings.Contains(auditBody, "won") {
+		t.Fatalf("stripe dispute lifecycle should write dispute audit logs, got %d %s", auditResp.Code, auditBody)
+	}
+
+	duplicateClosed := performStripeWebhook(r, closedBody, "whsec_test_secret")
+	if duplicateClosed.Code != http.StatusOK || strings.TrimSpace(duplicateClosed.Body.String()) != "success" {
+		t.Fatalf("duplicate stripe dispute closed should return success, got %d %s", duplicateClosed.Code, duplicateClosed.Body.String())
+	}
+	var closedAuditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "payment_dispute.closed", "payment_dispute", "dp_lifecycle_1").
+		Count(&closedAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if closedAuditCount != 1 {
+		t.Fatalf("duplicate stripe dispute closed must not write duplicate audit logs, got %d", closedAuditCount)
+	}
+}
+
 func TestChannelExtendedManagement(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -8924,6 +9027,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		&model.PaymentOrder{},
 		&model.PaymentEvent{},
 		&model.PaymentRefundRequest{},
+		&model.PaymentDispute{},
 		&model.AdminAuditLog{},
 		&model.Setting{},
 	); err != nil {
@@ -9060,15 +9164,21 @@ func stripeChargeRefundedPayload(eventID string, order model.PaymentOrder, payme
 }
 
 func stripeChargeDisputeCreatedPayload(eventID string, order model.PaymentOrder, paymentIntent string, amount int64) string {
+	return stripeChargeDisputePayload(eventID, "charge.dispute.created", order, paymentIntent, "dp_"+paymentIntent, "needs_response", amount)
+}
+
+func stripeChargeDisputePayload(eventID, eventType string, order model.PaymentOrder, paymentIntent, disputeID, status string, amount int64) string {
 	raw, _ := json.Marshal(map[string]interface{}{
 		"id":   eventID,
-		"type": "charge.dispute.created",
+		"type": eventType,
 		"data": map[string]interface{}{
 			"object": map[string]interface{}{
-				"id":             "dp_" + paymentIntent,
+				"id":             disputeID,
 				"amount":         amount,
 				"currency":       order.Currency,
 				"payment_intent": paymentIntent,
+				"status":         status,
+				"reason":         "fraudulent",
 				"metadata": map[string]string{
 					"order_no": order.OrderNo,
 				},

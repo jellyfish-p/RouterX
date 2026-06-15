@@ -100,6 +100,9 @@ const (
 	adminAuditActionPaymentRefundDeducted   = "payment_refund.deducted"
 	adminAuditActionPaymentRefundManual     = "payment_refund.manual"
 	adminAuditActionPaymentDisputeCreated   = "payment_dispute.created"
+	adminAuditActionPaymentDisputeUpdated   = "payment_dispute.updated"
+	adminAuditActionPaymentDisputeClosed    = "payment_dispute.closed"
+	adminAuditActionPaymentDisputeFunds     = "payment_dispute.funds_changed"
 	adminAuditActionPaymentManualCredit     = "payment_manual_adjust.credit"
 	adminAuditActionPaymentManualDebit      = "payment_manual_adjust.debit"
 )
@@ -1598,6 +1601,8 @@ type stripeCheckoutSession struct {
 	Currency       string            `json:"currency"`
 	PaymentStatus  string            `json:"payment_status"`
 	PaymentIntent  string            `json:"payment_intent"`
+	Status         string            `json:"status"`
+	Reason         string            `json:"reason"`
 }
 
 // ProcessStripeWebhook 验证 Stripe 原始签名，并在可信 Checkout 成功事件中幂等入账。
@@ -1645,7 +1650,7 @@ func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestI
 		if event.Type == "charge.refunded" {
 			return processStripeRefund(tx, &paymentEvent, session, requestID)
 		}
-		if event.Type == "charge.dispute.created" {
+		if isStripeDisputeEvent(event.Type) {
 			return processStripeDispute(tx, &paymentEvent, session, requestID)
 		}
 		if event.Type != "checkout.session.completed" || !stripeCheckoutSucceeded(session) {
@@ -1848,7 +1853,7 @@ func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeC
 	return nil
 }
 
-// processStripeDispute 只记录争议事实和可选风控动作，订单最终退款/胜诉结果由后续事件或人工处理决定。
+// processStripeDispute 记录争议生命周期事实，并在 created 阶段执行可选风控动作。
 func processStripeDispute(tx *gorm.DB, event *model.PaymentEvent, session stripeCheckoutSession, requestID string) error {
 	orderNo := strings.TrimSpace(session.Metadata["order_no"])
 	paymentIntent := strings.TrimSpace(session.PaymentIntent)
@@ -1870,6 +1875,15 @@ func processStripeDispute(tx *gorm.DB, event *model.PaymentEvent, session stripe
 		return err
 	}
 
+	disputeID := strings.TrimSpace(session.ID)
+	if disputeID == "" {
+		return errors.New("stripe dispute id is required")
+	}
+	disputeStatus := strings.TrimSpace(session.Status)
+	if disputeStatus == "" {
+		disputeStatus = stripeDisputeStatusFromEvent(event.EventType)
+	}
+	fundsStatus := stripeDisputeFundsStatus(event.EventType)
 	autoDisableTokens, err := paymentBoolSettingDefault("payment.dispute.auto_disable_tokens", false)
 	if err != nil {
 		return err
@@ -1882,7 +1896,7 @@ func processStripeDispute(tx *gorm.DB, event *model.PaymentEvent, session stripe
 	}
 
 	tokensDisabled := int64(0)
-	if autoDisableTokens {
+	if autoDisableTokens && event.EventType == "charge.dispute.created" {
 		result := tx.Model(&model.Token{}).
 			Where("user_id = ? AND status = ?", order.UserID, common.TokenStatusEnabled).
 			Updates(map[string]interface{}{
@@ -1895,18 +1909,152 @@ func processStripeDispute(tx *gorm.DB, event *model.PaymentEvent, session stripe
 		}
 		tokensDisabled = result.RowsAffected
 	}
+	if err := upsertStripeDispute(tx, model.PaymentDispute{
+		Provider:          common.PaymentProviderStripe,
+		ProviderDisputeID: disputeID,
+		OrderNo:           order.OrderNo,
+		UserID:            order.UserID,
+		ProviderPaymentID: paymentIntent,
+		AmountMinor:       disputeAmountMinor,
+		Currency:          strings.ToLower(strings.TrimSpace(order.Currency)),
+		Status:            disputeStatus,
+		Reason:            strings.TrimSpace(session.Reason),
+		FundsStatus:       fundsStatus,
+		LastEventID:       event.ProviderEventID,
+		LastEventType:     event.EventType,
+	}); err != nil {
+		return err
+	}
 	if err := tx.Model(event).Updates(eventUpdates).Error; err != nil {
 		return err
 	}
 	event.Processed = true
 	event.ProcessedAt = &now
-	return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentDisputeCreated, *event, &order, map[string]interface{}{
+	disputeSummary := map[string]interface{}{
+		"dispute_id":          disputeID,
 		"amount_disputed":     disputeAmountMinor,
 		"order_amount":        orderAmountMinor,
 		"payment_intent":      paymentIntent,
+		"dispute_status":      disputeStatus,
+		"funds_status":        fundsStatus,
+		"reason":              strings.TrimSpace(session.Reason),
 		"auto_disable_tokens": autoDisableTokens,
 		"tokens_disabled":     tokensDisabled,
+	}
+	if event.EventType == "charge.dispute.created" {
+		if err := recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentDisputeCreated, *event, &order, disputeSummary); err != nil {
+			return err
+		}
+	}
+	return recordPaymentDisputeAudit(tx, requestID, stripeDisputeAuditAction(event.EventType), event.ProviderEventID, disputeID, order, disputeSummary)
+}
+
+func upsertStripeDispute(tx *gorm.DB, dispute model.PaymentDispute) error {
+	now := time.Now()
+	var existing model.PaymentDispute
+	err := tx.Where("provider = ? AND provider_dispute_id = ?", dispute.Provider, dispute.ProviderDisputeID).First(&existing).Error
+	switch {
+	case err == nil:
+		return tx.Model(&existing).Updates(map[string]interface{}{
+			"order_no":            dispute.OrderNo,
+			"user_id":             dispute.UserID,
+			"provider_payment_id": dispute.ProviderPaymentID,
+			"amount_minor":        dispute.AmountMinor,
+			"currency":            dispute.Currency,
+			"status":              dispute.Status,
+			"reason":              dispute.Reason,
+			"funds_status":        dispute.FundsStatus,
+			"last_event_id":       dispute.LastEventID,
+			"last_event_type":     dispute.LastEventType,
+			"updated_at":          now,
+		}).Error
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		return err
+	}
+	dispute.CreatedAt = now
+	dispute.UpdatedAt = now
+	return tx.Create(&dispute).Error
+}
+
+func recordPaymentDisputeAudit(tx *gorm.DB, requestID, action, eventID, disputeID string, order model.PaymentOrder, extra map[string]interface{}) error {
+	summary := map[string]interface{}{
+		"provider":   common.PaymentProviderStripe,
+		"event_id":   eventID,
+		"dispute_id": disputeID,
+		"order_no":   order.OrderNo,
+		"user_id":    order.UserID,
+		"product_id": order.ProductID,
+		"amount":     order.Amount,
+		"currency":   order.Currency,
+		"quota":      order.Quota,
+	}
+	for key, value := range extra {
+		summary[key] = value
+	}
+	afterSummary, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+	return recordAdminAuditLogWithDB(tx, AdminAuditRecordInput{
+		RequestID:    requestID,
+		ActorUserID:  paymentWebhookAuditActorUserID,
+		ActorRole:    common.RoleSuper,
+		Action:       action,
+		ResourceType: "payment_dispute",
+		ResourceID:   disputeID,
+		AfterSummary: string(afterSummary),
+		Result:       "success",
 	})
+}
+
+func isStripeDisputeEvent(eventType string) bool {
+	switch eventType {
+	case "charge.dispute.created", "charge.dispute.updated", "charge.dispute.closed", "charge.dispute.funds_withdrawn", "charge.dispute.funds_reinstated":
+		return true
+	default:
+		return false
+	}
+}
+
+func stripeDisputeAuditAction(eventType string) string {
+	switch eventType {
+	case "charge.dispute.created":
+		return adminAuditActionPaymentDisputeCreated
+	case "charge.dispute.updated":
+		return adminAuditActionPaymentDisputeUpdated
+	case "charge.dispute.closed":
+		return adminAuditActionPaymentDisputeClosed
+	case "charge.dispute.funds_withdrawn", "charge.dispute.funds_reinstated":
+		return adminAuditActionPaymentDisputeFunds
+	default:
+		return adminAuditActionPaymentDisputeUpdated
+	}
+}
+
+func stripeDisputeStatusFromEvent(eventType string) string {
+	switch eventType {
+	case "charge.dispute.created":
+		return "needs_response"
+	case "charge.dispute.closed":
+		return "closed"
+	case "charge.dispute.funds_withdrawn":
+		return "funds_withdrawn"
+	case "charge.dispute.funds_reinstated":
+		return "funds_reinstated"
+	default:
+		return "updated"
+	}
+}
+
+func stripeDisputeFundsStatus(eventType string) string {
+	switch eventType {
+	case "charge.dispute.funds_withdrawn":
+		return "withdrawn"
+	case "charge.dispute.funds_reinstated":
+		return "reinstated"
+	default:
+		return ""
+	}
 }
 
 func verifyStripeSignature(raw []byte, signatureHeader, secret string) bool {
