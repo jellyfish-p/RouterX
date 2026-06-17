@@ -225,7 +225,7 @@ API Key 是调用 `/v1/*` 的唯一模型调用凭据。User JWT 只用于控制
 - `routerx.route` 只能表达偏好，不能扩大权限。
 - 后台策略、安全过滤、用户状态、API Key 状态、额度、通道启用状态和访问控制永远优先。
 - 真实厂商上游调用前必须剥离 `routerx` 字段。
-- RouterX-Compatible 上游可以继续接收 `routerx`，但必须有 hop 限制，避免循环。
+- RouterX-Compatible 上游当前可以继续接收 `routerx`；服务端会递增 `X-RouterX-Hop`，达到默认上限 `3` 时返回 `routerx_hop_exceeded`，避免循环。
 - `routerx.upstream.headers` 和 `routerx.upstream.query` 只能补充安全字段，不能覆盖 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`、`api-key`、provider API key query 等敏感鉴权字段。
 - `routerx.upstream.body` 只补充 JSON 请求体中原本不存在的字段，不能覆盖 `model`、`routerx`、`stream` 或调用方已经显式提交的字段。
 - `routerx.provider.<provider>` 只在最终选中对应上游 provider 时生效；当前基础实现把匹配 provider 下的 JSON 字段作为 body 缺省补充，适合 xAI `search_parameters` 这类 OpenAI-compatible 扩展。

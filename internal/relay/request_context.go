@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"routerx/internal/common"
@@ -10,6 +11,9 @@ import (
 
 type requestIDContextKey struct{}
 type upstreamOptionsContextKey struct{}
+type routerXHopContextKey struct{}
+
+const RouterXHopHeaderName = "X-RouterX-Hop"
 
 // UpstreamOptions carries caller-supplied, policy-safe additions for the next
 // upstream HTTP request. Sensitive authentication material is filtered before
@@ -54,6 +58,24 @@ func UpstreamOptionsFromContext(ctx context.Context) UpstreamOptions {
 	return cloneUpstreamOptions(opts)
 }
 
+// ContextWithRouterXHop stores the hop count to send to a RouterX-compatible
+// upstream. The service computes this only after selecting a RouterX channel.
+func ContextWithRouterXHop(ctx context.Context, hop int) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, routerXHopContextKey{}, hop)
+}
+
+// RouterXHopFromContext returns the outbound RouterX hop value, if one exists.
+func RouterXHopFromContext(ctx context.Context) (int, bool) {
+	if ctx == nil {
+		return 0, false
+	}
+	hop, ok := ctx.Value(routerXHopContextKey{}).(int)
+	return hop, ok
+}
+
 // SetRequestIDHeader copies RouterX's request id into outbound upstream calls.
 // It deliberately uses the configured public header name, so deployments that
 // rename observability.request_id_header keep the same trace boundary.
@@ -63,6 +85,17 @@ func SetRequestIDHeader(req *http.Request) {
 	}
 	if requestID := RequestIDFromContext(req.Context()); requestID != "" {
 		req.Header.Set(common.RequestIDHeaderName(), requestID)
+	}
+}
+
+// SetRouterXHopHeader forwards the loop-prevention hop count to RouterX
+// compatible upstreams. Non-RouterX adapters simply never receive this context.
+func SetRouterXHopHeader(req *http.Request) {
+	if req == nil {
+		return
+	}
+	if hop, ok := RouterXHopFromContext(req.Context()); ok && hop > 0 {
+		req.Header.Set(RouterXHopHeaderName, strconv.Itoa(hop))
 	}
 }
 

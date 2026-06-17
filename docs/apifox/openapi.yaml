@@ -1989,6 +1989,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         required: true
         content:
@@ -2017,6 +2018,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         required: true
         content:
@@ -2075,6 +2077,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2102,6 +2105,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2120,6 +2124,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2138,6 +2143,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         $ref: "#/components/requestBodies/ImageMultipart"
       responses:
@@ -2156,6 +2162,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         $ref: "#/components/requestBodies/ImageMultipart"
       responses:
@@ -2174,6 +2181,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         $ref: "#/components/requestBodies/AudioMultipart"
       responses:
@@ -2192,6 +2200,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         $ref: "#/components/requestBodies/AudioMultipart"
       responses:
@@ -2210,6 +2219,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2237,6 +2247,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2312,6 +2323,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
       requestBody:
         required: true
         content:
@@ -2369,6 +2381,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
         - name: model
           in: path
           required: true
@@ -2397,6 +2410,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
         - name: model
           in: path
           required: true
@@ -2423,6 +2437,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
         - name: model
           in: path
           required: true
@@ -2458,6 +2473,7 @@ paths:
         - ApiKeyBearer: []
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
+        - $ref: "#/components/parameters/RouterXHop"
         - name: model
           in: path
           required: true
@@ -2580,6 +2596,16 @@ components:
         type: string
         example: '{"route":{"channel_group":"premium"},"upstream":{"headers":{"X-Upstream-Feature":"beta"},"query":{"trace":"enabled"},"body":{"reasoning_effort":"high"}},"provider":{"xai":{"search_parameters":{"mode":"auto"}}}}'
       description: 可选 RouterX 私有选项 JSON 字符串；支持 route 路由偏好、upstream 安全 header/query/JSON body 补充和 provider 选中上游专属 JSON body 补充，body/form 中的 routerx 字段优先于该 header，发往真实上游前不会透传 routerx 私有字段。
+    RouterXHop:
+      name: X-RouterX-Hop
+      in: header
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 3
+        example: 1
+      description: 多层 RouterX-Compatible 上游循环保护 hop；选中 RouterX 上游时服务端会递增后转发，达到默认上限 3 时返回 routerx_hop_exceeded。
     StartTime:
       name: start_time
       in: query

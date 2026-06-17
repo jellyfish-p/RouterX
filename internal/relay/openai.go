@@ -16,12 +16,13 @@ import (
 // 覆盖 ChannelTypeOpenAI (1) 和 ChannelTypeOpenAICompat (100)。
 // OpenAI 原生 API 格式与 RouterX 一致，无需转换请求/响应格式。
 type OpenAIAdapter struct{}
+type RouterXAdapter struct{ OpenAIAdapter }
 
 func init() {
 	Register(common.ChannelTypeOpenAI, func() Adapter { return &OpenAIAdapter{} })
 	Register(common.ChannelTypeOpenAICompat, func() Adapter { return &OpenAIAdapter{} })
 	Register(common.ChannelTypeXAI, func() Adapter { return &OpenAIAdapter{} })
-	Register(common.ChannelTypeRouterX, func() Adapter { return &OpenAIAdapter{} })
+	Register(common.ChannelTypeRouterX, func() Adapter { return &RouterXAdapter{} })
 }
 
 func (a *OpenAIAdapter) GetChannelType() int {
@@ -38,6 +39,20 @@ func (a *OpenAIAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, er
 	}
 	delete(payload, "routerx")
 	return json.Marshal(payload)
+}
+
+func (a *RouterXAdapter) GetChannelType() int {
+	return common.ChannelTypeRouterX
+}
+
+func (a *RouterXAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
+	if apiType == APIModels {
+		return nil, nil
+	}
+	if !json.Valid(body) {
+		return nil, errors.New("invalid json")
+	}
+	return body, nil
 }
 
 func (a *OpenAIAdapter) GetAPIEndpoint(apiType APIType, model string) string {
@@ -96,6 +111,7 @@ func (a *OpenAIAdapter) doRequest(ctx context.Context, baseURL, endpoint, apiKey
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	SetRequestIDHeader(req)
+	SetRouterXHopHeader(req)
 	if body != nil {
 		contentType = strings.TrimSpace(contentType)
 		if contentType == "" {

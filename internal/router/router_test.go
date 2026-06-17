@@ -5957,6 +5957,176 @@ func TestRouterXProviderOptionsApplyOnlyToSelectedProvider(t *testing.T) {
 	}
 }
 
+func TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamHop := ""
+	var upstreamBody map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamHop = req.Header.Get("X-RouterX-Hop")
+		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
+			t.Errorf("routerx upstream received invalid json: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-routerx-hop","object":"chat.completion","model":"gpt-routerx","choices":[{"index":0,"message":{"role":"assistant","content":"routerx"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "routerx-compatible",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeRouterX,
+		"name":     "routerx-compatible-hop",
+		"models":   "gpt-routerx",
+		"base_url": upstream.URL,
+		"api_key":  "routerx-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create routerx channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	body := map[string]interface{}{
+		"model": "gpt-routerx",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"provider": "routerx"},
+			"provider": map[string]interface{}{
+				"xai": map[string]interface{}{"search_parameters": map[string]interface{}{"mode": "auto"}},
+			},
+		},
+	}
+	rawBody, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(rawBody))
+	req.Header.Set("Authorization", "Bearer "+tokenPayload.Data.Key)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-RouterX-Hop", "1")
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("routerx-compatible request failed: %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamHop != "2" {
+		t.Fatalf("routerx-compatible upstream should receive incremented hop, got %q", upstreamHop)
+	}
+	routerXBody, ok := upstreamBody["routerx"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("routerx-compatible upstream should receive routerx private field: %#v", upstreamBody)
+	}
+	route, ok := routerXBody["route"].(map[string]interface{})
+	if !ok || route["provider"] != "routerx" {
+		t.Fatalf("routerx route should be preserved for next RouterX hop: %#v", routerXBody)
+	}
+}
+
+func TestRouterXCompatibleUpstreamRejectsHopLimit(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-routerx-hop-limit","object":"chat.completion","model":"gpt-routerx","choices":[{"index":0,"message":{"role":"assistant","content":"routerx"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "routerx-hop-limit",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeRouterX,
+		"name":     "routerx-hop-limit",
+		"models":   "gpt-routerx",
+		"base_url": upstream.URL,
+		"api_key":  "routerx-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create routerx channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	rawBody, err := json.Marshal(map[string]interface{}{
+		"model": "gpt-routerx",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"provider": "routerx"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(rawBody))
+	req.Header.Set("Authorization", "Bearer "+tokenPayload.Data.Key)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-RouterX-Hop", "3")
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "routerx_hop_exceeded") {
+		t.Fatalf("routerx hop limit should be rejected locally, got %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("routerx hop limit rejection must not call upstream, calls=%d", upstreamCalls)
+	}
+}
+
 func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

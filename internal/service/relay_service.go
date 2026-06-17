@@ -45,6 +45,7 @@ type RelayRawResult struct {
 type relayUserAgentContextKey struct{}
 type relayRequestIDContextKey struct{}
 type relayRouterXOptionsContextKey struct{}
+type relayRouterXHopContextKey struct{}
 type relayRequestSnapshotContextKey struct{}
 type relayPolicySnapshotContextKey struct{}
 type relayRouteSnapshotContextKey struct{}
@@ -53,6 +54,8 @@ type relayBillingSnapshotContextKey struct{}
 type contentTypeRelayAdapter interface {
 	DoRequestWithContentType(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error)
 }
+
+const maxRouterXHop = 3
 
 func (r *RelayStreamResult) Forward(write func([]byte) error, flush func()) (*relay.Usage, error) {
 	if r == nil || r.forward == nil {
@@ -87,6 +90,15 @@ func ContextWithRelayRouterXOptions(ctx context.Context, options string) context
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, relayRouterXOptionsContextKey{}, strings.TrimSpace(options))
+}
+
+// ContextWithRelayRouterXHop stores the inbound hop count from X-RouterX-Hop.
+// The value is validated only when the selected upstream is RouterX-compatible.
+func ContextWithRelayRouterXHop(ctx context.Context, hop string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, relayRouterXHopContextKey{}, strings.TrimSpace(hop))
 }
 
 func ContextWithRelayRequestSnapshot(ctx context.Context, snapshot string) context.Context {
@@ -143,6 +155,22 @@ func relayRouterXOptionsFromContext(ctx context.Context) json.RawMessage {
 		return nil
 	}
 	return json.RawMessage(value)
+}
+
+func relayRouterXHopFromContext(ctx context.Context) (int, error) {
+	if ctx == nil {
+		return 0, nil
+	}
+	value, _ := ctx.Value(relayRouterXHopContextKey{}).(string)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	hop, err := strconv.Atoi(value)
+	if err != nil || hop < 0 {
+		return 0, errors.New("invalid routerx hop")
+	}
+	return hop, nil
 }
 
 func relayRequestSnapshotFromContext(ctx context.Context) string {
@@ -508,10 +536,18 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 		}
 	}
+	routerXHop, forwardRouterXHop, err := nextRouterXHop(ctx, channel)
+	if err != nil {
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
+		return nil, nil, false, routerXHopHTTPError(err)
+	}
 	endpoint := adapter.GetAPIEndpoint(apiType, upstreamModel)
 	timeout := s.relayTimeout()
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	reqCtx = relay.ContextWithUpstreamOptions(reqCtx, reqInfo.Upstream.Transport)
+	if forwardRouterXHop {
+		reqCtx = relay.ContextWithRouterXHop(reqCtx, routerXHop)
+	}
 	defer cancel()
 	start := time.Now()
 	resp, err := doRelayAdapterRequest(reqCtx, adapter, target.BaseURL, endpoint, target.APIKey, outBody, outContentType)
@@ -673,10 +709,18 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if err != nil {
 		return nil, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 	}
+	routerXHop, forwardRouterXHop, err := nextRouterXHop(ctx, channel)
+	if err != nil {
+		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
+		return nil, routerXHopHTTPError(err)
+	}
 
 	endpoint := adapter.GetAPIEndpoint(apiType, upstreamModel)
 	reqCtx, cancel := context.WithTimeout(ctx, s.relayTimeout())
 	reqCtx = relay.ContextWithUpstreamOptions(reqCtx, reqInfo.Upstream.Transport)
+	if forwardRouterXHop {
+		reqCtx = relay.ContextWithRouterXHop(reqCtx, routerXHop)
+	}
 	relayStart := time.Now()
 	start := time.Now()
 	resp, err := adapter.DoRequest(reqCtx, target.BaseURL, endpoint, target.APIKey, outBody)
@@ -1244,6 +1288,33 @@ func cloneRawMessageMap(values map[string]json.RawMessage) map[string]json.RawMe
 		cloned[key] = append(json.RawMessage(nil), value...)
 	}
 	return cloned
+}
+
+func nextRouterXHop(ctx context.Context, channel *model.Channel) (int, bool, error) {
+	if channel == nil || channel.Type != common.ChannelTypeRouterX {
+		return 0, false, nil
+	}
+	hop, err := relayRouterXHopFromContext(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+	if hop >= maxRouterXHop {
+		return 0, true, errors.New("routerx hop limit exceeded")
+	}
+	return hop + 1, true, nil
+}
+
+func routerXHopHTTPError(err error) *HTTPError {
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		message = "routerx hop limit exceeded"
+	}
+	return &HTTPError{
+		Status:  http.StatusBadRequest,
+		Message: message,
+		Type:    "invalid_request_error",
+		Code:    "routerx_hop_exceeded",
+	}
 }
 
 func rewriteMultipartRelayBody(body []byte, contentType string, modelName string) ([]byte, string, error) {
