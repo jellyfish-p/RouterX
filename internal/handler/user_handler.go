@@ -201,6 +201,48 @@ func (h *UserHandler) UpdateQuota(c *gin.Context) {
 	common.SuccessMsg(c, "额度已更新")
 }
 
+// GET /v0/user/quota-transactions — 当前用户额度流水。
+func (h *UserHandler) ListQuotaTransactions(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.QuotaTransactionListRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		common.FailWithStatus(c, 400, "额度流水查询参数无效")
+		return
+	}
+	transactions, total, err := h.svc.ListUserQuotaTransactions(user.ID, req.Page, req.PageSize, quotaTransactionFilterFromRequest(req))
+	if err != nil {
+		common.FailWithStatus(c, 500, "查询额度流水失败")
+		return
+	}
+	page, pageSize := pageValues(req.Page, req.PageSize)
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.QuotaTransactionInfosFromModels(transactions)})
+}
+
+// GET /v0/admin/quota-transactions — 管理端额度流水列表。
+func (h *UserHandler) ListQuotaTransactionsAdmin(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.QuotaTransactionListRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		common.FailWithStatus(c, 400, "额度流水查询参数无效")
+		return
+	}
+	transactions, total, err := h.svc.ListQuotaTransactions(operator.Role, req.Page, req.PageSize, quotaTransactionFilterFromRequest(req))
+	if err != nil {
+		common.FailWithStatus(c, 500, "查询额度流水失败")
+		return
+	}
+	page, pageSize := pageValues(req.Page, req.PageSize)
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.QuotaTransactionInfosFromModels(transactions)})
+}
+
 // GET /v0/admin/groups — 用户分组列表
 func (h *UserHandler) ListGroups(c *gin.Context) {
 	operator, ok := currentUser(c)
@@ -1285,6 +1327,17 @@ func redemCodeRedeemAuditSummary(code *model.RedemCode, redeemedQuota, balanceAf
 	summary["redeemed_quota"] = redeemedQuota
 	summary["balance_after"] = balanceAfter
 	return summary
+}
+
+func quotaTransactionFilterFromRequest(req dto.QuotaTransactionListRequest) service.QuotaTransactionFilter {
+	return service.QuotaTransactionFilter{
+		UserID:     req.UserID,
+		Type:       req.Type,
+		SourceType: req.SourceType,
+		SourceID:   req.SourceID,
+		StartTime:  req.StartTime,
+		EndTime:    req.EndTime,
+	}
 }
 
 func parseUintParam(c *gin.Context, name string) (uint, bool) {

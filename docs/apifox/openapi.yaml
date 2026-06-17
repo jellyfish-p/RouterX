@@ -9,7 +9,7 @@ info:
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
-    - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、日志库健康和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、额度流水查询、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、日志库健康和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -565,6 +565,44 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/BillingStats"
+  /v0/user/quota-transactions:
+    get:
+      tags: [User Usage]
+      summary: 当前用户额度流水
+      description: 查询当前用户自己的余额变更流水。该接口只返回支付入账、充值码兑换、退款扣回、人工补账和人工扣回等 quota_transactions；模型调用消费仍查询 /v0/user/log 或 /v0/user/billing。即使传入 user_id，服务端也会强制使用当前登录用户。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: type
+          in: query
+          schema: { type: string }
+          description: 流水类型，例如 payment_grant、redem_redeem、admin_adjust、refund_deduct、manual_credit、manual_debit。
+        - name: source_type
+          in: query
+          schema: { type: string }
+          description: 来源类型，例如 payment_order、payment_event、redem_code、admin_action、refund。
+        - name: source_id
+          in: query
+          schema: { type: string }
+          description: 来源 ID、本地订单号或事件 ID。
+        - $ref: "#/components/parameters/StartTime"
+        - $ref: "#/components/parameters/EndTime"
+      responses:
+        "200":
+          description: 当前用户额度流水分页。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/QuotaTransactionPage"
+        "401":
+          $ref: "#/components/responses/StandardUnauthorized"
   /v0/user/redem:
     post:
       tags: [User Usage]
@@ -900,6 +938,45 @@ paths:
           $ref: "#/components/responses/StandardOK"
         "400":
           $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/quota-transactions:
+    get:
+      tags: [Admin Users]
+      summary: 管理端额度流水
+      description: 管理员查询所有用户的余额变更流水；支持按用户、流水类型、来源类型、来源 ID 和创建时间过滤。模型调用消费不进入 quota_transactions，应通过 /v0/admin/log 或账单统计查询。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/UserID"
+        - name: type
+          in: query
+          schema: { type: string }
+          description: 流水类型，例如 payment_grant、redem_redeem、admin_adjust、refund_deduct、manual_credit、manual_debit。
+        - name: source_type
+          in: query
+          schema: { type: string }
+          description: 来源类型，例如 payment_order、payment_event、redem_code、admin_action、refund。
+        - name: source_id
+          in: query
+          schema: { type: string }
+          description: 来源 ID、本地订单号或事件 ID。
+        - $ref: "#/components/parameters/StartTime"
+        - $ref: "#/components/parameters/EndTime"
+      responses:
+        "200":
+          description: 额度流水分页。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/QuotaTransactionPage"
+        "403":
+          $ref: "#/components/responses/StandardForbidden"
   /v0/admin/groups:
     get:
       tags: [Admin Users]
@@ -3646,6 +3723,56 @@ components:
         reason:
           type: string
           description: 人工调额原因；为空时使用默认原因。
+    QuotaTransactionInfo:
+      type: object
+      properties:
+        id: { type: integer, format: uint64 }
+        user_id: { type: integer, format: uint64 }
+        type:
+          type: string
+          description: 额度流水类型。
+          enum: [payment_grant, redem_redeem, admin_adjust, refund_deduct, manual_credit, manual_debit]
+        amount:
+          type: integer
+          format: int64
+          description: 正数增加余额，负数扣减余额。
+        balance_before:
+          type: integer
+          format: int64
+          description: 本次变更前的用户余额。
+        balance_after:
+          type: integer
+          format: int64
+          description: 本次变更后的用户余额。
+        source_type:
+          type: string
+          description: 流水来源类型。
+          enum: [payment_order, payment_event, redem_code, admin_action, refund]
+        source_id:
+          type: string
+          description: 来源 ID、本地订单号或事件 ID。
+        reason:
+          type: string
+          description: 人工原因或系统摘要。
+        actor_user_id:
+          type: integer
+          format: uint64
+          nullable: true
+          description: 管理员或系统操作者。
+        request_id:
+          type: string
+          nullable: true
+          description: HTTP 请求追踪 ID。
+        created_at: { type: string, format: date-time }
+    QuotaTransactionPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/QuotaTransactionInfo"
     PaginatedResult:
       type: object
       properties:

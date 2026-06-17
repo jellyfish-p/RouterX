@@ -31,6 +31,19 @@ type UserGroupListRequest struct {
 	Keyword  string `form:"keyword"`
 }
 
+// QuotaTransactionListRequest 额度流水查询参数。
+// 用户侧会忽略 user_id，始终只返回当前登录用户的流水。
+type QuotaTransactionListRequest struct {
+	Page       int    `form:"page" binding:"omitempty,min=1"`
+	PageSize   int    `form:"page_size" binding:"omitempty,min=1,max=100"`
+	UserID     *uint  `form:"user_id"`
+	Type       string `form:"type"`
+	SourceType string `form:"source_type"`
+	SourceID   string `form:"source_id"`
+	StartTime  string `form:"start_time"`
+	EndTime    string `form:"end_time"`
+}
+
 type CreateUserGroupRequest struct {
 	Name  string  `json:"name" binding:"required,min=1,max=64"`
 	Ratio float64 `json:"ratio"`
@@ -72,6 +85,21 @@ type UpdateUserRequest struct {
 type UpdateQuotaRequest struct {
 	Quota  int64  `json:"quota" binding:"required"`
 	Reason string `json:"reason"`
+}
+
+type QuotaTransactionInfo struct {
+	ID            uint      `json:"id"`
+	UserID        uint      `json:"user_id"`
+	Type          string    `json:"type"`
+	Amount        int64     `json:"amount"`
+	BalanceBefore int64     `json:"balance_before"`
+	BalanceAfter  int64     `json:"balance_after"`
+	SourceType    string    `json:"source_type"`
+	SourceID      string    `json:"source_id"`
+	Reason        string    `json:"reason,omitempty"`
+	ActorUserID   *uint     `json:"actor_user_id,omitempty"`
+	RequestID     *string   `json:"request_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // UpdateSelfRequest 用户自助修改个人信息

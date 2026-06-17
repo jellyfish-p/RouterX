@@ -174,6 +174,7 @@ epay:{out_trade_no}:{trade_no}:{trade_status}:{money}
 - `idempotency_key` 应唯一，防止同一来源重复改变额度。
 - 写额度流水和更新 `users.quota` 必须在同一事务内完成。
 - 模型消费日志 `logs.quota_used` 不等同于充值流水；两者可以共同构成账务报表，但不能混为同一类事实。
+- 当前后端已提供 `GET /v0/user/quota-transactions` 和 `GET /v0/admin/quota-transactions` 查询该流水；用户侧强制只看自己，管理侧可按用户、类型、来源和时间过滤。
 
 ## 4. Provider 插件接口
 

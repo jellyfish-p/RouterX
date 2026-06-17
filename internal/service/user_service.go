@@ -44,6 +44,15 @@ type AdminAuditRecordInput struct {
 	UserAgent     string
 }
 
+type QuotaTransactionFilter struct {
+	UserID     *uint
+	Type       string
+	SourceType string
+	SourceID   string
+	StartTime  string
+	EndTime    string
+}
+
 // RecordAdminAuditLog 写入管理审计摘要。审计失败不应泄露敏感请求体。
 func (s *UserService) RecordAdminAuditLog(input AdminAuditRecordInput) error {
 	log, err := buildAdminAuditLog(input)
@@ -406,6 +415,57 @@ func (s *UserService) DeleteGroup(operatorRole int, id uint) error {
 		return errors.New("group is in use")
 	}
 	return internal.DB.Delete(&model.Group{}, id).Error
+}
+
+// ListQuotaTransactions 返回管理端额度流水列表。
+// 额度流水只记录余额变更；模型调用消费仍以 logs.quota_used 为事实来源。
+func (s *UserService) ListQuotaTransactions(operatorRole int, page, pageSize int, filter QuotaTransactionFilter) ([]model.QuotaTransaction, int64, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, 0, errors.New("admin role required")
+	}
+	return s.listQuotaTransactions(page, pageSize, filter)
+}
+
+// ListUserQuotaTransactions 返回当前用户自己的额度流水。
+// 即使 query 中携带 user_id，也必须在服务层强制覆盖，避免越权查询。
+func (s *UserService) ListUserQuotaTransactions(userID uint, page, pageSize int, filter QuotaTransactionFilter) ([]model.QuotaTransaction, int64, error) {
+	filter.UserID = &userID
+	return s.listQuotaTransactions(page, pageSize, filter)
+}
+
+func (s *UserService) listQuotaTransactions(page, pageSize int, filter QuotaTransactionFilter) ([]model.QuotaTransaction, int64, error) {
+	page, pageSize = normalizePage(page, pageSize)
+	query := internal.DB.Model(&model.QuotaTransaction{})
+	query = applyQuotaTransactionFilters(query, filter)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var transactions []model.QuotaTransaction
+	err := query.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&transactions).Error
+	return transactions, total, err
+}
+
+func applyQuotaTransactionFilters(query *gorm.DB, filter QuotaTransactionFilter) *gorm.DB {
+	if filter.UserID != nil {
+		query = query.Where("user_id = ?", *filter.UserID)
+	}
+	if txType := strings.TrimSpace(filter.Type); txType != "" {
+		query = query.Where("type = ?", txType)
+	}
+	if sourceType := strings.TrimSpace(filter.SourceType); sourceType != "" {
+		query = query.Where("source_type = ?", sourceType)
+	}
+	if sourceID := strings.TrimSpace(filter.SourceID); sourceID != "" {
+		query = query.Where("source_id = ?", sourceID)
+	}
+	if t, ok := parseTime(filter.StartTime); ok {
+		query = query.Where("created_at >= ?", t)
+	}
+	if t, ok := parseTime(filter.EndTime); ok {
+		query = query.Where("created_at <= ?", t)
+	}
+	return query
 }
 
 // Create 管理员创建用户。

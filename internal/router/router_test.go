@@ -1601,6 +1601,163 @@ func TestAdminQuotaAdjustmentWritesTransaction(t *testing.T) {
 	}
 }
 
+func TestQuotaTransactionListAPIs(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	for _, username := range []string{"ledger-user", "other-ledger-user"} {
+		createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+			"username": username,
+			"password": "password123",
+			"role":     common.RoleUser,
+			"quota":    0,
+		})
+		if createResp.Code != http.StatusOK {
+			t.Fatalf("create %s failed: %d %s", username, createResp.Code, createResp.Body.String())
+		}
+	}
+
+	var ledgerUser model.User
+	if err := internal.DB.Where("username = ?", "ledger-user").First(&ledgerUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	var otherUser model.User
+	if err := internal.DB.Where("username = ?", "other-ledger-user").First(&otherUser).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	adjustResp := performJSON(r, http.MethodPatch, "/v0/admin/user/"+uintString(ledgerUser.ID)+"/quota", rootJWT, map[string]interface{}{
+		"quota":  25,
+		"reason": "seed credit",
+	})
+	if adjustResp.Code != http.StatusOK {
+		t.Fatalf("quota adjust failed: %d %s", adjustResp.Code, adjustResp.Body.String())
+	}
+	otherAdjustResp := performJSON(r, http.MethodPatch, "/v0/admin/user/"+uintString(otherUser.ID)+"/quota", rootJWT, map[string]interface{}{
+		"quota":  9,
+		"reason": "other seed credit",
+	})
+	if otherAdjustResp.Code != http.StatusOK {
+		t.Fatalf("other quota adjust failed: %d %s", otherAdjustResp.Code, otherAdjustResp.Body.String())
+	}
+
+	userJWT := loginBearer(t, r, "ledger-user", "password123")
+	userResp := performJSON(r, http.MethodGet, "/v0/user/quota-transactions?type="+common.QuotaTransactionTypeAdminAdjust, userJWT, nil)
+	if userResp.Code != http.StatusOK {
+		t.Fatalf("user quota transactions failed: %d %s", userResp.Code, userResp.Body.String())
+	}
+	var userPayload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				UserID        uint   `json:"user_id"`
+				Type          string `json:"type"`
+				Amount        int64  `json:"amount"`
+				BalanceBefore int64  `json:"balance_before"`
+				BalanceAfter  int64  `json:"balance_after"`
+				SourceType    string `json:"source_type"`
+				Reason        string `json:"reason"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(userResp.Body.Bytes(), &userPayload); err != nil {
+		t.Fatal(err)
+	}
+	if userPayload.Data.Total != 1 || len(userPayload.Data.Data) != 1 {
+		t.Fatalf("user should only see own quota transaction, got %s", userResp.Body.String())
+	}
+	userTx := userPayload.Data.Data[0]
+	if userTx.UserID != ledgerUser.ID ||
+		userTx.Type != common.QuotaTransactionTypeAdminAdjust ||
+		userTx.Amount != 25 ||
+		userTx.BalanceBefore != 0 ||
+		userTx.BalanceAfter != 25 ||
+		userTx.SourceType != common.QuotaSourceTypeAdminAction ||
+		userTx.Reason != "seed credit" {
+		t.Fatalf("unexpected user quota transaction: %+v", userTx)
+	}
+
+	adminResp := performJSON(r, http.MethodGet, "/v0/admin/quota-transactions?user_id="+uintString(ledgerUser.ID)+"&type="+common.QuotaTransactionTypeAdminAdjust, rootJWT, nil)
+	if adminResp.Code != http.StatusOK {
+		t.Fatalf("admin quota transactions failed: %d %s", adminResp.Code, adminResp.Body.String())
+	}
+	var adminPayload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				UserID        uint   `json:"user_id"`
+				Type          string `json:"type"`
+				Amount        int64  `json:"amount"`
+				BalanceBefore int64  `json:"balance_before"`
+				BalanceAfter  int64  `json:"balance_after"`
+				SourceType    string `json:"source_type"`
+				Reason        string `json:"reason"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(adminResp.Body.Bytes(), &adminPayload); err != nil {
+		t.Fatal(err)
+	}
+	if adminPayload.Data.Total != 1 || len(adminPayload.Data.Data) != 1 {
+		t.Fatalf("admin should filter quota transactions by user, got %s", adminResp.Body.String())
+	}
+	adminTx := adminPayload.Data.Data[0]
+	if adminTx.UserID != ledgerUser.ID ||
+		adminTx.Type != common.QuotaTransactionTypeAdminAdjust ||
+		adminTx.Amount != 25 ||
+		adminTx.BalanceBefore != 0 ||
+		adminTx.BalanceAfter != 25 ||
+		adminTx.SourceType != common.QuotaSourceTypeAdminAction ||
+		adminTx.Reason != "seed credit" {
+		t.Fatalf("unexpected admin quota transaction: %+v", adminTx)
+	}
+
+	sourceResp := performJSON(r, http.MethodGet, "/v0/admin/quota-transactions?source_type="+common.QuotaSourceTypeAdminAction, rootJWT, nil)
+	if sourceResp.Code != http.StatusOK {
+		t.Fatalf("admin quota transactions source filter failed: %d %s", sourceResp.Code, sourceResp.Body.String())
+	}
+	var sourcePayload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				UserID     uint   `json:"user_id"`
+				SourceType string `json:"source_type"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(sourceResp.Body.Bytes(), &sourcePayload); err != nil {
+		t.Fatal(err)
+	}
+	if sourcePayload.Data.Total != 2 || len(sourcePayload.Data.Data) != 2 {
+		t.Fatalf("admin should filter quota transactions by source type, got %s", sourceResp.Body.String())
+	}
+	seenLedger := false
+	seenOther := false
+	for _, tx := range sourcePayload.Data.Data {
+		if tx.SourceType != common.QuotaSourceTypeAdminAction {
+			t.Fatalf("unexpected source type in filtered transaction: %+v", tx)
+		}
+		if tx.UserID == ledgerUser.ID {
+			seenLedger = true
+		}
+		if tx.UserID == otherUser.ID {
+			seenOther = true
+		}
+	}
+	if !seenLedger || !seenOther {
+		t.Fatalf("source type filter should include both admin adjustment transactions, got %s", sourceResp.Body.String())
+	}
+}
+
 func TestAdminPaymentManualAdjustmentRequiresReason(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

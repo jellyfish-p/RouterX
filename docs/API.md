@@ -232,6 +232,7 @@ Gemini-compatible 错误示例：
 | PUT | `/v0/admin/user/:id` | 已实现 | 编辑普通用户，成功后写 `user.update`；禁用写 `user.disable`；拒绝角色变更写 `user.denied` |
 | DELETE | `/v0/admin/user/:id` | 已实现 | 删除普通用户，成功后写 `user.delete` 管理审计 |
 | PATCH | `/v0/admin/user/:id/quota` | 已实现 | 调整用户额度并写入 `quota_transactions` 与管理审计，可选 `reason` |
+| GET | `/v0/admin/quota-transactions` | 已实现 | 管理员查询额度流水；支持按用户、类型、来源和时间过滤 |
 
 ### 用户分组管理
 
@@ -243,6 +244,21 @@ Gemini-compatible 错误示例：
 | DELETE | `/v0/admin/groups/:id` | 已实现 | 删除未使用用户分组；`default` 或仍有用户引用时拒绝，成功后写 `user_group.delete` |
 
 `groups.ratio` 当前作为分组元数据和兼容展示字段；成功调用后的实际扣费倍率仍以 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` settings 为权威来源。
+
+额度流水查询参数：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `page` | int | 页码，默认 1 |
+| `page_size` | int | 每页数量，默认 20，最大 100 |
+| `user_id` | uint | 管理端按用户过滤；用户端接口会忽略该参数并强制使用当前用户 |
+| `type` | string | 流水类型，如 `payment_grant`、`redem_redeem`、`admin_adjust`、`refund_deduct`、`manual_credit`、`manual_debit` |
+| `source_type` | string | 来源类型，如 `payment_order`、`payment_event`、`redem_code`、`admin_action`、`refund` |
+| `source_id` | string | 来源 ID、本地订单号或事件 ID |
+| `start_time` | string | 创建时间下限，支持 RFC3339、`YYYY-MM-DD HH:mm:ss` 或 `YYYY-MM-DD` |
+| `end_time` | string | 创建时间上限，支持 RFC3339、`YYYY-MM-DD HH:mm:ss` 或 `YYYY-MM-DD` |
+
+额度流水只表达用户余额变化；模型调用消费仍以 `logs.quota_used` 和 `/v0/user/log`、`/v0/admin/log` 为消费事实。
 
 用户列表查询参数：
 
@@ -714,6 +730,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 |------|------|----------|------|
 | GET | `/v0/user/log` | 已实现 | 当前用户调用日志 |
 | GET | `/v0/user/billing` | 基础实现 | 当前用户账单统计 |
+| GET | `/v0/user/quota-transactions` | 已实现 | 当前用户额度流水；支持按类型、来源和时间过滤，`user_id` 参数会被忽略 |
 | POST | `/v0/user/redem` | 基础实现 | 使用未兑换且未过期的充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水与 `redem_code.redeem` 管理审计 |
 | GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露且未被 `channel_model_prices.user_enabled=false` 隐藏的可用模型列表；普通用户调用也会过滤这些隐藏通道；通道级价格优先返回 `channel_model_price:<price_mode>:v<rule_version>`，否则命中启用 `model_prices` 时返回 `model_price:<price_mode>:v<rule_version>`，再否则返回 `minimum_usage` |
 

@@ -32,6 +32,7 @@ func setupAdminRoutes(
 			authRequired.PUT("/user/:id", userH.Update)
 			authRequired.DELETE("/user/:id", userH.Delete)
 			authRequired.PATCH("/user/:id/quota", userH.UpdateQuota)
+			authRequired.GET("/quota-transactions", userH.ListQuotaTransactionsAdmin)
 			authRequired.GET("/groups", userH.ListGroups)
 			authRequired.POST("/groups", userH.CreateGroup)
 			authRequired.PUT("/groups/:id", userH.UpdateGroup)

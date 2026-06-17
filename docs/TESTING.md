@@ -45,6 +45,7 @@
 | `TestUserRedeemsRedemCodeOnce` | 用户兑换未使用充值码、额度增加、充值码标记 used/used_by/used_at，写入幂等额度流水和 `redem_code.redeem` 管理审计，重复兑换不再入账 |
 | `TestRedemCodeBatchNoteAndExpirationPolicy` | 充值码支持 batch_no、note 和未来 expired_at；管理端可按 batch_no 筛选，过期码不可兑换且不改变余额 |
 | `TestAdminQuotaAdjustmentWritesTransaction` | 管理员调整用户额度时写入额度流水和 `user.quota_update` 管理审计，记录 actor、reason、变更前后余额和幂等键 |
+| `TestQuotaTransactionListAPIs` | 用户查询自己的额度流水且不能看见其他用户流水；管理员可按 `user_id`、`type` 和 `source_type` 过滤额度流水，余额变更字段保持可追溯 |
 | `TestAdminManagesRedemCodes` | 管理员生成随机充值码、导入指定充值码、列表查询、作废未使用码，作废码不可兑换，并写入 `redem_code.*` 管理审计 |
 | `TestAdminManagesPaymentProducts` | 管理员创建、更新、启用和禁用支付商品；用户侧只展示启用商品，禁用商品不能创建订单 |
 | `TestAdminPaymentProductAuditLogs` | 支付商品创建、更新和禁用成功后写入 `admin_audit_logs`，超级管理员可按资源类型查询 |

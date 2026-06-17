@@ -42,6 +42,7 @@ func setupUserRoutes(
 
 			jwtRequired.GET("/log", logH.UserList)
 			jwtRequired.GET("/billing", logH.UserBilling)
+			jwtRequired.GET("/quota-transactions", userH.ListQuotaTransactions)
 			jwtRequired.POST("/redem", userH.RedeemCode)
 			jwtRequired.GET("/models", userH.Models)
 			jwtRequired.GET("/payment/products", userH.PaymentProducts)
