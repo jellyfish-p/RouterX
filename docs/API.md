@@ -664,6 +664,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | PUT | `/v0/user/token/:id/scope` | 基础实现 | 更新自己的 Key 收窄 scope，当前支持 `allow_models`、`api_types`、`channel_groups`、`entry_protocols`、`ip_cidrs`、`methods`、`daily_quota`、`monthly_quota`、`max_concurrency`、`rpm` 和 `tpm`；成功后写 `api_key.scope_updated` 审计 |
 | GET | `/v0/user/token/:id/usage` | 已实现 | 返回该 Key 的调用数、成功/失败数、额度消耗、总 tokens 和最近调用摘要 |
 | GET | `/v0/admin/token` | 已实现 | 管理员跨用户查询脱敏 API Key 摘要，可按 `user_id` 和 `status` 过滤 |
+| GET | `/v0/admin/token/risk` | 基础实现 | 管理员查看异常 API Key 风险视图，支持 `user_id`、`window_hours`、`min_error_count` 和 `low_quota_below` 过滤，不返回明文 Key 或哈希 |
 | POST | `/v0/admin/token/batch-disable` | 已实现 | 管理员按 `token_ids` 或 `user_id` 批量禁用 Key，必须提供筛选条件，成功后写 `api_key.batch_disabled` 审计 |
 | POST | `/v0/admin/token/batch-expire` | 已实现 | 管理员按 `token_ids` 或 `user_id` 立即过期 Key，必须提供筛选条件，成功后写 `api_key.batch_expired` 审计 |
 

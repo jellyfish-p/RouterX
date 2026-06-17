@@ -338,6 +338,30 @@ func (h *TokenHandler) AdminList(c *gin.Context) {
 	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: data})
 }
 
+func (h *TokenHandler) AdminRisk(c *gin.Context) {
+	userID := queryUintPtr(c, "user_id")
+	page := queryInt(c, "page", 1)
+	pageSize := queryInt(c, "page_size", 20)
+	items, total, err := h.svc.ListRisk(service.TokenRiskFilter{
+		UserID:        userID,
+		WindowHours:   queryInt(c, "window_hours", 24),
+		MinErrorCount: queryInt64(c, "min_error_count", 3),
+		LowQuotaBelow: queryInt64(c, "low_quota_below", 100),
+		Page:          page,
+		PageSize:      pageSize,
+	})
+	if err != nil {
+		common.FailWithStatus(c, 500, "查询 API Key 风险视图失败")
+		return
+	}
+	data := make([]dto.TokenRiskResponse, 0, len(items))
+	for _, item := range items {
+		data = append(data, tokenRiskResponse(item))
+	}
+	page, pageSize = pageValues(page, pageSize)
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: data})
+}
+
 func (h *TokenHandler) BatchDisable(c *gin.Context) {
 	operator, ok := currentUser(c)
 	if !ok {
@@ -447,6 +471,25 @@ func tokenUsageResponse(stats service.TokenUsageStats) dto.TokenUsageResponse {
 	}
 }
 
+func tokenRiskResponse(item service.TokenRiskItem) dto.TokenRiskResponse {
+	return dto.TokenRiskResponse{
+		Token:             dto.TokenFromModel(item.Token),
+		CallCount:         item.CallCount,
+		SuccessCount:      item.SuccessCount,
+		ErrorCount:        item.ErrorCount,
+		TotalQuota:        item.TotalQuota,
+		TotalTokens:       item.TotalTokens,
+		LastUsedAt:        item.LastUsedAt,
+		LastModel:         item.LastModel,
+		LastStatus:        item.LastStatus,
+		LastErrorCode:     item.LastErrorCode,
+		RiskLevel:         item.RiskLevel,
+		RiskReasons:       item.RiskReasons,
+		RecommendedAction: item.RecommendedAction,
+		WindowStart:       item.WindowStart,
+	}
+}
+
 // tokenAuditSummary 使用公开 DTO 字段白名单，避免把哈希或一次性明文 Key 写入审计。
 func tokenAuditSummary(token *model.Token) map[string]interface{} {
 	if token == nil {
@@ -472,6 +515,14 @@ func tokenAuditSummary(token *model.Token) map[string]interface{} {
 		"created_at":           info.CreatedAt,
 		"updated_at":           info.UpdatedAt,
 	}
+}
+
+func queryInt64(c *gin.Context, key string, fallback int64) int64 {
+	value, err := strconv.ParseInt(c.Query(key), 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return value
 }
 
 func tokenQuotaDeniedAuditSummary(token *model.Token, req dto.UpdateTokenRequest) map[string]interface{} {

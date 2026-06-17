@@ -9,6 +9,7 @@ import (
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -88,6 +89,32 @@ type TokenUsageStats struct {
 	LastModel    string
 	LastStatus   int
 	LastErrorMsg string
+}
+
+type TokenRiskFilter struct {
+	UserID        *uint
+	WindowHours   int
+	MinErrorCount int64
+	LowQuotaBelow int64
+	Page          int
+	PageSize      int
+}
+
+type TokenRiskItem struct {
+	Token             model.Token
+	CallCount         int64
+	SuccessCount      int64
+	ErrorCount        int64
+	TotalQuota        int64
+	TotalTokens       int64
+	LastUsedAt        *time.Time
+	LastModel         string
+	LastStatus        int
+	LastErrorCode     string
+	RiskLevel         string
+	RiskReasons       []string
+	RecommendedAction string
+	WindowStart       time.Time
 }
 
 type BatchDisableTokensInput struct {
@@ -866,6 +893,222 @@ func (s *TokenService) GetUsageForUser(id, userID uint) (TokenUsageStats, error)
 	stats.LastStatus = last.Status
 	stats.LastErrorMsg = last.ErrorMsg
 	return stats, nil
+}
+
+func (s *TokenService) ListRisk(filter TokenRiskFilter) ([]TokenRiskItem, int64, error) {
+	page, pageSize := normalizePage(filter.Page, filter.PageSize)
+	filter = normalizeTokenRiskFilter(filter)
+	windowStart := time.Now().Add(-time.Duration(filter.WindowHours) * time.Hour)
+	query := internal.DB.Model(&model.Token{})
+	if filter.UserID != nil {
+		query = query.Where("user_id = ?", *filter.UserID)
+	}
+	var tokens []model.Token
+	if err := query.Order("id DESC").Find(&tokens).Error; err != nil {
+		return nil, 0, err
+	}
+	if len(tokens) == 0 {
+		return nil, 0, nil
+	}
+	tokenIDs := make([]uint, 0, len(tokens))
+	for _, token := range tokens {
+		tokenIDs = append(tokenIDs, token.ID)
+	}
+	aggregates, err := tokenRiskAggregates(tokenIDs, windowStart)
+	if err != nil {
+		return nil, 0, err
+	}
+	now := time.Now()
+	items := make([]TokenRiskItem, 0, len(tokens))
+	for _, token := range tokens {
+		agg := aggregates[token.ID]
+		reasons := tokenRiskReasons(token, agg, filter, now)
+		if len(reasons) == 0 {
+			continue
+		}
+		item := TokenRiskItem{
+			Token:             token,
+			CallCount:         agg.CallCount,
+			SuccessCount:      agg.SuccessCount,
+			ErrorCount:        agg.ErrorCount,
+			TotalQuota:        agg.TotalQuota,
+			TotalTokens:       agg.TotalTokens,
+			RiskReasons:       reasons,
+			RiskLevel:         tokenRiskLevel(reasons),
+			RecommendedAction: tokenRiskAction(reasons),
+			WindowStart:       windowStart,
+		}
+		if last, ok, err := tokenRiskLastLog(token.ID, windowStart); err != nil {
+			return nil, 0, err
+		} else if ok {
+			lastUsedAt := last.CreatedAt
+			item.LastUsedAt = &lastUsedAt
+			item.LastModel = last.Model
+			item.LastStatus = last.Status
+			item.LastErrorCode = last.ErrorCode
+		} else {
+			item.LastUsedAt = token.LastUsedAt
+			item.LastModel = token.LastModel
+			item.LastErrorCode = token.LastErrorCode
+		}
+		items = append(items, item)
+	}
+	sortTokenRiskItems(items)
+	total := int64(len(items))
+	start := (page - 1) * pageSize
+	if start >= len(items) {
+		return []TokenRiskItem{}, total, nil
+	}
+	end := start + pageSize
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[start:end], total, nil
+}
+
+type tokenRiskAggregate struct {
+	TokenID      uint
+	CallCount    int64
+	SuccessCount int64
+	ErrorCount   int64
+	TotalQuota   int64
+	TotalTokens  int64
+}
+
+func normalizeTokenRiskFilter(filter TokenRiskFilter) TokenRiskFilter {
+	if filter.WindowHours <= 0 {
+		filter.WindowHours = 24
+	}
+	if filter.WindowHours > 24*30 {
+		filter.WindowHours = 24 * 30
+	}
+	if filter.MinErrorCount <= 0 {
+		filter.MinErrorCount = 3
+	}
+	if filter.LowQuotaBelow <= 0 {
+		filter.LowQuotaBelow = 100
+	}
+	return filter
+}
+
+func tokenRiskAggregates(tokenIDs []uint, windowStart time.Time) (map[uint]tokenRiskAggregate, error) {
+	aggregates := map[uint]tokenRiskAggregate{}
+	var rows []tokenRiskAggregate
+	err := internal.DB.Model(&model.Log{}).
+		Where("token_id IN ? AND created_at >= ?", tokenIDs, windowStart).
+		Select(
+			"token_id, COUNT(*) AS call_count, "+
+				"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS success_count, "+
+				"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS error_count, "+
+				"COALESCE(SUM(quota_used), 0) AS total_quota, "+
+				"COALESCE(SUM(total_tokens), 0) AS total_tokens",
+			common.LogStatusSuccess,
+			common.LogStatusFailed,
+		).
+		Group("token_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		aggregates[row.TokenID] = row
+	}
+	return aggregates, nil
+}
+
+func tokenRiskLastLog(tokenID uint, windowStart time.Time) (model.Log, bool, error) {
+	var last model.Log
+	err := internal.DB.
+		Where("token_id = ? AND created_at >= ?", tokenID, windowStart).
+		Order("created_at DESC, id DESC").
+		First(&last).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.Log{}, false, nil
+	}
+	if err != nil {
+		return model.Log{}, false, err
+	}
+	return last, true, nil
+}
+
+func tokenRiskReasons(token model.Token, agg tokenRiskAggregate, filter TokenRiskFilter, now time.Time) []string {
+	var reasons []string
+	revokedReason := strings.ToLower(strings.TrimSpace(token.RevokedReason))
+	if strings.Contains(revokedReason, "leak") || strings.Contains(revokedReason, "public") {
+		reasons = append(reasons, "leak_reported")
+	}
+	if token.Status != common.TokenStatusEnabled {
+		reasons = append(reasons, "disabled")
+	}
+	if token.ExpiredAt != nil && token.ExpiredAt.Before(now) {
+		reasons = append(reasons, "expired")
+	}
+	if token.RemainQuota >= 0 && token.RemainQuota <= filter.LowQuotaBelow {
+		reasons = append(reasons, "low_quota")
+	}
+	if agg.ErrorCount >= filter.MinErrorCount {
+		reasons = append(reasons, "error_spike")
+	}
+	if token.LastErrorCode != "" && !containsString(reasons, "error_spike") {
+		reasons = append(reasons, "recent_error")
+	}
+	return reasons
+}
+
+func tokenRiskLevel(reasons []string) string {
+	for _, reason := range reasons {
+		if reason == "leak_reported" || reason == "error_spike" {
+			return "high"
+		}
+	}
+	if len(reasons) > 0 {
+		return "medium"
+	}
+	return "low"
+}
+
+func tokenRiskAction(reasons []string) string {
+	switch {
+	case containsString(reasons, "leak_reported"):
+		return "rotate_key"
+	case containsString(reasons, "error_spike") || containsString(reasons, "recent_error"):
+		return "review_errors"
+	case containsString(reasons, "low_quota"):
+		return "top_up_or_disable"
+	case containsString(reasons, "expired"):
+		return "review_expiration"
+	case containsString(reasons, "disabled"):
+		return "review_disabled_key"
+	default:
+		return "review"
+	}
+}
+
+func sortTokenRiskItems(items []TokenRiskItem) {
+	rank := map[string]int{"high": 0, "medium": 1, "low": 2}
+	sort.SliceStable(items, func(i, j int) bool {
+		leftRank := rank[items[i].RiskLevel]
+		rightRank := rank[items[j].RiskLevel]
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if items[i].ErrorCount != items[j].ErrorCount {
+			return items[i].ErrorCount > items[j].ErrorCount
+		}
+		if items[i].Token.RemainQuota != items[j].Token.RemainQuota {
+			return items[i].Token.RemainQuota < items[j].Token.RemainQuota
+		}
+		return items[i].Token.ID > items[j].Token.ID
+	})
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *TokenService) BatchDisable(input BatchDisableTokensInput) (BatchDisableTokensResult, []model.Token, error) {

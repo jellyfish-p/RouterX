@@ -927,6 +927,60 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/TokenPage"
+  /v0/admin/token/risk:
+    get:
+      tags: [Admin API Key]
+      summary: API Key 风险视图
+      description: 管理员按时间窗口查看异常 API Key；聚合调用数、成功/失败数、额度消耗、最近调用和风险原因。响应只返回脱敏 API Key 摘要，不返回明文 Key 或哈希。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: user_id
+          in: query
+          required: false
+          schema: { type: integer, format: uint64 }
+          description: 按所属用户过滤。
+        - name: window_hours
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 720
+            default: 24
+          description: 风险聚合窗口，单位小时；最大 720 小时。
+        - name: min_error_count
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            default: 3
+          description: 窗口内失败次数达到该值时标记 error_spike。
+        - name: low_quota_below
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            default: 100
+          description: 有限额度 Key 剩余额度小于等于该值时标记 low_quota。
+      responses:
+        "200":
+          description: API Key 风险分页列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenRiskPage"
   /v0/admin/token/batch-disable:
     post:
       tags: [Admin API Key]
@@ -3693,6 +3747,63 @@ components:
         last_error_msg:
           type: string
           description: 最近失败摘要；为空表示最近调用无错误或没有日志。
+    TokenRisk:
+      type: object
+      properties:
+        token:
+          $ref: "#/components/schemas/Token"
+        call_count:
+          type: integer
+          format: int64
+          description: 窗口内成功和失败日志总数。
+        success_count:
+          type: integer
+          format: int64
+          description: 窗口内成功日志数。
+        error_count:
+          type: integer
+          format: int64
+          description: 窗口内失败日志数。
+        total_quota:
+          type: integer
+          format: int64
+          description: 窗口内成功调用累计消耗额度。
+        total_tokens:
+          type: integer
+          format: int64
+          description: 窗口内日志累计模型 token 数。
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 窗口内最近日志时间；无窗口日志时回退 Key 最近使用时间。
+        last_model:
+          type: string
+          description: 最近模型名。
+        last_status:
+          type: integer
+          description: 最近一条窗口日志状态；1=成功，2=失败。
+        last_error_code:
+          type: string
+          description: 最近失败 code。
+        risk_level:
+          type: string
+          enum: [high, medium, low]
+          description: 风险等级；当前只返回至少一个风险原因的 Key。
+        risk_reasons:
+          type: array
+          items:
+            type: string
+            enum: [leak_reported, disabled, expired, low_quota, error_spike, recent_error]
+          description: 风险原因列表。
+        recommended_action:
+          type: string
+          enum: [rotate_key, review_errors, top_up_or_disable, review_expiration, review_disabled_key, review]
+          description: 建议处置动作。
+        window_start:
+          type: string
+          format: date-time
+          description: 本次风险统计窗口起点。
     ReportTokenLeakResponse:
       type: object
       properties:
@@ -3732,6 +3843,15 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Token"
+    TokenRiskPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/TokenRisk"
     ChannelUpstreamRequest:
       type: object
       properties:

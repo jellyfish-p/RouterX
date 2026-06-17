@@ -535,6 +535,85 @@ func TestAdminAPIKeyQueryAndBatchDisable(t *testing.T) {
 	}
 }
 
+func TestAdminAPIKeyRiskViewSummarizesRiskyKeys(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenSvc := service.NewTokenService()
+	riskyToken, err := tokenSvc.Create(root.ID, "danger-view", 5, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	riskyPlainKey := riskyToken.Key
+	riskyTokenID := riskyToken.ID
+	safeToken, err := tokenSvc.Create(root.ID, "normal-view", 1000, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	safeTokenID := safeToken.ID
+	now := time.Now()
+	logs := []model.Log{
+		{UserID: root.ID, TokenID: &riskyTokenID, Model: "gpt-risk", Status: common.LogStatusFailed, ErrorCode: "upstream_timeout", ErrorMsg: "upstream timeout", CreatedAt: now.Add(-10 * time.Minute)},
+		{UserID: root.ID, TokenID: &riskyTokenID, Model: "gpt-risk", Status: common.LogStatusFailed, ErrorCode: "upstream_500", ErrorMsg: "upstream returned status 500", CreatedAt: now.Add(-5 * time.Minute)},
+		{UserID: root.ID, TokenID: &riskyTokenID, Model: "gpt-risk", Status: common.LogStatusSuccess, TotalTokens: 4, QuotaUsed: 4, CreatedAt: now.Add(-time.Minute)},
+		{UserID: root.ID, TokenID: &safeTokenID, Model: "gpt-safe", Status: common.LogStatusSuccess, TotalTokens: 2, QuotaUsed: 2, CreatedAt: now.Add(-time.Minute)},
+	}
+	if err := internal.DB.Create(&logs).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	riskResp := performJSON(r, http.MethodGet, "/v0/admin/token/risk?window_hours=24&min_error_count=2&low_quota_below=10", rootJWT, nil)
+	var payload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				Token struct {
+					ID   uint   `json:"id"`
+					Name string `json:"name"`
+				} `json:"token"`
+				CallCount         int64    `json:"call_count"`
+				SuccessCount      int64    `json:"success_count"`
+				ErrorCount        int64    `json:"error_count"`
+				TotalQuota        int64    `json:"total_quota"`
+				RiskLevel         string   `json:"risk_level"`
+				RiskReasons       []string `json:"risk_reasons"`
+				RecommendedAction string   `json:"recommended_action"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(riskResp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("risk view response should be json: %v", err)
+	}
+	if riskResp.Code != http.StatusOK || payload.Data.Total != 1 || len(payload.Data.Data) != 1 {
+		t.Fatalf("risk view should return one risky key, got %d %s", riskResp.Code, riskResp.Body.String())
+	}
+	item := payload.Data.Data[0]
+	if item.Token.ID != riskyTokenID || item.Token.Name != "danger-view" || item.CallCount != 3 || item.SuccessCount != 1 || item.ErrorCount != 2 || item.TotalQuota != 4 {
+		t.Fatalf("risk view summary mismatch: %+v", item)
+	}
+	reasons := strings.Join(item.RiskReasons, ",")
+	if item.RiskLevel != "high" || !strings.Contains(reasons, "error_spike") || !strings.Contains(reasons, "low_quota") || item.RecommendedAction != "review_errors" {
+		t.Fatalf("risk view should include high-risk reasons and action, got %+v", item)
+	}
+	body := riskResp.Body.String()
+	if strings.Contains(body, "normal-view") || strings.Contains(body, riskyPlainKey) || strings.Contains(body, "sk-") {
+		t.Fatalf("risk view should not include safe keys or plaintext API keys: %s", body)
+	}
+}
+
 func TestAdminAPIKeyBatchExpire(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	r := newTestRouter(t)
