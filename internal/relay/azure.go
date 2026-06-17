@@ -91,6 +91,34 @@ func (a *AzureAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *U
 	return body, extractOpenAIUsage(body), nil
 }
 
+// GetModelList returns Azure deployment IDs because RouterX uses request model
+// names as the deployment path segment for Azure OpenAI Chat Completions.
 func (a *AzureAdapter) GetModelList(ctx context.Context, baseURL string, apiKey string) ([]string, error) {
-	return nil, errors.New("azure model list is not implemented")
+	resp, err := a.DoRequest(ctx, baseURL, "/openai/deployments?api-version="+defaultAzureAPIVersion, apiKey, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, errors.New(common.FormatHTTPError(resp.StatusCode, "model list request failed"))
+	}
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	models := make([]string, 0, len(result.Data))
+	for _, item := range result.Data {
+		if id := strings.TrimSpace(item.ID); id != "" {
+			models = append(models, id)
+		}
+	}
+	return models, nil
 }

@@ -465,6 +465,7 @@ Endpoint 示例：
 - 当前默认 `api-version` 为 `2024-02-15-preview`。
 - 发往 Azure 前会剥离 `model` 和 `routerx`，因为 deployment 已经由路径表达。
 - Azure 返回的 OpenAI-compatible `usage` 会写入 RouterX 日志并扣费。
+- 管理端通道模型拉取会调用 `/openai/deployments`，并把返回的 deployment `id` 作为可配置模型名。
 
 设计要求：
 

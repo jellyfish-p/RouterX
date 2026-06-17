@@ -1813,7 +1813,7 @@ paths:
     get:
       tags: [Admin Channels]
       summary: 拉取上游模型列表
-      description: 基础实现只支持单 base_url 通道；成功或失败都会写入 channel.fetch_models 管理审计。
+      description: 基础实现只支持单 base_url 通道；OpenAI-compatible 读取 /v1/models，Azure OpenAI 读取 /openai/deployments 并返回 deployment id；成功或失败都会写入 channel.fetch_models 管理审计。
       security:
         - UserJWT: []
       parameters:

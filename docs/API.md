@@ -520,7 +520,7 @@ Provider 退款请求：
 | PATCH | `/v0/admin/channel/:id/disable` | 已实现 | 禁用通道，成功后写 `channel.disable` 管理审计 |
 | PATCH | `/v0/admin/channel/:id/enable` | 已实现 | 启用通道，成功后写 `channel.enable` 管理审计 |
 | POST | `/v0/admin/channel/:id/test` | 基础实现 | 测试通道连通性，并写 `channel.test` 管理审计 |
-| GET | `/v0/admin/channel/:id/models` | 基础实现 | 从上游拉取模型列表，并写 `channel.fetch_models` 管理审计 |
+| GET | `/v0/admin/channel/:id/models` | 基础实现 | 从单上游 URL 拉取模型列表；Azure OpenAI 返回 deployment id；成功或失败写 `channel.fetch_models` 管理审计 |
 
 创建通道目标请求：
 

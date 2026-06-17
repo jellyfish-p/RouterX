@@ -8705,6 +8705,66 @@ func TestAzureChatCompletionUsesDeploymentPathAndAPIKey(t *testing.T) {
 	}
 }
 
+func TestAzureChannelFetchModelsUsesDeploymentsEndpoint(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamAPIVersion := ""
+	upstreamAPIKey := ""
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		upstreamAPIVersion = req.URL.Query().Get("api-version")
+		upstreamAPIKey = req.Header.Get("api-key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-prod","model":"gpt-4o"},{"id":"embed-prod","model":"text-embedding-3-large"}]}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeAzure,
+		"name":     "azure-model-list",
+		"models":   "gpt-prod",
+		"base_url": upstream.URL,
+		"api_key":  "azure-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create azure channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+	var channelPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(channelResp.Body.Bytes(), &channelPayload); err != nil {
+		t.Fatal(err)
+	}
+
+	modelsResp := performJSON(r, http.MethodGet, "/v0/admin/channel/"+uintString(channelPayload.Data.ID)+"/models", rootJWT, nil)
+	if modelsResp.Code != http.StatusOK ||
+		!strings.Contains(modelsResp.Body.String(), `"gpt-prod"`) ||
+		!strings.Contains(modelsResp.Body.String(), `"embed-prod"`) {
+		t.Fatalf("azure fetch models should return deployment ids, got %d %s", modelsResp.Code, modelsResp.Body.String())
+	}
+	if upstreamCalls != 1 || upstreamPath != "/openai/deployments" || upstreamAPIVersion == "" {
+		t.Fatalf("azure fetch models should call deployments endpoint once, calls=%d path=%q api-version=%q", upstreamCalls, upstreamPath, upstreamAPIVersion)
+	}
+	if upstreamAPIKey != "azure-secret" {
+		t.Fatalf("azure fetch models should use api-key header, got %q", upstreamAPIKey)
+	}
+}
+
 func TestResponsesPassthroughExtractsUsageAndDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
