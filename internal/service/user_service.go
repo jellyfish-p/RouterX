@@ -3023,6 +3023,44 @@ func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
 	return internal.DB.Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
 }
 
+// CancelSelf 注销当前普通用户账号。
+// 注销只禁用登录和 API Key，保留身份、日志、额度等历史事实用于追溯和恢复。
+func (s *UserService) CancelSelf(userID uint) (*model.User, error) {
+	if userID == 0 {
+		return nil, errors.New("user is required")
+	}
+	var cancelled model.User
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		var user model.User
+		if err := tx.First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.Role != common.RoleUser {
+			return errors.New("only normal users can cancel account")
+		}
+		if user.Status != common.UserStatusDisabled {
+			if err := tx.Model(&model.User{}).
+				Where("id = ? AND role = ?", userID, common.RoleUser).
+				Update("status", common.UserStatusDisabled).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&model.Token{}).
+			Where("user_id = ? AND status <> ?", userID, common.TokenStatusDisabled).
+			Updates(map[string]interface{}{
+				"status":         common.TokenStatusDisabled,
+				"revoked_reason": "user_self_cancel",
+			}).Error; err != nil {
+			return err
+		}
+		return tx.First(&cancelled, userID).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &cancelled, nil
+}
+
 // RedeemCode 将未使用的充值码兑换到当前用户余额。
 // 充值码状态、用户余额和额度流水必须在同一事务内完成，避免重复兑换或账实不一致。
 func (s *UserService) RedeemCode(userID uint, code string, requestID string) (int64, int64, error) {

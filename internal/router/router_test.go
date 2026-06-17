@@ -792,6 +792,116 @@ func TestUserRegisterRespectsRegistrationSettings(t *testing.T) {
 	}
 }
 
+func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("auth.register.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.username.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.captcha.required", "false"); err != nil {
+		t.Fatal(err)
+	}
+
+	registerBody := map[string]interface{}{
+		"username":     "cancel-user",
+		"password":     "password123",
+		"display_name": "Cancel User",
+	}
+	registerResp := performJSON(r, http.MethodPost, "/v0/user/register", "", registerBody)
+	if registerResp.Code != http.StatusOK {
+		t.Fatalf("register cancel user failed: %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	userJWT := loginBearer(t, r, "cancel-user", "password123")
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
+		"name":         "cancel-key",
+		"remain_quota": 10,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	cancelResp := performJSON(r, http.MethodDelete, "/v0/user/self", userJWT, nil)
+	if cancelResp.Code != http.StatusOK {
+		t.Fatalf("self cancel should succeed, got %d %s", cancelResp.Code, cancelResp.Body.String())
+	}
+
+	var user model.User
+	if err := internal.DB.Where("username = ?", "cancel-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Status != common.UserStatusDisabled {
+		t.Fatalf("self-cancelled user should be disabled, got status=%d", user.Status)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.Status != common.TokenStatusDisabled {
+		t.Fatalf("self-cancel should disable user API keys, got status=%d", storedToken.Status)
+	}
+	var identityCount int64
+	if err := internal.DB.Model(&model.UserIdentity{}).
+		Where("user_id = ? AND method = ? AND provider = ? AND identifier = ?", user.ID, model.UserIdentityMethodUsername, model.UserIdentityProviderLocal, "cancel-user").
+		Count(&identityCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if identityCount != 1 {
+		t.Fatalf("self-cancel should preserve username identity, got count=%d", identityCount)
+	}
+	var auditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "user.self_cancel", "user", fmt.Sprint(user.ID)).
+		Count(&auditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("self-cancel should write one audit record, got count=%d", auditCount)
+	}
+
+	loginAgainResp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "cancel-user",
+		"password": "password123",
+	})
+	if loginAgainResp.Code != http.StatusUnauthorized {
+		t.Fatalf("self-cancelled user should not log in again, got %d %s", loginAgainResp.Code, loginAgainResp.Body.String())
+	}
+	duplicateResp := performJSON(r, http.MethodPost, "/v0/user/register", "", registerBody)
+	if duplicateResp.Code != http.StatusBadRequest {
+		t.Fatalf("preserved identity should block same username registration, got %d %s", duplicateResp.Code, duplicateResp.Body.String())
+	}
+	var userCount int64
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "cancel-user").Count(&userCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if userCount != 1 {
+		t.Fatalf("same username registration must not create a second account, got count=%d", userCount)
+	}
+}
+
 func TestUserLoginRespectsLoginMethodSettings(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

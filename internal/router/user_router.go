@@ -28,6 +28,7 @@ func setupUserRoutes(
 		{
 			jwtRequired.GET("/self", userH.Self)
 			jwtRequired.PUT("/self", userH.UpdateSelf)
+			jwtRequired.DELETE("/self", userH.CancelSelf)
 			jwtRequired.POST("/self/password", authH.ChangePassword)
 
 			jwtRequired.GET("/token", tokenH.List)

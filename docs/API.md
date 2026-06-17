@@ -648,6 +648,7 @@ Provider 退款请求：
 | POST | `/v0/user/login` | 已实现 | 用户统一登录；用户名密码始终可用，email/phone 密码登录受 settings 控制 |
 | GET | `/v0/user/self` | 已实现 | 获取个人信息 |
 | PUT | `/v0/user/self` | 已实现 | 修改个人信息 |
+| DELETE | `/v0/user/self` | 已实现 | 注销当前普通用户账号；禁用登录和 API Key，保留账号、身份、日志、额度与历史事实，并写 `user.self_cancel` 审计 |
 | POST | `/v0/user/self/password` | 已实现 | 修改密码 |
 
 注册目标请求：
@@ -662,6 +663,8 @@ Provider 退款请求：
 ```
 
 注册策略拒绝返回 403，例如公开注册关闭、用户名注册关闭，或当前无验证码请求但 `auth.register.captcha.required=true`。注册成功时会应用 `auth.register.default_quota` 和可解析的 `auth.register.default_group_id`。
+
+自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key；不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史。注销后用户名密码登录返回统一认证失败，同名注册会因保留的 `username/local` identity 被拒绝；未来恢复账号流程会在 `docs/ACCOUNTS.md` 的恢复规则基础上继续扩展。
 
 登录目标响应：
 

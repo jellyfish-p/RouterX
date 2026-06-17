@@ -21,7 +21,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、管理员角色校验、API Key 鉴权所需的基础账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，并应用默认额度/分组。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC、注销保留账号和恢复账号属于目标设计，需要按阶段继续实现。
+当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、管理员角色校验、API Key 鉴权和自助注销保留账号所需的基础账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，并应用默认额度/分组。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC、注销二次验证和恢复账号属于目标设计，需要按阶段继续实现。
 
 阶段边界：
 
@@ -255,6 +255,8 @@ POST /v0/user/register
     -> 保留 users、user_identities、logs、欠款和风控记录
     -> 清理当前登录会话
 ```
+
+当前已落地基础接口 `DELETE /v0/user/self`：要求当前 User JWT，限制普通用户只能注销自己；服务端将 `users.status` 置为禁用、禁用该用户已启用 API Key 并写入 `user.self_cancel` 审计。该接口不删除 `users`、`user_identities`、`tokens`、`logs`、余额或额度流水；相同用户名再次注册会被保留 identity 拦截。当前版本尚未实现密码二次确认、隐私字段擦除和账号恢复入口。
 
 注销后保留的数据：
 

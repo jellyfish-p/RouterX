@@ -1317,6 +1317,30 @@ func (h *UserHandler) UpdateSelf(c *gin.Context) {
 	common.SuccessMsg(c, "个人信息已更新")
 }
 
+// DELETE /v0/user/self — 注销当前普通用户账号
+func (h *UserHandler) CancelSelf(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	before, err := h.svc.GetByID(user.ID)
+	if err != nil {
+		common.FailWithStatus(c, 404, "用户不存在")
+		return
+	}
+	cancelled, err := h.svc.CancelSelf(user.ID)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAudit(c, user, "user.self_cancel", "user", cancelled.ID, userAuditSummary(before), userAuditSummary(cancelled)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.SuccessMsg(c, "账号已注销")
+}
+
 // POST /v0/user/redem — 使用充值码给当前账户增加额度
 func (h *UserHandler) RedeemCode(c *gin.Context) {
 	user, ok := currentUser(c)
