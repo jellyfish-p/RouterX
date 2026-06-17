@@ -2625,9 +2625,8 @@ components:
       schema:
         type: integer
         minimum: 0
-        maximum: 3
         example: 1
-      description: 多层 RouterX-Compatible 上游循环保护 hop；选中 RouterX 上游时服务端会递增后转发，达到默认上限 3 时返回 routerx_hop_exceeded。
+      description: 多层 RouterX-Compatible 上游循环保护 hop；选中 RouterX 上游时服务端会递增后转发，达到 relay.routerx_max_hops 配置上限时返回 routerx_hop_exceeded，默认上限为 3。
     RouterXChain:
       name: X-RouterX-Chain
       in: header

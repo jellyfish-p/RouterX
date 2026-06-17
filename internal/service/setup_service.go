@@ -174,6 +174,7 @@ func buildDefaultSettings() map[string]map[string]string {
 			"relay.error_ban_threshold":     "10",
 			"relay.max_request_body_bytes":  "10485760",
 			"relay.max_response_body_bytes": "10485760",
+			"relay.routerx_max_hops":        "3",
 			"relay.log_body_max_bytes":      "0",
 		},
 		"routing": {

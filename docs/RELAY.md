@@ -157,7 +157,7 @@ RouterX 可以把另一个 RouterX 作为上游通道。
 兼容规则：
 
 - 上游类型为 `routerx` 时，当前实现会保留 `routerx` 扩展对象继续向下一层传递；真实厂商上游仍会剥离该私有字段。
-- 每层必须增加或更新 `X-RouterX-Hop`；当前实现默认最大跳数为 `3`，达到或超过上限后返回 400 / `routerx_hop_exceeded`，避免路由循环。
+- 每层必须增加或更新 `X-RouterX-Hop`；当前实现通过 `relay.routerx_max_hops` 控制最大跳数，默认 `3`，达到或超过上限后返回 400 / `routerx_hop_exceeded`，避免路由循环。
 - 每层必须透传或生成请求 ID，默认使用 `X-Request-Id`，也可通过 `observability.request_id_header` 使用其他合法 HTTP header 名；当前实现会在选中 RouterX-Compatible 上游时追加 `X-RouterX-Chain` 记录紧凑链路摘要。
 - 每层只能消费属于自己的 `routerx.route` 指令；未知或下一层需要的 provider 参数必须保留。
 - 向真实厂商发起请求前必须剥离 RouterX 私有字段和 `X-RouterX-*` 内部 header。
@@ -746,6 +746,7 @@ usage -> price rule -> group ratio -> quota_used
 | `relay.error_ban_threshold` | `10` | 自动排除通道的连续错误阈值 |
 | `relay.max_request_body_bytes` | `10485760` | 模型请求体最大字节数，`0` 表示不限制；超过时返回协议兼容 413 |
 | `relay.max_response_body_bytes` | `10485760` | 非流式下游响应体最大字节数，`0` 表示不限制；超过时返回协议兼容 502 |
+| `relay.routerx_max_hops` | `3` | RouterX-Compatible 上游循环保护最大跳数，必须为正整数 |
 | `relay.log_body_max_bytes` | `0` | Relay 日志体最大长度，`0` 表示默认不记录 body |
 | `relay.stream_usage_strategy` | `provider_or_estimate` | 流式 usage 策略 |
 | `billing.default_ratio` | `1.0` | 默认计费倍率 |

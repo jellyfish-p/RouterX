@@ -151,7 +151,7 @@ Gemini-compatible 错误示例：
 
 | HTTP 状态 | 内部 code 示例 | type/status 示例 | 调用方含义 |
 |-----------|----------------|------------------|------------|
-| 400 | `invalid_json`、`invalid_multipart`、`model_required`、`invalid_routerx_options`、`unsupported_api` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数或换用已支持接口 |
+| 400 | `invalid_json`、`invalid_multipart`、`model_required`、`invalid_routerx_options`、`routerx_hop_exceeded`、`unsupported_api` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数或换用已支持接口 |
 | 401 | `invalid_api_key`、`expired_api_key` | `authentication_error` / `UNAUTHENTICATED` | 更换或重新创建 API Key |
 | 403 | `user_disabled`、`token_forbidden`、`model_not_allowed`、`route_forbidden` | `permission_error` / `PERMISSION_DENIED` | 联系管理员调整权限或通道分组 |
 | 404 | `model_not_found`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名或资源 ID |
@@ -975,7 +975,7 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 当上游通道也是 RouterX 时，需要保持兼容：
 
 - 允许保留 `routerx` 扩展字段继续转发。
-- 当前实现会在选中 RouterX-Compatible 上游时保留 `routerx` 扩展字段、递增 `X-RouterX-Hop`，并把 `X-RouterX-Chain` 追加当前 `routerx` 节点后转发；默认最大跳数为 `3`，达到或超过上限时返回 `routerx_hop_exceeded` 且不调用上游。
+- 当前实现会在选中 RouterX-Compatible 上游时保留 `routerx` 扩展字段、递增 `X-RouterX-Hop`，并把 `X-RouterX-Chain` 追加当前 `routerx` 节点后转发；最大跳数由 `relay.routerx_max_hops` 配置，默认 `3`，达到或超过上限时返回 `routerx_hop_exceeded` 且不调用上游。
 - 每层透传或生成请求 ID，默认使用 `X-Request-Id`；部署方可通过 `observability.request_id_header` 改为其他合法 HTTP header 名，便于跨层追踪。
 - 转发到真实厂商前必须移除 `routerx` 私有字段和 `X-RouterX-*` 内部 header。
 

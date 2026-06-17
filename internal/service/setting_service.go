@@ -233,7 +233,7 @@ func validateSettingValue(key, value string) error {
 	case "server.mode":
 		return validateServerModeSetting(key, value)
 	case "jwt.admin_expire_hours", "jwt.user_expire_hours",
-		"relay.timeout", "relay.error_ban_threshold", "routing.channel_cache.version", "payment.order_expire_minutes":
+		"relay.timeout", "relay.error_ban_threshold", "relay.routerx_max_hops", "routing.channel_cache.version", "payment.order_expire_minutes":
 		return validatePositiveIntSetting(key, value)
 	case "rate_limit.global_per_min", "rate_limit.per_token_per_min", "rate_limit.per_ip_per_min":
 		return validateNonNegativeIntSetting(key, value)

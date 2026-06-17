@@ -57,7 +57,7 @@ type contentTypeRelayAdapter interface {
 }
 
 const (
-	maxRouterXHop = 3
+	defaultRouterXMaxHops = 3
 
 	defaultRelayMaxRequestBodyBytes  int64 = 20 << 20
 	defaultRelayMaxResponseBodyBytes int64 = 20 << 20
@@ -553,7 +553,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 		}
 	}
-	routerXHop, forwardRouterXHop, err := nextRouterXHop(ctx, channel)
+	routerXHop, forwardRouterXHop, err := s.nextRouterXHop(ctx, channel)
 	if err != nil {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, nil, false, routerXHopHTTPError(err)
@@ -733,7 +733,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if err != nil {
 		return nil, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 	}
-	routerXHop, forwardRouterXHop, err := nextRouterXHop(ctx, channel)
+	routerXHop, forwardRouterXHop, err := s.nextRouterXHop(ctx, channel)
 	if err != nil {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, routerXHopHTTPError(err)
@@ -1317,7 +1317,7 @@ func cloneRawMessageMap(values map[string]json.RawMessage) map[string]json.RawMe
 	return cloned
 }
 
-func nextRouterXHop(ctx context.Context, channel *model.Channel) (int, bool, error) {
+func (s *RelayService) nextRouterXHop(ctx context.Context, channel *model.Channel) (int, bool, error) {
 	if channel == nil || channel.Type != common.ChannelTypeRouterX {
 		return 0, false, nil
 	}
@@ -1325,7 +1325,7 @@ func nextRouterXHop(ctx context.Context, channel *model.Channel) (int, bool, err
 	if err != nil {
 		return 0, true, err
 	}
-	if hop >= maxRouterXHop {
+	if hop >= s.RouterXMaxHops() {
 		return 0, true, errors.New("routerx hop limit exceeded")
 	}
 	return hop + 1, true, nil
@@ -2028,6 +2028,17 @@ func (s *RelayService) MaxResponseBodyBytes() int64 {
 		return defaultRelayMaxResponseBodyBytes
 	}
 	return int64(value)
+}
+
+func (s *RelayService) RouterXMaxHops() int {
+	if s == nil || s.settingService == nil {
+		return defaultRouterXMaxHops
+	}
+	value, err := s.settingService.GetInt("relay.routerx_max_hops")
+	if err != nil || value <= 0 {
+		return defaultRouterXMaxHops
+	}
+	return value
 }
 
 func (s *RelayService) readUpstreamResponseBody(body io.Reader) ([]byte, error) {
