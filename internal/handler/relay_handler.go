@@ -19,6 +19,8 @@ type RelayHandler struct {
 	svc *service.RelayService
 }
 
+var errRelayRequestBodyTooLarge = errors.New("relay request body too large")
+
 func NewRelayHandler(svc *service.RelayService) *RelayHandler {
 	return &RelayHandler{svc: svc}
 }
@@ -39,9 +41,9 @@ func (h *RelayHandler) relayOpenAI(c *gin.Context, apiType relay.APIType) {
 		c.JSON(http.StatusUnauthorized, common.OpenAIError("invalid api key", "authentication_error", "invalid_api_key"))
 		return
 	}
-	body, err := readRelayBody(c)
+	body, err := h.readRelayBody(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
+		writeOpenAIReadBodyError(c, err)
 		return
 	}
 	if openAIAPIAllowsMultipart(apiType) && requestIsMultipart(c.GetHeader("Content-Type")) {
@@ -118,9 +120,9 @@ func (h *RelayHandler) AudioSpeech(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, common.OpenAIError("invalid api key", "authentication_error", "invalid_api_key"))
 		return
 	}
-	body, err := readRelayBody(c)
+	body, err := h.readRelayBody(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
+		writeOpenAIReadBodyError(c, err)
 		return
 	}
 	result, err := h.svc.RelayRaw(relayRequestContext(c), token, relay.APIAudioSpeech, body, c.ClientIP())
@@ -174,9 +176,9 @@ func (h *RelayHandler) AnthropicMessages(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, common.AnthropicError("invalid api key", "authentication_error"))
 		return
 	}
-	body, err := readRelayBody(c)
+	body, err := h.readRelayBody(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, common.AnthropicError("failed to read request body", "invalid_request_error"))
+		writeAnthropicReadBodyError(c, err)
 		return
 	}
 	if requestWantsStream(body) {
@@ -206,9 +208,9 @@ func (h *RelayHandler) AnthropicMessages(c *gin.Context) {
 }
 
 func (h *RelayHandler) AnthropicCountTokens(c *gin.Context) {
-	body, err := readRelayBody(c)
+	body, err := h.readRelayBody(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
+		writeAnthropicReadBodyError(c, err)
 		return
 	}
 	resp, err := h.svc.AnthropicCountTokens(body)
@@ -221,9 +223,9 @@ func (h *RelayHandler) AnthropicCountTokens(c *gin.Context) {
 
 func (h *RelayHandler) GeminiModelAction(c *gin.Context) {
 	modelName, action := splitGeminiModelAction(c.Param("model"))
-	body, err := readRelayBody(c)
+	body, err := h.readRelayBody(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, common.GeminiError(http.StatusBadRequest, "failed to read request body", geminiRelayStatusText(http.StatusBadRequest)))
+		writeGeminiReadBodyError(c, err)
 		return
 	}
 	switch action {
@@ -346,6 +348,8 @@ func geminiRelayStatusText(status int) string {
 		return "NOT_FOUND"
 	case http.StatusTooManyRequests:
 		return "RESOURCE_EXHAUSTED"
+	case http.StatusRequestEntityTooLarge:
+		return "RESOURCE_EXHAUSTED"
 	case http.StatusGatewayTimeout:
 		return "DEADLINE_EXCEEDED"
 	case http.StatusBadGateway, http.StatusServiceUnavailable:
@@ -359,8 +363,46 @@ func writeUnsupported(c *gin.Context) {
 	c.JSON(http.StatusNotFound, common.OpenAIError("unsupported api", "invalid_request_error", "unsupported_api"))
 }
 
-func readRelayBody(c *gin.Context) ([]byte, error) {
-	return io.ReadAll(io.LimitReader(c.Request.Body, 20<<20))
+func (h *RelayHandler) readRelayBody(c *gin.Context) ([]byte, error) {
+	var reader io.Reader = c.Request.Body
+	if h != nil && h.svc != nil {
+		if limit := h.svc.MaxRequestBodyBytes(); limit > 0 {
+			reader = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+		}
+	}
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return nil, errRelayRequestBodyTooLarge
+		}
+		return nil, err
+	}
+	return body, nil
+}
+
+func writeOpenAIReadBodyError(c *gin.Context, err error) {
+	if errors.Is(err, errRelayRequestBodyTooLarge) {
+		c.JSON(http.StatusRequestEntityTooLarge, common.OpenAIError("request body too large", "invalid_request_error", "request_body_too_large"))
+		return
+	}
+	c.JSON(http.StatusBadRequest, common.OpenAIError("failed to read request body", "invalid_request_error", "invalid_request"))
+}
+
+func writeAnthropicReadBodyError(c *gin.Context, err error) {
+	if errors.Is(err, errRelayRequestBodyTooLarge) {
+		c.JSON(http.StatusRequestEntityTooLarge, common.AnthropicError("request body too large", "invalid_request_error"))
+		return
+	}
+	c.JSON(http.StatusBadRequest, common.AnthropicError("failed to read request body", "invalid_request_error"))
+}
+
+func writeGeminiReadBodyError(c *gin.Context, err error) {
+	if errors.Is(err, errRelayRequestBodyTooLarge) {
+		c.JSON(http.StatusRequestEntityTooLarge, common.GeminiError(http.StatusRequestEntityTooLarge, "request body too large", geminiRelayStatusText(http.StatusRequestEntityTooLarge)))
+		return
+	}
+	c.JSON(http.StatusBadRequest, common.GeminiError(http.StatusBadRequest, "failed to read request body", geminiRelayStatusText(http.StatusBadRequest)))
 }
 
 func requestWantsStream(body []byte) bool {

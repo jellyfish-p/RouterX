@@ -598,7 +598,7 @@ parse model/stream
 非流式处理流程：
 
 ```text
-read request body
+read request body with relay.max_request_body_bytes
     -> adapter.ConvertRequest
     -> http.Client.Do
     -> read downstream body with size limit
@@ -612,6 +612,7 @@ read request body
 要求：
 
 - 下游响应体读取必须有最大限制，避免异常大响应撑爆内存。
+- 请求体超过 `relay.max_request_body_bytes` 时，本地按入口协议返回 413，且不选择或调用上游。
 - 需要记录下游状态码。
 - 需要对下游错误转换为当前路由对应的兼容错误。
 - 日志保存响应应截断。
@@ -743,6 +744,7 @@ usage -> price rule -> group ratio -> quota_used
 | `relay.retry_count` | `0` | 默认不自动重试；大于 0 时非流式只对 429、5xx、网络错误、超时和响应读取失败换候选 |
 | `relay.error_auto_ban` | `true` | 是否按 `error_count` 自动排除故障通道 |
 | `relay.error_ban_threshold` | `10` | 自动排除通道的连续错误阈值 |
+| `relay.max_request_body_bytes` | `10485760` | 模型请求体最大字节数，`0` 表示不限制；超过时返回协议兼容 413 |
 | `relay.log_body_max_bytes` | `0` | Relay 日志体最大长度，`0` 表示默认不记录 body |
 | `relay.stream_usage_strategy` | `provider_or_estimate` | 流式 usage 策略 |
 | `billing.default_ratio` | `1.0` | 默认计费倍率 |
@@ -755,6 +757,7 @@ usage -> price rule -> group ratio -> quota_used
 - 下游 API Key 使用 `ENCRYPTION_KEY` 或 KMS 加密存储，不能依赖实例本地随机密钥。
 - Authorization、Cookie、API Key 必须在日志中脱敏。
 - Adapter 错误返回不能泄露完整下游密钥或内部 DSN。
+- 所有 `/v1` 模型入口必须在调用上游前执行请求体大小限制。
 - 请求体日志默认关闭。
 - 对图片、音频、文件类接口设置上传大小限制。
 - 对下游响应体设置最大读取大小。

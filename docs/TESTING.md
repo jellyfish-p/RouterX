@@ -99,6 +99,7 @@
 | `TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini batchEmbedContents 转 OpenAI-compatible Embeddings 批量 input，上游 embedding list 返回 Gemini `embeddings[].values` 外形，usage 写日志和扣费 |
 | `TestRateLimitUsesSettingsAndEntryProtocolErrorShape` | Redis Token 限流读取 `rate_limit.*`，本地 429 不调用上游，返回入口协议兼容错误，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model 在本地失败且不污染通道和账单 |
+| `TestRelayMaxRequestBodyBytesRejectsBeforeUpstream` | `relay.max_request_body_bytes` 超限时本地返回 OpenAI-compatible 413 `request_body_too_large`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
 | `TestUserBillingMatchesLogs` | 多次成功/失败混合后，用户账单、日志、余额和 Key 预算一致 |
 | `TestChatCompletionSuccessLogsAndDeductsQuota` | Chat 非流式成功调用、request id 上游透传、基础 request_snapshot、基础 policy_snapshot、上游 usage_source、基础 route_snapshot、含 P0 回退表达式/倍率/预算前后摘要的基础 billing_snapshot、日志、用户额度、Key 预算和账单聚合 |

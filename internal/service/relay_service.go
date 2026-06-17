@@ -56,7 +56,11 @@ type contentTypeRelayAdapter interface {
 	DoRequestWithContentType(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error)
 }
 
-const maxRouterXHop = 3
+const (
+	maxRouterXHop = 3
+
+	defaultRelayMaxRequestBodyBytes int64 = 20 << 20
+)
 
 func (r *RelayStreamResult) Forward(write func([]byte) error, flush func()) (*relay.Usage, error) {
 	if r == nil || r.forward == nil {
@@ -1995,6 +1999,17 @@ func (s *RelayService) relayTimeout() time.Duration {
 		}
 	}
 	return time.Duration(timeoutSeconds) * time.Second
+}
+
+func (s *RelayService) MaxRequestBodyBytes() int64 {
+	if s == nil || s.settingService == nil {
+		return defaultRelayMaxRequestBodyBytes
+	}
+	value, err := s.settingService.GetInt("relay.max_request_body_bytes")
+	if err != nil || value < 0 {
+		return defaultRelayMaxRequestBodyBytes
+	}
+	return int64(value)
 }
 
 func (s *RelayService) relayRetryCount() int {
