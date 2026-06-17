@@ -9103,6 +9103,118 @@ func TestAzureImageGenerationsUsesV1EndpointAndMinimumCharge(t *testing.T) {
 	}
 }
 
+func TestAzureAudioSpeechUsesV1EndpointAndMinimumCharge(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	audioBytes := []byte{0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00}
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamAPIVersion := ""
+	upstreamAPIKey := ""
+	upstreamAuth := ""
+	upstreamBody := map[string]interface{}{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		upstreamAPIVersion = req.URL.Query().Get("api-version")
+		upstreamAPIKey = req.Header.Get("api-key")
+		upstreamAuth = req.Header.Get("Authorization")
+		raw := new(bytes.Buffer)
+		_, _ = raw.ReadFrom(req.Body)
+		if err := json.Unmarshal(raw.Bytes(), &upstreamBody); err != nil {
+			t.Errorf("azure audio speech upstream body should be json: %v", err)
+		}
+		if _, ok := upstreamBody["routerx"]; ok {
+			t.Errorf("azure audio speech upstream body should not include routerx field: %#v", upstreamBody)
+		}
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write(audioBytes)
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "azure-audio-speech",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeAzure,
+		"name":     "azure-audio-speech",
+		"models":   "tts-prod",
+		"base_url": upstream.URL,
+		"api_key":  "azure-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create azure audio speech channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/audio/speech", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "tts-prod",
+		"input": "hello from azure",
+		"voice": "alloy",
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"provider": "azure"},
+		},
+	})
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Header().Get("Content-Type"), "audio/mpeg") || !bytes.Equal(resp.Body.Bytes(), audioBytes) {
+		t.Fatalf("azure audio speech should return upstream audio response, got %d %s %#v", resp.Code, resp.Header().Get("Content-Type"), resp.Body.Bytes())
+	}
+	if upstreamCalls != 1 || upstreamPath != "/openai/v1/audio/speech" || upstreamAPIVersion != "preview" {
+		t.Fatalf("azure audio speech should use Azure v1 path and preview api-version, calls=%d path=%q api-version=%q", upstreamCalls, upstreamPath, upstreamAPIVersion)
+	}
+	if upstreamAPIKey != "azure-secret" || upstreamAuth != "" {
+		t.Fatalf("azure audio speech should use api-key header only, api-key=%q authorization=%q", upstreamAPIKey, upstreamAuth)
+	}
+	if upstreamBody["model"] != "tts-prod" || upstreamBody["input"] != "hello from azure" || upstreamBody["voice"] != "alloy" {
+		t.Fatalf("azure audio speech should preserve model, input and voice, got %#v", upstreamBody)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 49 {
+		t.Fatalf("azure audio speech without usage should deduct minimum token budget charge, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 99 {
+		t.Fatalf("azure audio speech without usage should deduct minimum user quota charge, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 1 || callLog.TotalTokens != 0 || callLog.UsageSource != common.LogUsageSourceMinimum {
+		t.Fatalf("unexpected azure audio speech success log: %+v", callLog)
+	}
+}
+
 func TestResponsesPassthroughExtractsUsageAndDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

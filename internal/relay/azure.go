@@ -15,7 +15,7 @@ import (
 
 // AzureAdapter Azure OpenAI 厂商适配器。
 // Chat/Completions/Embeddings 继续使用 deployment-path 形态；
-// Image Generations 使用 Azure /openai/v1 形态，model 字段就是部署名。
+// Image Generations/Audio Speech 使用 Azure /openai/v1 形态，model 字段就是部署名。
 // Azure 使用 api-key header 而非 Bearer token。
 type AzureAdapter struct{}
 
@@ -31,15 +31,15 @@ func (a *AzureAdapter) GetChannelType() int {
 }
 
 func (a *AzureAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
-	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings && apiType != APIImagesGenerations {
+	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings && !azureUsesV1Endpoint(apiType) {
 		return nil, errors.New("unsupported api type")
 	}
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
-	// Azure deployment-path API 已经由路径表达 model；/openai/v1 图片接口仍需要 model 选择部署。
-	if apiType != APIImagesGenerations {
+	// Azure deployment-path API 已经由路径表达 model；/openai/v1 API 仍需要 model 选择部署。
+	if !azureUsesV1Endpoint(apiType) {
 		delete(payload, "model")
 	}
 	delete(payload, "routerx")
@@ -61,6 +61,8 @@ func (a *AzureAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 		return "/openai/deployments/" + deployment + "/embeddings?api-version=" + defaultAzureAPIVersion
 	case APIImagesGenerations:
 		return "/openai/v1/images/generations?api-version=" + azureV1PreviewAPIVersion
+	case APIAudioSpeech:
+		return "/openai/v1/audio/speech?api-version=" + azureV1PreviewAPIVersion
 	default:
 		return ""
 	}
@@ -99,6 +101,10 @@ func (a *AzureAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *U
 		return nil, nil, errors.New("upstream returned invalid json")
 	}
 	return body, extractOpenAIUsage(body), nil
+}
+
+func azureUsesV1Endpoint(apiType APIType) bool {
+	return apiType == APIImagesGenerations || apiType == APIAudioSpeech
 }
 
 // GetModelList returns Azure deployment IDs because RouterX uses request model
