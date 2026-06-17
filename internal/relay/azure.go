@@ -15,7 +15,7 @@ import (
 
 // AzureAdapter Azure OpenAI 厂商适配器。
 // Chat/Completions/Embeddings 继续使用 deployment-path 形态；
-// Image Generations/Audio Speech 使用 Azure /openai/v1 形态，model 字段就是部署名。
+// Image/Audio 的新式能力使用 Azure /openai/v1 形态，model 字段就是部署名。
 // Azure 使用 api-key header 而非 Bearer token。
 type AzureAdapter struct{}
 
@@ -61,6 +61,8 @@ func (a *AzureAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 		return "/openai/deployments/" + deployment + "/embeddings?api-version=" + defaultAzureAPIVersion
 	case APIImagesGenerations:
 		return "/openai/v1/images/generations?api-version=" + azureV1PreviewAPIVersion
+	case APIImagesEdits:
+		return "/openai/v1/images/edits?api-version=" + azureV1PreviewAPIVersion
 	case APIAudioSpeech:
 		return "/openai/v1/audio/speech?api-version=" + azureV1PreviewAPIVersion
 	case APIAudioTranscriptions:
@@ -110,7 +112,7 @@ func (a *AzureAdapter) doRequest(ctx context.Context, baseURL, endpoint, apiKey 
 }
 
 func (a *AzureAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
-	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings && apiType != APIImagesGenerations && apiType != APIAudioTranscriptions && apiType != APIAudioTranslations {
+	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings && apiType != APIImagesGenerations && apiType != APIImagesEdits && apiType != APIAudioTranscriptions && apiType != APIAudioTranslations {
 		return nil, nil, errors.New("unsupported api type")
 	}
 	if !json.Valid(body) {
@@ -120,6 +122,7 @@ func (a *AzureAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *U
 }
 
 func azureUsesV1Endpoint(apiType APIType) bool {
+	// Multipart /openai/v1 APIs skip ConvertRequest and keep their endpoint cases explicit.
 	return apiType == APIImagesGenerations || apiType == APIAudioSpeech
 }
 

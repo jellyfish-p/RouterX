@@ -9103,6 +9103,179 @@ func TestAzureImageGenerationsUsesV1EndpointAndMinimumCharge(t *testing.T) {
 	}
 }
 
+func TestAzureImageEditsMultipartUsesV1EndpointAndMinimumCharge(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	imageBytes := []byte("PNG-routerx-azure-image")
+	maskBytes := []byte("PNG-routerx-azure-mask")
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamAPIVersion := ""
+	upstreamAPIKey := ""
+	upstreamAuth := ""
+	upstreamModel := ""
+	upstreamPrompt := ""
+	var upstreamImage []byte
+	var upstreamMask []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		upstreamAPIVersion = req.URL.Query().Get("api-version")
+		upstreamAPIKey = req.Header.Get("api-key")
+		upstreamAuth = req.Header.Get("Authorization")
+		if !strings.Contains(req.Header.Get("Content-Type"), "multipart/form-data") {
+			t.Errorf("azure image edits upstream should receive multipart content type, got %q", req.Header.Get("Content-Type"))
+		}
+		if err := req.ParseMultipartForm(20 << 20); err != nil {
+			t.Errorf("azure image edits upstream received invalid multipart body: %v", err)
+		}
+		upstreamModel = req.FormValue("model")
+		upstreamPrompt = req.FormValue("prompt")
+		if leaked := req.FormValue("routerx"); leaked != "" {
+			t.Errorf("routerx private form field leaked to azure image edits upstream: %q", leaked)
+		}
+		file, _, err := req.FormFile("image")
+		if err != nil {
+			t.Errorf("azure image edits upstream missing image file: %v", err)
+		} else {
+			defer file.Close()
+			raw := new(bytes.Buffer)
+			_, _ = raw.ReadFrom(file)
+			upstreamImage = raw.Bytes()
+		}
+		mask, _, err := req.FormFile("mask")
+		if err != nil {
+			t.Errorf("azure image edits upstream missing mask file: %v", err)
+		} else {
+			defer mask.Close()
+			raw := new(bytes.Buffer)
+			_, _ = raw.ReadFrom(mask)
+			upstreamMask = raw.Bytes()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1710000000,"data":[{"b64_json":"ZWRpdGVk"}]}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "azure-image-edits",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeAzure,
+		"name":     "azure-image-edits",
+		"models":   "dalle-edit-prod",
+		"base_url": upstream.URL,
+		"api_key":  "azure-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create azure image edits channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	var reqBody bytes.Buffer
+	writer := multipart.NewWriter(&reqBody)
+	if err := writer.WriteField("model", "dalle-edit-prod"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("prompt", "add routerx label"); err != nil {
+		t.Fatal(err)
+	}
+	routerxOptions, err := json.Marshal(map[string]interface{}{
+		"route": map[string]string{"provider": "azure"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("routerx", string(routerxOptions)); err != nil {
+		t.Fatal(err)
+	}
+	imageWriter, err := writer.CreateFormFile("image", "input.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := imageWriter.Write(imageBytes); err != nil {
+		t.Fatal(err)
+	}
+	maskWriter, err := writer.CreateFormFile("mask", "mask.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := maskWriter.Write(maskBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", &reqBody)
+	req.Header.Set("Authorization", "Bearer "+tokenPayload.Data.Key)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"b64_json":"ZWRpdGVk"`) {
+		t.Fatalf("azure image edits should return upstream response, got %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamCalls != 1 || upstreamPath != "/openai/v1/images/edits" || upstreamAPIVersion != "preview" {
+		t.Fatalf("azure image edits should use Azure v1 path and preview api-version, calls=%d path=%q api-version=%q", upstreamCalls, upstreamPath, upstreamAPIVersion)
+	}
+	if upstreamAPIKey != "azure-secret" || upstreamAuth != "" {
+		t.Fatalf("azure image edits should use api-key header only, api-key=%q authorization=%q", upstreamAPIKey, upstreamAuth)
+	}
+	if upstreamModel != "dalle-edit-prod" || upstreamPrompt != "add routerx label" {
+		t.Fatalf("azure image edits should preserve model and prompt, model=%q prompt=%q", upstreamModel, upstreamPrompt)
+	}
+	if !bytes.Equal(upstreamImage, imageBytes) || !bytes.Equal(upstreamMask, maskBytes) {
+		t.Fatalf("azure image edits should preserve image and mask files, image=%q mask=%q", string(upstreamImage), string(upstreamMask))
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 49 {
+		t.Fatalf("azure image edits without usage should deduct minimum token budget charge, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 99 {
+		t.Fatalf("azure image edits without usage should deduct minimum user quota charge, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 1 || callLog.TotalTokens != 0 || callLog.UsageSource != common.LogUsageSourceMinimum {
+		t.Fatalf("unexpected azure image edits success log: %+v", callLog)
+	}
+}
+
 func TestAzureAudioSpeechUsesV1EndpointAndMinimumCharge(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
