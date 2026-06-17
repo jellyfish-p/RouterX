@@ -4117,6 +4117,54 @@ func TestAdminSettingUpdateWritesAuditLog(t *testing.T) {
 	}
 }
 
+func TestAdminSettingValidationFailureWritesDeniedAuditLog(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	settingSvc := service.NewSettingService()
+	beforeGateway, err := settingSvc.Get("payment.epay.gateway")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawInvalidGateway := "not-a-url-secret"
+	updateResp := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"payment.epay.gateway": rawInvalidGateway,
+	})
+	if updateResp.Code != http.StatusBadRequest {
+		t.Fatalf("invalid setting update should be rejected, got %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	afterGateway, err := settingSvc.Get("payment.epay.gateway")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterGateway != beforeGateway {
+		t.Fatalf("invalid setting update should not persist value, before=%q after=%q", beforeGateway, afterGateway)
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=setting&resource_id=payment.epay.gateway&result=denied&error_code=setting_validation_failed", rootJWT, nil)
+	body := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(body, `"action":"setting.denied"`) ||
+		!strings.Contains(body, `"resource_id":"payment.epay.gateway"`) ||
+		!strings.Contains(body, `"result":"denied"`) ||
+		!strings.Contains(body, `"error_code":"setting_validation_failed"`) {
+		t.Fatalf("invalid setting update should write denied audit log, got %d %s", auditResp.Code, body)
+	}
+	if strings.Contains(body, rawInvalidGateway) {
+		t.Fatalf("denied setting audit should redact sensitive attempted value: %s", body)
+	}
+}
+
 func TestSettingDefaultsBackfillPreservesExistingValues(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

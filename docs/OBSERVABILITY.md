@@ -29,7 +29,7 @@
 - 支付商品创建、更新、启用和禁用会写入 `payment_product.*` 管理审计摘要。
 - 系统模型价格创建、更新、启用和禁用会写入 `model_price.*` 管理审计摘要，`resource_id` 使用模型名便于直接过滤。
 - 通道模型价格覆盖创建、更新、启用和禁用会写入 `channel_model_price.*` 管理审计摘要，`resource_id` 使用 `channel_id:model` 便于直接过滤。
-- `PUT /v0/admin/setting` 批量更新成功后会按 key 写入 `setting.create` 或 `setting.update` 管理审计摘要，敏感值只保存脱敏摘要。
+- `PUT /v0/admin/setting` 批量更新成功后会按 key 写入 `setting.create` 或 `setting.update` 管理审计摘要；校验失败会写 `setting.denied`，敏感值只保存脱敏摘要。
 - `PATCH /v0/admin/user/:id/quota` 调整普通用户额度时会写入 `user.quota_update` 管理审计摘要，并关联调额原因。
 - 充值码生成、导入、作废和兑换会写入 `redem_code.*` 管理审计摘要，完整兑换码不会明文写入审计摘要。
 - 支付订单创建会写入 `payment_order.create` 管理审计摘要，checkout URL 不会写入审计摘要。
@@ -273,7 +273,7 @@
 | 管理日志筛选 | 管理员可按 user、token、channel、model、status、时间筛选。 |
 | 账单一致 | 用户账单聚合等于成功日志事实；启用独立日志库时主库结算最小事实可恢复。 |
 | 脱敏 | 日志和导出不包含 API Key、上游密钥、DSN、支付密钥。 |
-| 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖 API Key 管理和 scope 更新、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理和日志清理操作。 |
+| 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖 API Key 管理和 scope 更新、用户管理、支付商品管理、settings 更新与校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理和日志导出操作。 |
 | 指标 | `/metrics` 暴露基础实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付、审计和 DB/Redis/日志库指标，不包含高基数或敏感 label；后续继续补更细错误维度和告警。 |
 
 ## 文档同步

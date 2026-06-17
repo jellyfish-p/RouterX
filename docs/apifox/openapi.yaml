@@ -1056,7 +1056,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
       security:
         - UserJWT: []
       parameters:
@@ -1066,7 +1066,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_webhook.processed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、channel.update、log.clear、log.export 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_webhook.processed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
         - name: resource_type
           in: query
           required: false
@@ -1909,7 +1909,7 @@ paths:
     put:
       tags: [Admin Logs]
       summary: 批量更新系统设置
-      description: 仅超级管理员；成功后按 key 写入 setting.create 或 setting.update 管理审计，敏感值只保存脱敏摘要。
+      description: 仅超级管理员；成功后按 key 写入 setting.create 或 setting.update 管理审计，校验失败或高风险配置被拒绝时按 key 写入 setting.denied，敏感值只保存脱敏摘要。
       security:
         - UserJWT: []
       requestBody:
@@ -1921,6 +1921,8 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
         "403":
           $ref: "#/components/responses/StandardForbidden"
   /v1/responses:

@@ -466,6 +466,7 @@ Provider 退款请求：
 | `api_key.quota_limit_denied` | 用户端尝试通过 `PUT /v0/user/token/:id` 修改额度或无限标记被拒绝 |
 | `setting.create` | `PUT /v0/admin/setting` 新增 key |
 | `setting.update` | `PUT /v0/admin/setting` 修改已有 key |
+| `setting.denied` | `PUT /v0/admin/setting` 参数校验失败或高风险配置被拒绝 |
 | `user.create` | `POST /v0/admin/user` |
 | `user.update` | `PUT /v0/admin/user/:id` |
 | `user.disable` | `PUT /v0/admin/user/:id` 将用户状态改为禁用 |

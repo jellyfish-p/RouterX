@@ -77,6 +77,7 @@
 | `TestMetricsEndpointReportsIndependentLogDBHealth` | `/metrics` 输出独立日志库配置和 ping 状态，日志库不可用时仍回退主库事实并保持指标可用 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |
 | `TestAdminSettingUpdateWritesAuditLog` | 超级管理员批量更新 settings 后按 key 写 `setting.update` 审计，敏感 payment 配置值不完整泄露 |
+| `TestAdminSettingValidationFailureWritesDeniedAuditLog` | 超级管理员提交非法 settings 值时不落库，写 `setting.denied` 审计并脱敏敏感尝试值 |
 | `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |
 | `TestSettingCacheRefreshesStaleRedisValues` | settings 读取缓存、单项更新和批量更新后的 Redis 刷新边界 |
 | `TestInitRedisSkipsEmptyConfig` | `REDIS_CONN` 为空时不隐式连接本机 Redis，SQLite 单机模式保持可降级 |
@@ -449,7 +450,7 @@ Gemini-compatible 最小断言：
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝和 RPM/TPM 拒绝已覆盖；风险视图和缓存失效待补 |
 | P2 | 支付充值 | 充值码批次/备注/过期策略、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回审计、支付人工退款落账审计；更多 provider 自动退款适配待补 |
-| P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新、用户调额、充值码管理、通道管理、管理员账号管理、日志清理审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status 和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis/日志库指标测试已覆盖；继续补更完整结构化日志、更多管理审计动作和生产 `/ready` |
+| P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status 和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis/日志库指标测试已覆盖；继续补更完整结构化日志、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
 
