@@ -972,7 +972,7 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 当上游通道也是 RouterX 时，需要保持兼容：
 
 - 允许保留 `routerx` 扩展字段继续转发。
-- 当前实现会在选中 RouterX-Compatible 上游时保留 `routerx` 扩展字段、递增 `X-RouterX-Hop` 并转发；默认最大跳数为 `3`，达到或超过上限时返回 `routerx_hop_exceeded` 且不调用上游。
+- 当前实现会在选中 RouterX-Compatible 上游时保留 `routerx` 扩展字段、递增 `X-RouterX-Hop`，并把 `X-RouterX-Chain` 追加当前 `routerx` 节点后转发；默认最大跳数为 `3`，达到或超过上限时返回 `routerx_hop_exceeded` 且不调用上游。
 - 每层透传或生成请求 ID，默认使用 `X-Request-Id`；部署方可通过 `observability.request_id_header` 改为其他合法 HTTP header 名，便于跨层追踪。
 - 转发到真实厂商前必须移除 `routerx` 私有字段和 `X-RouterX-*` 内部 header。
 

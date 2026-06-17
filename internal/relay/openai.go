@@ -112,6 +112,7 @@ func (a *OpenAIAdapter) doRequest(ctx context.Context, baseURL, endpoint, apiKey
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	SetRequestIDHeader(req)
 	SetRouterXHopHeader(req)
+	SetRouterXChainHeader(req)
 	if body != nil {
 		contentType = strings.TrimSpace(contentType)
 		if contentType == "" {

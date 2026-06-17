@@ -5962,9 +5962,11 @@ func TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop(t *testing.T)
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
 	upstreamHop := ""
+	upstreamChain := ""
 	var upstreamBody map[string]interface{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		upstreamHop = req.Header.Get("X-RouterX-Hop")
+		upstreamChain = req.Header.Get("X-RouterX-Chain")
 		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
 			t.Errorf("routerx upstream received invalid json: %v", err)
 		}
@@ -6031,6 +6033,7 @@ func TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop(t *testing.T)
 	req.Header.Set("Authorization", "Bearer "+tokenPayload.Data.Key)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-RouterX-Hop", "1")
+	req.Header.Set("X-RouterX-Chain", "edge")
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
 
@@ -6039,6 +6042,9 @@ func TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop(t *testing.T)
 	}
 	if upstreamHop != "2" {
 		t.Fatalf("routerx-compatible upstream should receive incremented hop, got %q", upstreamHop)
+	}
+	if upstreamChain != "edge,routerx" {
+		t.Fatalf("routerx-compatible upstream should receive appended chain, got %q", upstreamChain)
 	}
 	routerXBody, ok := upstreamBody["routerx"].(map[string]interface{})
 	if !ok {

@@ -46,6 +46,7 @@ type relayUserAgentContextKey struct{}
 type relayRequestIDContextKey struct{}
 type relayRouterXOptionsContextKey struct{}
 type relayRouterXHopContextKey struct{}
+type relayRouterXChainContextKey struct{}
 type relayRequestSnapshotContextKey struct{}
 type relayPolicySnapshotContextKey struct{}
 type relayRouteSnapshotContextKey struct{}
@@ -99,6 +100,15 @@ func ContextWithRelayRouterXHop(ctx context.Context, hop string) context.Context
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, relayRouterXHopContextKey{}, strings.TrimSpace(hop))
+}
+
+// ContextWithRelayRouterXChain stores the inbound chain summary from
+// X-RouterX-Chain. It is forwarded only to RouterX-compatible upstreams.
+func ContextWithRelayRouterXChain(ctx context.Context, chain string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, relayRouterXChainContextKey{}, strings.TrimSpace(chain))
 }
 
 func ContextWithRelayRequestSnapshot(ctx context.Context, snapshot string) context.Context {
@@ -548,6 +558,9 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	if forwardRouterXHop {
 		reqCtx = relay.ContextWithRouterXHop(reqCtx, routerXHop)
 	}
+	if routerXChain, forwardRouterXChain := routerXChainForUpstream(ctx, channel); forwardRouterXChain {
+		reqCtx = relay.ContextWithRouterXChain(reqCtx, routerXChain)
+	}
 	defer cancel()
 	start := time.Now()
 	resp, err := doRelayAdapterRequest(reqCtx, adapter, target.BaseURL, endpoint, target.APIKey, outBody, outContentType)
@@ -720,6 +733,9 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	reqCtx = relay.ContextWithUpstreamOptions(reqCtx, reqInfo.Upstream.Transport)
 	if forwardRouterXHop {
 		reqCtx = relay.ContextWithRouterXHop(reqCtx, routerXHop)
+	}
+	if routerXChain, forwardRouterXChain := routerXChainForUpstream(ctx, channel); forwardRouterXChain {
+		reqCtx = relay.ContextWithRouterXChain(reqCtx, routerXChain)
 	}
 	relayStart := time.Now()
 	start := time.Now()
@@ -1302,6 +1318,53 @@ func nextRouterXHop(ctx context.Context, channel *model.Channel) (int, bool, err
 		return 0, true, errors.New("routerx hop limit exceeded")
 	}
 	return hop + 1, true, nil
+}
+
+func relayRouterXChainFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(relayRouterXChainContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
+func routerXChainForUpstream(ctx context.Context, channel *model.Channel) (string, bool) {
+	if channel == nil || channel.Type != common.ChannelTypeRouterX {
+		return "", false
+	}
+	chain := sanitizeRouterXChain(relayRouterXChainFromContext(ctx))
+	if chain == "" {
+		return "routerx", true
+	}
+	return chain + ",routerx", true
+}
+
+func sanitizeRouterXChain(chain string) string {
+	parts := strings.Split(chain, ",")
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		part = strings.Map(func(r rune) rune {
+			if r < 32 || r == 127 {
+				return -1
+			}
+			return r
+		}, part)
+		if part != "" {
+			clean = append(clean, part)
+		}
+	}
+	if len(clean) == 0 {
+		return ""
+	}
+	joined := strings.Join(clean, ",")
+	if len(joined) > 512 {
+		return joined[:512]
+	}
+	return joined
 }
 
 func routerXHopHTTPError(err error) *HTTPError {

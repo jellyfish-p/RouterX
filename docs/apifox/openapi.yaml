@@ -1990,6 +1990,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         required: true
         content:
@@ -2019,6 +2020,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         required: true
         content:
@@ -2078,6 +2080,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2106,6 +2109,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2125,6 +2129,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2144,6 +2149,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         $ref: "#/components/requestBodies/ImageMultipart"
       responses:
@@ -2163,6 +2169,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         $ref: "#/components/requestBodies/ImageMultipart"
       responses:
@@ -2182,6 +2189,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         $ref: "#/components/requestBodies/AudioMultipart"
       responses:
@@ -2201,6 +2209,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         $ref: "#/components/requestBodies/AudioMultipart"
       responses:
@@ -2220,6 +2229,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2248,6 +2258,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2324,6 +2335,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
       requestBody:
         required: true
         content:
@@ -2382,6 +2394,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
         - name: model
           in: path
           required: true
@@ -2411,6 +2424,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
         - name: model
           in: path
           required: true
@@ -2438,6 +2452,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
         - name: model
           in: path
           required: true
@@ -2474,6 +2489,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
+        - $ref: "#/components/parameters/RouterXChain"
         - name: model
           in: path
           required: true
@@ -2606,6 +2622,14 @@ components:
         maximum: 3
         example: 1
       description: 多层 RouterX-Compatible 上游循环保护 hop；选中 RouterX 上游时服务端会递增后转发，达到默认上限 3 时返回 routerx_hop_exceeded。
+    RouterXChain:
+      name: X-RouterX-Chain
+      in: header
+      required: false
+      schema:
+        type: string
+        example: edge
+      description: 多层 RouterX-Compatible 上游链路摘要；选中 RouterX 上游时服务端会追加当前 routerx 节点后转发，例如 edge,routerx。
     StartTime:
       name: start_time
       in: query

@@ -12,8 +12,10 @@ import (
 type requestIDContextKey struct{}
 type upstreamOptionsContextKey struct{}
 type routerXHopContextKey struct{}
+type routerXChainContextKey struct{}
 
 const RouterXHopHeaderName = "X-RouterX-Hop"
+const RouterXChainHeaderName = "X-RouterX-Chain"
 
 // UpstreamOptions carries caller-supplied, policy-safe additions for the next
 // upstream HTTP request. Sensitive authentication material is filtered before
@@ -76,6 +78,23 @@ func RouterXHopFromContext(ctx context.Context) (int, bool) {
 	return hop, ok
 }
 
+// ContextWithRouterXChain stores the outbound chain summary for RouterX hops.
+func ContextWithRouterXChain(ctx context.Context, chain string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, routerXChainContextKey{}, strings.TrimSpace(chain))
+}
+
+// RouterXChainFromContext returns the outbound RouterX chain summary.
+func RouterXChainFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	chain, _ := ctx.Value(routerXChainContextKey{}).(string)
+	return strings.TrimSpace(chain)
+}
+
 // SetRequestIDHeader copies RouterX's request id into outbound upstream calls.
 // It deliberately uses the configured public header name, so deployments that
 // rename observability.request_id_header keep the same trace boundary.
@@ -96,6 +115,17 @@ func SetRouterXHopHeader(req *http.Request) {
 	}
 	if hop, ok := RouterXHopFromContext(req.Context()); ok && hop > 0 {
 		req.Header.Set(RouterXHopHeaderName, strconv.Itoa(hop))
+	}
+}
+
+// SetRouterXChainHeader forwards a compact chain summary to RouterX-compatible
+// upstreams. The service decides when this is safe to emit.
+func SetRouterXChainHeader(req *http.Request) {
+	if req == nil {
+		return
+	}
+	if chain := RouterXChainFromContext(req.Context()); chain != "" {
+		req.Header.Set(RouterXChainHeaderName, chain)
 	}
 }
 
