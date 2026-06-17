@@ -29,7 +29,7 @@ func (a *AzureAdapter) GetChannelType() int {
 }
 
 func (a *AzureAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
-	if apiType != APIChatCompletions && apiType != APIEmbeddings {
+	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings {
 		return nil, errors.New("unsupported api type")
 	}
 	var payload map[string]json.RawMessage
@@ -51,6 +51,8 @@ func (a *AzureAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 	switch apiType {
 	case APIChatCompletions:
 		return "/openai/deployments/" + deployment + "/chat/completions?api-version=" + defaultAzureAPIVersion
+	case APICompletions:
+		return "/openai/deployments/" + deployment + "/completions?api-version=" + defaultAzureAPIVersion
 	case APIEmbeddings:
 		return "/openai/deployments/" + deployment + "/embeddings?api-version=" + defaultAzureAPIVersion
 	default:
@@ -84,7 +86,7 @@ func (a *AzureAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey 
 }
 
 func (a *AzureAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
-	if apiType != APIChatCompletions && apiType != APIEmbeddings {
+	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings {
 		return nil, nil, errors.New("unsupported api type")
 	}
 	if !json.Valid(body) {

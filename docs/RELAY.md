@@ -461,7 +461,7 @@ Endpoint 示例：
 
 当前实现：
 
-- Chat Completions 和 Embeddings 已按 deployment 路径调用 Azure OpenAI。
+- Chat Completions、Completions 和 Embeddings 已按 deployment 路径调用 Azure OpenAI。
 - 当前默认 `api-version` 为 `2024-02-15-preview`。
 - 发往 Azure 前会剥离 `model` 和 `routerx`，因为 deployment 已经由路径表达。
 - Azure 返回的 OpenAI-compatible `usage` 会写入 RouterX 日志并扣费。
