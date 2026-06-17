@@ -946,7 +946,7 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 - `routerx.route` 只能收窄管理员策略允许的候选通道，不能启用已禁用通道、绕过额度、绕过通道分组访问控制或强制使用无权限 provider。
 - `routerx.upstream` 用于补充上游 header、query 和 body 参数，但敏感鉴权 header 必须来自通道配置，不能由用户请求覆盖。
 - `routerx.provider.<provider>` 仅在选中对应上游 provider 时生效。
-- multipart 或非 JSON 请求当前可通过 `routerx` 表单字段传递 JSON 字符串；`X-RouterX-Options` header 是后续扩展目标。
+- multipart 或非 JSON 请求当前可通过 `routerx` 表单字段或 `X-RouterX-Options` header 传递 JSON 字符串；body/form 中的 `routerx` 优先于 header。
 - 对 `GET /v1/models` 这类无 JSON body 的冲突路径，当前可使用 `?format=gemini` 或 `?format=anthropic`，并可通过 `anthropic-version` header 识别 Anthropic 格式；目标设计可扩展 `?routerx_protocol=` 或 `X-RouterX-Protocol`。
 
 路由偏好处理：

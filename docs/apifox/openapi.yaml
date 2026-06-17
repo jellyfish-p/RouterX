@@ -7,7 +7,7 @@ info:
 
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
-    - /v1 使用入口协议兼容响应，不包裹 success/data/message。
+    - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
     - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、日志库健康和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
@@ -1987,6 +1987,8 @@ paths:
       description: OpenAI-compatible Responses 基础实现；JSON 请求体透传到上游 /v1/responses，发出前剥离 routerx 私有字段，并将 usage.input_tokens/output_tokens/total_tokens 映射到 RouterX 日志与扣费。完整 Responses 原生字段矩阵以 docs/PROTOCOLS.md 为准。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         required: true
         content:
@@ -2013,6 +2015,8 @@ paths:
       description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。本地限流读取 rate_limit.*，覆盖全局、IP 和 Token 分钟窗口；API Key max_concurrency 可限制同一 Key 同时在途请求，rpm/tpm 可限制同一 Key 每分钟请求和模型 token，命中时返回 rate_limit_exceeded 且不调用上游。通道候选读取 relay.error_auto_ban 和 relay.error_ban_threshold，自动排除达到阈值的故障通道。非流式在 relay.retry_count > 0 时会对上游 429、5xx、网络错误、超时和响应读取失败换候选通道；400/401/403 不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         required: true
         content:
@@ -2069,6 +2073,8 @@ paths:
       description: 支持 OpenAI-compatible JSON 响应；stream=true 且命中 OpenAI SSE 形态通道时转发 text/event-stream，并按 SSE chunk 中的 usage 写日志和扣费。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2094,6 +2100,8 @@ paths:
       description: OpenAI-compatible Embeddings 基础实现；JSON 请求体透传到上游 /v1/embeddings，发出前剥离 routerx 私有字段，并将 usage.prompt_tokens/total_tokens 映射到 RouterX 日志与扣费。输入 schema、批量边界和模型能力策略以 docs/PROTOCOLS.md 为准。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2110,6 +2118,8 @@ paths:
       description: OpenAI-compatible 图像生成基础实现；JSON 请求体透传到上游 /v1/images/generations，发出前剥离 routerx 私有字段。图像生成响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整安全扫描、尺寸/文件策略和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2123,9 +2133,11 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 图像编辑转发
-      description: OpenAI-compatible Image Edits 基础实现；multipart/form-data 请求体透传到上游 /v1/images/edits，发出前剥离 routerx 表单字段，并使用其中的 routerx.route 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整文件大小限制、安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Image Edits 基础实现；multipart/form-data 请求体透传到上游 /v1/images/edits，发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整文件大小限制、安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         $ref: "#/components/requestBodies/ImageMultipart"
       responses:
@@ -2139,9 +2151,11 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 图像变体转发
-      description: OpenAI-compatible Image Variations 基础实现；multipart/form-data 请求体透传到上游 /v1/images/variations，发出前剥离 routerx 表单字段，并使用其中的 routerx.route 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整文件大小限制、安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Image Variations 基础实现；multipart/form-data 请求体透传到上游 /v1/images/variations，发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整文件大小限制、安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         $ref: "#/components/requestBodies/ImageMultipart"
       responses:
@@ -2155,9 +2169,11 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 语音转文字转发
-      description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，发出前剥离 routerx 表单字段，并使用其中的 routerx.route 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、文件大小、安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、文件大小、安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         $ref: "#/components/requestBodies/AudioMultipart"
       responses:
@@ -2171,9 +2187,11 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 语音翻译转发
-      description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，发出前剥离 routerx 表单字段，并使用其中的 routerx.route 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、文件大小、安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、文件大小、安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         $ref: "#/components/requestBodies/AudioMultipart"
       responses:
@@ -2190,6 +2208,8 @@ paths:
       description: OpenAI-compatible Audio Speech 基础实现；JSON 请求体透传到上游 /v1/audio/speech，发出前剥离 routerx 私有字段。上游音频字节流会保留 Content-Type 透传给客户端；OpenAI Audio Speech 响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算。完整音频格式策略、时长限制和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2215,6 +2235,8 @@ paths:
       description: OpenAI-compatible Moderations 基础实现；JSON 请求体透传到上游 /v1/moderations，发出前剥离 routerx 私有字段。OpenAI Moderations 响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整安全策略、分类字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         $ref: "#/components/requestBodies/GenericJSON"
       responses:
@@ -2288,6 +2310,8 @@ paths:
         API Key、配额、本地限流、路由和基础下游错误均返回 Anthropic-compatible error envelope；本地限流 type 为 rate_limit_error。
       security:
         - ApiKeyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
       requestBody:
         required: true
         content:
@@ -2344,6 +2368,7 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
         - name: model
           in: path
           required: true
@@ -2371,6 +2396,7 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
         - name: model
           in: path
           required: true
@@ -2396,6 +2422,7 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
         - name: model
           in: path
           required: true
@@ -2430,6 +2457,7 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
+        - $ref: "#/components/parameters/RouterXOptions"
         - name: model
           in: path
           required: true
@@ -2544,6 +2572,14 @@ components:
       name: model
       in: query
       schema: { type: string }
+    RouterXOptions:
+      name: X-RouterX-Options
+      in: header
+      required: false
+      schema:
+        type: string
+        example: '{"route":{"channel_group":"premium"}}'
+      description: 可选 RouterX 私有选项 JSON 字符串；支持 route 路由偏好，body/form 中的 routerx 字段优先于该 header，发往真实上游前不会透传。
     StartTime:
       name: start_time
       in: query

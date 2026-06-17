@@ -9206,6 +9206,109 @@ func TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge(t *tes
 	}
 }
 
+func TestRouterXOptionsHeaderRoutesMultipartRequest(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	paidCalls := 0
+	freeCalls := 0
+	upstreamHandler := func(label string, calls *int) http.HandlerFunc {
+		return func(w http.ResponseWriter, req *http.Request) {
+			*calls++
+			if err := req.ParseMultipartForm(20 << 20); err != nil {
+				t.Errorf("%s upstream received invalid multipart body: %v", label, err)
+			}
+			if leaked := req.FormValue("routerx"); leaked != "" {
+				t.Errorf("routerx private form field leaked to upstream: %q", leaked)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"text":"` + label + ` transcript"}`))
+		}
+	}
+	freeUpstream := httptest.NewServer(upstreamHandler("free", &freeCalls))
+	defer freeUpstream.Close()
+	paidUpstream := httptest.NewServer(upstreamHandler("paid", &paidCalls))
+	defer paidUpstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("billing.default_user_channel_group_access", `["free","paid"]`); err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "routerx-header",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	createChannel := func(name, group, baseURL string, priority int) {
+		t.Helper()
+		resp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+			"type":     common.ChannelTypeOpenAICompat,
+			"name":     name,
+			"models":   "whisper-test",
+			"base_url": baseURL,
+			"api_key":  "upstream-secret-" + group,
+			"group":    group,
+			"priority": priority,
+		})
+		if resp.Code != http.StatusOK {
+			t.Fatalf("create %s channel failed: %d %s", name, resp.Code, resp.Body.String())
+		}
+	}
+	createChannel("free", "free", freeUpstream.URL, 50)
+	createChannel("paid", "paid", paidUpstream.URL, 1)
+
+	var reqBody bytes.Buffer
+	writer := multipart.NewWriter(&reqBody)
+	if err := writer.WriteField("model", "whisper-test"); err != nil {
+		t.Fatal(err)
+	}
+	fileWriter, err := writer.CreateFormFile("file", "sample.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fileWriter.Write([]byte("RIFF-routerx-header-audio")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &reqBody)
+	req.Header.Set("Authorization", "Bearer "+tokenPayload.Data.Key)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-RouterX-Options", `{"route":{"channel_group":"paid"}}`)
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"text":"paid transcript"`) {
+		t.Fatalf("X-RouterX-Options should route multipart request to paid upstream, got %d %s", resp.Code, resp.Body.String())
+	}
+	if paidCalls != 1 || freeCalls != 0 {
+		t.Fatalf("X-RouterX-Options should select paid channel only, paid=%d free=%d", paidCalls, freeCalls)
+	}
+}
+
 func TestChatCompletionStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

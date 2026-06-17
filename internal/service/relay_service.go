@@ -44,6 +44,7 @@ type RelayRawResult struct {
 
 type relayUserAgentContextKey struct{}
 type relayRequestIDContextKey struct{}
+type relayRouterXOptionsContextKey struct{}
 type relayRequestSnapshotContextKey struct{}
 type relayPolicySnapshotContextKey struct{}
 type relayRouteSnapshotContextKey struct{}
@@ -77,6 +78,15 @@ func ContextWithRelayRequestID(ctx context.Context, requestID string) context.Co
 	}
 	ctx = relay.ContextWithRequestID(ctx, requestID)
 	return context.WithValue(ctx, relayRequestIDContextKey{}, strings.TrimSpace(requestID))
+}
+
+// ContextWithRelayRouterXOptions stores the optional X-RouterX-Options header.
+// Request body or multipart form routerx fields still take precedence.
+func ContextWithRelayRouterXOptions(ctx context.Context, options string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, relayRouterXOptionsContextKey{}, strings.TrimSpace(options))
 }
 
 func ContextWithRelayRequestSnapshot(ctx context.Context, snapshot string) context.Context {
@@ -121,6 +131,18 @@ func relayRequestIDFromContext(ctx context.Context) string {
 	}
 	value, _ := ctx.Value(relayRequestIDContextKey{}).(string)
 	return strings.TrimSpace(value)
+}
+
+func relayRouterXOptionsFromContext(ctx context.Context) json.RawMessage {
+	if ctx == nil {
+		return nil
+	}
+	value, _ := ctx.Value(relayRouterXOptionsContextKey{}).(string)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return json.RawMessage(value)
 }
 
 func relayRequestSnapshotFromContext(ctx context.Context) string {
@@ -366,7 +388,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	if token == nil {
 		return nil, nil, &HTTPError{Status: 401, Message: "invalid api key", Type: "authentication_error", Code: "invalid_api_key"}
 	}
-	reqInfo, err := parseRelayRequestWithContentType(apiType, body, contentType)
+	reqInfo, err := parseRelayRequestWithContentType(apiType, body, contentType, relayRouterXOptionsFromContext(ctx))
 	if err != nil {
 		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: relayRequestErrorCode(err)}
 	}
@@ -565,7 +587,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if token == nil {
 		return nil, &HTTPError{Status: 401, Message: "invalid api key", Type: "authentication_error", Code: "invalid_api_key"}
 	}
-	reqInfo, err := parseRelayRequest(apiType, body)
+	reqInfo, err := parseRelayRequest(apiType, body, relayRouterXOptionsFromContext(ctx))
 	if err != nil {
 		return nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: relayRequestErrorCode(err)}
 	}
@@ -793,14 +815,14 @@ type relayRequestInfo struct {
 	Route  RoutePreference
 }
 
-func parseRelayRequestWithContentType(apiType relay.APIType, body []byte, contentType string) (relayRequestInfo, error) {
+func parseRelayRequestWithContentType(apiType relay.APIType, body []byte, contentType string, headerRouterX json.RawMessage) (relayRequestInfo, error) {
 	if isMultipartRelayContentType(contentType) {
-		return parseMultipartRelayRequest(body, contentType)
+		return parseMultipartRelayRequest(body, contentType, headerRouterX)
 	}
-	return parseRelayRequest(apiType, body)
+	return parseRelayRequest(apiType, body, headerRouterX)
 }
 
-func parseRelayRequest(apiType relay.APIType, body []byte) (relayRequestInfo, error) {
+func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.RawMessage) (relayRequestInfo, error) {
 	if apiType == relay.APIModels {
 		return relayRequestInfo{}, nil
 	}
@@ -812,7 +834,11 @@ func parseRelayRequest(apiType relay.APIType, body []byte) (relayRequestInfo, er
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return relayRequestInfo{}, errInvalidJSONBody
 	}
-	route, err := parseRouterXRoute(payload.RouterX)
+	routerXRaw := payload.RouterX
+	if len(routerXRaw) == 0 || isJSONNull(routerXRaw) {
+		routerXRaw = headerRouterX
+	}
+	route, err := parseRouterXRoute(routerXRaw)
 	if err != nil {
 		return relayRequestInfo{}, err
 	}
@@ -823,13 +849,14 @@ func parseRelayRequest(apiType relay.APIType, body []byte) (relayRequestInfo, er
 	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream, Route: route}, nil
 }
 
-func parseMultipartRelayRequest(body []byte, contentType string) (relayRequestInfo, error) {
+func parseMultipartRelayRequest(body []byte, contentType string, headerRouterX json.RawMessage) (relayRequestInfo, error) {
 	boundary, err := multipartBoundary(contentType)
 	if err != nil {
 		return relayRequestInfo{}, err
 	}
 	reader := multipart.NewReader(bytes.NewReader(body), boundary)
 	info := relayRequestInfo{}
+	hasRouterXFormField := false
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -852,12 +879,20 @@ func parseMultipartRelayRequest(body []byte, contentType string) (relayRequestIn
 		case "stream":
 			info.Stream = multipartBoolValue(raw)
 		case "routerx":
+			hasRouterXFormField = true
 			route, err := parseRouterXRoute(bytes.TrimSpace(raw))
 			if err != nil {
 				return relayRequestInfo{}, err
 			}
 			info.Route = route
 		}
+	}
+	if !hasRouterXFormField {
+		route, err := parseRouterXRoute(headerRouterX)
+		if err != nil {
+			return relayRequestInfo{}, err
+		}
+		info.Route = route
 	}
 	if info.Model == "" {
 		return relayRequestInfo{}, errModelRequired
