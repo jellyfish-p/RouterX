@@ -299,7 +299,7 @@ volumes:
 | `/ready` | 就绪检查 | DB、迁移状态、必要配置 |
 | `/metrics` | 指标 | Prometheus metrics，受 `observability.metrics_enabled` 控制 |
 
-当前 `/ready` 已检查数据库连通性、初始化后 `jwt.secret`、`relay.timeout`，以及已启用支付 provider 的必需密钥：
+当前 `/ready` 已检查数据库连通性、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、`relay.timeout`，以及已启用支付 provider 的必需密钥：
 
 - `payment.epay.enabled=true` 时必须存在 `PAYMENT_EPAY_KEY`。
 - `payment.stripe.enabled=true` 时必须存在 `PAYMENT_STRIPE_SECRET_KEY` 和 `PAYMENT_STRIPE_WEBHOOK_SECRET`。
@@ -315,7 +315,7 @@ volumes:
 Redis 失败处理：
 
 - `/health` 可以仍然健康。
-- `/ready` 在外部数据库、生产或集群模式下应返回不就绪，避免流量进入功能受限实例。
+- `/ready` 在外部数据库模式下已返回不就绪；生产或集群模式后续可在同一策略上扩展，避免流量进入功能受限实例。
 - 如果当前是 SQLite 单镜像模式，Redis 不可用不影响 `/ready`，但相关缓存和限流只能使用进程内策略。
 
 ## 安全基线

@@ -103,7 +103,7 @@ main
 | User | `/v0/user` | `SetupCheck`、User JWT | 用户控制台 API |
 | Relay | `/v1` | `SetupCheck`、API Key Auth | OpenAI、Gemini、Anthropic 入口协议和多上游转发 API |
 
-当前 `/ready` 挂在公共路由上，已检查数据库连接和初始化后的 JWT 配置。目标生产版本应继续检查迁移状态、生产密钥、Redis 策略和关键 settings 格式；这些检查属于运维就绪，不应阻塞 `/health` 存活探测。
+当前 `/ready` 挂在公共路由上，已检查数据库连接、外部数据库模式下 Redis 可用性和初始化后的 JWT 配置。目标生产版本应继续检查迁移状态、生产密钥、更多 Redis 集群策略和关键 settings 格式；这些检查属于运维就绪，不应阻塞 `/health` 存活探测。
 
 全局中间件顺序：
 

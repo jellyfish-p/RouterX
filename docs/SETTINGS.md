@@ -214,6 +214,7 @@ validate key exists
 
 - `jwt.secret` 缺失、过短或多实例不一致。
 - `ENCRYPTION_KEY` 或 KMS 不可用，且数据库存在 `enc:v1:` 下游密钥。
+- `SQL_DSN` 指向 PostgreSQL/MySQL 等外部数据库但 Redis 不可用。
 - `relay.timeout <= 0`。
 - `rate_limit.*` 类型非法。
 - `billing.default_ratio <= 0`。

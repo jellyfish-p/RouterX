@@ -3907,6 +3907,27 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	}
 }
 
+func TestReadinessRequiresRedisForExternalDatabaseMode(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("SQL_DSN", "postgres://routerx:secret@db.example/routerx?sslmode=disable")
+	t.Setenv("REDIS_CONN", "")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+
+	readyResp := performJSON(r, http.MethodGet, "/ready", "", nil)
+	if readyResp.Code != http.StatusServiceUnavailable || !strings.Contains(readyResp.Body.String(), "redis") {
+		t.Fatalf("external database mode without Redis should be not ready, got %d %s", readyResp.Code, readyResp.Body.String())
+	}
+}
+
 func TestAdminSettingUpdateWritesAuditLog(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

@@ -187,7 +187,7 @@ P2 验收标准：
 
 | 工作包 | 阶段 | 主要模块 | 必须证明的结果 | 当前测试线索 |
 |--------|------|----------|----------------|--------------|
-| WP0-1 初始化、settings 与就绪 | P0 | setup、settings、ready、JWT | 空库可初始化；重复初始化被拒绝；初始化后 JWT 可用；settings 默认值和类型可验证；`/ready` 能反映 DB、JWT 和关键配置状态 | `TestP0BackendFlow`、`TestSetupBootstrapAdminQuotaAndSettingsDefaults`、`TestSettingsValidationAndReadiness`、`TestSettingCacheRefreshesStaleRedisValues` |
+| WP0-1 初始化、settings 与就绪 | P0 | setup、settings、ready、JWT | 空库可初始化；重复初始化被拒绝；初始化后 JWT 可用；settings 默认值和类型可验证；`/ready` 能反映 DB、外部数据库 Redis 依赖、JWT 和关键配置状态 | `TestP0BackendFlow`、`TestSetupBootstrapAdminQuotaAndSettingsDefaults`、`TestSettingsValidationAndReadiness`、`TestSettingCacheRefreshesStaleRedisValues`、`TestInitRedisSkipsEmptyConfig`、`TestReadinessRequiresRedisForExternalDatabaseMode` |
 | WP0-2 账号与权限 | P0 | auth、user、admin middleware、audit | 用户登录签发 JWT；管理员/超级管理员边界正确；普通用户不能越权；用户和管理员账号管理审计不泄露密码 | `TestAdminPrivilegeBoundaries`、`TestAdminUserManagementAuditLogs`、`TestAdminAccountManagementAuditLogs` 覆盖账号边界和审计 |
 | WP0-3 API Key 生命周期 | P0 | token、API Key auth、Redis 缓存、audit | Key 明文只返回一次；DB 保存哈希；禁用、过期、删除、用户禁用立即影响 `/v1`；创建、编辑、禁用、删除和用户端额度编辑拒绝可审计 | `TestP0BackendFlow` 覆盖创建、禁用和额度边界；`TestUserAPIKeyManagementAuditLogs` 覆盖生命周期审计 |
 | WP0-4 通道基础管理 | P0 | channel、adapter registry、secret encryption、audit | 管理员可创建/测试/启停通道；下游密钥加密；响应、日志和审计摘要不泄露密钥 | `TestP0BackendFlow`、`TestChannelExtendedManagement`、`TestAdminChannelManagementAuditLogs` |

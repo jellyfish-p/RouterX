@@ -78,6 +78,10 @@ func readyHandler(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "database": "unavailable"})
 		return
 	}
+	if problem := readinessRedisProblem(); problem != "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "redis": problem})
+		return
+	}
 	if internal.IsInitialized() {
 		if problem := readinessSettingProblem(); problem != "" {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "setting": problem})
@@ -108,6 +112,8 @@ func metricsHandler(c *gin.Context) {
 	}
 	ready := int64(1)
 	if sqlDB, err := internal.DB.DB(); err != nil || sqlDB.Ping() != nil {
+		ready = 0
+	} else if readinessRedisProblem() != "" {
 		ready = 0
 	} else if internal.IsInitialized() && readinessSettingProblem() != "" {
 		ready = 0
@@ -933,6 +939,27 @@ func redisUp() int64 {
 		return 0
 	}
 	return 1
+}
+
+func readinessRedisProblem() string {
+	if !redisRequiredForCurrentMode() {
+		return ""
+	}
+	if internal.RDB == nil {
+		return "required"
+	}
+	if redisUp() == 0 {
+		return "unavailable"
+	}
+	return ""
+}
+
+func redisRequiredForCurrentMode() bool {
+	dsn := strings.TrimSpace(os.Getenv("SQL_DSN"))
+	if dsn == "" || strings.HasPrefix(dsn, "sqlite://") || strings.HasPrefix(dsn, "file:") {
+		return false
+	}
+	return true
 }
 
 func metricsEnabled() bool {

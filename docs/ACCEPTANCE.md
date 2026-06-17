@@ -97,7 +97,7 @@ P1 可以宣称完成时，必须在 P0 全部通过后再满足：
 | G16 访问控制 | API Key scope、用户分组、通道分组、入口协议、来源 IP、方法路径、日/月预算、并发上限、RPM/TPM 和模型/APIType 权限只能收窄，不能放大权限。 | `TestUserGroupChannelGroupAccessFiltersRelayCandidates`、`TestAPIKeyModelScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyChannelGroupScopeFiltersRelayCandidates`、`TestAPIKeyEntryProtocolScopeRejectsBeforeRelay`、`TestAPIKeyIPScopeRejectsBeforeRelay`、`TestAPIKeyMethodScopeRejectsBeforeRelay`、`TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed`、`TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed`、`TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight`、`TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay`、`TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed`、访问允许/拒绝测试。 |
 | G17 可靠性 | 非流式安全重试、熔断、限流和半开恢复可解释。 | 故障注入测试、指标和 Runbook。 |
 | G18 计费规则 | 价格表达式、倍率、规则快照和历史账单解释一致。 | 计费事实链和调用事实快照测试。 |
-| G19 运行模式 | SQLite 单镜像可无 Redis；外部数据库或集群模式必须 Redis 可用。 | readiness、启动模式和 Redis 故障测试。 |
+| G19 运行模式 | SQLite 单镜像可无 Redis；外部数据库或集群模式必须 Redis 可用。 | `TestInitRedisSkipsEmptyConfig`、`TestReadinessRequiresRedisForExternalDatabaseMode`、readiness、启动模式和 Redis 故障测试。 |
 | G20 热路径缓存和日志库 | 通道候选缓存可失效，独立日志库不破坏账单最小事实。 | 缓存版本测试、`LOG_SQL_DSN` 初始化/副本写入/降级测试。 |
 
 P1 新增任何协议、APIType 或 provider 时，必须先更新 `docs/PROTOCOLS.md`，再更新 API、Relay、错误、测试、Runbook 和追踪矩阵。
