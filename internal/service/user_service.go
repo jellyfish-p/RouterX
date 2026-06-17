@@ -2188,6 +2188,59 @@ func (s *UserService) GetPaymentOrder(userID uint, orderNo string) (*model.Payme
 	return &order, nil
 }
 
+// CancelPaymentOrder 将当前用户自己的 pending 支付订单关闭。
+// 已关闭订单按幂等成功处理；已支付、退款中或已退款订单不能被用户取消。
+func (s *UserService) CancelPaymentOrder(userID uint, orderNo string) (*model.PaymentOrder, bool, error) {
+	orderNo = strings.TrimSpace(orderNo)
+	if userID == 0 || orderNo == "" {
+		return nil, false, errors.New("payment order is required")
+	}
+	var result *model.PaymentOrder
+	changed := false
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		var order model.PaymentOrder
+		if err := tx.Where("user_id = ? AND order_no = ?", userID, orderNo).First(&order).Error; err != nil {
+			return err
+		}
+		switch order.Status {
+		case common.PaymentOrderStatusClosed:
+			result = &order
+			return nil
+		case common.PaymentOrderStatusPending:
+		default:
+			return errors.New("payment order is not pending")
+		}
+
+		now := time.Now()
+		updates := map[string]interface{}{
+			"status":     common.PaymentOrderStatusClosed,
+			"updated_at": now,
+		}
+		res := tx.Model(&model.PaymentOrder{}).
+			Where("id = ? AND status = ?", order.ID, common.PaymentOrderStatusPending).
+			Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			if err := tx.First(&order, order.ID).Error; err != nil {
+				return err
+			}
+			if order.Status == common.PaymentOrderStatusClosed {
+				result = &order
+				return nil
+			}
+			return errors.New("payment order is not pending")
+		}
+		order.Status = common.PaymentOrderStatusClosed
+		order.UpdatedAt = now
+		result = &order
+		changed = true
+		return nil
+	})
+	return result, changed, err
+}
+
 // GetEpayReturnOrder 返回易支付同步返回页可展示的本地订单状态。
 // 同步返回不可信，只允许读本地订单快照，入账必须等待异步通知。
 func (s *UserService) GetEpayReturnOrder(orderNo string) (*model.PaymentOrder, error) {

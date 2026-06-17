@@ -2,11 +2,13 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"routerx/internal/common"
 	"routerx/internal/dto"
 	"routerx/internal/model"
@@ -1205,6 +1207,31 @@ func (h *UserHandler) PaymentOrder(c *gin.Context) {
 	if err != nil {
 		common.FailWithStatus(c, 404, "支付订单不存在")
 		return
+	}
+	common.Success(c, dto.PaymentOrderInfoFromModel(order))
+}
+
+// POST /v0/user/payment/orders/:order_no/cancel — 取消未支付订单
+func (h *UserHandler) CancelPaymentOrder(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	order, changed, err := h.svc.CancelPaymentOrder(user.ID, c.Param("order_no"))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			common.FailWithStatus(c, 404, "支付订单不存在")
+			return
+		}
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if changed {
+		if err := h.recordAdminAudit(c, user, "payment_order.cancel", "payment_order", order.ID, nil, paymentOrderAuditSummary(order)); err != nil {
+			common.FailWithStatus(c, 500, "写入审计日志失败")
+			return
+		}
 	}
 	common.Success(c, dto.PaymentOrderInfoFromModel(order))
 }

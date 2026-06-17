@@ -49,6 +49,7 @@ func setupUserRoutes(
 			jwtRequired.POST("/payment/orders", userH.CreatePaymentOrder)
 			jwtRequired.GET("/payment/orders", userH.PaymentOrders)
 			jwtRequired.GET("/payment/orders/:order_no", userH.PaymentOrder)
+			jwtRequired.POST("/payment/orders/:order_no/cancel", userH.CancelPaymentOrder)
 		}
 	}
 }

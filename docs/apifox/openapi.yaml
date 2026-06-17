@@ -9,7 +9,7 @@ info:
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
-    - 充值码、额度流水查询、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、日志库健康和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、额度流水查询、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、日志库健康和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单与未支付订单取消、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -744,6 +744,34 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/PaymentOrderInfo"
+        "404":
+          description: 订单不存在或不属于当前用户。
+  /v0/user/payment/orders/{order_no}/cancel:
+    post:
+      tags: [User Payment]
+      summary: 取消未支付订单
+      description: 当前用户取消自己的 pending 支付订单，订单置为 closed 并写 payment_order.cancel 审计；已 closed 订单幂等返回当前状态，已支付、退款中或已退款订单拒绝取消，不会增加用户额度。
+      security:
+        - UserJWT: []
+      parameters:
+        - name: order_no
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 取消成功或订单已关闭。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentOrderInfo"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
         "404":
           description: 订单不存在或不属于当前用户。
   /v0/payment/stripe/webhook:

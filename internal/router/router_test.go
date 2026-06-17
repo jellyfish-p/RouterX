@@ -2879,6 +2879,124 @@ func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 	}
 }
 
+func TestUserCancelsPendingPaymentOrder(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_cancel",
+		Name:      "Cancel credits",
+		Amount:    "4.99",
+		Currency:  "usd",
+		Quota:     50,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	createOrder := func() string {
+		resp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+			"provider":   "stripe",
+			"product_id": "quota_cancel",
+			"return_url": "https://app.example.com/billing/result",
+		})
+		if resp.Code != http.StatusOK {
+			t.Fatalf("create payment order failed: %d %s", resp.Code, resp.Body.String())
+		}
+		var payload struct {
+			Data struct {
+				OrderNo string `json:"order_no"`
+				Status  string `json:"status"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Data.OrderNo == "" || payload.Data.Status != common.PaymentOrderStatusPending {
+			t.Fatalf("unexpected created order payload: %s", resp.Body.String())
+		}
+		return payload.Data.OrderNo
+	}
+
+	orderNo := createOrder()
+	cancelResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders/"+orderNo+"/cancel", rootJWT, nil)
+	if cancelResp.Code != http.StatusOK || !strings.Contains(cancelResp.Body.String(), `"status":"closed"`) {
+		t.Fatalf("user should cancel pending payment order, got %d %s", cancelResp.Code, cancelResp.Body.String())
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("order_no = ?", orderNo).First(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != common.PaymentOrderStatusClosed {
+		t.Fatalf("payment order should be closed after cancellation, got %+v", order)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 0 {
+		t.Fatalf("cancelled payment order must not grant quota, got %d", root.Quota)
+	}
+	var cancelAuditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "payment_order.cancel", "payment_order", fmt.Sprint(order.ID)).
+		Count(&cancelAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if cancelAuditCount != 1 {
+		t.Fatalf("payment order cancellation should write one audit log, got %d", cancelAuditCount)
+	}
+
+	secondCancelResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders/"+orderNo+"/cancel", rootJWT, nil)
+	if secondCancelResp.Code != http.StatusOK || !strings.Contains(secondCancelResp.Body.String(), `"status":"closed"`) {
+		t.Fatalf("cancelled payment order should be idempotent, got %d %s", secondCancelResp.Code, secondCancelResp.Body.String())
+	}
+	cancelAuditCount = 0
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "payment_order.cancel", "payment_order", fmt.Sprint(order.ID)).
+		Count(&cancelAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if cancelAuditCount != 1 {
+		t.Fatalf("idempotent cancellation must not duplicate audit logs, got %d", cancelAuditCount)
+	}
+
+	paidOrderNo := createOrder()
+	now := time.Now()
+	if err := internal.DB.Model(&model.PaymentOrder{}).Where("order_no = ?", paidOrderNo).Updates(map[string]interface{}{
+		"status":  common.PaymentOrderStatusPaid,
+		"paid_at": &now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	paidCancelResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders/"+paidOrderNo+"/cancel", rootJWT, nil)
+	if paidCancelResp.Code != http.StatusBadRequest {
+		t.Fatalf("paid payment order should reject cancellation, got %d %s", paidCancelResp.Code, paidCancelResp.Body.String())
+	}
+	var paidOrder model.PaymentOrder
+	if err := internal.DB.Where("order_no = ?", paidOrderNo).First(&paidOrder).Error; err != nil {
+		t.Fatal(err)
+	}
+	if paidOrder.Status != common.PaymentOrderStatusPaid {
+		t.Fatalf("paid payment order must remain paid after cancellation attempt, got %+v", paidOrder)
+	}
+}
+
 func TestStripeOrderCreatesCheckoutSessionWhenConfigured(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
