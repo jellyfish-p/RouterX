@@ -834,7 +834,7 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/responses` | 基础实现，OpenAI-compatible Responses JSON 透传和 usage 映射 |
 | POST | `/v1/chat/completions` | 基础实现，Chat Completions；支持非流式和 OpenAI-compatible SSE 流式 |
 | POST | `/v1/completions` | 基础实现，Legacy Completions；支持非流式和 OpenAI-compatible SSE 流式 |
-| POST | `/v1/embeddings` | 基础实现，OpenAI-compatible Embeddings JSON 透传、`routerx` 剥离和 usage 扣费 |
+| POST | `/v1/embeddings` | 基础实现，OpenAI-compatible Embeddings JSON 透传、Azure deployment 路径转发、`routerx` 剥离和 usage 扣费 |
 | POST | `/v1/images/generations` | 基础实现，OpenAI-compatible 图像生成 JSON 透传；无 usage 时按 P0 最低计费 |
 | POST | `/v1/images/edits` | 基础实现，OpenAI-compatible multipart 图像表单透传、`routerx` 表单字段剥离和路由偏好；无 usage 时按 P0 最低计费 |
 | POST | `/v1/images/variations` | 基础实现，OpenAI-compatible multipart 图像表单透传、`routerx` 表单字段剥离和路由偏好；无 usage 时按 P0 最低计费 |

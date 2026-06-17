@@ -14,7 +14,7 @@ import (
 )
 
 // AzureAdapter Azure OpenAI 厂商适配器。
-// Azure 的 API 路径格式: /openai/deployments/{model}/chat/completions?api-version=2024-02-15-preview
+// Azure 的 API 路径格式: /openai/deployments/{model}/{operation}?api-version=2024-02-15-preview
 // 使用 api-key header 而非 Bearer token。
 type AzureAdapter struct{}
 
@@ -29,7 +29,7 @@ func (a *AzureAdapter) GetChannelType() int {
 }
 
 func (a *AzureAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
-	if apiType != APIChatCompletions {
+	if apiType != APIChatCompletions && apiType != APIEmbeddings {
 		return nil, errors.New("unsupported api type")
 	}
 	var payload map[string]json.RawMessage
@@ -51,6 +51,8 @@ func (a *AzureAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 	switch apiType {
 	case APIChatCompletions:
 		return "/openai/deployments/" + deployment + "/chat/completions?api-version=" + defaultAzureAPIVersion
+	case APIEmbeddings:
+		return "/openai/deployments/" + deployment + "/embeddings?api-version=" + defaultAzureAPIVersion
 	default:
 		return ""
 	}
@@ -82,7 +84,7 @@ func (a *AzureAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey 
 }
 
 func (a *AzureAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
-	if apiType != APIChatCompletions {
+	if apiType != APIChatCompletions && apiType != APIEmbeddings {
 		return nil, nil, errors.New("unsupported api type")
 	}
 	if !json.Valid(body) {

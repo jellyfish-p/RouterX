@@ -8765,6 +8765,119 @@ func TestAzureChannelFetchModelsUsesDeploymentsEndpoint(t *testing.T) {
 	}
 }
 
+func TestAzureEmbeddingsUsesDeploymentPathAndAPIKey(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamAPIVersion := ""
+	upstreamAPIKey := ""
+	upstreamAuth := ""
+	upstreamBody := map[string]interface{}{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		upstreamAPIVersion = req.URL.Query().Get("api-version")
+		upstreamAPIKey = req.Header.Get("api-key")
+		upstreamAuth = req.Header.Get("Authorization")
+		raw := new(bytes.Buffer)
+		_, _ = raw.ReadFrom(req.Body)
+		if err := json.Unmarshal(raw.Bytes(), &upstreamBody); err != nil {
+			t.Errorf("azure embeddings upstream body should be json: %v", err)
+		}
+		if _, ok := upstreamBody["model"]; ok {
+			t.Errorf("azure embeddings upstream body should not include model field: %#v", upstreamBody)
+		}
+		if _, ok := upstreamBody["routerx"]; ok {
+			t.Errorf("azure embeddings upstream body should not include routerx field: %#v", upstreamBody)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"embed-prod","usage":{"prompt_tokens":6,"total_tokens":6}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "azure-embeddings",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeAzure,
+		"name":     "azure-embeddings",
+		"models":   "embed-prod",
+		"base_url": upstream.URL,
+		"api_key":  "azure-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create azure embeddings channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/embeddings", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "embed-prod",
+		"input": "hello",
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"provider": "azure"},
+		},
+	})
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"object":"embedding"`) {
+		t.Fatalf("azure embeddings should return upstream OpenAI-compatible response, got %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamCalls != 1 || upstreamPath != "/openai/deployments/embed-prod/embeddings" || upstreamAPIVersion == "" {
+		t.Fatalf("azure embeddings should use deployment path and api-version, calls=%d path=%q api-version=%q", upstreamCalls, upstreamPath, upstreamAPIVersion)
+	}
+	if upstreamAPIKey != "azure-secret" || upstreamAuth != "" {
+		t.Fatalf("azure embeddings should use api-key header only, api-key=%q authorization=%q", upstreamAPIKey, upstreamAuth)
+	}
+	if upstreamBody["input"] != "hello" {
+		t.Fatalf("azure embeddings should preserve input, got %#v", upstreamBody)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 44 {
+		t.Fatalf("azure embeddings usage should deduct token budget by 6, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 94 {
+		t.Fatalf("azure embeddings usage should deduct user quota by 6, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 6 || callLog.TotalTokens != 6 || callLog.PromptTokens != 6 {
+		t.Fatalf("unexpected azure embeddings success log: %+v", callLog)
+	}
+}
+
 func TestResponsesPassthroughExtractsUsageAndDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
