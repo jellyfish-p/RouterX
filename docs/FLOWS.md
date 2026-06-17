@@ -185,7 +185,7 @@ P0 usage.total_tokens -> quota_used
 | 用户路径 | 测试 |
 |----------|------|
 | 初始化和启动额度 | `TestSetupBootstrapAdminQuota` |
-| settings 默认值和 readiness | `TestSettingsRegistryAndReadiness` |
+| settings 默认值和 readiness | `TestSettingsValidationAndReadiness` |
 | Chat 成功调用 | `TestChatCompletionSuccessLogsAndDeductsQuota` |
 | 请求错误不调用下游 | `TestChatCompletionInvalidRequestDoesNotCallUpstream` |
 | 下游错误映射 | `TestChatCompletionUpstreamErrorMapping` |

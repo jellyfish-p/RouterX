@@ -55,7 +55,7 @@ P0 的交付目标是：
 
 验收：
 
-- `TestSettingsRegistryAndReadiness` 覆盖默认值、类型错误、缓存刷新、脱敏和 production readiness。
+- `TestSettingsValidationAndReadiness` 覆盖默认值、类型错误、缓存刷新、脱敏和 production readiness。
 - `go test ./...` 通过。
 
 ### 2. 初始化启动额度

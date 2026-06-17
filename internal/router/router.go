@@ -1118,6 +1118,9 @@ func readinessSettingProblem() string {
 	if !strict {
 		return ""
 	}
+	if problem := readinessEncryptionKeyProblem(); problem != "" {
+		return problem
+	}
 	relayTimeout, ok := settingValue("relay.timeout")
 	if !ok {
 		return "relay.timeout"
@@ -1144,6 +1147,36 @@ func readinessSettingProblem() string {
 		return "PAYMENT_STRIPE_WEBHOOK_SECRET"
 	}
 	return ""
+}
+
+func readinessEncryptionKeyProblem() string {
+	if strings.TrimSpace(os.Getenv("ENCRYPTION_KEY")) != "" {
+		return ""
+	}
+	if encryptedChannelSecretsPresent() {
+		return "ENCRYPTION_KEY"
+	}
+	return ""
+}
+
+func encryptedChannelSecretsPresent() bool {
+	var channels []model.Channel
+	if err := internal.DB.
+		Model(&model.Channel{}).
+		Select("api_key, api_keys, upstreams").
+		Find(&channels).Error; err != nil {
+		return false
+	}
+	for _, channel := range channels {
+		// APIKeys and Upstreams are serialized JSON columns, so the prefix scan
+		// intentionally works on their raw payloads instead of decoded structs.
+		if common.ContainsEncryptedSecret(channel.APIKey) ||
+			common.ContainsEncryptedSecret(string(channel.APIKeys)) ||
+			common.ContainsEncryptedSecret(string(channel.Upstreams)) {
+			return true
+		}
+	}
+	return false
 }
 
 func settingValue(key string) (string, bool) {

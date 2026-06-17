@@ -170,7 +170,7 @@ Gemini-compatible 错误示例：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/health` | 已注册 | 健康检查 |
-| GET | `/ready` | 已实现 | 就绪检查，检查数据库、外部数据库模式下 Redis 可用性、初始化后的 JWT 配置、关键 settings，以及已启用支付 provider 的必需密钥 |
+| GET | `/ready` | 已实现 | 就绪检查，检查数据库、外部数据库模式下 Redis 可用性、初始化后的 JWT 配置、关键 settings、已启用支付 provider 的必需密钥，以及存在 `enc:v1:` 通道密钥时的 `ENCRYPTION_KEY` |
 | GET | `/metrics` | 基础实现 | Prometheus 文本指标；默认由 `observability.metrics_enabled=false` 关闭，已包含实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付、审计和 DB/Redis/日志库基础指标 |
 | GET | `/v0/setup/status` | 已实现 | 查询系统是否初始化 |
 | POST | `/v0/setup/init` | 已实现 | 首次初始化超级管理员和默认设置 |

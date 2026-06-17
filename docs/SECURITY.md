@@ -56,8 +56,8 @@ RouterX 运行时
 | ID | 威胁 | 风险场景 | 默认控制 | 验收证据 |
 |----|------|----------|----------|----------|
 | S1 | API Key 泄露 | 用户 API Key 出现在日志、管理响应、缓存键或错误信息中。 | 明文只返回一次；数据库保存 SHA256；日志和响应脱敏；缓存键使用哈希或内部 ID。 | `TestP0BackendFlow`、敏感词日志扫描、API Key 列表不返回明文。 |
-| S2 | 上游密钥泄露 | 通道密钥被管理列表、测试接口、错误响应或调用日志暴露。 | 使用 `ENCRYPTION_KEY` 或 KMS 加密；管理响应只返回脱敏摘要；错误摘要不含密钥。 | `TestChannelExtendedManagement`、通道响应和日志不包含测试密钥。 |
-| S3 | JWT 伪造或跨实例失效 | 多实例各自生成 `jwt.secret`，或弱密钥导致伪造。 | 生产必须显式配置一致 `JWT_SECRET` 或数据库 `jwt.secret`；`/ready` 检查关键配置。 | `TestSettingsRegistryAndReadiness`、生产 readiness 缺关键密钥时不就绪。 |
+| S2 | 上游密钥泄露 | 通道密钥被管理列表、测试接口、错误响应或调用日志暴露。 | 使用 `ENCRYPTION_KEY` 或 KMS 加密；管理响应只返回脱敏摘要；错误摘要不含密钥；已有加密通道密钥但缺少主密钥时 `/ready` 不就绪。 | `TestChannelExtendedManagement`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、通道响应和日志不包含测试密钥。 |
+| S3 | JWT 伪造或跨实例失效 | 多实例各自生成 `jwt.secret`，或弱密钥导致伪造。 | 生产必须显式配置一致 `JWT_SECRET` 或数据库 `jwt.secret`；`/ready` 检查关键配置。 | `TestSettingsValidationAndReadiness`、生产 readiness 缺关键密钥时不就绪。 |
 | S4 | 管理权限越权 | 普通用户调用管理员接口，或普通管理员修改超级管理员配置。 | User JWT + role 校验；超级管理员能力单独判断；API Key 不继承管理权限。 | `TestAdminPrivilegeBoundaries`、权限矩阵接口测试。 |
 | S5 | API Key 越权调用管理接口 | 管理员的 API Key 被拿来调用 `/v0/admin/*`。 | API Key 只在 `/v1/*` 生效；管理接口只看 User JWT。 | API 鉴权边界测试，API Key 调 `/v0` 返回未登录或权限错误。 |
 | S6 | 路由或 scope 越权 | 调用方通过 `routerx.route` 强制使用无权通道、禁用通道或高价通道，或通过 API Key 调用 scope 未允许模型/APIType/通道分组/入口协议/IP/方法路径，或超过 Key 日/月预算/并发上限/RPM/TPM。 | 先做后台硬性过滤、用户分组访问控制、API Key scope 和访问控制，再应用偏好；拒绝原因写日志。 | `TestChannelRoutingConfigResolution`、`TestUserGroupChannelGroupAccessFiltersRelayCandidates`、`TestAPIKeyModelScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyChannelGroupScopeFiltersRelayCandidates`、`TestAPIKeyEntryProtocolScopeRejectsBeforeRelay`、`TestAPIKeyIPScopeRejectsBeforeRelay`、`TestAPIKeyMethodScopeRejectsBeforeRelay`、`TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed`、`TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed`、`TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight`、`TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay`、`TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed`、`routerx.route` 合法/拒绝路径测试。 |
@@ -66,7 +66,7 @@ RouterX 运行时
 | S9 | 失败调用误扣 | 本地请求错误、无通道、余额不足或上游未调用时仍计费。 | 预检拒绝发生在上游前；失败默认 `quota_used=0`；如启用失败成本需写 settings 和快照。 | `TestRelayPrecheckRejectsBeforeUpstream`、失败日志断言。 |
 | S10 | `/v1` 错误泄露内部细节 | 错误响应暴露 DSN、密钥、堆栈或原始上游敏感响应。 | 错误映射为入口协议兼容格式；内部错误只保存脱敏摘要。 | `TestChatCompletionUpstreamErrorMapping`、敏感词扫描。 |
 | S11 | 请求/响应体日志泄露 | prompt、响应、Authorization、Cookie 或密钥被完整记录。 | body 日志默认关闭；开启后截断和脱敏；敏感 header 不记录。 | `relay.log_body_max_bytes=0` 默认检查、日志脱敏测试。 |
-| S12 | settings 被错误修改 | 配置类型错误、敏感值明文返回、关键配置误改后无审计。 | settings 注册表校验类型和敏感级别；变更先校验再写 DB；写审计摘要。 | `TestSettingsRegistryAndReadiness`、配置修改审计测试。 |
+| S12 | settings 被错误修改 | 配置类型错误、敏感值明文返回、关键配置误改后无审计。 | settings 注册表校验类型和敏感级别；变更先校验再写 DB；写审计摘要。 | `TestSettingsValidationAndReadiness`、配置修改审计测试。 |
 | S13 | 支付伪造入账 | 客户端提交额度、伪造 webhook、金额不一致或重复通知。 | 服务端商品决定额度；校验签名、金额、货币、订单状态；幂等写事件。 | 支付签名和幂等测试、重复通知只入账一次。 |
 | S14 | OAuth/OIDC 账号接管 | 第三方 provider 返回相同 email 时自动绑定已有账号。 | 不因 email 自动接管；以 provider 稳定身份标识做 identity；绑定需已登录或明确恢复流程。 | 企业身份绑定和恢复测试。 |
 | S15 | 上游不可用扩大故障 | 401/403 被无限重试，或流式输出后切换通道造成协议混乱。 | 401/403 归因通道配置不重试；流式写出后不跨通道重试；熔断和错误计数可解释。 | 上游错误映射、重试和熔断测试。 |

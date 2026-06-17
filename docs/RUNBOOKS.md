@@ -558,7 +558,7 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 
 | Runbook | 对应能力 | 主要文档 | 建议测试 |
 |---------|----------|----------|----------|
-| RB-001 | 生产 readiness | `SETTINGS`、`OPERATIONS`、`ARCHITECTURE` | `TestSettingsRegistryAndReadiness` |
+| RB-001 | 生产 readiness | `SETTINGS`、`OPERATIONS`、`ARCHITECTURE` | `TestSettingsValidationAndReadiness`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets` |
 | RB-002 | 初始化闭环 | `DESIGN`、`FLOWS`、`API` | `TestSetupBootstrapAdminQuota` |
 | RB-003 | API Key 鉴权 | `API_KEYS`、`ACCOUNTS`、`SECURITY`、`API` | `TestRelayPrecheckRejectsBeforeUpstream` |
 | RB-004 | 额度预检 | `BILLING`、`ERRORS`、`RELAY` | `TestRelayPrecheckRejectsBeforeUpstream` |

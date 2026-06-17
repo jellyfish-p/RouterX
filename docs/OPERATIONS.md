@@ -301,16 +301,17 @@ volumes:
 | `/ready` | 就绪检查 | DB、迁移状态、必要配置 |
 | `/metrics` | 指标 | Prometheus metrics，受 `observability.metrics_enabled` 控制 |
 
-当前 `/ready` 已检查数据库连通性、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、`relay.timeout`，以及已启用支付 provider 的必需密钥：
+当前 `/ready` 已检查数据库连通性、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、`relay.timeout`、已启用支付 provider 的必需密钥，以及已有加密通道密钥时的主密钥：
 
 - `payment.epay.enabled=true` 时必须存在 `PAYMENT_EPAY_KEY`。
 - `payment.stripe.enabled=true` 时必须存在 `PAYMENT_STRIPE_SECRET_KEY` 和 `PAYMENT_STRIPE_WEBHOOK_SECRET`。
+- 数据库中存在 `enc:v1:` 通道密钥时必须存在 `ENCRYPTION_KEY`。
 
 目标生产就绪检查应继续补充：
 
 - 迁移状态不是 dirty。
 - 生产模式下 `JWT_SECRET` 或数据库 `jwt.secret` 可用且跨实例一致。
-- 生产模式下 `ENCRYPTION_KEY` 或 KMS 可用，且能解密已有 `enc:v1:` 密文。
+- KMS 可用性和已有 `enc:v1:` 密文的逐条解密巡检。
 - Redis 策略符合当前模式：SQLite 单镜像可无 Redis；外部数据库和集群模式必须 Redis 可用。
 - 必要 settings 已加载，关键配置值格式合法。
 
@@ -341,7 +342,7 @@ Redis 失败处理：
 - `jwt.secret` 初始化后不可为空。
 - `jwt.secret` 必须支持由 `JWT_SECRET` 环境变量指定；生产和多实例必须显式配置，禁止各实例启动时各自随机生成。
 - 下游 API Key、OAuth/OIDC client secret 应加密存储，主密钥来自 `ENCRYPTION_KEY` 环境变量或 KMS。
-- 当前加密格式使用 `enc:v1:` 前缀；未配置 `ENCRYPTION_KEY` 时新密钥可能以兼容方式保存，生产必须通过发布检查和 `/ready` 目标检查阻止这种状态接收流量。
+- 当前加密格式使用 `enc:v1:` 前缀；未配置 `ENCRYPTION_KEY` 时新密钥可能以兼容方式保存，已有 `enc:v1:` 通道密钥且缺少 `ENCRYPTION_KEY` 时 `/ready` 会阻止实例接收流量。
 - 支付密钥应通过环境变量、KMS 或加密配置提供，禁止写入前端响应、日志或明文配置文件。
 - API Key 明文只返回一次，数据库保存 SHA256 哈希；后续重点是存量明文迁移兜底、缓存失效和审计。
 - 管理端任何响应不得返回完整下游 API Key。

@@ -83,6 +83,7 @@
 | `TestSettingCacheRefreshesStaleRedisValues` | settings 读取缓存、单项更新和批量更新后的 Redis 刷新边界 |
 | `TestInitRedisSkipsEmptyConfig` | `REDIS_CONN` 为空时不隐式连接本机 Redis，SQLite 单机模式保持可降级 |
 | `TestReadinessRequiresRedisForExternalDatabaseMode` | `SQL_DSN` 指向外部数据库且 Redis 不可用时 `/ready` 返回不就绪 |
+| `TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets` | 数据库已有 `enc:v1:` 通道密钥但缺少 `ENCRYPTION_KEY` 时 `/ready` 返回不就绪 |
 | `TestInitLogDBUsesConfiguredDSN` | 启动期读取 `LOG_SQL_DSN`，初始化独立日志数据库并迁移 `logs` schema |
 | `TestLogServiceWritesMainFactAndExternalLogDB` | 配置独立日志库时，`LogService` 先在主库保留调用/结算事实并更新 API Key 最近使用摘要，再写日志库副本 |
 | `TestLogServiceFallsBackWhenExternalLogDBWriteFails` | 独立日志库运行期写入失败时，主库调用事实和基础 `billing_snapshot` 仍可恢复 |

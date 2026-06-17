@@ -4161,6 +4161,66 @@ func TestReadinessRequiresRedisForExternalDatabaseMode(t *testing.T) {
 	}
 }
 
+func TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets(t *testing.T) {
+	cases := []struct {
+		name    string
+		channel model.Channel
+	}{
+		{
+			name: "single api key",
+			channel: model.Channel{
+				APIKey: "enc:v1:single-encrypted",
+			},
+		},
+		{
+			name: "multi api keys",
+			channel: model.Channel{
+				APIKeys: model.NewJSONValue([]string{"enc:v1:multi-encrypted"}),
+			},
+		},
+		{
+			name: "upstream api key",
+			channel: model.Channel{
+				Upstreams: model.NewJSONValue([]map[string]string{{
+					"base_url": "https://upstream.example",
+					"api_key":  "enc:v1:upstream-encrypted",
+				}}),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+			t.Setenv("ENCRYPTION_KEY", "")
+			r := newTestRouter(t)
+
+			initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+				"username": "root",
+				"password": "password123",
+			})
+			if initResp.Code != http.StatusOK {
+				t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+			}
+
+			channel := tc.channel
+			channel.Type = common.ChannelTypeOpenAICompat
+			channel.Name = "encrypted-ready"
+			channel.Models = "gpt-ready"
+			channel.BaseURL = "https://upstream.example"
+			channel.Status = common.ChannelStatusEnabled
+			if err := internal.DB.Create(&channel).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			readyResp := performJSON(r, http.MethodGet, "/ready", "", nil)
+			if readyResp.Code != http.StatusServiceUnavailable || !strings.Contains(readyResp.Body.String(), "ENCRYPTION_KEY") {
+				t.Fatalf("encrypted channel secrets without ENCRYPTION_KEY should make ready fail, got %d %s", readyResp.Code, readyResp.Body.String())
+			}
+		})
+	}
+}
+
 func TestAdminSettingUpdateWritesAuditLog(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
