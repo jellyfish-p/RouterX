@@ -889,16 +889,65 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 	if loginAgainResp.Code != http.StatusUnauthorized {
 		t.Fatalf("self-cancelled user should not log in again, got %d %s", loginAgainResp.Code, loginAgainResp.Body.String())
 	}
-	duplicateResp := performJSON(r, http.MethodPost, "/v0/user/register", "", registerBody)
-	if duplicateResp.Code != http.StatusBadRequest {
-		t.Fatalf("preserved identity should block same username registration, got %d %s", duplicateResp.Code, duplicateResp.Body.String())
+	recoverResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "cancel-user",
+		"password":     "newpassword123",
+		"display_name": "Recovered User",
+	})
+	if recoverResp.Code != http.StatusOK {
+		t.Fatalf("preserved identity should recover cancelled account, got %d %s", recoverResp.Code, recoverResp.Body.String())
+	}
+	var recoveredPayload struct {
+		Data struct {
+			ID          uint   `json:"id"`
+			DisplayName string `json:"display_name"`
+			Status      int    `json:"status"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recoverResp.Body.Bytes(), &recoveredPayload); err != nil {
+		t.Fatal(err)
+	}
+	if recoveredPayload.Data.ID != user.ID || recoveredPayload.Data.DisplayName != "Recovered User" || recoveredPayload.Data.Status != common.UserStatusEnabled {
+		t.Fatalf("recovery should return original enabled user, got %+v want id=%d", recoveredPayload.Data, user.ID)
+	}
+	if err := internal.DB.First(&user, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Status != common.UserStatusEnabled || user.DisplayName != "Recovered User" {
+		t.Fatalf("recovered user should be enabled with updated profile, got %+v", user)
+	}
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.Status != common.TokenStatusDisabled {
+		t.Fatalf("recovery must not re-enable old API keys, got status=%d", storedToken.Status)
+	}
+	loginOldPasswordResp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "cancel-user",
+		"password": "password123",
+	})
+	if loginOldPasswordResp.Code != http.StatusUnauthorized {
+		t.Fatalf("old password should not work after recovery, got %d %s", loginOldPasswordResp.Code, loginOldPasswordResp.Body.String())
+	}
+	loginRecoveredJWT := loginBearer(t, r, "cancel-user", "newpassword123")
+	if loginRecoveredJWT == "" {
+		t.Fatal("recovered account should log in with new password")
+	}
+	var recoverAuditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "user.recover", "user", fmt.Sprint(user.ID)).
+		Count(&recoverAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if recoverAuditCount != 1 {
+		t.Fatalf("recovery should write one audit record, got count=%d", recoverAuditCount)
 	}
 	var userCount int64
 	if err := internal.DB.Model(&model.User{}).Where("username = ?", "cancel-user").Count(&userCount).Error; err != nil {
 		t.Fatal(err)
 	}
 	if userCount != 1 {
-		t.Fatalf("same username registration must not create a second account, got count=%d", userCount)
+		t.Fatalf("recovery must not create a second account, got count=%d", userCount)
 	}
 }
 

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"routerx/internal/common"
@@ -25,7 +26,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		common.FailWithStatus(c, 400, "注册参数无效")
 		return
 	}
-	user, err := h.svc.Register(req.Username, req.Password, req.DisplayName, req.Email)
+	result, err := h.svc.Register(req.Username, req.Password, req.DisplayName, req.Email)
 	if err != nil {
 		if errors.Is(err, service.ErrSelfRegistrationDisabled) ||
 			errors.Is(err, service.ErrUsernameRegistrationDisabled) ||
@@ -36,7 +37,28 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
-	common.Success(c, dto.UserBriefFromModel(user))
+	if result == nil || result.User == nil {
+		common.FailWithStatus(c, 500, "注册结果无效")
+		return
+	}
+	if result.Recovered {
+		if err := service.NewUserService().RecordAdminAuditLog(service.AdminAuditRecordInput{
+			RequestID:    c.GetString("request_id"),
+			ActorUserID:  result.User.ID,
+			ActorRole:    result.User.Role,
+			Action:       "user.recover",
+			ResourceType: "user",
+			ResourceID:   strconv.FormatUint(uint64(result.User.ID), 10),
+			AfterSummary: auditSummary(dto.UserBriefFromModel(result.User)),
+			Result:       "success",
+			IP:           c.ClientIP(),
+			UserAgent:    c.GetHeader("User-Agent"),
+		}); err != nil {
+			common.FailWithStatus(c, 500, "写入审计日志失败")
+			return
+		}
+	}
+	common.Success(c, dto.UserBriefFromModel(result.User))
 }
 
 // POST /v0/user/login — 用户登录 (返回 JWT)

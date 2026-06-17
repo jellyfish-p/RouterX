@@ -25,12 +25,17 @@ func NewAuthService() *AuthService {
 	return &AuthService{}
 }
 
+type RegisterResult struct {
+	User      *model.User
+	Recovered bool
+}
+
 // Register 用户注册。
 // 1. 校验启用的账号身份唯一性
 // 2. bcrypt 哈希密码
-// 3. 创建用户记录和本地 UserIdentity (role=0, status=1)
+// 3. 创建用户记录和本地 UserIdentity，或恢复已注销的普通用户
 // 4. 返回用户信息
-func (s *AuthService) Register(username, password, displayName, email string) (*model.User, error) {
+func (s *AuthService) Register(username, password, displayName, email string) (*RegisterResult, error) {
 	if err := registrationPolicyError(); err != nil {
 		return nil, err
 	}
@@ -46,17 +51,22 @@ func (s *AuthService) Register(username, password, displayName, email string) (*
 		displayName = username
 	}
 
-	var user *model.User
+	var result *RegisterResult
 	err := internal.DB.Transaction(func(tx *gorm.DB) error {
-		quota := registrationDefaultQuota()
-		groupID, err := registrationDefaultGroupID(tx)
+		usernameIdentity, err := findIdentityForRecovery(tx, model.UserIdentityMethodUsername, username)
 		if err != nil {
 			return err
 		}
-		if exists, err := identityExists(tx, model.UserIdentityMethodUsername, username); err != nil {
-			return err
-		} else if exists {
-			return errors.New("username already exists")
+		if usernameIdentity != nil {
+			if usernameIdentity.User == nil || usernameIdentity.User.Role != common.RoleUser || usernameIdentity.User.Status != common.UserStatusDisabled {
+				return errors.New("username already exists")
+			}
+			recovered, err := recoverRegisteredUser(tx, usernameIdentity, password, displayName, email)
+			if err != nil {
+				return err
+			}
+			result = &RegisterResult{User: recovered, Recovered: true}
+			return nil
 		}
 		if email != "" {
 			if exists, err := identityExists(tx, model.UserIdentityMethodEmail, email); err != nil {
@@ -64,6 +74,11 @@ func (s *AuthService) Register(username, password, displayName, email string) (*
 			} else if exists {
 				return errors.New("email already exists")
 			}
+		}
+		quota := registrationDefaultQuota()
+		groupID, err := registrationDefaultGroupID(tx)
+		if err != nil {
+			return err
 		}
 
 		hash, err := common.HashPassword(password)
@@ -109,10 +124,70 @@ func (s *AuthService) Register(username, password, displayName, email string) (*
 		if err := tx.Create(&identities).Error; err != nil {
 			return err
 		}
-		user = u
+		result = &RegisterResult{User: u}
 		return nil
 	})
-	return user, err
+	return result, err
+}
+
+func findIdentityForRecovery(tx *gorm.DB, method, identifier string) (*model.UserIdentity, error) {
+	var identity model.UserIdentity
+	err := tx.Preload("User").
+		Where("method = ? AND provider = ? AND identifier = ?", method, model.UserIdentityProviderLocal, identifier).
+		First(&identity).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &identity, nil
+}
+
+func recoverRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, displayName, email string) (*model.User, error) {
+	if identity == nil || identity.User == nil {
+		return nil, errors.New("account identity is invalid")
+	}
+	if email != "" {
+		emailIdentity, err := findIdentityForRecovery(tx, model.UserIdentityMethodEmail, email)
+		if err != nil {
+			return nil, err
+		}
+		if emailIdentity != nil && emailIdentity.UserID != identity.UserID {
+			return nil, errors.New("email already exists")
+		}
+	}
+	hash, err := common.HashPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	updates := map[string]interface{}{
+		"status": common.UserStatusEnabled,
+	}
+	if strings.TrimSpace(displayName) != "" {
+		updates["display_name"] = strings.TrimSpace(displayName)
+	}
+	if email != "" {
+		emailPtr := email
+		updates["email"] = &emailPtr
+	}
+	if err := tx.Model(&model.User{}).Where("id = ? AND role = ?", identity.UserID, common.RoleUser).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	if err := tx.Model(&model.UserIdentity{}).
+		Where("user_id = ? AND provider = ?", identity.UserID, model.UserIdentityProviderLocal).
+		Updates(map[string]interface{}{
+			"password_hash": hash,
+			"verified_at":   &now,
+		}).Error; err != nil {
+		return nil, err
+	}
+	var recovered model.User
+	if err := tx.First(&recovered, identity.UserID).Error; err != nil {
+		return nil, err
+	}
+	return &recovered, nil
 }
 
 func registrationPolicyError() error {

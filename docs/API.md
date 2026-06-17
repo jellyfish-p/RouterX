@@ -504,6 +504,8 @@ Provider 退款请求：
 | `user.delete` | `DELETE /v0/admin/user/:id` |
 | `user.denied` | 用户管理接口拒绝角色变更 |
 | `user.quota_update` | `PATCH /v0/admin/user/:id/quota` |
+| `user.self_cancel` | `DELETE /v0/user/self` |
+| `user.recover` | `POST /v0/user/register` 命中已注销同名账号并恢复 |
 | `user_group.create` | `POST /v0/admin/groups` |
 | `user_group.update` | `PUT /v0/admin/groups/:id` |
 | `user_group.delete` | `DELETE /v0/admin/groups/:id` |
@@ -644,7 +646,7 @@ Provider 退款请求：
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
-| POST | `/v0/user/register` | 已实现 | 基础用户名密码注册，受自助注册 settings 控制 |
+| POST | `/v0/user/register` | 已实现 | 基础用户名密码注册，受自助注册 settings 控制；命中已注销同名账号时恢复原账号 |
 | POST | `/v0/user/login` | 已实现 | 用户统一登录；用户名密码始终可用，email/phone 密码登录受 settings 控制 |
 | GET | `/v0/user/self` | 已实现 | 获取个人信息 |
 | PUT | `/v0/user/self` | 已实现 | 修改个人信息 |
@@ -662,9 +664,9 @@ Provider 退款请求：
 }
 ```
 
-注册策略拒绝返回 403，例如公开注册关闭、用户名注册关闭，或当前无验证码请求但 `auth.register.captcha.required=true`。注册成功时会应用 `auth.register.default_quota` 和可解析的 `auth.register.default_group_id`。
+注册策略拒绝返回 403，例如公开注册关闭、用户名注册关闭，或当前无验证码请求但 `auth.register.captcha.required=true`。新账号注册成功时会应用 `auth.register.default_quota` 和可解析的 `auth.register.default_group_id`。如果同名 `username/local` identity 命中已注销的普通用户账号，当前接口会恢复原 `users.id`，把账号状态改回启用，更新本地密码身份和展示名，保留原额度、分组、日志和历史流水，不会自动启用旧 API Key，并写入 `user.recover` 审计。
 
-自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key；不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史。注销后用户名密码登录返回统一认证失败，同名注册会因保留的 `username/local` identity 被拒绝；未来恢复账号流程会在 `docs/ACCOUNTS.md` 的恢复规则基础上继续扩展。
+自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key；不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史。注销后用户名密码登录返回统一认证失败，同名注册会走上述恢复流程；完整二次验证、隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复会在 `docs/ACCOUNTS.md` 的规则基础上继续扩展。
 
 登录目标响应：
 

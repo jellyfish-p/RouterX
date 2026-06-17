@@ -188,7 +188,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 用户注册
-      description: 当前基础实现为用户名密码注册；默认关闭公开注册。需要 auth.register.enabled=true、auth.register.username.enabled=true 且 auth.register.captcha.required=false 才接受当前无验证码请求；成功注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id。
+      description: 当前基础实现为用户名密码注册；默认关闭公开注册。需要 auth.register.enabled=true、auth.register.username.enabled=true 且 auth.register.captcha.required=false 才接受当前无验证码请求。新账号注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id；同名 username/local identity 命中已注销普通用户时会恢复原 users.id、启用账号、更新本地密码身份和展示名，保留额度/分组/日志/历史流水，不自动启用旧 API Key，并写 user.recover 审计。
       requestBody:
         required: true
         content:
@@ -281,7 +281,7 @@ paths:
     delete:
       tags: [User Auth]
       summary: 注销当前账号
-      description: 当前普通用户注销自己的账号；服务端将 users.status 置为 disabled、禁用该用户已启用 API Key 并写 user.self_cancel 审计。该操作保留 users、user_identities、tokens、logs、quota 和历史流水；注销后不能再次登录，同名注册会因保留 identity 被拒绝。账号恢复、密码二次确认和隐私字段擦除属于后续增强。
+      description: 当前普通用户注销自己的账号；服务端将 users.status 置为 disabled、禁用该用户已启用 API Key 并写 user.self_cancel 审计。该操作保留 users、user_identities、tokens、logs、quota 和历史流水；注销后不能再次登录，同名 username/local 注册会恢复原账号并写 user.recover 审计，旧 API Key 不会自动恢复。密码二次确认、隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复属于后续增强。
       security:
         - UserJWT: []
       responses:
@@ -1326,7 +1326,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、自助注销、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、自助注销、基础恢复、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
       security:
         - UserJWT: []
       parameters:
