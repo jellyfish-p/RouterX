@@ -3746,6 +3746,56 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 	}
 }
 
+func TestMetricsEndpointReportsIndependentLogDBHealth(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("observability.metrics_enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	oldLogDB := internal.LogDB
+	logDB := newRouterLogDB(t, "metrics_health")
+	internal.LogDB = logDB
+	t.Cleanup(func() {
+		if sqlDB, err := logDB.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+		internal.LogDB = oldLogDB
+	})
+
+	healthyResp := performJSON(r, http.MethodGet, "/metrics", "", nil)
+	healthyBody := healthyResp.Body.String()
+	if healthyResp.Code != http.StatusOK ||
+		!strings.Contains(healthyBody, "routerx_log_db_configured 1") ||
+		!strings.Contains(healthyBody, "routerx_log_db_up 1") {
+		t.Fatalf("metrics should report configured healthy independent log DB, got %d %s", healthyResp.Code, healthyBody)
+	}
+
+	sqlDB, err := logDB.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	downResp := performJSON(r, http.MethodGet, "/metrics", "", nil)
+	downBody := downResp.Body.String()
+	if downResp.Code != http.StatusOK ||
+		!strings.Contains(downBody, "routerx_log_db_configured 1") ||
+		!strings.Contains(downBody, "routerx_log_db_up 0") {
+		t.Fatalf("metrics should keep serving main DB facts while reporting log DB down, got %d %s", downResp.Code, downBody)
+	}
+}
+
 func TestSettingsValidationAndReadiness(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -10139,6 +10189,20 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		handler.NewSettingHandler(settingSvc),
 		handler.NewSetupHandler(setupSvc),
 	)
+}
+
+func newRouterLogDB(t *testing.T, name string) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:routerx_log_"+name+"_"+time.Now().Format("150405.000000000")+"?mode=memory&cache=shared"), &gorm.Config{
+		DisableForeignKeyConstraintWhenMigrating: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Log{}); err != nil {
+		t.Fatal(err)
+	}
+	return db
 }
 
 func performJSON(r http.Handler, method, path, bearer string, body interface{}) *httptest.ResponseRecorder {

@@ -219,10 +219,10 @@ volumes:
 
 - `LOG_SQL_DSN` 为空时，模型调用日志写入主业务数据库。
 - `LOG_SQL_DSN` 非空时，启动流程会初始化独立日志数据库并迁移 `logs` schema；初始化失败会阻止服务启动，避免流量进入不可解释状态。
-- `LOG_SQL_DSN` 非空时，模型调用日志、诊断快照和可清理历史日志会最佳努力写入独立日志数据库；管理端日志列表、日志清理和看板今日调用/额度优先使用日志库，列表查询失败时回退读取主库事实。
+- `LOG_SQL_DSN` 非空时，模型调用日志、诊断快照和可清理历史日志会最佳努力写入独立日志数据库；管理端日志列表、日志清理和看板今日调用/额度优先使用日志库，列表与看板查询失败时回退读取主库事实。
 - 独立日志数据库适合单独备份、冷热分层、按周期归档和清理。
 - 扣费事务、用户余额变化和 Key 预算消耗的最小结算事实必须保留在主业务数据库或主库 outbox 中，不能只依赖日志数据库；当前实现会在主库事务中保留完整调用事实。
-- 日志数据库运行期不可用时，当前实现保留主库事实并记录应用告警；后续可在此基础上扩展 outbox 异步补写和日志库健康指标。
+- 日志数据库运行期不可用时，当前实现保留主库事实并记录应用告警，`/metrics` 通过 `routerx_log_db_configured` 和 `routerx_log_db_up` 暴露配置状态与 ping 状态；后续可在此基础上扩展 outbox 异步补写。
 
 日志类型：
 
@@ -261,7 +261,7 @@ volumes:
 
 完整指标目录、标签控制和告警建议以 `docs/OBSERVABILITY.md` 为准。
 
-当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis up、HTTP 请求量/耗时、调用日志状态、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、逐通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标，后续继续补更细错误维度。
+当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、HTTP 请求量/耗时、调用日志状态、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、逐通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标，后续继续补更细错误维度。
 
 核心指标：
 
@@ -282,6 +282,8 @@ volumes:
 | `routerx_payment_events_total` | gauge | 支付事件处理状态 |
 | `routerx_db_up` | gauge | 数据库 ping 状态 |
 | `routerx_redis_up` | gauge | Redis ping 状态 |
+| `routerx_log_db_configured` | gauge | 独立日志库配置状态 |
+| `routerx_log_db_up` | gauge | 日志存储 ping 状态 |
 | `routerx_redis_errors_total` | counter | Redis 错误数 |
 | `routerx_db_errors_total` | counter | DB 错误数 |
 

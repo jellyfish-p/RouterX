@@ -8,7 +8,7 @@ info:
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message。
-    - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、日志库健康和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -84,7 +84,7 @@ paths:
     get:
       tags: [Health]
       summary: Prometheus 指标
-      description: 默认由 observability.metrics_enabled=false 关闭；启用后返回 Prometheus text/plain，包含实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付、审计和 DB/Redis 基础指标。
+      description: 默认由 observability.metrics_enabled=false 关闭；启用后返回 Prometheus text/plain，包含实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付、审计和 DB/Redis/日志库基础指标。
       responses:
         "200":
           description: Prometheus text format metrics.
@@ -130,6 +130,15 @@ paths:
                   # HELP routerx_db_up Database ping status.
                   # TYPE routerx_db_up gauge
                   routerx_db_up 1
+                  # HELP routerx_redis_up Redis ping status.
+                  # TYPE routerx_redis_up gauge
+                  routerx_redis_up 0
+                  # HELP routerx_log_db_configured Independent log database configuration status.
+                  # TYPE routerx_log_db_configured gauge
+                  routerx_log_db_configured 1
+                  # HELP routerx_log_db_up Log storage ping status.
+                  # TYPE routerx_log_db_up gauge
+                  routerx_log_db_up 1
         "404":
           description: 指标接口未启用。
   /v0/setup/status:

@@ -363,6 +363,13 @@ func (s *LogService) GetDashboardStats() (userCount, channelCount, tokenCount, t
 		Where("created_at >= ?", start).
 		Select("COUNT(*) AS today_calls, COALESCE(SUM(quota_used), 0) AS today_quota").
 		Scan(&result).Error
+	if err != nil && s.usesExternalLogDB() {
+		stdlog.Printf("[LogService] WARN: external log DB dashboard query failed, falling back to main DB: %v", err)
+		err = internal.DB.Model(&model.Log{}).
+			Where("created_at >= ?", start).
+			Select("COUNT(*) AS today_calls, COALESCE(SUM(quota_used), 0) AS today_quota").
+			Scan(&result).Error
+	}
 	return userCount, channelCount, tokenCount, result.TodayCalls, result.TodayQuota, activeChannels, err
 }
 
