@@ -601,7 +601,7 @@ parse model/stream
 read request body with relay.max_request_body_bytes
     -> adapter.ConvertRequest
     -> http.Client.Do
-    -> read downstream body with size limit
+    -> read downstream body with relay.max_response_body_bytes
     -> adapter.ConvertResponse
     -> extract usage
     -> deduct quota
@@ -611,7 +611,7 @@ read request body with relay.max_request_body_bytes
 
 要求：
 
-- 下游响应体读取必须有最大限制，避免异常大响应撑爆内存。
+- 下游响应体读取必须有最大限制，避免异常大响应撑爆内存；非流式响应超过 `relay.max_response_body_bytes` 时返回 502 `upstream_response_too_large`，不反射下游响应体且不扣费。
 - 请求体超过 `relay.max_request_body_bytes` 时，本地按入口协议返回 413，且不选择或调用上游。
 - 需要记录下游状态码。
 - 需要对下游错误转换为当前路由对应的兼容错误。
@@ -745,6 +745,7 @@ usage -> price rule -> group ratio -> quota_used
 | `relay.error_auto_ban` | `true` | 是否按 `error_count` 自动排除故障通道 |
 | `relay.error_ban_threshold` | `10` | 自动排除通道的连续错误阈值 |
 | `relay.max_request_body_bytes` | `10485760` | 模型请求体最大字节数，`0` 表示不限制；超过时返回协议兼容 413 |
+| `relay.max_response_body_bytes` | `10485760` | 非流式下游响应体最大字节数，`0` 表示不限制；超过时返回协议兼容 502 |
 | `relay.log_body_max_bytes` | `0` | Relay 日志体最大长度，`0` 表示默认不记录 body |
 | `relay.stream_usage_strategy` | `provider_or_estimate` | 流式 usage 策略 |
 | `billing.default_ratio` | `1.0` | 默认计费倍率 |
@@ -758,6 +759,7 @@ usage -> price rule -> group ratio -> quota_used
 - Authorization、Cookie、API Key 必须在日志中脱敏。
 - Adapter 错误返回不能泄露完整下游密钥或内部 DSN。
 - 所有 `/v1` 模型入口必须在调用上游前执行请求体大小限制。
+- 非流式上游响应超过 `relay.max_response_body_bytes` 时不能透传、不能入日志完整 body、不能扣费。
 - 请求体日志默认关闭。
 - 对图片、音频、文件类接口设置上传大小限制。
 - 对下游响应体设置最大读取大小。

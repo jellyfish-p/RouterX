@@ -7,7 +7,7 @@ info:
 
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
-    - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游。
+    - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
     - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、日志库健康和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
@@ -2065,7 +2065,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/OpenAIErrorEnvelope"
         "502":
-          description: 无可用通道或上游错误；routerx.route 筛选后无候选时返回 no_available_channel，非流式可重试错误在 relay.retry_count 耗尽后返回最后一次上游错误，stream=true 命中非 OpenAI SSE 通道时返回 unsupported_stream_channel。
+          description: 无可用通道或上游错误；routerx.route 筛选后无候选时返回 no_available_channel，非流式可重试错误在 relay.retry_count 耗尽后返回最后一次上游错误，上游响应体超过 relay.max_response_body_bytes 时返回 upstream_response_too_large，stream=true 命中非 OpenAI SSE 通道时返回 unsupported_stream_channel。
           content:
             application/json:
               schema:
@@ -2757,19 +2757,19 @@ components:
           schema:
             $ref: "#/components/schemas/StandardResponse"
     OpenAIError:
-      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large。
+      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/OpenAIErrorEnvelope"
     AnthropicError:
-      description: Anthropic-compatible 错误。本地限流返回 type=rate_limit_error；请求体超过 relay.max_request_body_bytes 时返回 413 invalid_request_error。
+      description: Anthropic-compatible 错误。本地限流返回 type=rate_limit_error；请求体超过 relay.max_request_body_bytes 时返回 413 invalid_request_error；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_error。
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/AnthropicErrorEnvelope"
     GeminiError:
-      description: Gemini-compatible 错误。本地限流返回 status=RESOURCE_EXHAUSTED；请求体超过 relay.max_request_body_bytes 时返回 413 RESOURCE_EXHAUSTED。
+      description: Gemini-compatible 错误。本地限流返回 status=RESOURCE_EXHAUSTED；请求体超过 relay.max_request_body_bytes 时返回 413 RESOURCE_EXHAUSTED；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 UNAVAILABLE。
       content:
         application/json:
           schema:

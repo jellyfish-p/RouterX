@@ -132,6 +132,7 @@
 | `TestAnthropicMessagesStreamConvertsOpenAISSEAndDeductsUsage` | Anthropic Messages stream 转 OpenAI-compatible Chat SSE，上游 OpenAI chunk 转 Anthropic SSE 事件，usage 扣费和日志 |
 | `TestChatCompletionUpstreamBadRequestMapping` | 下游 400 错误映射、失败日志和密钥不泄露 |
 | `TestChatCompletionUpstreamErrorStatusMapping` | 下游 401/403/429/5xx 错误映射、失败日志、通道错误计数和不扣费 |
+| `TestRelayMaxResponseBodyBytesRejectsOversizedUpstream` | `relay.max_response_body_bytes` 超限时返回 OpenAI-compatible 502 `upstream_response_too_large`，不反射下游响应体、不扣额度，并写失败日志 |
 | `TestChatCompletionUpstreamTimeoutMapping` | 下游超时错误映射、失败日志、通道错误计数和不扣费 |
 | `TestRelayFailureLogPersistsRequestIDAndErrorCode` | 下游失败时调用日志和用户日志接口持久化 `request_id`、稳定 `error_code`、`error_source` 和 `upstream_status` |
 | `TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce` | 非流式 5xx 按 `relay.retry_count` 换候选通道，最终只按成功 usage 扣费一次，并在 route_snapshot 记录实际通道和重试摘要 |

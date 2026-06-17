@@ -59,8 +59,11 @@ type contentTypeRelayAdapter interface {
 const (
 	maxRouterXHop = 3
 
-	defaultRelayMaxRequestBodyBytes int64 = 20 << 20
+	defaultRelayMaxRequestBodyBytes  int64 = 20 << 20
+	defaultRelayMaxResponseBodyBytes int64 = 20 << 20
 )
+
+var errRelayResponseBodyTooLarge = errors.New("relay upstream response body too large")
 
 func (r *RelayStreamResult) Forward(write func([]byte) error, flush func()) (*relay.Usage, error) {
 	if r == nil || r.forward == nil {
@@ -585,10 +588,14 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
+	respBody, err := s.readUpstreamResponseBody(resp.Body)
 	if err != nil {
 		s.recordUpstreamDuration(channel, "failed", time.Since(start))
 		_ = s.markChannelFailure(channel, latencyMs)
+		if errors.Is(err, errRelayResponseBodyTooLarge) {
+			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response body too large", clientIP)
+			return nil, nil, true, &HTTPError{Status: 502, Message: "upstream response body too large", Type: "upstream_error", Code: "upstream_response_too_large"}
+		}
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response read failed", clientIP)
 		return nil, nil, true, &HTTPError{Status: 502, Message: "upstream response read failed", Type: "upstream_error", Code: "upstream_response_failed"}
 	}
@@ -2010,6 +2017,32 @@ func (s *RelayService) MaxRequestBodyBytes() int64 {
 		return defaultRelayMaxRequestBodyBytes
 	}
 	return int64(value)
+}
+
+func (s *RelayService) MaxResponseBodyBytes() int64 {
+	if s == nil || s.settingService == nil {
+		return defaultRelayMaxResponseBodyBytes
+	}
+	value, err := s.settingService.GetInt("relay.max_response_body_bytes")
+	if err != nil || value < 0 {
+		return defaultRelayMaxResponseBodyBytes
+	}
+	return int64(value)
+}
+
+func (s *RelayService) readUpstreamResponseBody(body io.Reader) ([]byte, error) {
+	limit := s.MaxResponseBodyBytes()
+	if limit <= 0 {
+		return io.ReadAll(body)
+	}
+	payload, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(payload)) > limit {
+		return nil, errRelayResponseBodyTooLarge
+	}
+	return payload, nil
 }
 
 func (s *RelayService) relayRetryCount() int {

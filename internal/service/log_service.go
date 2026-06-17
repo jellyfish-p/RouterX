@@ -273,6 +273,8 @@ func normalizeLogErrorCode(log *model.Log) string {
 		return "rate_limit_exceeded"
 	case strings.Contains(msg, "timeout"):
 		return "upstream_timeout"
+	case strings.Contains(msg, "upstream response body too large"):
+		return "upstream_response_too_large"
 	case strings.Contains(msg, "upstream returned status"):
 		fields := strings.Fields(msg)
 		if len(fields) > 0 {

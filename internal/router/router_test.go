@@ -3589,6 +3589,7 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"relay.timeout",
 		"relay.retry_count",
 		"relay.max_request_body_bytes",
+		"relay.max_response_body_bytes",
 		"relay.log_body_max_bytes",
 		"log.body_max_bytes",
 		"log.request_body_enabled",
@@ -4143,6 +4144,12 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badRelayRequestBodyLimit.Code != http.StatusBadRequest {
 		t.Fatalf("relay max request body bytes should reject negative values, got %d %s", badRelayRequestBodyLimit.Code, badRelayRequestBodyLimit.Body.String())
+	}
+	badRelayResponseBodyLimit := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"relay.max_response_body_bytes": "-1",
+	})
+	if badRelayResponseBodyLimit.Code != http.StatusBadRequest {
+		t.Fatalf("relay max response body bytes should reject negative values, got %d %s", badRelayResponseBodyLimit.Code, badRelayResponseBodyLimit.Body.String())
 	}
 
 	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
@@ -11807,6 +11814,117 @@ func TestRelayFailureLogPersistsRequestIDAndErrorCode(t *testing.T) {
 		!strings.Contains(logBody, `"error_source":"upstream"`) ||
 		!strings.Contains(logBody, `"upstream_status":400`) {
 		t.Fatalf("user log API should expose request_id, error_code and upstream failure facts, got %d %s", logResp.Code, logBody)
+	}
+}
+
+func TestRelayMaxResponseBodyBytesRejectsOversizedUpstream(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	oversizedBody := strings.Repeat("oversized-upstream-body", 20)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(oversizedBody))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("relay.max_response_body_bytes", "64"); err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "response-limit",
+		"remain_quota": 10,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "response-limit",
+		"models":   "gpt-response-limit",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	var channelPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(channelResp.Body.Bytes(), &channelPayload); err != nil {
+		t.Fatal(err)
+	}
+	if channelResp.Code != http.StatusOK || channelPayload.Data.ID == 0 {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-response-limit",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	})
+	if resp.Code != http.StatusBadGateway || !strings.Contains(resp.Body.String(), `"code":"upstream_response_too_large"`) {
+		t.Fatalf("oversized upstream response should return upstream_response_too_large, got %d %s", resp.Code, resp.Body.String())
+	}
+	if strings.Contains(resp.Body.String(), "oversized-upstream-body") {
+		t.Fatalf("oversized upstream response should not be reflected to client: %s", resp.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("response limit should be detected after one upstream call, got %d", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 10 {
+		t.Fatalf("oversized upstream response should not deduct token budget, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("oversized upstream response should not deduct user quota, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusFailed ||
+		callLog.QuotaUsed != 0 ||
+		callLog.ErrorCode != "upstream_response_too_large" ||
+		callLog.ErrorSource != common.LogErrorSourceUpstream {
+		t.Fatalf("unexpected oversized response failure log: %+v", callLog)
+	}
+	var channel model.Channel
+	if err := internal.DB.First(&channel, channelPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if channel.ErrorCount != 1 {
+		t.Fatalf("oversized upstream response should mark channel failure, got %d", channel.ErrorCount)
 	}
 }
 

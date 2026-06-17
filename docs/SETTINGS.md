@@ -51,6 +51,7 @@
 | `relay.error_auto_ban` | `relay` | bool | `true` | 否 | hot | relay | bool |
 | `relay.error_ban_threshold` | `relay` | int | `10` | 否 | hot | relay | `>0` |
 | `relay.max_request_body_bytes` | `relay` | int | `10485760` | 否 | hot | relay | `>=0`，`0` 表示不限制 |
+| `relay.max_response_body_bytes` | `relay` | int | `10485760` | 否 | hot | relay | `>=0`，`0` 表示不限制 |
 | `relay.log_body_max_bytes` | `relay` | int | `0` | 否 | hot | relay/log | `>=0`，`0` 表示不记录 body |
 | `routing.channel_cache.enabled` | `routing` | bool | `true` | 否 | hot | relay | bool |
 | `routing.channel_cache.preload` | `routing` | bool | `true` | 否 | cache_refresh | relay | bool |
@@ -66,6 +67,7 @@
 - `relay.retry_count` 默认是 `0`，表示不做自动重试；大于 0 时，非流式 Relay 只对 429、5xx、网络错误、超时和响应读取失败进行有限候选通道重试。
 - `relay.error_auto_ban=false` 时仍会记录通道 `error_count`，但候选查询不会因为 `relay.error_ban_threshold` 排除通道。
 - `relay.max_request_body_bytes` 当前已在 `/v1` 模型入口生效，超过限制时按入口协议返回 413 且不调用上游。
+- `relay.max_response_body_bytes` 当前已在非流式上游响应读取路径生效，超过限制时返回 502 `upstream_response_too_large`，不反射下游响应体且不扣费。
 - `relay.log_body_max_bytes` 和 `log.body_max_bytes` 当前默认是 `0`，表示默认不记录请求/响应 body。
 
 ## P0 目标配置
@@ -120,7 +122,7 @@ P0 补齐这些配置时，应同时补测试：
 | key | 默认 | stage | 说明 |
 |-----|------|-------|------|
 | `relay.max_request_body_bytes` | `10485760` | P1 | 当前已落地；模型请求体最大字节数，必须为非负整数，`0` 表示不限制 |
-| `relay.max_response_body_bytes` | `10485760` | P1 | 非流式下游响应读取上限 |
+| `relay.max_response_body_bytes` | `10485760` | P1 | 当前已落地；非流式下游响应读取上限，必须为非负整数，`0` 表示不限制 |
 | `relay.stream_usage_strategy` | `provider_or_estimate` | P1 | 流式 usage 策略 |
 | `relay.routerx_max_hops` | `3` | P1 | 多层 RouterX 最大跳数 |
 | `relay.retry_on_status` | `[429,500,502,503,504]` | P1 | 可重试状态码白名单 |
@@ -219,6 +221,7 @@ validate key exists
 - `SQL_DSN` 指向 PostgreSQL/MySQL 等外部数据库但 Redis 不可用。
 - `relay.timeout <= 0`。
 - `relay.max_request_body_bytes < 0`。
+- `relay.max_response_body_bytes < 0`。
 - `rate_limit.*` 类型非法。
 - `billing.default_ratio <= 0`。
 - `billing.user_group_ratios`、`billing.channel_group_ratios`、`billing.model_group_ratios` 或 `billing.user_group_channel_ratios` 不是 JSON 对象，或包含空 key、`<= 0` 的倍率值。

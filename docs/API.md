@@ -156,7 +156,7 @@ Gemini-compatible 错误示例：
 | 403 | `user_disabled`、`token_forbidden`、`model_not_allowed`、`route_forbidden` | `permission_error` / `PERMISSION_DENIED` | 联系管理员调整权限或通道分组 |
 | 404 | `model_not_found`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名或资源 ID |
 | 429 | `insufficient_quota`、`rate_limit_exceeded` | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 充值、降低并发或等待限流窗口 |
-| 502 | `no_available_channel`、`unsupported_channel`、`unsupported_multipart_channel`、`upstream_request_failed`、`upstream_secret_error`、`upstream_conversion_failed` | `upstream_error` / `UNAVAILABLE` | 管理员检查通道、密钥或上游状态 |
+| 502 | `no_available_channel`、`unsupported_channel`、`unsupported_multipart_channel`、`upstream_request_failed`、`upstream_secret_error`、`upstream_response_too_large`、`upstream_conversion_failed` | `upstream_error` / `UNAVAILABLE` | 管理员检查通道、密钥、响应大小或上游状态 |
 | 504 | `upstream_timeout` | `upstream_error` / `DEADLINE_EXCEEDED` | 重试或检查下游耗时 |
 
 错误响应要求：
@@ -165,6 +165,7 @@ Gemini-compatible 错误示例：
 - 401/403 必须区分认证失败和权限不足；但登录场景可继续使用模糊提示防止账号枚举。
 - 余额不足、访问控制不通过、没有可用通道时必须在日志中记录可排障原因。
 - 下游原始错误可保存脱敏摘要；对客户端返回时必须转换为当前入口协议兼容格式。
+- 下游非流式响应超过 `relay.max_response_body_bytes` 时返回 502 `upstream_response_too_large`，不反射完整下游响应体且不扣费。
 - `/v1` API Key 鉴权、用户禁用、配额预检查和基础下游错误会按入口协议返回 OpenAI-compatible、Anthropic 或 Gemini 错误外形；Anthropic/Gemini 基础非流式成功、Anthropic Messages Stream、Gemini streamGenerateContent 基础 SSE、字段降级和基础下游错误外形已有测试，更深层的原生字段保真和 SDK 行为继续按 P1 测试矩阵收敛。
 
 ## 公共接口
