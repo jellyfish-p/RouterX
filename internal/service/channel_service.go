@@ -50,6 +50,7 @@ type channelCandidateCache struct {
 
 type channelCandidateCacheConfig struct {
 	enabled bool
+	preload bool
 	version int
 	ttl     time.Duration
 }
@@ -189,6 +190,7 @@ func (s *ChannelService) channelsForCandidateSelection() ([]model.Channel, error
 func (s *ChannelService) channelCandidateCacheConfig() channelCandidateCacheConfig {
 	cfg := channelCandidateCacheConfig{
 		enabled: true,
+		preload: true,
 		version: 1,
 		ttl:     60 * time.Second,
 	}
@@ -199,6 +201,9 @@ func (s *ChannelService) channelCandidateCacheConfig() channelCandidateCacheConf
 	if enabled, err := settingSvc.GetBool("routing.channel_cache.enabled"); err == nil {
 		cfg.enabled = enabled
 	}
+	if preload, err := settingSvc.GetBool("routing.channel_cache.preload"); err == nil {
+		cfg.preload = preload
+	}
 	if ttlSeconds, err := settingSvc.GetInt("routing.channel_cache.ttl_seconds"); err == nil && ttlSeconds >= 0 {
 		cfg.ttl = time.Duration(ttlSeconds) * time.Second
 	}
@@ -206,6 +211,30 @@ func (s *ChannelService) channelCandidateCacheConfig() channelCandidateCacheConf
 		cfg.version = version
 	}
 	return cfg
+}
+
+func (s *ChannelService) PreloadCandidateCache() error {
+	if s == nil || internal.DB == nil {
+		return nil
+	}
+	cfg := s.channelCandidateCacheConfig()
+	if !cfg.enabled || !cfg.preload {
+		return nil
+	}
+	channels, err := loadChannelsForCandidateSelection()
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	s.candidateCacheMu.Lock()
+	defer s.candidateCacheMu.Unlock()
+	s.candidateCache = channelCandidateCache{
+		loaded:    true,
+		version:   cfg.version,
+		expiresAt: now.Add(cfg.ttl),
+		channels:  cloneChannels(channels),
+	}
+	return nil
 }
 
 func loadChannelsForCandidateSelection() ([]model.Channel, error) {
@@ -243,6 +272,8 @@ func (s *ChannelService) touchCandidateCacheVersion() {
 		version = 1
 	}
 	_ = settingSvc.Set("routing.channel_cache.version", strconv.Itoa(version+1))
+	// Preload is an optimization; request-time cache reload remains authoritative if warmup fails.
+	_ = s.PreloadCandidateCache()
 }
 
 // ResolveUpstream 解析某个通道本次请求应该使用的 base_url/api_key。

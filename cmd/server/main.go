@@ -39,6 +39,9 @@ func main() {
 	if err := settingSvc.EnsureDefaults(); err != nil {
 		log.Fatalf("[FATAL] settings defaults failed: %v", err)
 	}
+	if err := channelSvc.PreloadCandidateCache(); err != nil {
+		log.Printf("[WARN] channel candidate cache preload failed: %v", err)
+	}
 	logSvc.StartLogReplicationWorker(context.Background(), time.Minute, 100)
 
 	// 4. 依赖注入: Handler 层
