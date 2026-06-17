@@ -14,11 +14,13 @@ import (
 )
 
 // AzureAdapter Azure OpenAI 厂商适配器。
-// Azure 的 API 路径格式: /openai/deployments/{model}/{operation}?api-version=2024-02-15-preview
-// 使用 api-key header 而非 Bearer token。
+// Chat/Completions/Embeddings 继续使用 deployment-path 形态；
+// Image Generations 使用 Azure /openai/v1 形态，model 字段就是部署名。
+// Azure 使用 api-key header 而非 Bearer token。
 type AzureAdapter struct{}
 
 const defaultAzureAPIVersion = "2024-02-15-preview"
+const azureV1PreviewAPIVersion = "preview"
 
 func init() {
 	Register(common.ChannelTypeAzure, func() Adapter { return &AzureAdapter{} })
@@ -29,15 +31,17 @@ func (a *AzureAdapter) GetChannelType() int {
 }
 
 func (a *AzureAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
-	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings {
+	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings && apiType != APIImagesGenerations {
 		return nil, errors.New("unsupported api type")
 	}
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
-	// Azure deployment 已经由路径表达，真实上游请求体不再携带 RouterX 私有字段或 model。
-	delete(payload, "model")
+	// Azure deployment-path API 已经由路径表达 model；/openai/v1 图片接口仍需要 model 选择部署。
+	if apiType != APIImagesGenerations {
+		delete(payload, "model")
+	}
 	delete(payload, "routerx")
 	return json.Marshal(payload)
 }
@@ -55,6 +59,8 @@ func (a *AzureAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 		return "/openai/deployments/" + deployment + "/completions?api-version=" + defaultAzureAPIVersion
 	case APIEmbeddings:
 		return "/openai/deployments/" + deployment + "/embeddings?api-version=" + defaultAzureAPIVersion
+	case APIImagesGenerations:
+		return "/openai/v1/images/generations?api-version=" + azureV1PreviewAPIVersion
 	default:
 		return ""
 	}
@@ -86,7 +92,7 @@ func (a *AzureAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey 
 }
 
 func (a *AzureAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
-	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings {
+	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings && apiType != APIImagesGenerations {
 		return nil, nil, errors.New("unsupported api type")
 	}
 	if !json.Valid(body) {

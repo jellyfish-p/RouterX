@@ -106,6 +106,7 @@
 | `TestAzureCompletionsUsesDeploymentPathAndAPIKey` | Azure OpenAI Legacy Completions 基础转发，deployment 路径、`api-version` query、`api-key` header、`model/routerx` 剥离、usage 日志和扣费 |
 | `TestAzureChannelFetchModelsUsesDeploymentsEndpoint` | Azure OpenAI 管理端模型拉取使用 `/openai/deployments`、`api-version` query 和 `api-key` header，并返回 deployment id |
 | `TestAzureEmbeddingsUsesDeploymentPathAndAPIKey` | Azure OpenAI Embeddings 基础转发，deployment 路径、`api-version` query、`api-key` header、`model/routerx` 剥离、usage 日志和扣费 |
+| `TestAzureImageGenerationsUsesV1EndpointAndMinimumCharge` | Azure OpenAI Image Generations 基础转发，`/openai/v1/images/generations?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 剥离、无 usage 最低计费日志和扣费 |
 | `TestResponsesPassthroughExtractsUsageAndDeductsQuota` | Responses 基础 JSON 透传、`routerx` 剥离、`input_tokens/output_tokens` usage 映射、日志和扣费 |
 | `TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota` | Embeddings 基础 JSON 透传、`routerx` 剥离、`prompt_tokens/total_tokens` usage 映射、日志和扣费 |
 | `TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | Moderations 基础 JSON 透传、`routerx` 剥离、上游无 usage 时按 P0 最低计费写日志、记录 minimum usage_source、minimum 表达式快照并扣费 |
