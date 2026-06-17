@@ -104,6 +104,7 @@ func (a *OpenAIAdapter) doRequest(ctx context.Context, baseURL, endpoint, apiKey
 		req.Header.Set("Content-Type", contentType)
 	}
 	req.Header.Set("Accept", "application/json")
+	ApplyUpstreamOptions(req)
 	return http.DefaultClient.Do(req)
 }
 

@@ -111,6 +111,7 @@
 | `TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge` | Audio Speech 基础 JSON 透传、`routerx` 剥离、二进制音频响应和 Content-Type 透传、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge` | Audio Transcriptions multipart 表单透传、`routerx` 表单字段剥离与路由偏好、文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestRouterXOptionsHeaderRoutesMultipartRequest` | `X-RouterX-Options` header 为 multipart 请求提供路由偏好，且不向真实上游泄露 `routerx` 私有字段 |
+| `TestRouterXUpstreamOptionsSupplementRequest` | `routerx.upstream` 安全补充上游 header/query/JSON body，敏感鉴权字段、`model`、`stream` 和原请求已存在字段不会被覆盖，`routerx` 私有字段不会泄露 |
 | `TestChatCompletionStreamForwardsSSEAndDeductsUsage` | OpenAI-compatible Chat SSE chunk 转发、usage 提取、日志和扣费 |
 | `TestCompletionsStreamForwardsSSEAndDeductsUsage` | Legacy Completions SSE chunk 转发、`routerx` 剥离、usage 提取、日志和扣费 |
 | `TestChatCompletionStreamCancelsUpstreamWhenClientWriteFails` | 客户端写入失败时取消上游 SSE 请求，失败日志不扣费 |

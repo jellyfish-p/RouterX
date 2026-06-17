@@ -9,6 +9,16 @@ import (
 )
 
 type requestIDContextKey struct{}
+type upstreamOptionsContextKey struct{}
+
+// UpstreamOptions carries caller-supplied, policy-safe additions for the next
+// upstream HTTP request. Sensitive authentication material is filtered before
+// this value is stored, and adapters apply these values without replacing their
+// own required headers or query parameters.
+type UpstreamOptions struct {
+	Headers map[string]string
+	Query   map[string]string
+}
 
 // ContextWithRequestID stores the RouterX request id for outbound adapter calls.
 func ContextWithRequestID(ctx context.Context, requestID string) context.Context {
@@ -27,6 +37,23 @@ func RequestIDFromContext(ctx context.Context) string {
 	return strings.TrimSpace(value)
 }
 
+// ContextWithUpstreamOptions stores sanitized outbound request additions.
+func ContextWithUpstreamOptions(ctx context.Context, opts UpstreamOptions) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, upstreamOptionsContextKey{}, cloneUpstreamOptions(opts))
+}
+
+// UpstreamOptionsFromContext returns sanitized outbound request additions.
+func UpstreamOptionsFromContext(ctx context.Context) UpstreamOptions {
+	if ctx == nil {
+		return UpstreamOptions{}
+	}
+	opts, _ := ctx.Value(upstreamOptionsContextKey{}).(UpstreamOptions)
+	return cloneUpstreamOptions(opts)
+}
+
 // SetRequestIDHeader copies RouterX's request id into outbound upstream calls.
 // It deliberately uses the configured public header name, so deployments that
 // rename observability.request_id_header keep the same trace boundary.
@@ -37,4 +64,45 @@ func SetRequestIDHeader(req *http.Request) {
 	if requestID := RequestIDFromContext(req.Context()); requestID != "" {
 		req.Header.Set(common.RequestIDHeaderName(), requestID)
 	}
+}
+
+// ApplyUpstreamOptions supplements outbound requests with caller-provided
+// headers and query parameters. Existing adapter values win, so channel
+// credentials, provider API keys and required content negotiation stay intact.
+func ApplyUpstreamOptions(req *http.Request) {
+	if req == nil {
+		return
+	}
+	opts := UpstreamOptionsFromContext(req.Context())
+	if len(opts.Query) > 0 && req.URL != nil {
+		query := req.URL.Query()
+		for key, value := range opts.Query {
+			if _, exists := query[key]; !exists {
+				query.Set(key, value)
+			}
+		}
+		req.URL.RawQuery = query.Encode()
+	}
+	for key, value := range opts.Headers {
+		if req.Header.Get(key) == "" {
+			req.Header.Set(key, value)
+		}
+	}
+}
+
+func cloneUpstreamOptions(opts UpstreamOptions) UpstreamOptions {
+	cloned := UpstreamOptions{}
+	if len(opts.Headers) > 0 {
+		cloned.Headers = make(map[string]string, len(opts.Headers))
+		for key, value := range opts.Headers {
+			cloned.Headers[key] = value
+		}
+	}
+	if len(opts.Query) > 0 {
+		cloned.Query = make(map[string]string, len(opts.Query))
+		for key, value := range opts.Query {
+			cloned.Query[key] = value
+		}
+	}
+	return cloned
 }

@@ -7,7 +7,7 @@ info:
 
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
-    - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好。
+    - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
     - 充值码、API Key 生命周期审计、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、限流拒绝、计费失败、日志库健康和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
@@ -2578,8 +2578,8 @@ components:
       required: false
       schema:
         type: string
-        example: '{"route":{"channel_group":"premium"}}'
-      description: 可选 RouterX 私有选项 JSON 字符串；支持 route 路由偏好，body/form 中的 routerx 字段优先于该 header，发往真实上游前不会透传。
+        example: '{"route":{"channel_group":"premium"},"upstream":{"headers":{"X-Upstream-Feature":"beta"},"query":{"trace":"enabled"},"body":{"reasoning_effort":"high"}}}'
+      description: 可选 RouterX 私有选项 JSON 字符串；支持 route 路由偏好和 upstream 安全 header/query/JSON body 补充，body/form 中的 routerx 字段优先于该 header，发往真实上游前不会透传 routerx 私有字段。
     StartTime:
       name: start_time
       in: query
@@ -2631,7 +2631,7 @@ components:
                   enum: [word, segment]
               routerx:
                 type: string
-                description: RouterX 私有 JSON 字符串，例如 {"route":{"channel_group":"premium"}}；发往真实上游前会被剥离。
+                description: RouterX 私有 JSON 字符串，例如 {"route":{"channel_group":"premium"},"upstream":{"headers":{"X-Upstream-Feature":"beta"}}}；发往真实上游前会被剥离，multipart 当前不合并 upstream.body 回文件表单。
     ImageMultipart:
       required: true
       content:
@@ -2668,7 +2668,7 @@ components:
                 type: string
               routerx:
                 type: string
-                description: RouterX 私有 JSON 字符串，例如 {"route":{"channel_group":"premium"}}；发往真实上游前会被剥离。
+                description: RouterX 私有 JSON 字符串，例如 {"route":{"channel_group":"premium"},"upstream":{"headers":{"X-Upstream-Feature":"beta"}}}；发往真实上游前会被剥离，multipart 当前不合并 upstream.body 回文件表单。
   responses:
     StandardOK:
       description: 成功。
@@ -4121,6 +4121,8 @@ components:
           properties:
             route:
               $ref: "#/components/schemas/RouterXRoutePreference"
+            upstream:
+              $ref: "#/components/schemas/RouterXUpstreamOptions"
           additionalProperties: true
     RouterXRoutePreference:
       type: object
@@ -4141,6 +4143,29 @@ components:
           type: array
           items: { type: string }
           description: 从候选集中排除指定 provider。
+      additionalProperties: true
+    RouterXUpstreamOptions:
+      type: object
+      description: 上游请求补充参数；只补充安全 header/query 和 JSON body 缺省字段，不覆盖通道密钥、provider API key、Content-Type、model、stream、routerx 或原请求已存在字段。
+      properties:
+        headers:
+          type: object
+          additionalProperties: { type: string }
+          description: 额外上游 header；Authorization、Cookie、Set-Cookie、X-Api-Key、api-key、Content-Type、X-RouterX-* 等敏感/内部字段会被忽略。
+          example:
+            X-Upstream-Feature: beta
+        query:
+          type: object
+          additionalProperties: { type: string }
+          description: 额外上游 query；key、api_key、apikey、access_token 等常见鉴权参数会被忽略，适配器已设置的 query 不会被覆盖。
+          example:
+            trace: enabled
+        body:
+          type: object
+          additionalProperties: true
+          description: 额外 JSON body 字段；仅在原请求不存在该字段时合并，model、routerx、stream 会被忽略。
+          example:
+            reasoning_effort: high
       additionalProperties: true
     ChatMessage:
       type: object

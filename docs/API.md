@@ -944,9 +944,10 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 - 策略决策顺序、访问控制、限流、分组和冲突规则以 `docs/POLICIES.md` 为准。
 - `routerx.route` 用于路由偏好，不参与模型原生请求。
 - `routerx.route` 只能收窄管理员策略允许的候选通道，不能启用已禁用通道、绕过额度、绕过通道分组访问控制或强制使用无权限 provider。
-- `routerx.upstream` 用于补充上游 header、query 和 body 参数，但敏感鉴权 header 必须来自通道配置，不能由用户请求覆盖。
+- `routerx.upstream` 用于安全补充上游 header、query 和 JSON body 参数；当前实现会把允许的 header/query 加到真实上游请求，并把 `routerx.upstream.body` 中不存在于原请求的字段合并进 JSON 请求体。
+- 敏感鉴权 header/query 必须来自通道配置，不能由用户请求覆盖；已有请求字段、`model`、`routerx` 和 `stream` 不会被 `routerx.upstream.body` 改写。
 - `routerx.provider.<provider>` 仅在选中对应上游 provider 时生效。
-- multipart 或非 JSON 请求当前可通过 `routerx` 表单字段或 `X-RouterX-Options` header 传递 JSON 字符串；body/form 中的 `routerx` 优先于 header。
+- multipart 或非 JSON 请求当前可通过 `routerx` 表单字段或 `X-RouterX-Options` header 传递 JSON 字符串；body/form 中的 `routerx` 优先于 header，multipart 当前只应用路由偏好和安全 header/query 补充，不重写文件表单 body。
 - 对 `GET /v1/models` 这类无 JSON body 的冲突路径，当前可使用 `?format=gemini` 或 `?format=anthropic`，并可通过 `anthropic-version` header 识别 Anthropic 格式；目标设计可扩展 `?routerx_protocol=` 或 `X-RouterX-Protocol`。
 
 路由偏好处理：
@@ -961,8 +962,8 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 
 安全边界：
 
-- 客户端不能通过 `routerx.upstream.headers` 覆盖 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`、`api-key` 等敏感鉴权字段。
-- 客户端不能通过 `routerx.upstream.body` 覆盖 RouterX 已经完成安全决策的内部字段。
+- 客户端不能通过 `routerx.upstream.headers` 覆盖 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`、`api-key`、`Content-Type` 或 `X-RouterX-*` 等敏感/内部 header，也不能通过 query 覆盖常见 API key 参数。
+- 客户端不能通过 `routerx.upstream.body` 覆盖 RouterX 已经完成安全决策的内部字段；当前 `model`、`routerx`、`stream` 和原请求已存在字段都会保持原值。
 - RouterX-Compatible 上游可以继续接收 `routerx` 扩展，但真实厂商上游必须在请求发出前移除该私有字段。
 - 所有路由偏好、是否命中、是否被拒绝和最终通道应进入日志或后续路由决策快照。
 

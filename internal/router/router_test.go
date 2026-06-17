@@ -5721,6 +5721,107 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 	}
 }
 
+func TestRouterXUpstreamOptionsSupplementRequest(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamAuth := ""
+	upstreamAPIKey := ""
+	upstreamFeature := ""
+	upstreamQuery := ""
+	var upstreamBody map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamAuth = req.Header.Get("Authorization")
+		upstreamAPIKey = req.Header.Get("X-Api-Key")
+		upstreamFeature = req.Header.Get("X-Upstream-Feature")
+		upstreamQuery = req.URL.Query().Get("trace")
+		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
+			t.Errorf("upstream received invalid json: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-upstream-options","object":"chat.completion","model":"gpt-options","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "upstream-options",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "upstream-options",
+		"models":   "gpt-options",
+		"base_url": upstream.URL,
+		"api_key":  "channel-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model":       "gpt-options",
+		"temperature": 0.2,
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+		"routerx": map[string]interface{}{
+			"upstream": map[string]interface{}{
+				"headers": map[string]string{
+					"X-Upstream-Feature": "beta",
+					"Authorization":      "Bearer user-supplied",
+					"X-Api-Key":          "user-key",
+				},
+				"query": map[string]string{
+					"trace": "enabled",
+				},
+				"body": map[string]interface{}{
+					"reasoning_effort": "high",
+					"temperature":      0.9,
+					"model":            "evil-model",
+				},
+			},
+		},
+	})
+	if chatResp.Code != http.StatusOK {
+		t.Fatalf("chat completion with upstream options failed: %d %s", chatResp.Code, chatResp.Body.String())
+	}
+	if upstreamAuth != "Bearer channel-secret" || upstreamAPIKey != "" {
+		t.Fatalf("sensitive upstream headers must not be user-controlled, auth=%q x-api-key=%q", upstreamAuth, upstreamAPIKey)
+	}
+	if upstreamFeature != "beta" || upstreamQuery != "enabled" {
+		t.Fatalf("safe upstream options should be forwarded, header=%q query=%q", upstreamFeature, upstreamQuery)
+	}
+	if upstreamBody["reasoning_effort"] != "high" || upstreamBody["temperature"] != float64(0.2) || upstreamBody["model"] != "gpt-options" {
+		t.Fatalf("upstream body options should supplement without overriding existing/internal fields: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx private field leaked to upstream: %#v", upstreamBody)
+	}
+}
+
 func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

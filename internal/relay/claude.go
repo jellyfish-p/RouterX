@@ -110,6 +110,7 @@ func (a *ClaudeAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	ApplyUpstreamOptions(req)
 	return http.DefaultClient.Do(req)
 }
 
