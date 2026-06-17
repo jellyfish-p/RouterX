@@ -260,6 +260,8 @@ func validateSettingValue(key, value string) error {
 		}
 	case "billing.default_user_channel_group_access":
 		return validateStringArrayJSONSetting(key, value)
+	case "billing.usage_missing_strategy":
+		return validateUsageMissingStrategySetting(key, value)
 	case "billing.user_group_ratios", "billing.channel_group_ratios", "billing.model_group_ratios":
 		return validatePositiveRatioMapSetting(key, value)
 	case "billing.user_group_channel_ratios":
@@ -282,6 +284,15 @@ func validatePortSetting(key, value string) error {
 		return errors.New(key + " must be between 1 and 65535")
 	}
 	return nil
+}
+
+func validateUsageMissingStrategySetting(key, value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "minimum", "reject":
+		return nil
+	default:
+		return errors.New(key + " must be one of: minimum, reject")
+	}
 }
 
 func validateServerModeSetting(key, value string) error {

@@ -624,7 +624,7 @@ read request body with relay.max_request_body_bytes
 - `/v1/chat/completions` 和 `/v1/completions` 的 `stream=true` 已支持 OpenAI-compatible SSE 基础转发。
 - 支持的上游通道范围是 OpenAI、OpenAI-Compatible、xAI、Qwen、DeepSeek 和 RouterX-Compatible 这类 OpenAI SSE 形态通道。
 - Service 会先确认上游返回 2xx，再让 Handler 写 `text/event-stream` 响应头，避免把上游错误伪装成成功流。
-- 当前从 OpenAI SSE `data:` JSON chunk 中提取 `usage`；缺失 usage 时沿用最低扣费规则。
+- 当前从 OpenAI SSE `data:` JSON chunk 中提取 `usage`；缺失 usage 时按 `billing.usage_missing_strategy` 处理，默认 `minimum` 沿用最低扣费，`reject` 写 `usage_missing` 失败日志且不扣费。
 
 流式处理流程：
 

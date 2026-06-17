@@ -59,6 +59,9 @@ type contentTypeRelayAdapter interface {
 const (
 	defaultRouterXMaxHops = 3
 
+	usageMissingStrategyMinimum = "minimum"
+	usageMissingStrategyReject  = "reject"
+
 	defaultRelayMaxRequestBodyBytes  int64 = 20 << 20
 	defaultRelayMaxResponseBodyBytes int64 = 20 << 20
 )
@@ -614,6 +617,10 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	s.recordUpstreamDuration(channel, "success", time.Since(start))
 
 	if rawResponse {
+		if httpErr := s.rejectMissingUsage(ctx, token, channel, reqInfo.Model, nil, clientIP); httpErr != nil {
+			_ = s.markChannelSuccess(channel, latencyMs)
+			return nil, nil, false, httpErr
+		}
 		billing := s.calculateRelayBilling(token, channel, reqInfo.Model, nil)
 		deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 		if err != nil {
@@ -635,6 +642,10 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		_ = s.markChannelFailure(channel, latencyMs)
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response conversion failed", clientIP)
 		return nil, nil, false, &HTTPError{Status: 502, Message: "upstream response conversion failed", Type: "upstream_error", Code: "upstream_conversion_failed"}
+	}
+	if httpErr := s.rejectMissingUsage(ctx, token, channel, reqInfo.Model, usage, clientIP); httpErr != nil {
+		_ = s.markChannelSuccess(channel, latencyMs)
+		return nil, usage, false, httpErr
 	}
 	billing := s.calculateRelayBilling(token, channel, reqInfo.Model, usage)
 	deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
@@ -800,6 +811,10 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 				_ = s.markChannelFailure(channel, latencyMs)
 				_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, "stream forwarding failed", clientIP)
 				return usage, err
+			}
+			if httpErr := s.rejectMissingUsage(ctx, token, channel, reqInfo.Model, usage, clientIP); httpErr != nil {
+				_ = s.markChannelSuccess(channel, latencyMs)
+				return usage, httpErr
 			}
 			billing := s.calculateRelayBilling(token, channel, reqInfo.Model, usage)
 			deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
@@ -2463,6 +2478,39 @@ func quotaFromUsage(usage *relay.Usage) int64 {
 		return 1
 	}
 	return int64(usage.TotalTokens)
+}
+
+func (s *RelayService) usageMissingStrategy() string {
+	if s == nil || s.settingService == nil {
+		return usageMissingStrategyMinimum
+	}
+	value, err := s.settingService.Get("billing.usage_missing_strategy")
+	if err != nil {
+		return usageMissingStrategyMinimum
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case usageMissingStrategyReject:
+		return usageMissingStrategyReject
+	default:
+		return usageMissingStrategyMinimum
+	}
+}
+
+func (s *RelayService) rejectMissingUsage(ctx context.Context, token *model.Token, channel *model.Channel, modelName string, usage *relay.Usage, clientIP string) *HTTPError {
+	if usage != nil && usage.TotalTokens > 0 {
+		return nil
+	}
+	if s.usageMissingStrategy() != usageMissingStrategyReject {
+		return nil
+	}
+	const message = "usage missing rejected by billing policy"
+	_ = s.recordLog(ctx, token, channel, modelName, usage, common.LogStatusFailed, 0, message, clientIP)
+	return &HTTPError{
+		Status:  http.StatusBadGateway,
+		Message: "upstream usage missing",
+		Type:    "upstream_error",
+		Code:    "usage_missing",
+	}
 }
 
 func logUsageSource(usage *relay.Usage, status int, quotaUsed int64) string {

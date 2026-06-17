@@ -290,6 +290,8 @@ func normalizeLogErrorCode(log *model.Log) string {
 		return "no_available_channel"
 	case strings.Contains(msg, "routerx hop limit exceeded"):
 		return "routerx_hop_exceeded"
+	case strings.Contains(msg, "usage missing"):
+		return "usage_missing"
 	}
 	return "relay_failed"
 }
@@ -314,6 +316,8 @@ func normalizeLogErrorSource(log *model.Log) string {
 		return common.LogErrorSourceRoute
 	case code == "routerx_hop_exceeded":
 		return common.LogErrorSourceRequest
+	case code == "usage_missing":
+		return common.LogErrorSourceBilling
 	case code == "token_forbidden" || code == "model_not_allowed":
 		return common.LogErrorSourceAuth
 	case strings.Contains(msg, "invalid request") || strings.Contains(msg, "bad request"):

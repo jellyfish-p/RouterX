@@ -2065,7 +2065,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/OpenAIErrorEnvelope"
         "502":
-          description: 无可用通道或上游错误；routerx.route 筛选后无候选时返回 no_available_channel，非流式可重试错误在 relay.retry_count 耗尽后返回最后一次上游错误，上游响应体超过 relay.max_response_body_bytes 时返回 upstream_response_too_large，stream=true 命中非 OpenAI SSE 通道时返回 unsupported_stream_channel。
+          description: 无可用通道或上游错误；routerx.route 筛选后无候选时返回 no_available_channel，非流式可重试错误在 relay.retry_count 耗尽后返回最后一次上游错误，上游响应体超过 relay.max_response_body_bytes 时返回 upstream_response_too_large，billing.usage_missing_strategy=reject 且上游缺少 usage 时返回 usage_missing，stream=true 命中非 OpenAI SSE 通道时返回 unsupported_stream_channel。
           content:
             application/json:
               schema:
@@ -4134,7 +4134,7 @@ components:
         updated_at: { type: string, format: date-time }
     BatchSetSettingsRequest:
       type: object
-      description: 顶层对象为 key/value 字符串映射；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；倍率相关 key 包括 billing.user_group_ratios='{"vip":0.8}'、billing.channel_group_ratios='{"premium":1.2}' 和 billing.user_group_channel_ratios='{"vip":{"premium":0.9}}'，组合倍率命中时覆盖用户分组倍率和通道分组倍率的乘积；通道候选缓存可设置 routing.channel_cache.enabled=true、routing.channel_cache.ttl_seconds=60 和 routing.channel_cache.version=1；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，易支付退款请求地址可设置 payment.epay.refund_url。
+      description: 顶层对象为 key/value 字符串映射；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；倍率相关 key 包括 billing.user_group_ratios='{"vip":0.8}'、billing.channel_group_ratios='{"premium":1.2}' 和 billing.user_group_channel_ratios='{"vip":{"premium":0.9}}'，组合倍率命中时覆盖用户分组倍率和通道分组倍率的乘积；usage 缺失策略可设置 billing.usage_missing_strategy=minimum 或 reject；通道候选缓存可设置 routing.channel_cache.enabled=true、routing.channel_cache.ttl_seconds=60 和 routing.channel_cache.version=1；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，易支付退款请求地址可设置 payment.epay.refund_url。
       additionalProperties:
         type: string
       example:
@@ -4143,6 +4143,7 @@ components:
         billing.user_group_ratios: '{"vip":0.8}'
         billing.channel_group_ratios: '{"premium":1.2}'
         billing.user_group_channel_ratios: '{"vip":{"premium":0.9}}'
+        billing.usage_missing_strategy: "reject"
         routing.channel_cache.enabled: "true"
         routing.channel_cache.ttl_seconds: "60"
         routing.channel_cache.version: "1"

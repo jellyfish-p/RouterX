@@ -3611,6 +3611,7 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"billing.model_group_ratios",
 		"billing.user_group_channel_ratios",
 		"billing.user_group_channel_group_access",
+		"billing.usage_missing_strategy",
 		"payment.stripe.enabled",
 		"payment.epay.enabled",
 		"payment.epay.gateway",
@@ -4121,6 +4122,12 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badNestedRatio.Code != http.StatusBadRequest {
 		t.Fatalf("user group channel ratios should reject zero nested values, got %d %s", badNestedRatio.Code, badNestedRatio.Body.String())
+	}
+	badUsageMissingStrategy := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"billing.usage_missing_strategy": "free",
+	})
+	if badUsageMissingStrategy.Code != http.StatusBadRequest {
+		t.Fatalf("usage missing strategy should reject unknown values, got %d %s", badUsageMissingStrategy.Code, badUsageMissingStrategy.Body.String())
 	}
 	badChannelCacheEnabled := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
 		"routing.channel_cache.enabled": "maybe",
@@ -10194,6 +10201,96 @@ func TestModerationsPassthroughUsesMinimumChargeWithoutUsage(t *testing.T) {
 	expressionSnapshot, ok := billingSnapshot["billing_expression_snapshot"].(map[string]interface{})
 	if !ok || expressionSnapshot["source"] != "minimum" || expressionSnapshot["expression"] != "minimum_charge" || expressionSnapshot["base_quota"] != float64(1) {
 		t.Fatalf("minimum billing snapshot should record minimum expression: %+v", billingSnapshot)
+	}
+}
+
+func TestUsageMissingStrategyRejectsWithoutDeductingQuota(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"modr-no-usage","model":"omni-moderation-test","results":[{"flagged":false,"categories":{},"category_scores":{}}]}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("billing.usage_missing_strategy", "reject"); err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "missing-usage-reject",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "missing-usage-reject",
+		"models":   "omni-moderation-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/moderations", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "omni-moderation-test",
+		"input": "hello",
+	})
+	if resp.Code != http.StatusBadGateway || !strings.Contains(resp.Body.String(), `"code":"usage_missing"`) {
+		t.Fatalf("missing usage reject strategy should return usage_missing, got %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("missing usage reject should happen after exactly one upstream call, calls=%d", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 50 {
+		t.Fatalf("missing usage reject should not deduct token budget, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("missing usage reject should not deduct user quota, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusFailed ||
+		callLog.QuotaUsed != 0 ||
+		callLog.ErrorCode != "usage_missing" ||
+		callLog.ErrorSource != common.LogErrorSourceBilling {
+		t.Fatalf("unexpected missing usage failure log: %+v", callLog)
 	}
 }
 

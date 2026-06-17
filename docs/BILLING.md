@@ -27,7 +27,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口、基于 settings 的用户分组 x 通道分组访问控制，系统模型价格表 `model_prices` 的管理端 API、规则版本和用户侧模型价格就绪状态展示，以及通道模型价格覆盖 `channel_model_prices` 的管理端 API、规则版本、普通用户可见性和用户侧通道级价格状态展示。`channel_model_prices.user_enabled=false` 已同时作用于 `/v0/user/models` 和普通用户调用候选过滤。成功调用后的扣费热路径已读取启用的通道级价格表达式，未命中时读取启用的系统模型价格表达式，并在表达式后应用 `billing.default_ratio`、用户分组倍率、通道分组倍率或组合覆盖倍率；实际执行表达式、变量、规则 ID、规则版本、倍率快照和最终 `quota_used` 会写入 `billing_snapshot`。无价格规则或表达式不可执行时回退 P0 usage/minimum 后仍应用倍率。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；完整访问控制快照和更多事件仍属于目标增强。
+当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口、基于 settings 的用户分组 x 通道分组访问控制，系统模型价格表 `model_prices` 的管理端 API、规则版本和用户侧模型价格就绪状态展示，以及通道模型价格覆盖 `channel_model_prices` 的管理端 API、规则版本、普通用户可见性和用户侧通道级价格状态展示。`channel_model_prices.user_enabled=false` 已同时作用于 `/v0/user/models` 和普通用户调用候选过滤。成功调用后的扣费热路径已读取启用的通道级价格表达式，未命中时读取启用的系统模型价格表达式，并在表达式后应用 `billing.default_ratio`、用户分组倍率、通道分组倍率或组合覆盖倍率；实际执行表达式、变量、规则 ID、规则版本、倍率快照和最终 `quota_used` 会写入 `billing_snapshot`。无价格规则或表达式不可执行时回退 P0 usage/minimum 后仍应用倍率；上游成功响应缺少 usage 时由 `billing.usage_missing_strategy` 决定最低扣费或拒绝且不扣费。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；完整访问控制快照和更多事件仍属于目标增强。
 
 文档中的部分商业级 `billing_*_snapshot` 字段仍是目标设计，不应误读为当前迁移已经全部存在。`model_prices` 和 `channel_model_prices` 当前已经落库并用于管理端维护、`/v0/user/models` 价格状态/可见性展示，以及成功调用后的基础价格表达式执行；`multiplier_snapshot` 当前已记录默认倍率、用户分组倍率、通道分组倍率、组合倍率、倍率模式和最终 `effective_ratio`。调用事实快照的统一字段、脱敏和测试要求以 `docs/SNAPSHOTS.md` 为准。
 
@@ -120,7 +120,7 @@ QuotaPerUnit = 100000000
 - API Key 无效、用户禁用、Token 禁用或过期：返回 401/403，不调用下游。
 - 余额不足、预留额度不足或访问控制不通过：返回 429/403，不调用下游。
 - 通道不可用、模型不匹配、provider 不支持：返回当前入口协议兼容错误，不扣费；provider 能力等级和阶段以 `docs/PROTOCOLS.md` 为准。
-- 下游已调用但 usage 缺失：按配置使用 tokenizer 估算或最低计费规则，并记录 `usage_source`。
+- 下游已调用但 usage 缺失：当前可通过 `billing.usage_missing_strategy=minimum` 使用最低计费并记录 `usage_source=minimum`，或通过 `reject` 返回 `usage_missing`、写失败日志且不扣费；tokenizer/estimate 仍属后续增强。
 - 扣费事务失败：必须写失败日志；非流式响应在返回前发现失败时应返回错误，流式响应已输出时需按后续补偿策略处理。
 
 ### P0 扣费事务边界

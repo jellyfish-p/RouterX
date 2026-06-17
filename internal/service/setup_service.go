@@ -192,6 +192,7 @@ func buildDefaultSettings() map[string]map[string]string {
 			"billing.model_group_ratios":                `{}`,
 			"billing.user_group_channel_ratios":         `{}`,
 			"billing.user_group_channel_group_access":   `{}`,
+			"billing.usage_missing_strategy":            "minimum",
 		},
 		"payment": {
 			"payment.stripe.enabled":                       "false",

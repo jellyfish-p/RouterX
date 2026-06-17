@@ -108,6 +108,7 @@
 | `upstream_request_failed` | 502 | `upstream_error` / `UNAVAILABLE` | 网络错误或请求发送失败 | 可能未到达上游 | 非流式可按策略重试 | 否 | channel_id、耗时、错误摘要 | 检查网络和上游可用性 |
 | `upstream_response_failed` | 502 | `upstream_error` / `UNAVAILABLE` | 响应读取失败 | 是 | 非流式可按策略重试 | 否，除非已有 usage | channel_id、状态、读取错误 | 检查上游和响应大小 |
 | `upstream_conversion_failed` | 502 | `upstream_error` / `UNAVAILABLE` | 上游响应无法转换 | 是 | 否 | 否，除非已有 usage | adapter、api_type、脱敏摘要 | 修复 Adapter 或降级字段 |
+| `usage_missing` | 502 | `upstream_error` / `UNAVAILABLE` | 上游成功响应缺少 usage，且 `billing.usage_missing_strategy=reject` | 是 | 否 | 否 | channel_id、api_type、usage 策略 | 检查上游 usage、Adapter 或改回最低计费策略 |
 | `upstream_timeout` | 504 | `upstream_error` / `DEADLINE_EXCEEDED` | 上游超时 | 不确定 | 非流式可按策略重试 | 否，除非已有 usage | channel_id、timeout、耗时 | 检查超时和上游状态 |
 | `upstream_400` | 502 或 400 | `upstream_error` / `INVALID_ARGUMENT` | 上游认为请求错误 | 是 | 否 | 否 | 上游状态、脱敏摘要 | 检查转换和请求参数 |
 | `upstream_401` | 502 | `upstream_error` / `UNAVAILABLE` | 上游认证失败 | 是 | 否 | 否 | channel_id、provider | 检查上游密钥 |

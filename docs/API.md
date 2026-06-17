@@ -156,7 +156,7 @@ Gemini-compatible 错误示例：
 | 403 | `user_disabled`、`token_forbidden`、`model_not_allowed`、`route_forbidden` | `permission_error` / `PERMISSION_DENIED` | 联系管理员调整权限或通道分组 |
 | 404 | `model_not_found`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名或资源 ID |
 | 429 | `insufficient_quota`、`rate_limit_exceeded` | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 充值、降低并发或等待限流窗口 |
-| 502 | `no_available_channel`、`unsupported_channel`、`unsupported_multipart_channel`、`upstream_request_failed`、`upstream_secret_error`、`upstream_response_too_large`、`upstream_conversion_failed` | `upstream_error` / `UNAVAILABLE` | 管理员检查通道、密钥、响应大小或上游状态 |
+| 502 | `no_available_channel`、`unsupported_channel`、`unsupported_multipart_channel`、`upstream_request_failed`、`upstream_secret_error`、`upstream_response_too_large`、`upstream_conversion_failed`、`usage_missing` | `upstream_error` / `UNAVAILABLE` | 管理员检查通道、密钥、响应大小、usage 或上游状态 |
 | 504 | `upstream_timeout` | `upstream_error` / `DEADLINE_EXCEEDED` | 重试或检查下游耗时 |
 
 错误响应要求：
@@ -587,7 +587,7 @@ Provider 退款请求：
 | `start_time` | string | 开始时间 |
 | `end_time` | string | 结束时间 |
 
-日志响应字段至少包含 `user_id`、`token_id`、`channel_id`、`model`、usage、`usage_source`、`quota_used`、`status`、`request_id`、`error_code`、`error_source`、`upstream_status`、`request_snapshot`、`policy_snapshot`、`route_snapshot`、`billing_snapshot`、`error_msg`、`ip` 和 `created_at`。`usage_source` 当前会记录 `upstream` 或 `minimum`；`request_id` 用于关联 HTTP 访问日志和审计日志；`error_code` 成功调用为空，失败调用按 `docs/ERRORS.md` 使用稳定 code；`error_source` 和 `upstream_status` 用于排查失败来源；`request_snapshot`、`policy_snapshot`、`route_snapshot` 和 `billing_snapshot` 当前是脱敏 JSON 字符串，分别记录基础请求事实、基础策略事实、基础路由选择事实和基础计费事实，其中请求快照包含入口协议、API 类型、请求模型和 stream 标记，策略快照包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要，路由快照包含候选过滤、模型重写和非流式重试摘要，计费快照包含价格表达式或 P0 回退表达式、规则 ID/版本、倍率快照、Key 预算和用户余额前后摘要。配置 `LOG_SQL_DSN` 时，`LogService` 会先在主库事务内保存可恢复结算事实并创建 `log_replication_outboxes` 补写项，再写入独立日志库；日志查询和清理优先使用独立日志库，日志库查询失败时回退读取主库事实，独立日志库运行期写入失败不应抹掉主库事实，后台 worker 会在恢复后补写 pending outbox。
+日志响应字段至少包含 `user_id`、`token_id`、`channel_id`、`model`、usage、`usage_source`、`quota_used`、`status`、`request_id`、`error_code`、`error_source`、`upstream_status`、`request_snapshot`、`policy_snapshot`、`route_snapshot`、`billing_snapshot`、`error_msg`、`ip` 和 `created_at`。`usage_source` 当前会记录 `upstream` 或 `minimum`；当 `billing.usage_missing_strategy=reject` 且上游成功响应缺少 usage 时，会写失败日志 `usage_missing`、`error_source=billing` 且不扣费；`request_id` 用于关联 HTTP 访问日志和审计日志；`error_code` 成功调用为空，失败调用按 `docs/ERRORS.md` 使用稳定 code；`error_source` 和 `upstream_status` 用于排查失败来源；`request_snapshot`、`policy_snapshot`、`route_snapshot` 和 `billing_snapshot` 当前是脱敏 JSON 字符串，分别记录基础请求事实、基础策略事实、基础路由选择事实和基础计费事实，其中请求快照包含入口协议、API 类型、请求模型和 stream 标记，策略快照包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要，路由快照包含候选过滤、模型重写和非流式重试摘要，计费快照包含价格表达式或 P0 回退表达式、规则 ID/版本、倍率快照、Key 预算和用户余额前后摘要。配置 `LOG_SQL_DSN` 时，`LogService` 会先在主库事务内保存可恢复结算事实并创建 `log_replication_outboxes` 补写项，再写入独立日志库；日志查询和清理优先使用独立日志库，日志库查询失败时回退读取主库事实，独立日志库运行期写入失败不应抹掉主库事实，后台 worker 会在恢复后补写 pending outbox。
 
 日志导出使用与列表相同的过滤参数，并额外支持 `limit`，默认 `1000`、最大 `10000`。CSV 只包含 `id`、`user_id`、`token_id`、`channel_id`、`model`、usage、`usage_source`、`quota_used`、`status`、`error_code`、`error_source`、`upstream_status`、`request_id` 和 `created_at`。导出内容不包含请求体、响应体、IP、错误原文、request/policy/route/billing snapshot、API Key、上游密钥或支付密钥；成功导出写 `log.export` 管理审计，摘要记录过滤条件、规范化后的 `limit` 和 `exported_count`。
 
