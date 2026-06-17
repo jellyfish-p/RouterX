@@ -25,6 +25,29 @@ type RedemCodeListRequest struct {
 	BatchNo  string `form:"batch_no"`
 }
 
+type UserGroupListRequest struct {
+	Page     int    `form:"page" binding:"omitempty,min=1"`
+	PageSize int    `form:"page_size" binding:"omitempty,min=1,max=100"`
+	Keyword  string `form:"keyword"`
+}
+
+type CreateUserGroupRequest struct {
+	Name  string  `json:"name" binding:"required,min=1,max=64"`
+	Ratio float64 `json:"ratio"`
+}
+
+type UpdateUserGroupRequest struct {
+	Name  *string  `json:"name"`
+	Ratio *float64 `json:"ratio"`
+}
+
+type UserGroupInfo struct {
+	ID        uint      `json:"id"`
+	Name      string    `json:"name"`
+	Ratio     float64   `json:"ratio"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // CreateUserRequest 创建用户请求 (Admin)
 type CreateUserRequest struct {
 	Username    string `json:"username" binding:"required,min=3,max=64"`

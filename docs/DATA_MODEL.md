@@ -208,19 +208,20 @@ erDiagram
 
 ### `groups`
 
-用户分组表，用于计费倍率和权限策略扩展。
+用户分组表，用于用户归类、策略扩展和运营展示。当前管理端已提供 `GET/POST/PUT/DELETE /v0/admin/groups`；删除会保护 `default` 分组和仍被 `users.group_id` 引用的分组。
 
 默认分组要求：
 
 - 初始化或迁移应保证存在 code/name 为 `default` 的默认用户分组，或在策略层把空 `group_id` 归一为 `default`。
 - 新用户默认使用 `default`。
-- 默认分组倍率为 `1`，不应自动获得管理员权限。
+- 默认分组展示倍率为 `1`，不应自动获得管理员权限。
+- 成功调用后的实际扣费倍率以 `settings` 中的 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` 为准，`groups.ratio` 不直接参与热路径扣费。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `id` | uint | 主键 |
 | `name` | string | 分组名 |
-| `ratio` | float64 | 计费倍率，默认 `1.0` |
+| `ratio` | float64 | 分组元数据/兼容展示倍率，默认 `1.0` |
 | `created_at` | time | 创建时间 |
 
 ### `tokens`

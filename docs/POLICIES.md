@@ -30,6 +30,7 @@
 - API Key scope 已支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`entry_protocols` 入口协议 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list、`daily_quota` 日预算、`monthly_quota` 月预算、`max_concurrency` 并发上限、`rpm` 和 `tpm`，未命中或达到上限时在上游调用前返回 `model_not_allowed`、`token_forbidden`、`route_forbidden`、`insufficient_quota` 或 `rate_limit_exceeded` 并写失败日志。
 - 通道选择会过滤禁用通道、模型不匹配通道、错误计数过高通道和不可用 Adapter。
 - 通道候选按 `priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC` 排序，并在最高 priority 组内按 `weight` 加权选择。
+- 管理端已支持 `GET/POST/PUT/DELETE /v0/admin/groups` 维护用户分组；删除会保护 `default` 和仍被用户引用的分组，并写 `user_group.*` 审计。
 - 通道已具备 `channel_group` 字段，新通道默认写入 `default`；Relay 已按 `billing.default_user_channel_group_access` 和 `billing.user_group_channel_group_access` 在候选阶段过滤用户可访问通道分组。完整策略快照仍属于目标增强。
 - Redis 限流已有全局、Token 和 IP 维度的基础设置与执行路径；阈值来自 `rate_limit.*`，`0` 表示关闭对应维度。
 
@@ -111,6 +112,8 @@ P1/P2 启用访问控制后，默认策略应偏向安全：
 | 用户分组 | `users.group_id`、`groups` | 用户套餐、倍率、默认访问范围；默认 `default` | 管理员角色权限 |
 | 通道分组 | `channels.channel_group` | 路由、套餐、倍率、访问控制；默认 `default` | provider 类型或真实地域的唯一来源 |
 | 用户分组 x 通道分组 | `billing.user_group_channel_group_access`、`billing.user_group_channel_ratios` | 组合访问和组合倍率 | 模型价格表达式 |
+
+用户分组 CRUD 当前由管理端 `/v0/admin/groups` 提供，`groups.ratio` 保留为分组元数据和兼容展示倍率；成功调用后的实际扣费倍率仍以 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` settings 为准。
 
 访问判断建议：
 
@@ -270,7 +273,7 @@ access allowed
 
 ### P1 验收
 
-- 用户分组和通道分组访问控制已可通过 settings 配置、验证和审计；完整调用快照仍需补齐。
+- 用户分组已可通过管理端 API 维护；用户分组和通道分组访问控制已可通过 settings 配置、验证和审计；完整调用快照仍需补齐。
 - API Key scope 已支持模型、APIType、通道分组、入口协议、IP/CIDR、方法路径、日预算、月预算、并发上限和 RPM/TPM 收窄。
 - `routerx.route` 合法、忽略、越权和无候选路径都有稳定行为和日志摘要。
 - 计费倍率和访问控制分别快照，历史账单可解释。
@@ -290,6 +293,7 @@ access allowed
 |------|------|
 | 默认开箱 | 不配置高级策略也能完成首次调用。 |
 | API Key scope 收窄 | 允许模型/APIType/通道分组/入口协议/IP/方法路径、未达日/月预算、未超并发上限且未超 RPM/TPM 的请求成功；未允许模型、APIType、通道分组、入口协议、IP、方法路径、达到日/月预算、达到并发上限或达到 RPM/TPM 时拒绝且不调用上游。 |
+| 用户分组管理 | `TestAdminUserGroupManagement` 覆盖分组创建、查询、更新、未使用删除、`default`/已引用分组删除保护和 `user_group.*` 审计。 |
 | 用户分组访问 | `TestUserGroupChannelGroupAccessFiltersRelayCandidates` 覆盖默认用户只能访问允许的通道分组，越权路由偏好不调用上游。 |
 | deny 优先 | 同时命中 allow 和 deny 时拒绝。 |
 | `routerx.route` 合法 | 在允许候选集中继续收窄。 |

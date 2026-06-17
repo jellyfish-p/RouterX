@@ -298,6 +298,116 @@ func (s *UserService) List(operatorRole int, page, pageSize int, keyword string,
 	return users, total, err
 }
 
+// ListGroups 返回管理端用户分组列表。分组倍率只作为分组元数据展示；
+// 实际扣费倍率仍以 billing.* settings 为权威来源。
+func (s *UserService) ListGroups(operatorRole int, page, pageSize int, keyword string) ([]model.Group, int64, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, 0, errors.New("admin role required")
+	}
+	page, pageSize = normalizePage(page, pageSize)
+	query := internal.DB.Model(&model.Group{})
+	if strings.TrimSpace(keyword) != "" {
+		like := "%" + strings.TrimSpace(keyword) + "%"
+		query = query.Where("name LIKE ?", like)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var groups []model.Group
+	err := query.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&groups).Error
+	return groups, total, err
+}
+
+func (s *UserService) GetGroupByID(id uint) (*model.Group, error) {
+	var group model.Group
+	if err := internal.DB.First(&group, id).Error; err != nil {
+		return nil, err
+	}
+	return &group, nil
+}
+
+func (s *UserService) CreateGroup(operatorRole int, name string, ratio float64) (*model.Group, error) {
+	if operatorRole < common.RoleAdmin {
+		return nil, errors.New("admin role required")
+	}
+	name, err := normalizeGroupName(name)
+	if err != nil {
+		return nil, err
+	}
+	if ratio <= 0 {
+		ratio = 1
+	}
+	var existing int64
+	if err := internal.DB.Model(&model.Group{}).Where("name = ?", name).Count(&existing).Error; err != nil {
+		return nil, err
+	}
+	if existing > 0 {
+		return nil, errors.New("group name already exists")
+	}
+	group := &model.Group{Name: name, Ratio: ratio}
+	if err := internal.DB.Create(group).Error; err != nil {
+		return nil, err
+	}
+	return group, nil
+}
+
+func (s *UserService) UpdateGroup(operatorRole int, id uint, name *string, ratio *float64) error {
+	if operatorRole < common.RoleAdmin {
+		return errors.New("admin role required")
+	}
+	var current model.Group
+	if err := internal.DB.First(&current, id).Error; err != nil {
+		return err
+	}
+	updates := map[string]interface{}{}
+	if name != nil {
+		normalizedName, err := normalizeGroupName(*name)
+		if err != nil {
+			return err
+		}
+		var duplicate int64
+		if err := internal.DB.Model(&model.Group{}).Where("name = ? AND id <> ?", normalizedName, id).Count(&duplicate).Error; err != nil {
+			return err
+		}
+		if duplicate > 0 {
+			return errors.New("group name already exists")
+		}
+		updates["name"] = normalizedName
+	}
+	if ratio != nil {
+		if *ratio <= 0 {
+			return errors.New("group ratio must be positive")
+		}
+		updates["ratio"] = *ratio
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return internal.DB.Model(&model.Group{}).Where("id = ?", current.ID).Updates(updates).Error
+}
+
+func (s *UserService) DeleteGroup(operatorRole int, id uint) error {
+	if operatorRole < common.RoleAdmin {
+		return errors.New("admin role required")
+	}
+	var group model.Group
+	if err := internal.DB.First(&group, id).Error; err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(group.Name), "default") {
+		return errors.New("default group cannot be deleted")
+	}
+	var users int64
+	if err := internal.DB.Model(&model.User{}).Where("group_id = ?", id).Count(&users).Error; err != nil {
+		return err
+	}
+	if users > 0 {
+		return errors.New("group is in use")
+	}
+	return internal.DB.Delete(&model.Group{}, id).Error
+}
+
 // Create 管理员创建用户。
 func (s *UserService) Create(operatorRole int, username, password, displayName, email string, role int, quota int64, groupID *uint) (*model.User, error) {
 	if operatorRole < common.RoleAdmin {
@@ -2982,6 +3092,17 @@ func filterUpdates(updates map[string]interface{}, keys ...string) map[string]in
 		}
 	}
 	return allowed
+}
+
+func normalizeGroupName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("group name is required")
+	}
+	if len(name) > 64 {
+		return "", errors.New("group name is too long")
+	}
+	return name, nil
 }
 
 func (s *UserService) ensureNormalUserTarget(operatorID uint, operatorRole int, targetID uint) error {

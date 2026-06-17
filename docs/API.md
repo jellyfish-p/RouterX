@@ -233,7 +233,18 @@ Gemini-compatible 错误示例：
 | DELETE | `/v0/admin/user/:id` | 已实现 | 删除普通用户，成功后写 `user.delete` 管理审计 |
 | PATCH | `/v0/admin/user/:id/quota` | 已实现 | 调整用户额度并写入 `quota_transactions` 与管理审计，可选 `reason` |
 
-列表查询参数：
+### 用户分组管理
+
+| 方法 | 路径 | 当前状态 | 说明 |
+|------|------|----------|------|
+| GET | `/v0/admin/groups` | 已实现 | 用户分组列表，支持 `page`、`page_size` 和 `keyword` |
+| POST | `/v0/admin/groups` | 已实现 | 创建用户分组；`ratio <= 0` 时按 `1` 保存，成功后写 `user_group.create` 管理审计 |
+| PUT | `/v0/admin/groups/:id` | 已实现 | 更新用户分组名称或展示倍率；名称唯一，显式 `ratio <= 0` 会被拒绝，成功后写 `user_group.update` |
+| DELETE | `/v0/admin/groups/:id` | 已实现 | 删除未使用用户分组；`default` 或仍有用户引用时拒绝，成功后写 `user_group.delete` |
+
+`groups.ratio` 当前作为分组元数据和兼容展示字段；成功调用后的实际扣费倍率仍以 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` settings 为权威来源。
+
+用户列表查询参数：
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -476,6 +487,9 @@ Provider 退款请求：
 | `user.delete` | `DELETE /v0/admin/user/:id` |
 | `user.denied` | 用户管理接口拒绝角色变更 |
 | `user.quota_update` | `PATCH /v0/admin/user/:id/quota` |
+| `user_group.create` | `POST /v0/admin/groups` |
+| `user_group.update` | `PUT /v0/admin/groups/:id` |
+| `user_group.delete` | `DELETE /v0/admin/groups/:id` |
 | `redem_code.create` | `POST /v0/admin/redem` |
 | `redem_code.disable` | `PATCH /v0/admin/redem/:id/disable` |
 | `redem_code.redeem` | `POST /v0/user/redem` 成功兑换充值码 |

@@ -201,6 +201,112 @@ func (h *UserHandler) UpdateQuota(c *gin.Context) {
 	common.SuccessMsg(c, "额度已更新")
 }
 
+// GET /v0/admin/groups — 用户分组列表
+func (h *UserHandler) ListGroups(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.UserGroupListRequest
+	_ = c.ShouldBindQuery(&req)
+	groups, total, err := h.svc.ListGroups(operator.Role, req.Page, req.PageSize, req.Keyword)
+	if err != nil {
+		common.FailWithStatus(c, 500, "查询用户分组失败")
+		return
+	}
+	page, pageSize := pageValues(req.Page, req.PageSize)
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.UserGroupInfosFromModels(groups)})
+}
+
+// POST /v0/admin/groups — 创建用户分组
+func (h *UserHandler) CreateGroup(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.CreateUserGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "用户分组参数无效")
+		return
+	}
+	group, err := h.svc.CreateGroup(operator.Role, req.Name, req.Ratio)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAudit(c, operator, "user_group.create", "user_group", group.ID, nil, userGroupAuditSummary(group)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.UserGroupInfoFromModel(group))
+}
+
+// PUT /v0/admin/groups/:id — 更新用户分组
+func (h *UserHandler) UpdateGroup(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	var req dto.UpdateUserGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "用户分组参数无效")
+		return
+	}
+	before, err := h.svc.GetGroupByID(id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.svc.UpdateGroup(operator.Role, id, req.Name, req.Ratio); err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	after, err := h.svc.GetGroupByID(id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAudit(c, operator, "user_group.update", "user_group", id, userGroupAuditSummary(before), userGroupAuditSummary(after)); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.UserGroupInfoFromModel(after))
+}
+
+// DELETE /v0/admin/groups/:id — 删除未使用的用户分组
+func (h *UserHandler) DeleteGroup(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	before, err := h.svc.GetGroupByID(id)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.svc.DeleteGroup(operator.Role, id); err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	if err := h.recordAdminAudit(c, operator, "user_group.delete", "user_group", id, userGroupAuditSummary(before), nil); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.SuccessMsg(c, "用户分组已删除")
+}
+
 // POST /v0/admin/payment/adjustments — 支付相关人工补账或扣回
 func (h *UserHandler) CreatePaymentManualAdjustment(c *gin.Context) {
 	operator, ok := currentUser(c)
@@ -946,6 +1052,17 @@ func userAuditSummary(user *model.User) map[string]interface{} {
 		"quota":        brief.Quota,
 		"status":       brief.Status,
 		"group_id":     brief.GroupID,
+	}
+}
+
+func userGroupAuditSummary(group *model.Group) map[string]interface{} {
+	if group == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"id":    group.ID,
+		"name":  group.Name,
+		"ratio": group.Ratio,
 	}
 }
 

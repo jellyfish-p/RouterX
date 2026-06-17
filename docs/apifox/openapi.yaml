@@ -900,6 +900,97 @@ paths:
           $ref: "#/components/responses/StandardOK"
         "400":
           $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/groups:
+    get:
+      tags: [Admin Users]
+      summary: 用户分组列表
+      description: 管理员查看用户分组；支持 page、page_size 和 keyword。groups.ratio 当前作为分组元数据/兼容展示倍率，实际扣费倍率以 billing.* settings 为准。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Keyword"
+      responses:
+        "200":
+          description: 用户分组分页列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserGroupPage"
+    post:
+      tags: [Admin Users]
+      summary: 创建用户分组
+      description: 创建用户分组；名称必须唯一，ratio 小于等于 0 时按 1 保存。成功后写入 user_group.create 管理审计。
+      security:
+        - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserGroupRequest"
+      responses:
+        "200":
+          description: 创建成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserGroupInfo"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+  /v0/admin/groups/{id}:
+    put:
+      tags: [Admin Users]
+      summary: 更新用户分组
+      description: 更新用户分组名称或展示倍率；名称必须唯一，显式 ratio 小于等于 0 会被拒绝。成功后写入 user_group.update 管理审计。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserGroupRequest"
+      responses:
+        "200":
+          description: 更新成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserGroupInfo"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+    delete:
+      tags: [Admin Users]
+      summary: 删除用户分组
+      description: 删除未使用的用户分组；default 分组或仍有用户引用的分组会被拒绝。成功后写入 user_group.delete 管理审计。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          $ref: "#/components/responses/StandardOK"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/token:
     get:
       tags: [Admin API Key]
@@ -1117,7 +1208,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖 API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
       security:
         - UserJWT: []
       parameters:
@@ -1127,12 +1218,12 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_webhook.processed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.quota_limit_denied、user.create、user_group.create、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_webhook.processed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
         - name: resource_type
           in: query
           required: false
           schema: { type: string }
-          description: 资源类型过滤，例如 api_key、user、payment_product、model_price、channel_model_price、payment_order、payment_event、channel、log 或 admin。
+          description: 资源类型过滤，例如 api_key、user、user_group、payment_product、model_price、channel_model_price、payment_order、payment_event、channel、log 或 admin。
         - name: resource_id
           in: query
           required: false
@@ -2898,6 +2989,42 @@ components:
         role: { type: integer, nullable: true }
         status: { type: integer, nullable: true }
         group_id: { type: integer, format: uint64, nullable: true }
+    UserGroupInfo:
+      type: object
+      properties:
+        id: { type: integer, format: uint64 }
+        name:
+          type: string
+          description: 分组名。
+          example: vip
+        ratio:
+          type: number
+          format: double
+          description: 分组元数据/兼容展示倍率；实际扣费倍率以 billing.* settings 为准。
+          example: 0.8
+        created_at:
+          type: string
+          format: date-time
+    CreateUserGroupRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64, example: vip }
+        ratio:
+          type: number
+          format: double
+          description: 小于等于 0 时按 1 保存。
+          example: 0.8
+    UpdateUserGroupRequest:
+      type: object
+      properties:
+        name: { type: string, maxLength: 64, example: vip-renamed }
+        ratio:
+          type: number
+          format: double
+          nullable: true
+          description: 显式传入时必须大于 0。
+          example: 0.9
     UpdateSelfRequest:
       type: object
       properties:
@@ -3537,6 +3664,15 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/UserBrief"
+    UserGroupPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/UserGroupInfo"
     CreateTokenRequest:
       type: object
       required: [name]

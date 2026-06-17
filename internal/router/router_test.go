@@ -892,6 +892,132 @@ func TestUserLoginRespectsLoginMethodSettings(t *testing.T) {
 	}
 }
 
+func TestAdminUserGroupManagement(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/groups", rootJWT, map[string]interface{}{
+		"name":  "vip",
+		"ratio": 0.8,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create group failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var createdGroupResp struct {
+		Data struct {
+			ID    uint    `json:"id"`
+			Name  string  `json:"name"`
+			Ratio float64 `json:"ratio"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createdGroupResp); err != nil {
+		t.Fatal(err)
+	}
+	if createdGroupResp.Data.ID == 0 || createdGroupResp.Data.Name != "vip" || createdGroupResp.Data.Ratio != 0.8 {
+		t.Fatalf("unexpected created group response: %s", createResp.Body.String())
+	}
+
+	listResp := performJSON(r, http.MethodGet, "/v0/admin/groups?keyword=vip", rootJWT, nil)
+	if listResp.Code != http.StatusOK || !strings.Contains(listResp.Body.String(), `"name":"vip"`) {
+		t.Fatalf("list groups should include created group, got %d %s", listResp.Code, listResp.Body.String())
+	}
+
+	blankNameResp := performJSON(r, http.MethodPut, fmt.Sprintf("/v0/admin/groups/%d", createdGroupResp.Data.ID), rootJWT, map[string]interface{}{
+		"name": "   ",
+	})
+	if blankNameResp.Code != http.StatusBadRequest {
+		t.Fatalf("blank group name update should be rejected, got %d %s", blankNameResp.Code, blankNameResp.Body.String())
+	}
+
+	updateResp := performJSON(r, http.MethodPut, fmt.Sprintf("/v0/admin/groups/%d", createdGroupResp.Data.ID), rootJWT, map[string]interface{}{
+		"name":  "vip-renamed",
+		"ratio": 0.9,
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update group failed: %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	var updatedGroup model.Group
+	if err := internal.DB.First(&updatedGroup, createdGroupResp.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if updatedGroup.Name != "vip-renamed" || updatedGroup.Ratio != 0.9 {
+		t.Fatalf("group should be updated, got %+v", updatedGroup)
+	}
+
+	userResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "grouped-user",
+		"password":     "password123",
+		"display_name": "Grouped User",
+		"role":         common.RoleUser,
+		"quota":        10,
+		"group_id":     createdGroupResp.Data.ID,
+	})
+	if userResp.Code != http.StatusOK {
+		t.Fatalf("create grouped user failed: %d %s", userResp.Code, userResp.Body.String())
+	}
+	inUseDelete := performJSON(r, http.MethodDelete, fmt.Sprintf("/v0/admin/groups/%d", createdGroupResp.Data.ID), rootJWT, nil)
+	if inUseDelete.Code != http.StatusBadRequest {
+		t.Fatalf("in-use group delete should be rejected, got %d %s", inUseDelete.Code, inUseDelete.Body.String())
+	}
+
+	unusedResp := performJSON(r, http.MethodPost, "/v0/admin/groups", rootJWT, map[string]interface{}{
+		"name":  "unused",
+		"ratio": 1.2,
+	})
+	if unusedResp.Code != http.StatusOK {
+		t.Fatalf("create unused group failed: %d %s", unusedResp.Code, unusedResp.Body.String())
+	}
+	var unusedGroupResp struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(unusedResp.Body.Bytes(), &unusedGroupResp); err != nil {
+		t.Fatal(err)
+	}
+	deleteUnused := performJSON(r, http.MethodDelete, fmt.Sprintf("/v0/admin/groups/%d", unusedGroupResp.Data.ID), rootJWT, nil)
+	if deleteUnused.Code != http.StatusOK {
+		t.Fatalf("delete unused group failed: %d %s", deleteUnused.Code, deleteUnused.Body.String())
+	}
+	afterDeleteList := performJSON(r, http.MethodGet, "/v0/admin/groups?keyword=unused", rootJWT, nil)
+	if afterDeleteList.Code != http.StatusOK || strings.Contains(afterDeleteList.Body.String(), `"name":"unused"`) {
+		t.Fatalf("deleted group should be absent from list, got %d %s", afterDeleteList.Code, afterDeleteList.Body.String())
+	}
+
+	var defaultGroup model.Group
+	if err := internal.DB.Where("name = ?", "default").First(&defaultGroup).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		defaultGroup = model.Group{Name: "default", Ratio: 1}
+		if err := internal.DB.Create(&defaultGroup).Error; err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	deleteDefault := performJSON(r, http.MethodDelete, fmt.Sprintf("/v0/admin/groups/%d", defaultGroup.ID), rootJWT, nil)
+	if deleteDefault.Code != http.StatusBadRequest {
+		t.Fatalf("default group delete should be rejected, got %d %s", deleteDefault.Code, deleteDefault.Body.String())
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=user_group", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"user_group.create"`) ||
+		!strings.Contains(auditBody, `"action":"user_group.update"`) ||
+		!strings.Contains(auditBody, `"action":"user_group.delete"`) {
+		t.Fatalf("group audits missing, got %d %s", auditResp.Code, auditBody)
+	}
+}
+
 func TestAdminPrivilegeBoundaries(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

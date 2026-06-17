@@ -31,6 +31,26 @@ func UserBriefFromModel(user *model.User) UserBrief {
 	}
 }
 
+func UserGroupInfoFromModel(group *model.Group) UserGroupInfo {
+	if group == nil {
+		return UserGroupInfo{}
+	}
+	return UserGroupInfo{
+		ID:        group.ID,
+		Name:      group.Name,
+		Ratio:     group.Ratio,
+		CreatedAt: group.CreatedAt,
+	}
+}
+
+func UserGroupInfosFromModels(groups []model.Group) []UserGroupInfo {
+	items := make([]UserGroupInfo, 0, len(groups))
+	for i := range groups {
+		items = append(items, UserGroupInfoFromModel(&groups[i]))
+	}
+	return items
+}
+
 func ChannelInfoFromModel(channel *model.Channel) ChannelInfo {
 	if channel == nil {
 		return ChannelInfo{}
