@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -955,6 +956,109 @@ func TestAdminLogClearWritesAuditLog(t *testing.T) {
 		!strings.Contains(body, `"action":"log.clear"`) ||
 		!strings.Contains(body, before) {
 		t.Fatalf("admin log clear should write audit log, got %d %s", auditResp.Code, body)
+	}
+}
+
+func TestAdminLogExportWritesAuditLogAndRedactsSensitiveFields(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	exportLog := model.Log{
+		UserID:           root.ID,
+		Model:            "export-model",
+		PromptTokens:     2,
+		CompletionTokens: 3,
+		TotalTokens:      5,
+		UsageSource:      common.LogUsageSourceUpstream,
+		QuotaUsed:        7,
+		Status:           common.LogStatusSuccess,
+		Content:          `{"prompt":"raw prompt","api_key":"sk-export-secret"}`,
+		Response:         `{"output":"provider response","upstream_key":"upstream-secret"}`,
+		ErrorMsg:         "provider message with sk-export-secret",
+		RequestSnapshot:  `{"api_key":"sk-export-secret"}`,
+		PolicySnapshot:   `{"payment_key":"PAYMENT_SECRET"}`,
+		RouteSnapshot:    `{"upstream_key":"upstream-secret"}`,
+		BillingSnapshot:  `{"secret":"PAYMENT_SECRET"}`,
+		IP:               "203.0.113.5",
+		RequestID:        "req-export-1",
+		CreatedAt:        time.Date(2026, 6, 17, 8, 30, 0, 0, time.UTC),
+	}
+	if err := internal.DB.Create(&exportLog).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	exportResp := performJSON(r, http.MethodGet, "/v0/admin/log/export?model=export-model&limit=10", rootJWT, nil)
+	if exportResp.Code != http.StatusOK {
+		t.Fatalf("export admin logs failed: %d %s", exportResp.Code, exportResp.Body.String())
+	}
+	if contentType := exportResp.Header().Get("Content-Type"); !strings.Contains(contentType, "text/csv") {
+		t.Fatalf("export should return csv content type, got %q", contentType)
+	}
+	if disposition := exportResp.Header().Get("Content-Disposition"); !strings.Contains(disposition, "attachment") || !strings.Contains(disposition, "routerx-logs") {
+		t.Fatalf("export should return attachment disposition, got %q", disposition)
+	}
+	body := exportResp.Body.String()
+	for _, forbidden := range []string{"sk-export-secret", "PAYMENT_SECRET", "upstream-secret", "raw prompt", "provider response", "203.0.113.5"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("export csv should not expose sensitive value %q: %s", forbidden, body)
+		}
+	}
+	records, err := csv.NewReader(strings.NewReader(body)).ReadAll()
+	if err != nil {
+		t.Fatalf("export should be valid csv: %v\n%s", err, body)
+	}
+	if len(records) != 2 {
+		t.Fatalf("export should include header and one filtered log, got %d records: %#v", len(records), records)
+	}
+	expectedHeader := []string{"id", "user_id", "token_id", "channel_id", "model", "prompt_tokens", "completion_tokens", "total_tokens", "usage_source", "quota_used", "status", "error_code", "error_source", "upstream_status", "request_id", "created_at"}
+	if fmt.Sprint(records[0]) != fmt.Sprint(expectedHeader) {
+		t.Fatalf("unexpected csv header: %#v", records[0])
+	}
+	row := records[1]
+	if row[4] != "export-model" || row[8] != common.LogUsageSourceUpstream || row[9] != "7" || row[14] != "req-export-1" {
+		t.Fatalf("unexpected csv row: %#v", row)
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=log", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if strings.Contains(auditBody, "sk-export-secret") || strings.Contains(auditBody, "PAYMENT_SECRET") {
+		t.Fatalf("admin log export audit should not expose sensitive values: %s", auditBody)
+	}
+	var auditPayload struct {
+		Data struct {
+			Data []struct {
+				Action       string `json:"action"`
+				AfterSummary string `json:"after_summary"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(auditResp.Body.Bytes(), &auditPayload); err != nil {
+		t.Fatalf("admin log export audit response should be json: %v", err)
+	}
+	if auditResp.Code != http.StatusOK || len(auditPayload.Data.Data) != 1 || auditPayload.Data.Data[0].Action != "log.export" {
+		t.Fatalf("admin log export should write audit log, got %d %s", auditResp.Code, auditBody)
+	}
+	var afterSummary map[string]interface{}
+	if err := json.Unmarshal([]byte(auditPayload.Data.Data[0].AfterSummary), &afterSummary); err != nil {
+		t.Fatalf("admin log export audit summary should be json: %v", err)
+	}
+	filters, _ := afterSummary["filters"].(map[string]interface{})
+	if afterSummary["exported_count"] != float64(1) || afterSummary["limit"] != float64(10) || filters["model"] != "export-model" {
+		t.Fatalf("admin log export audit should record filters, limit and count, got %#v", afterSummary)
 	}
 }
 

@@ -78,6 +78,7 @@ func setupAdminRoutes(
 			authRequired.GET("/channel/:id/models", channelH.FetchModels)
 
 			authRequired.GET("/log", logH.AdminList)
+			authRequired.GET("/log/export", logH.AdminExport)
 			authRequired.DELETE("/log", logH.AdminClear)
 			authRequired.GET("/dashboard", logH.Dashboard)
 

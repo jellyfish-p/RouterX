@@ -70,6 +70,7 @@
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
 | `TestAdminChannelManagementAuditLogs` | 通道创建、测试、拉取模型、编辑、禁用、启用和删除写入 `channel.*` 管理审计，且审计摘要不泄露下游密钥 |
 | `TestAdminLogClearWritesAuditLog` | 管理员按 `before` 清理调用日志写入 `log.clear` 审计，并记录清理截止时间 |
+| `TestAdminLogExportWritesAuditLogAndRedactsSensitiveFields` | 管理员按过滤条件导出调用日志 CSV 写入 `log.export` 审计，导出内容不包含请求/响应体、IP、错误原文、snapshot 或密钥 |
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
 | `TestMetricsEndpointRequiresSettingAndExposesPrometheusText` | `/metrics` 默认关闭，启用 `observability.metrics_enabled` 后返回 Prometheus 文本和基础实例指标 |
 | `TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals` | `/metrics` 输出 DB/Redis up、调用日志成功/失败计数、Relay 请求数、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标 |

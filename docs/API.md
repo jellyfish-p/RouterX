@@ -488,6 +488,7 @@ Provider 退款请求：
 | `channel.test` | `POST /v0/admin/channel/:id/test` |
 | `channel.fetch_models` | `GET /v0/admin/channel/:id/models` |
 | `log.clear` | `DELETE /v0/admin/log` |
+| `log.export` | `GET /v0/admin/log/export` |
 
 审计摘要只保存脱敏后的变更摘要，不保存完整请求体、支付密钥、JWT secret、API Key 或 provider secret。
 
@@ -562,6 +563,7 @@ Provider 退款请求：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/v0/admin/log` | 已实现 | 调用日志列表；配置 `LOG_SQL_DSN` 时读取独立日志库 |
+| GET | `/v0/admin/log/export` | 基础实现 | 按日志查询条件导出脱敏 CSV；配置 `LOG_SQL_DSN` 时读取独立日志库，查询失败回退主库；成功后写 `log.export` 管理审计 |
 | DELETE | `/v0/admin/log` | 基础实现 | 按 `before` 清理日志；配置 `LOG_SQL_DSN` 时清理独立日志库；成功后写 `log.clear` 管理审计 |
 | GET | `/v0/admin/dashboard` | 基础实现 | 仪表盘统计；基础用户/通道/API Key 数来自主库，今日调用和额度在配置 `LOG_SQL_DSN` 时来自日志库 |
 | GET | `/v0/admin/setting` | 已实现 | 获取系统设置，仅超级管理员 |
@@ -578,10 +580,12 @@ Provider 退款请求：
 | `channel_id` | uint | 通道过滤 |
 | `model` | string | 模型过滤 |
 | `status` | int | 状态过滤 |
-| `start_at` | string | 开始时间 |
-| `end_at` | string | 结束时间 |
+| `start_time` | string | 开始时间 |
+| `end_time` | string | 结束时间 |
 
 日志响应字段至少包含 `user_id`、`token_id`、`channel_id`、`model`、usage、`usage_source`、`quota_used`、`status`、`request_id`、`error_code`、`error_source`、`upstream_status`、`request_snapshot`、`policy_snapshot`、`route_snapshot`、`billing_snapshot`、`error_msg`、`ip` 和 `created_at`。`usage_source` 当前会记录 `upstream` 或 `minimum`；`request_id` 用于关联 HTTP 访问日志和审计日志；`error_code` 成功调用为空，失败调用按 `docs/ERRORS.md` 使用稳定 code；`error_source` 和 `upstream_status` 用于排查失败来源；`request_snapshot`、`policy_snapshot`、`route_snapshot` 和 `billing_snapshot` 当前是脱敏 JSON 字符串，分别记录基础请求事实、基础策略事实、基础路由选择事实和基础计费事实，其中请求快照包含入口协议、API 类型、请求模型和 stream 标记，策略快照包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要，路由快照包含候选过滤、模型重写和非流式重试摘要，计费快照包含价格表达式或 P0 回退表达式、规则 ID/版本、倍率快照、Key 预算和用户余额前后摘要。配置 `LOG_SQL_DSN` 时，`LogService` 会先在主库事务内保存可恢复结算事实并创建 `log_replication_outboxes` 补写项，再写入独立日志库；日志查询和清理优先使用独立日志库，日志库查询失败时回退读取主库事实，独立日志库运行期写入失败不应抹掉主库事实，后台 worker 会在恢复后补写 pending outbox。
+
+日志导出使用与列表相同的过滤参数，并额外支持 `limit`，默认 `1000`、最大 `10000`。CSV 只包含 `id`、`user_id`、`token_id`、`channel_id`、`model`、usage、`usage_source`、`quota_used`、`status`、`error_code`、`error_source`、`upstream_status`、`request_id` 和 `created_at`。导出内容不包含请求体、响应体、IP、错误原文、request/policy/route/billing snapshot、API Key、上游密钥或支付密钥；成功导出写 `log.export` 管理审计，摘要记录过滤条件、规范化后的 `limit` 和 `exported_count`。
 
 删除日志目标要求：
 

@@ -24,6 +24,22 @@ type LogService struct {
 	logDB *gorm.DB
 }
 
+// LogFilters 描述日志列表和导出的公共筛选条件。
+type LogFilters struct {
+	UserID    *uint
+	TokenID   *uint
+	ChannelID *uint
+	ModelName string
+	Status    *int
+	StartTime string
+	EndTime   string
+}
+
+const (
+	defaultLogExportLimit = 1000
+	maxLogExportLimit     = 10000
+)
+
 func NewLogService() *LogService {
 	return &LogService{logDB: internal.LogDB}
 }
@@ -406,37 +422,25 @@ func normalizeLogBillingSnapshot(log *model.Log) string {
 // List 日志分页查询, 支持多维筛选。
 func (s *LogService) List(userID, tokenID, channelID *uint, modelName string, status *int, startTime, endTime string, page, pageSize int) ([]model.Log, int64, error) {
 	page, pageSize = normalizePage(page, pageSize)
-	logs, total, err := s.listFromDB(s.logReadDB(), userID, tokenID, channelID, modelName, status, startTime, endTime, page, pageSize)
+	filter := LogFilters{
+		UserID:    userID,
+		TokenID:   tokenID,
+		ChannelID: channelID,
+		ModelName: modelName,
+		Status:    status,
+		StartTime: startTime,
+		EndTime:   endTime,
+	}
+	logs, total, err := s.listFromDB(s.logReadDB(), filter, page, pageSize)
 	if err != nil && s.usesExternalLogDB() {
 		stdlog.Printf("[LogService] WARN: external log DB query failed, falling back to main DB: %v", err)
-		return s.listFromDB(internal.DB, userID, tokenID, channelID, modelName, status, startTime, endTime, page, pageSize)
+		return s.listFromDB(internal.DB, filter, page, pageSize)
 	}
 	return logs, total, err
 }
 
-func (s *LogService) listFromDB(db *gorm.DB, userID, tokenID, channelID *uint, modelName string, status *int, startTime, endTime string, page, pageSize int) ([]model.Log, int64, error) {
-	query := db.Model(&model.Log{})
-	if userID != nil {
-		query = query.Where("user_id = ?", *userID)
-	}
-	if tokenID != nil {
-		query = query.Where("token_id = ?", *tokenID)
-	}
-	if channelID != nil {
-		query = query.Where("channel_id = ?", *channelID)
-	}
-	if modelName != "" {
-		query = query.Where("model = ?", modelName)
-	}
-	if status != nil {
-		query = query.Where("status = ?", *status)
-	}
-	if t, ok := parseTime(startTime); ok {
-		query = query.Where("created_at >= ?", t)
-	}
-	if t, ok := parseTime(endTime); ok {
-		query = query.Where("created_at <= ?", t)
-	}
+func (s *LogService) listFromDB(db *gorm.DB, filter LogFilters, page, pageSize int) ([]model.Log, int64, error) {
+	query := applyLogFilters(db.Model(&model.Log{}), filter)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -444,6 +448,63 @@ func (s *LogService) listFromDB(db *gorm.DB, userID, tokenID, channelID *uint, m
 	var logs []model.Log
 	err := query.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs).Error
 	return logs, total, err
+}
+
+// Export 返回适合管理端 CSV 导出的安全日志字段。
+func (s *LogService) Export(filter LogFilters, limit int) ([]model.Log, int, error) {
+	limit = normalizeLogExportLimit(limit)
+	logs, err := s.exportFromDB(s.logReadDB(), filter, limit)
+	if err != nil && s.usesExternalLogDB() {
+		stdlog.Printf("[LogService] WARN: external log DB export failed, falling back to main DB: %v", err)
+		logs, err = s.exportFromDB(internal.DB, filter, limit)
+	}
+	return logs, limit, err
+}
+
+func (s *LogService) exportFromDB(db *gorm.DB, filter LogFilters, limit int) ([]model.Log, error) {
+	query := applyLogFilters(db.Model(&model.Log{}), filter)
+	var logs []model.Log
+	err := query.
+		Select("id, user_id, token_id, channel_id, model, prompt_tokens, completion_tokens, total_tokens, usage_source, quota_used, status, error_code, error_source, upstream_status, request_id, created_at").
+		Order("id DESC").
+		Limit(limit).
+		Find(&logs).Error
+	return logs, err
+}
+
+func applyLogFilters(query *gorm.DB, filter LogFilters) *gorm.DB {
+	if filter.UserID != nil {
+		query = query.Where("user_id = ?", *filter.UserID)
+	}
+	if filter.TokenID != nil {
+		query = query.Where("token_id = ?", *filter.TokenID)
+	}
+	if filter.ChannelID != nil {
+		query = query.Where("channel_id = ?", *filter.ChannelID)
+	}
+	if modelName := strings.TrimSpace(filter.ModelName); modelName != "" {
+		query = query.Where("model = ?", modelName)
+	}
+	if filter.Status != nil {
+		query = query.Where("status = ?", *filter.Status)
+	}
+	if t, ok := parseTime(filter.StartTime); ok {
+		query = query.Where("created_at >= ?", t)
+	}
+	if t, ok := parseTime(filter.EndTime); ok {
+		query = query.Where("created_at <= ?", t)
+	}
+	return query
+}
+
+func normalizeLogExportLimit(limit int) int {
+	if limit <= 0 {
+		return defaultLogExportLimit
+	}
+	if limit > maxLogExportLimit {
+		return maxLogExportLimit
+	}
+	return limit
 }
 
 func (s *LogService) logReadDB() *gorm.DB {
