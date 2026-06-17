@@ -161,6 +161,15 @@ func buildDefaultSettings() map[string]map[string]string {
 			"jwt.admin_expire_hours": "24",
 			"jwt.user_expire_hours":  "168",
 		},
+		"auth": {
+			"auth.register.enabled":          "false",
+			"auth.register.username.enabled": "true",
+			"auth.register.email.enabled":    "false",
+			"auth.register.phone.enabled":    "false",
+			"auth.register.captcha.required": "true",
+			"auth.register.default_quota":    "0",
+			"auth.register.default_group_id": "default",
+		},
 		"rate_limit": {
 			"rate_limit.enabled":           "true",
 			"rate_limit.global_per_min":    "1000",

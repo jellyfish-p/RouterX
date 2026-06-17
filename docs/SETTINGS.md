@@ -42,6 +42,13 @@
 | `jwt.secret` | `jwt` | string | `JWT_SECRET` 或初始化生成 | 是 | restart/cache_refresh | auth | 长度不少于 32，生产必须固定 |
 | `jwt.admin_expire_hours` | `jwt` | int | `24` | 否 | cache_refresh | auth | `>0` |
 | `jwt.user_expire_hours` | `jwt` | int | `168` | 否 | cache_refresh | auth | `>0` |
+| `auth.register.enabled` | `auth` | bool | `false` | 否 | hot | auth | bool |
+| `auth.register.username.enabled` | `auth` | bool | `true` | 否 | hot | auth | bool |
+| `auth.register.email.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前注册接口暂未使用 |
+| `auth.register.phone.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前注册接口暂未使用 |
+| `auth.register.captcha.required` | `auth` | bool | `true` | 否 | hot | auth | bool；当前无验证码请求时 fail-closed |
+| `auth.register.default_quota` | `auth` | int | `0` | 否 | hot | auth | `>=0` |
+| `auth.register.default_group_id` | `auth` | string | `default` | 否 | hot | auth | 非空 group 名称或数字 ID |
 | `rate_limit.enabled` | `rate_limit` | bool | `true` | 否 | hot | rate limit | bool |
 | `rate_limit.global_per_min` | `rate_limit` | int | `1000` | 否 | hot | rate limit | `>=0` |
 | `rate_limit.per_token_per_min` | `rate_limit` | int | `60` | 否 | hot | rate limit | `>=0` |
@@ -66,6 +73,7 @@
 说明：
 
 - `jwt.secret` 可以由 `JWT_SECRET` 注入；生产和多实例部署必须显式固定，不能让各实例随机生成不同值。
+- `auth.register.enabled=false` 是商业级自部署安全默认；当前基础用户名注册还会检查 `auth.register.username.enabled`，并在 `auth.register.captcha.required=true` 时拒绝无验证码注册请求。完整验证码、邮箱和手机号注册仍按 `docs/ACCOUNTS.md` 分阶段补齐。
 - `rate_limit.global_per_min`、`rate_limit.per_token_per_min` 和 `rate_limit.per_ip_per_min` 为 `0` 时表示关闭对应维度；Redis 可用时这些 hot setting 会影响后续请求。
 - `relay.retry_count` 默认是 `0`，表示不做自动重试；大于 0 时，非流式 Relay 只对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败进行有限候选通道重试。默认白名单为 429/500/502/503/504，生产环境不建议把 401/403 加入白名单。
 - `relay.error_auto_ban=false` 时仍会记录通道 `error_count`，但候选查询不会因为 `relay.error_ban_threshold` 排除通道。
@@ -99,13 +107,13 @@ P0 补齐这些配置时，应同时补测试：
 
 | key | 默认 | stage | 说明 |
 |-----|------|-------|------|
-| `auth.register.enabled` | `false` | P1 | 是否开放公开自助注册 |
-| `auth.register.username.enabled` | `true` | P1 | 开启注册后是否允许用户名注册 |
-| `auth.register.email.enabled` | `false` | P1 | 是否允许邮箱注册 |
-| `auth.register.phone.enabled` | `false` | P1 | 是否允许手机号注册 |
-| `auth.register.captcha.required` | `true` | P1 | 注册是否强制验证码 |
-| `auth.register.default_quota` | `0` | P1 | 自助注册默认额度 |
-| `auth.register.default_group_id` | `default` | P1 | 自助注册默认用户分组；如果实现使用数字 ID，应解析 code 为 `default` 的分组 |
+| `auth.register.enabled` | `false` | P1 | 当前已落地；是否开放公开自助注册，默认关闭 |
+| `auth.register.username.enabled` | `true` | P1 | 当前已落地；开启注册后是否允许用户名注册 |
+| `auth.register.email.enabled` | `false` | P1 | 当前已校验；邮箱注册入口仍属后续增强 |
+| `auth.register.phone.enabled` | `false` | P1 | 当前已校验；手机号注册入口仍属后续增强 |
+| `auth.register.captcha.required` | `true` | P1 | 当前已落地 fail-closed；基础无验证码注册需显式设为 `false`，完整验证码校验仍属后续增强 |
+| `auth.register.default_quota` | `0` | P1 | 当前已落地；自助注册默认额度，必须为非负整数 |
+| `auth.register.default_group_id` | `default` | P1 | 当前已落地；自助注册默认用户分组，支持 group 名称或数字 ID；`default` 不存在时按空分组归一 |
 
 ### Billing
 
@@ -222,6 +230,9 @@ validate key exists
 生产模式下，以下配置缺失或非法时 `/ready` 应返回不就绪：
 
 - `jwt.secret` 缺失、过短或多实例不一致。
+- `auth.register.*.enabled` 或 `auth.register.captcha.required` 不是 boolean。
+- `auth.register.default_quota < 0`。
+- `auth.register.default_group_id` 为空。
 - `ENCRYPTION_KEY` 或 KMS 不可用，且数据库存在 `enc:v1:` 下游密钥。
 - `SQL_DSN` 指向 PostgreSQL/MySQL 等外部数据库但 Redis 不可用。
 - `relay.timeout <= 0`。

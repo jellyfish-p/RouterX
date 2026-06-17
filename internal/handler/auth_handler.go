@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gin-gonic/gin"
 	"routerx/internal/common"
 	"routerx/internal/dto"
@@ -25,6 +27,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 	user, err := h.svc.Register(req.Username, req.Password, req.DisplayName, req.Email)
 	if err != nil {
+		if errors.Is(err, service.ErrSelfRegistrationDisabled) ||
+			errors.Is(err, service.ErrUsernameRegistrationDisabled) ||
+			errors.Is(err, service.ErrRegistrationCaptchaRequired) {
+			common.FailWithStatus(c, 403, err.Error())
+			return
+		}
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}

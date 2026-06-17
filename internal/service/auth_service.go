@@ -6,10 +6,17 @@ import (
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
+	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+)
+
+var (
+	ErrSelfRegistrationDisabled     = errors.New("self registration is disabled")
+	ErrUsernameRegistrationDisabled = errors.New("username registration is disabled")
+	ErrRegistrationCaptchaRequired  = errors.New("registration captcha is required")
 )
 
 type AuthService struct{}
@@ -24,6 +31,9 @@ func NewAuthService() *AuthService {
 // 3. 创建用户记录和本地 UserIdentity (role=0, status=1)
 // 4. 返回用户信息
 func (s *AuthService) Register(username, password, displayName, email string) (*model.User, error) {
+	if err := registrationPolicyError(); err != nil {
+		return nil, err
+	}
 	username = strings.TrimSpace(username)
 	email = normalizeEmail(email)
 	if username == "" || password == "" {
@@ -38,6 +48,11 @@ func (s *AuthService) Register(username, password, displayName, email string) (*
 
 	var user *model.User
 	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		quota := registrationDefaultQuota()
+		groupID, err := registrationDefaultGroupID(tx)
+		if err != nil {
+			return err
+		}
 		if exists, err := identityExists(tx, model.UserIdentityMethodUsername, username); err != nil {
 			return err
 		} else if exists {
@@ -65,7 +80,9 @@ func (s *AuthService) Register(username, password, displayName, email string) (*
 			DisplayName: displayName,
 			Email:       emailPtr,
 			Role:        common.RoleUser,
+			Quota:       quota,
 			Status:      common.UserStatusEnabled,
+			GroupID:     groupID,
 		}
 		if err := tx.Create(u).Error; err != nil {
 			return err
@@ -96,6 +113,61 @@ func (s *AuthService) Register(username, password, displayName, email string) (*
 		return nil
 	})
 	return user, err
+}
+
+func registrationPolicyError() error {
+	settingSvc := NewSettingService()
+	if enabled, err := settingSvc.GetBool("auth.register.enabled"); err != nil || !enabled {
+		return ErrSelfRegistrationDisabled
+	}
+	if enabled, err := settingSvc.GetBool("auth.register.username.enabled"); err != nil || !enabled {
+		return ErrUsernameRegistrationDisabled
+	}
+	// Captcha-backed self-registration is intentionally fail-closed until the captcha service lands.
+	if required, err := settingSvc.GetBool("auth.register.captcha.required"); err == nil && required {
+		return ErrRegistrationCaptchaRequired
+	}
+	return nil
+}
+
+func registrationDefaultQuota() int64 {
+	raw, err := NewSettingService().Get("auth.register.default_quota")
+	if err != nil {
+		return 0
+	}
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
+}
+
+func registrationDefaultGroupID(tx *gorm.DB) (*uint, error) {
+	raw, err := NewSettingService().Get("auth.register.default_group_id")
+	if err != nil {
+		return nil, nil
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var group model.Group
+	if id, err := strconv.ParseUint(raw, 10, 64); err == nil && id > 0 {
+		if err := tx.First(&group, uint(id)).Error; err != nil {
+			return nil, err
+		}
+		groupID := group.ID
+		return &groupID, nil
+	}
+	err = tx.Where("name = ?", raw).First(&group).Error
+	if err == nil {
+		groupID := group.ID
+		return &groupID, nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) && raw == "default" {
+		return nil, nil
+	}
+	return nil, err
 }
 
 // UserLogin 用户登录 (返回 JWT)。

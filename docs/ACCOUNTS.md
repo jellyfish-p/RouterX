@@ -21,7 +21,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备用户名密码注册、统一登录、User JWT、管理员角色校验、API Key 鉴权所需的基础账号能力。本文档中的邮箱/手机号验证码、OAuth/OIDC、注销保留账号和恢复账号属于目标设计，需要按阶段继续实现。
+当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、管理员角色校验、API Key 鉴权所需的基础账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，并应用默认额度/分组。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC、注销保留账号和恢复账号属于目标设计，需要按阶段继续实现。
 
 阶段边界：
 
@@ -134,15 +134,15 @@ password_hash = bcrypt hash
 
 | key | 默认 | 说明 |
 |-----|------|------|
-| `auth.register.enabled` | `false` | 是否开放用户自助注册；自部署商业级默认关闭，由管理员按运营需要开启 |
-| `auth.register.username.enabled` | `true` | 开启自助注册后，是否允许用户名自助注册 |
-| `auth.register.email.enabled` | `false` | 是否允许邮箱自助注册 |
-| `auth.register.phone.enabled` | `false` | 是否允许手机号自助注册 |
+| `auth.register.enabled` | `false` | 当前已落地；是否开放用户自助注册；自部署商业级默认关闭，由管理员按运营需要开启 |
+| `auth.register.username.enabled` | `true` | 当前已落地；开启自助注册后，是否允许用户名自助注册 |
+| `auth.register.email.enabled` | `false` | 当前已校验；邮箱自助注册入口仍属后续增强 |
+| `auth.register.phone.enabled` | `false` | 当前已校验；手机号自助注册入口仍属后续增强 |
 | `auth.register.oauth.enabled` | `false` | 是否允许 OAuth 首次登录自动进入注册流程 |
 | `auth.register.oidc.enabled` | `false` | 是否允许 OIDC 首次登录自动进入注册流程 |
-| `auth.register.captcha.required` | `true` | 强制为 true，注册必须校验验证码 |
-| `auth.register.default_quota` | `0` | 注册默认额度 |
-| `auth.register.default_group_id` | `default` | 注册默认分组 |
+| `auth.register.captcha.required` | `true` | 当前已 fail-closed；无验证码请求会被拒绝，完整验证码校验仍属后续增强 |
+| `auth.register.default_quota` | `0` | 当前已落地；注册默认额度 |
+| `auth.register.default_group_id` | `default` | 当前已落地；注册默认分组，支持 group 名称或数字 ID |
 
 ### 验证码配置
 
@@ -163,6 +163,7 @@ password_hash = bcrypt hash
 - 关闭某种登录方式不删除已绑定身份，只禁止继续使用该方式登录。
 - 管理员创建账户不受自助注册开关限制，但仍必须设置用户名和密码。
 - 默认关闭自助注册不影响用户名密码登录，也不影响管理员创建用户或后续邀请用户。
+- 当前基础用户名密码注册只有在 `auth.register.enabled=true`、`auth.register.username.enabled=true` 且 `auth.register.captcha.required=false` 时接受无验证码请求；生产启用公开注册前应先落地验证码。
 
 ## 注册设计
 
@@ -225,7 +226,7 @@ POST /v0/user/register
 注册规则：
 
 - 所有注册方式都必须提交用户名、密码和验证码。
-- `register_method=username` 时必须开启 `auth.register.username.enabled`。
+- 当前基础实现只支持用户名密码注册；目标 `register_method=username` 时必须开启 `auth.register.username.enabled`。
 - `register_method=email` 时必须开启 `auth.register.email.enabled`，并且必须填写邮箱。
 - `register_method=phone` 时必须开启 `auth.register.phone.enabled`，并且必须填写手机号。
 - 即使用邮箱或手机号注册，也必须同时创建用户名和密码。

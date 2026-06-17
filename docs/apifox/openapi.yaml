@@ -188,7 +188,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 用户注册
-      description: 当前基础实现为用户名密码注册；是否允许公开注册由 settings 控制。
+      description: 当前基础实现为用户名密码注册；默认关闭公开注册。需要 auth.register.enabled=true、auth.register.username.enabled=true 且 auth.register.captcha.required=false 才接受当前无验证码请求；成功注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id。
       requestBody:
         required: true
         content:
@@ -209,6 +209,12 @@ paths:
                         $ref: "#/components/schemas/UserBrief"
         "400":
           $ref: "#/components/responses/StandardBadRequest"
+        "403":
+          description: 公开注册关闭、用户名注册关闭，或当前无验证码请求但 auth.register.captcha.required=true。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
   /v0/user/login:
     post:
       tags: [User Auth]
@@ -4134,10 +4140,15 @@ components:
         updated_at: { type: string, format: date-time }
     BatchSetSettingsRequest:
       type: object
-      description: 顶层对象为 key/value 字符串映射；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；倍率相关 key 包括 billing.user_group_ratios='{"vip":0.8}'、billing.channel_group_ratios='{"premium":1.2}' 和 billing.user_group_channel_ratios='{"vip":{"premium":0.9}}'，组合倍率命中时覆盖用户分组倍率和通道分组倍率的乘积；usage 缺失策略可设置 billing.usage_missing_strategy=minimum 或 reject；Relay 重试可设置 relay.retry_count=1 和 relay.retry_on_status='[429,500,502,503,504]'；通道候选缓存可设置 routing.channel_cache.enabled=true、routing.channel_cache.preload=true、routing.channel_cache.ttl_seconds=60 和 routing.channel_cache.version=1；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，易支付退款请求地址可设置 payment.epay.refund_url。
+      description: 顶层对象为 key/value 字符串映射；注册相关 key 包括 auth.register.enabled=false、auth.register.username.enabled=true、auth.register.captcha.required=true、auth.register.default_quota=0 和 auth.register.default_group_id=default；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；倍率相关 key 包括 billing.user_group_ratios='{"vip":0.8}'、billing.channel_group_ratios='{"premium":1.2}' 和 billing.user_group_channel_ratios='{"vip":{"premium":0.9}}'，组合倍率命中时覆盖用户分组倍率和通道分组倍率的乘积；usage 缺失策略可设置 billing.usage_missing_strategy=minimum 或 reject；Relay 重试可设置 relay.retry_count=1 和 relay.retry_on_status='[429,500,502,503,504]'；通道候选缓存可设置 routing.channel_cache.enabled=true、routing.channel_cache.preload=true、routing.channel_cache.ttl_seconds=60 和 routing.channel_cache.version=1；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，易支付退款请求地址可设置 payment.epay.refund_url。
       additionalProperties:
         type: string
       example:
+        auth.register.enabled: "false"
+        auth.register.username.enabled: "true"
+        auth.register.captcha.required: "true"
+        auth.register.default_quota: "0"
+        auth.register.default_group_id: "default"
         billing.default_user_channel_group_access: '["default"]'
         billing.user_group_channel_group_access: '{"vip":{"allow":["premium"],"deny":["experimental"]}}'
         billing.user_group_ratios: '{"vip":0.8}'

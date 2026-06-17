@@ -703,6 +703,95 @@ func TestAdminAPIKeyBatchExpire(t *testing.T) {
 	}
 }
 
+func TestUserRegisterRespectsRegistrationSettings(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+
+	closedResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "closed-user",
+		"password":     "password123",
+		"display_name": "Closed User",
+	})
+	if closedResp.Code != http.StatusForbidden {
+		t.Fatalf("self registration should be closed by default, got %d %s", closedResp.Code, closedResp.Body.String())
+	}
+	var closedCount int64
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "closed-user").Count(&closedCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if closedCount != 0 {
+		t.Fatalf("closed registration must not create user, got count=%d", closedCount)
+	}
+
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("auth.register.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.username.enabled", "false"); err != nil {
+		t.Fatal(err)
+	}
+	usernameDisabledResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username": "disabled-method",
+		"password": "password123",
+	})
+	if usernameDisabledResp.Code != http.StatusForbidden {
+		t.Fatalf("username registration should respect method switch, got %d %s", usernameDisabledResp.Code, usernameDisabledResp.Body.String())
+	}
+
+	if err := settingSvc.Set("auth.register.username.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	captchaRequiredResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username": "captcha-required",
+		"password": "password123",
+	})
+	if captchaRequiredResp.Code != http.StatusForbidden {
+		t.Fatalf("captcha-required registration should reject current no-captcha request, got %d %s", captchaRequiredResp.Code, captchaRequiredResp.Body.String())
+	}
+
+	trialGroup := model.Group{Name: "trial", Ratio: 1}
+	if err := internal.DB.Create(&trialGroup).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.captcha.required", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.default_quota", "1234"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.default_group_id", "trial"); err != nil {
+		t.Fatal(err)
+	}
+
+	openResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "trial-user",
+		"password":     "password123",
+		"display_name": "Trial User",
+	})
+	if openResp.Code != http.StatusOK {
+		t.Fatalf("enabled username registration should succeed, got %d %s", openResp.Code, openResp.Body.String())
+	}
+	var registered model.User
+	if err := internal.DB.Where("username = ?", "trial-user").First(&registered).Error; err != nil {
+		t.Fatal(err)
+	}
+	if registered.Quota != 1234 {
+		t.Fatalf("registered user should receive default quota, got %d", registered.Quota)
+	}
+	if registered.GroupID == nil || *registered.GroupID != trialGroup.ID {
+		t.Fatalf("registered user should receive trial group id %d, got %v", trialGroup.ID, registered.GroupID)
+	}
+}
+
 func TestAdminPrivilegeBoundaries(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -3585,6 +3674,13 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 	}
 
 	for _, key := range []string{
+		"auth.register.enabled",
+		"auth.register.username.enabled",
+		"auth.register.email.enabled",
+		"auth.register.phone.enabled",
+		"auth.register.captcha.required",
+		"auth.register.default_quota",
+		"auth.register.default_group_id",
 		"jwt.secret",
 		"relay.timeout",
 		"relay.retry_count",
@@ -4171,6 +4267,24 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badRelayRetryStatus.Code != http.StatusBadRequest {
 		t.Fatalf("relay retry statuses should reject non-error status codes, got %d %s", badRelayRetryStatus.Code, badRelayRetryStatus.Body.String())
+	}
+	badRegisterEnabled := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"auth.register.enabled": "maybe",
+	})
+	if badRegisterEnabled.Code != http.StatusBadRequest {
+		t.Fatalf("register enabled should be boolean, got %d %s", badRegisterEnabled.Code, badRegisterEnabled.Body.String())
+	}
+	badRegisterQuota := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"auth.register.default_quota": "-1",
+	})
+	if badRegisterQuota.Code != http.StatusBadRequest {
+		t.Fatalf("register default quota should reject negative values, got %d %s", badRegisterQuota.Code, badRegisterQuota.Body.String())
+	}
+	badRegisterGroup := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"auth.register.default_group_id": "",
+	})
+	if badRegisterGroup.Code != http.StatusBadRequest {
+		t.Fatalf("register default group should reject empty values, got %d %s", badRegisterGroup.Code, badRegisterGroup.Body.String())
 	}
 
 	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {

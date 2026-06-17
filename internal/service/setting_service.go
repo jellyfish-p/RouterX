@@ -238,12 +238,14 @@ func validateSettingValue(key, value string) error {
 	case "rate_limit.global_per_min", "rate_limit.per_token_per_min", "rate_limit.per_ip_per_min":
 		return validateNonNegativeIntSetting(key, value)
 	case "relay.retry_count", "relay.max_request_body_bytes", "relay.max_response_body_bytes", "relay.log_body_max_bytes", "log.body_max_bytes", "billing.bootstrap_admin_quota",
+		"auth.register.default_quota",
 		"routing.channel_cache.ttl_seconds",
 		"payment.manual_adjust.large_amount_threshold":
 		return validateNonNegativeIntSetting(key, value)
 	case "relay.retry_on_status":
 		return validateHTTPErrorStatusArraySetting(key, value)
 	case "rate_limit.enabled", "relay.error_auto_ban", "log.request_body_enabled", "log.response_body_enabled",
+		"auth.register.enabled", "auth.register.username.enabled", "auth.register.email.enabled", "auth.register.phone.enabled", "auth.register.captcha.required",
 		"routing.channel_cache.enabled", "routing.channel_cache.preload",
 		"ready.production_strict", "payment.epay.enabled", "payment.stripe.enabled",
 		"payment.refund.auto_deduct", "payment.refund.allow_negative_balance", "payment.dispute.auto_disable_tokens", "payment.manual_adjust.require_reason",
@@ -251,6 +253,8 @@ func validateSettingValue(key, value string) error {
 		if _, err := strconv.ParseBool(value); err != nil {
 			return errors.New(key + " must be a boolean")
 		}
+	case "auth.register.default_group_id":
+		return validateNonEmptySetting(key, value)
 	case "observability.request_id_header":
 		if !common.ValidHTTPHeaderName(value) {
 			return errors.New(key + " must be a valid HTTP header name")
@@ -329,6 +333,13 @@ func validateNonNegativeIntSetting(key, value string) error {
 	n, err := strconv.Atoi(value)
 	if err != nil || n < 0 {
 		return errors.New(key + " must be a non-negative integer")
+	}
+	return nil
+}
+
+func validateNonEmptySetting(key, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return errors.New(key + " cannot be empty")
 	}
 	return nil
 }
