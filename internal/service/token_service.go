@@ -53,6 +53,8 @@ var (
 	ErrTPMExceeded             = errors.New("tpm exceeded by api key scope")
 )
 
+var tokenNow = time.Now
+
 const (
 	maxTokenScopeModels         = 200
 	maxTokenScopeAPITypes       = 64
@@ -173,7 +175,7 @@ func (s *TokenService) ValidateAndGetToken(key string) (*model.Token, error) {
 	if token.Status != common.TokenStatusEnabled {
 		return nil, ErrAPIKeyDisabled
 	}
-	if token.ExpiredAt != nil && token.ExpiredAt.Before(time.Now()) {
+	if token.ExpiredAt != nil && !token.ExpiredAt.After(tokenNow()) {
 		return nil, ErrAPIKeyExpired
 	}
 	if token.User == nil || token.User.Status != common.UserStatusEnabled {
@@ -1040,7 +1042,7 @@ func tokenRiskReasons(token model.Token, agg tokenRiskAggregate, filter TokenRis
 	if token.Status != common.TokenStatusEnabled {
 		reasons = append(reasons, "disabled")
 	}
-	if token.ExpiredAt != nil && token.ExpiredAt.Before(now) {
+	if token.ExpiredAt != nil && !token.ExpiredAt.After(now) {
 		reasons = append(reasons, "expired")
 	}
 	if token.RemainQuota >= 0 && token.RemainQuota <= filter.LowQuotaBelow {
