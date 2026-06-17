@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"routerx/internal"
+	"routerx/internal/common"
 	"routerx/internal/model"
 )
 
@@ -81,6 +82,37 @@ func TestSettingCacheRefreshesStaleRedisValues(t *testing.T) {
 	bodyLogging, err := svc.GetBool("log.request_body_enabled")
 	if err != nil || !bodyLogging {
 		t.Fatalf("BatchSet should cache newly created setting, got value=%v err=%v", bodyLogging, err)
+	}
+}
+
+func TestSettingLoadCacheAppliesRequestIDHeaderRuntimeConfig(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:setting_runtime_test_"+time.Now().Format("150405.000000000")+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Setting{}); err != nil {
+		t.Fatal(err)
+	}
+	internal.DB = db
+	internal.RDB = nil
+	t.Cleanup(func() {
+		internal.RDB = nil
+	})
+
+	if err := db.Create(&model.Setting{
+		Key:      "observability.request_id_header",
+		Value:    "X-Correlation-Id",
+		Category: "observability",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	common.SetRequestIDHeaderName(common.DefaultRequestIDHeader)
+	if err := NewSettingService().LoadCache(); err != nil {
+		t.Fatal(err)
+	}
+	if got := common.RequestIDHeaderName(); got != "X-Correlation-Id" {
+		t.Fatalf("LoadCache should apply request id header runtime config, got %q", got)
 	}
 }
 

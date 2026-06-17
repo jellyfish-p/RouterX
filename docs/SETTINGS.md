@@ -140,7 +140,7 @@ P0 补齐这些配置时，应同时补测试：
 |-----|------|-------|------|
 | `observability.metrics_enabled` | `false` | P2 | 是否暴露 `/metrics` |
 | `observability.audit_enabled` | `true` | P2 | 是否记录管理审计 |
-| `observability.request_id_header` | `X-Request-Id` | P2 | 请求 ID header |
+| `observability.request_id_header` | `X-Request-Id` | P2 | 请求 ID header；必须是合法 HTTP header 名，修改后后续请求会从该 header 读取并用同名响应头返回 request id |
 
 ### Payment
 

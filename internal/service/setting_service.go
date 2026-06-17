@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"routerx/internal"
+	"routerx/internal/common"
 	"routerx/internal/model"
 )
 
@@ -146,6 +147,7 @@ func (s *SettingService) Set(key, value string) error {
 		defer cancel()
 		_ = internal.RDB.HSet(ctx, "settings", key, value).Err()
 	}
+	applyRuntimeSetting(key, value)
 	return nil
 }
 
@@ -162,7 +164,7 @@ func (s *SettingService) BatchSet(settings map[string]string) error {
 		}
 		normalized[key] = value
 	}
-	return internal.DB.Transaction(func(tx *gorm.DB) error {
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
 		for key, value := range normalized {
 			var setting model.Setting
 			err := tx.Where("key = ?", key).First(&setting).Error
@@ -191,13 +193,17 @@ func (s *SettingService) BatchSet(settings map[string]string) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	for key, value := range normalized {
+		applyRuntimeSetting(key, value)
+	}
+	return nil
 }
 
 // LoadCache 启动时将全量 settings 加载到 Redis Hash。
 func (s *SettingService) LoadCache() error {
-	if internal.RDB == nil {
-		return nil
-	}
 	var settings []model.Setting
 	if err := internal.DB.Find(&settings).Error; err != nil {
 		return err
@@ -205,8 +211,9 @@ func (s *SettingService) LoadCache() error {
 	values := make(map[string]interface{}, len(settings))
 	for _, setting := range settings {
 		values[setting.Key] = setting.Value
+		applyRuntimeSetting(setting.Key, setting.Value)
 	}
-	if len(values) == 0 {
+	if internal.RDB == nil || len(values) == 0 {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -241,6 +248,10 @@ func validateSettingValue(key, value string) error {
 		"observability.metrics_enabled", "observability.audit_enabled":
 		if _, err := strconv.ParseBool(value); err != nil {
 			return errors.New(key + " must be a boolean")
+		}
+	case "observability.request_id_header":
+		if !common.ValidHTTPHeaderName(value) {
+			return errors.New(key + " must be a valid HTTP header name")
 		}
 	case "billing.default_ratio":
 		ratio, err := strconv.ParseFloat(value, 64)
@@ -390,4 +401,11 @@ func categoryFromKey(key string) string {
 		return "general"
 	}
 	return "general"
+}
+
+func applyRuntimeSetting(key, value string) {
+	switch key {
+	case "observability.request_id_header":
+		common.SetRequestIDHeaderName(value)
+	}
 }

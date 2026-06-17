@@ -972,7 +972,7 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 
 - 允许保留 `routerx` 扩展字段继续转发。
 - 每层递增 `X-RouterX-Hop`，超过最大跳数时拒绝，避免循环。
-- 每层透传或生成 `X-Request-Id`，便于跨层追踪。
+- 每层透传或生成请求 ID，默认使用 `X-Request-Id`；部署方可通过 `observability.request_id_header` 改为其他合法 HTTP header 名，便于跨层追踪。
 - 转发到真实厂商前必须移除 `routerx` 私有字段和 `X-RouterX-*` 内部 header。
 
 ## API Key 生命周期

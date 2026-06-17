@@ -69,14 +69,14 @@
 
 | 项目 | 要求 |
 |------|------|
-| 来源 | 优先读取 `X-Request-Id`；缺失时服务端生成。 |
-| 响应 | 所有 HTTP 响应返回 `X-Request-Id`。 |
+| 来源 | 默认优先读取 `X-Request-Id`；可通过 `observability.request_id_header` 改为其他合法 HTTP header；缺失时服务端生成。 |
+| 响应 | 所有 HTTP 响应通过当前配置的 request id header 返回请求 ID。 |
 | 上下文 | Gin context 中写入 `request_id`。 |
 | `/v1` 上游 | 调用真实上游时传递或生成可追踪 request id，避免覆盖上游鉴权 header。 |
 | 多层 RouterX | 传递 `X-RouterX-Hop` 和 `X-RouterX-Chain`，防止循环并保留链路摘要。 |
 | 日志 | HTTP 日志、调用日志、审计日志和系统错误日志都写 request_id。 |
 
-当前 HTTP 请求上下文、模型调用日志和管理审计已持久化 `request_id`；上游透传、系统错误日志和跨实例追踪仍需按目标规则继续补齐。
+当前 HTTP 中间件会按 `observability.request_id_header` 读取或生成请求 ID，并通过同名响应头返回；模型调用日志和管理审计已持久化 `request_id`。上游透传、系统错误日志和跨实例追踪仍需按目标规则继续补齐。
 
 ## 模型调用日志
 

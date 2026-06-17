@@ -158,7 +158,7 @@ RouterX 可以把另一个 RouterX 作为上游通道。
 
 - 上游类型为 `routerx` 时，允许保留 `routerx` 扩展对象继续向下一层传递。
 - 每层必须增加或更新 `X-RouterX-Hop`，默认最大跳数建议为 `3`，超过后返回 508 或 400，避免路由循环。
-- 每层必须透传或生成 `X-Request-Id`，并可追加 `X-RouterX-Chain` 记录链路摘要。
+- 每层必须透传或生成请求 ID，默认使用 `X-Request-Id`，也可通过 `observability.request_id_header` 使用其他合法 HTTP header 名；并可追加 `X-RouterX-Chain` 记录链路摘要。
 - 每层只能消费属于自己的 `routerx.route` 指令；未知或下一层需要的 provider 参数必须保留。
 - 向真实厂商发起请求前必须剥离 RouterX 私有字段和 `X-RouterX-*` 内部 header。
 - 多层转发时 usage 以最后真实厂商返回或最后一层 RouterX 返回为准，上层 RouterX 不能重复估算导致重复计费。
@@ -534,7 +534,7 @@ Endpoint 示例：
 
 要求：
 
-- 传递 `X-RouterX-Hop` 和 `X-Request-Id`。
+- 传递 `X-RouterX-Hop` 和当前配置的 request id header。
 - 保留 `routerx.provider` 和未知 `routerx` 扩展字段。
 - 不重复注入已存在的 provider-specific 参数。
 

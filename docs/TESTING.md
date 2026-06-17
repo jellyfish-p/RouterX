@@ -76,11 +76,13 @@
 | `TestMetricsEndpointRequiresSettingAndExposesPrometheusText` | `/metrics` 默认关闭，启用 `observability.metrics_enabled` 后返回 Prometheus 文本和基础实例指标 |
 | `TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals` | `/metrics` 输出 DB/Redis up、调用日志成功/失败计数、Relay 请求数、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标 |
 | `TestMetricsEndpointReportsIndependentLogDBHealth` | `/metrics` 输出独立日志库配置和 ping 状态，日志库不可用时仍回退主库事实并保持指标可用 |
-| `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |
+| `TestRequestIDHeaderUsesConfiguredSetting` | `observability.request_id_header` 修改后，请求 ID 从配置 header 读取并通过同名响应头返回，缺失时生成新 ID |
+| `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、request id header 名校验、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |
 | `TestAdminSettingUpdateWritesAuditLog` | 超级管理员批量更新 settings 后按 key 写 `setting.update` 审计，敏感 payment 配置值不完整泄露 |
 | `TestAdminSettingValidationFailureWritesDeniedAuditLog` | 超级管理员提交非法 settings 值时不落库，写 `setting.denied` 审计并脱敏敏感尝试值 |
 | `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |
 | `TestSettingCacheRefreshesStaleRedisValues` | settings 读取缓存、单项更新和批量更新后的 Redis 刷新边界 |
+| `TestSettingLoadCacheAppliesRequestIDHeaderRuntimeConfig` | 启动加载 settings 时会把已有 `observability.request_id_header` 应用到进程内 request id header 配置 |
 | `TestInitRedisSkipsEmptyConfig` | `REDIS_CONN` 为空时不隐式连接本机 Redis，SQLite 单机模式保持可降级 |
 | `TestReadinessRequiresRedisForExternalDatabaseMode` | `SQL_DSN` 指向外部数据库且 Redis 不可用时 `/ready` 返回不就绪 |
 | `TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets` | 数据库已有 `enc:v1:` 通道密钥但缺少 `ENCRYPTION_KEY` 时 `/ready` 返回不就绪 |

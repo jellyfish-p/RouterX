@@ -3640,6 +3640,38 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 	}
 }
 
+func TestRequestIDHeaderUsesConfiguredSetting(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("observability.request_id_header", "X-Correlation-Id"); err != nil {
+		t.Fatal(err)
+	}
+
+	providedResp := performRawWithHeaders(r, http.MethodGet, "/health", "", "", map[string]string{
+		"X-Correlation-Id": "trace-custom-1",
+	})
+	if got := providedResp.Header().Get("X-Correlation-Id"); got != "trace-custom-1" {
+		t.Fatalf("configured request id header should echo provided id, got %q", got)
+	}
+	if legacy := providedResp.Header().Get("X-Request-Id"); legacy != "" {
+		t.Fatalf("configured request id header should not also emit legacy header, got %q", legacy)
+	}
+
+	generatedResp := performRawWithHeaders(r, http.MethodGet, "/health", "", "", nil)
+	if got := generatedResp.Header().Get("X-Correlation-Id"); strings.TrimSpace(got) == "" {
+		t.Fatalf("configured request id header should receive generated id, headers=%v", generatedResp.Header())
+	}
+}
+
 func TestMetricsEndpointRequiresSettingAndExposesPrometheusText(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	r := newTestRouter(t)
@@ -4038,6 +4070,12 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badPaymentSwitch.Code != http.StatusBadRequest {
 		t.Fatalf("invalid payment.epay.enabled should be rejected, got %d %s", badPaymentSwitch.Code, badPaymentSwitch.Body.String())
+	}
+	badRequestIDHeader := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"observability.request_id_header": "X Bad:Request",
+	})
+	if badRequestIDHeader.Code != http.StatusBadRequest {
+		t.Fatalf("invalid observability.request_id_header should be rejected, got %d %s", badRequestIDHeader.Code, badRequestIDHeader.Body.String())
 	}
 	badEpayGateway := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
 		"payment.epay.gateway": "pay.example.com/submit.php",
@@ -10431,6 +10469,7 @@ func TestChatCompletionUpstreamTimeoutMapping(t *testing.T) {
 func newTestRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
+	common.SetRequestIDHeaderName(common.DefaultRequestIDHeader)
 	db, err := gorm.Open(sqlite.Open("file:routerx_test_"+time.Now().Format("150405.000000000")+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)

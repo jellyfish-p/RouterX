@@ -129,7 +129,7 @@ Recovery
 | 中间件 | 当前状态 | 目标职责 |
 |--------|----------|----------|
 | `Recovery` | 已存在 | 捕获 panic，返回统一错误，记录堆栈 |
-| `Logger` | 已存在 | 记录 method/path/status/latency/ip，后续切结构化日志 |
+| `Logger` | 已存在 | 按 `observability.request_id_header` 读取或生成 request_id，写响应头并记录 method/path/status/latency/ip，后续切结构化日志 |
 | `SetupCheck` | 已存在 | 系统未初始化时拦截非 setup/health 请求 |
 | `AdminAuthRequired` | 已存在 | 校验 User JWT 和管理员角色 |
 | `RequireSuperAdmin` | 已存在 | 校验超级管理员权限 |
@@ -220,7 +220,7 @@ POST /v0/setup/init
 |-----|------|------|
 | `current_user` | `*model.User` | User JWT/API Key 鉴权 |
 | `current_token` | `*model.Token` | API Key 鉴权 |
-| `request_id` | `string` | RequestID 中间件 |
+| `request_id` | `string` | Logger 中间件按 `observability.request_id_header` 写入 |
 | `auth_method` | `string` | `user_jwt`、`api_key` |
 
 ## 依赖装配

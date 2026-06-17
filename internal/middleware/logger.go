@@ -4,6 +4,7 @@ import (
 	"log"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,7 +68,8 @@ var httpMetrics = struct {
 func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		requestID := c.GetHeader("X-Request-Id")
+		requestIDHeader := common.RequestIDHeaderName()
+		requestID := strings.TrimSpace(c.GetHeader(requestIDHeader))
 		if requestID == "" {
 			if generated, err := common.GenerateRandomString(8); err == nil {
 				requestID = generated
@@ -75,7 +77,7 @@ func Logger() gin.HandlerFunc {
 		}
 		if requestID != "" {
 			c.Set("request_id", requestID)
-			c.Header("X-Request-Id", requestID)
+			c.Header(requestIDHeader, requestID)
 		}
 
 		c.Next()
