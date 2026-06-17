@@ -2578,8 +2578,8 @@ components:
       required: false
       schema:
         type: string
-        example: '{"route":{"channel_group":"premium"},"upstream":{"headers":{"X-Upstream-Feature":"beta"},"query":{"trace":"enabled"},"body":{"reasoning_effort":"high"}}}'
-      description: 可选 RouterX 私有选项 JSON 字符串；支持 route 路由偏好和 upstream 安全 header/query/JSON body 补充，body/form 中的 routerx 字段优先于该 header，发往真实上游前不会透传 routerx 私有字段。
+        example: '{"route":{"channel_group":"premium"},"upstream":{"headers":{"X-Upstream-Feature":"beta"},"query":{"trace":"enabled"},"body":{"reasoning_effort":"high"}},"provider":{"xai":{"search_parameters":{"mode":"auto"}}}}'
+      description: 可选 RouterX 私有选项 JSON 字符串；支持 route 路由偏好、upstream 安全 header/query/JSON body 补充和 provider 选中上游专属 JSON body 补充，body/form 中的 routerx 字段优先于该 header，发往真实上游前不会透传 routerx 私有字段。
     StartTime:
       name: start_time
       in: query
@@ -4123,6 +4123,8 @@ components:
               $ref: "#/components/schemas/RouterXRoutePreference"
             upstream:
               $ref: "#/components/schemas/RouterXUpstreamOptions"
+            provider:
+              $ref: "#/components/schemas/RouterXProviderOptions"
           additionalProperties: true
     RouterXRoutePreference:
       type: object
@@ -4167,6 +4169,28 @@ components:
           example:
             reasoning_effort: high
       additionalProperties: true
+    RouterXProviderOptions:
+      type: object
+      description: provider 专属 JSON body 补充参数；仅在最终选中的上游 provider 匹配时合并，provider 专属补充值优先于通用 upstream.body，但仍不覆盖原请求已有字段、model、routerx 或 stream。
+      properties:
+        openai:
+          $ref: "#/components/schemas/RouterXProviderBody"
+        anthropic:
+          $ref: "#/components/schemas/RouterXProviderBody"
+        gemini:
+          $ref: "#/components/schemas/RouterXProviderBody"
+        xai:
+          allOf:
+            - $ref: "#/components/schemas/RouterXProviderBody"
+          example:
+            search_parameters:
+              mode: auto
+      additionalProperties:
+        $ref: "#/components/schemas/RouterXProviderBody"
+    RouterXProviderBody:
+      type: object
+      additionalProperties: true
+      description: 匹配 provider 后补充到 JSON body 的字段；model、routerx、stream 和原请求已存在字段不会被覆盖。
     ChatMessage:
       type: object
       required: [role, content]

@@ -5822,6 +5822,141 @@ func TestRouterXUpstreamOptionsSupplementRequest(t *testing.T) {
 	}
 }
 
+func TestRouterXProviderOptionsApplyOnlyToSelectedProvider(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	xaiCalls := 0
+	openAICalls := 0
+	var xaiBody map[string]interface{}
+	var openAIBody map[string]interface{}
+	xaiUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		xaiCalls++
+		if err := json.NewDecoder(req.Body).Decode(&xaiBody); err != nil {
+			t.Errorf("xAI upstream received invalid json: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-provider-xai","object":"chat.completion","model":"grok-test","choices":[{"index":0,"message":{"role":"assistant","content":"xai"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer xaiUpstream.Close()
+	openAIUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		openAICalls++
+		if err := json.NewDecoder(req.Body).Decode(&openAIBody); err != nil {
+			t.Errorf("OpenAI-compatible upstream received invalid json: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-provider-openai","object":"chat.completion","model":"grok-test","choices":[{"index":0,"message":{"role":"assistant","content":"openai"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer openAIUpstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "provider-options",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	for _, channel := range []struct {
+		channelType int
+		name        string
+		baseURL     string
+	}{
+		{channelType: common.ChannelTypeXAI, name: "xai-provider", baseURL: xaiUpstream.URL},
+		{channelType: common.ChannelTypeOpenAICompat, name: "openai-provider", baseURL: openAIUpstream.URL},
+	} {
+		resp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+			"type":     channel.channelType,
+			"name":     channel.name,
+			"models":   "grok-test",
+			"base_url": channel.baseURL,
+			"api_key":  channel.name + "-secret",
+		})
+		if resp.Code != http.StatusOK {
+			t.Fatalf("create %s channel failed: %d %s", channel.name, resp.Code, resp.Body.String())
+		}
+	}
+
+	xaiResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model":       "grok-test",
+		"temperature": 0.2,
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"provider": "xai"},
+			"upstream": map[string]interface{}{
+				"body": map[string]interface{}{
+					"generic_param":     true,
+					"search_parameters": map[string]interface{}{"mode": "generic"},
+				},
+			},
+			"provider": map[string]interface{}{
+				"openai": map[string]interface{}{"reasoning_effort": "medium"},
+				"xai": map[string]interface{}{
+					"search_parameters": map[string]interface{}{"mode": "auto"},
+					"temperature":       0.9,
+					"model":             "evil-model",
+				},
+			},
+		},
+	})
+	if xaiResp.Code != http.StatusOK {
+		t.Fatalf("xAI provider options request failed: %d %s", xaiResp.Code, xaiResp.Body.String())
+	}
+	searchParameters, ok := xaiBody["search_parameters"].(map[string]interface{})
+	if !ok || searchParameters["mode"] != "auto" {
+		t.Fatalf("xAI provider options should override generic supplements before merge: %#v", xaiBody)
+	}
+	if xaiBody["generic_param"] != true || xaiBody["temperature"] != float64(0.2) || xaiBody["model"] != "grok-test" {
+		t.Fatalf("provider options should supplement without overriding existing/internal fields: %#v", xaiBody)
+	}
+	if _, ok := xaiBody["reasoning_effort"]; ok {
+		t.Fatalf("non-selected provider options leaked to xAI upstream: %#v", xaiBody)
+	}
+
+	openAIResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "grok-test",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello again"},
+		},
+		"routerx": map[string]interface{}{
+			"route": map[string]string{"provider": "openai-compatible"},
+			"provider": map[string]interface{}{
+				"xai": map[string]interface{}{"search_parameters": map[string]interface{}{"mode": "auto"}},
+			},
+		},
+	})
+	if openAIResp.Code != http.StatusOK {
+		t.Fatalf("OpenAI-compatible provider options request failed: %d %s", openAIResp.Code, openAIResp.Body.String())
+	}
+	if xaiCalls != 1 || openAICalls != 1 {
+		t.Fatalf("requests should route once to each selected provider, xai=%d openai=%d", xaiCalls, openAICalls)
+	}
+	if _, ok := openAIBody["search_parameters"]; ok {
+		t.Fatalf("xAI provider options leaked to OpenAI-compatible upstream: %#v", openAIBody)
+	}
+}
+
 func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

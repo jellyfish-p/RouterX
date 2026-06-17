@@ -495,7 +495,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid multipart body", Type: "invalid_request_error", Code: "invalid_multipart"}
 		}
 	} else {
-		outInputBody, err := mergeRelayUpstreamBody(body, reqInfo.Upstream.Body)
+		outInputBody, err := mergeRelayUpstreamBody(body, relayUpstreamBodyForChannel(reqInfo.Upstream, channel.Type))
 		if err != nil {
 			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 		}
@@ -661,7 +661,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		return nil, &HTTPError{Status: 502, Message: "upstream channel secret is not available", Type: "upstream_error", Code: "upstream_secret_error"}
 	}
 	upstreamModel := s.channelService.ApplyModelRewrite(channel, reqInfo.Model)
-	outInputBody, err := mergeRelayUpstreamBody(body, reqInfo.Upstream.Body)
+	outInputBody, err := mergeRelayUpstreamBody(body, relayUpstreamBodyForChannel(reqInfo.Upstream, channel.Type))
 	if err != nil {
 		return nil, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 	}
@@ -827,8 +827,9 @@ type relayRequestInfo struct {
 }
 
 type relayUpstreamOptions struct {
-	Transport relay.UpstreamOptions
-	Body      map[string]json.RawMessage
+	Transport    relay.UpstreamOptions
+	Body         map[string]json.RawMessage
+	ProviderBody map[string]map[string]json.RawMessage
 }
 
 func parseRelayRequestWithContentType(apiType relay.APIType, body []byte, contentType string, headerRouterX json.RawMessage) (relayRequestInfo, error) {
@@ -956,6 +957,11 @@ func parseRouterXOptions(raw json.RawMessage) (RoutePreference, relayUpstreamOpt
 	if err != nil {
 		return RoutePreference{}, relayUpstreamOptions{}, err
 	}
+	providerBody, err := parseRouterXProviderOptions(options["provider"])
+	if err != nil {
+		return RoutePreference{}, relayUpstreamOptions{}, err
+	}
+	upstream.ProviderBody = providerBody
 	return route, upstream, nil
 }
 
@@ -1024,6 +1030,35 @@ func parseRouterXUpstreamOptions(raw json.RawMessage) (relayUpstreamOptions, err
 		},
 		Body: sanitizeRouterXUpstreamBody(upstream.Body),
 	}, nil
+}
+
+func parseRouterXProviderOptions(raw json.RawMessage) (map[string]map[string]json.RawMessage, error) {
+	if len(raw) == 0 || isJSONNull(raw) {
+		return nil, nil
+	}
+	var providers map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &providers); err != nil {
+		return nil, errInvalidRouterXOptions
+	}
+	clean := make(map[string]map[string]json.RawMessage, len(providers))
+	for provider, rawBody := range providers {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		if provider == "" || isJSONNull(rawBody) {
+			continue
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(rawBody, &body); err != nil {
+			return nil, errInvalidRouterXOptions
+		}
+		body = sanitizeRouterXUpstreamBody(body)
+		if len(body) > 0 {
+			clean[provider] = body
+		}
+	}
+	if len(clean) == 0 {
+		return nil, nil
+	}
+	return clean, nil
 }
 
 func sanitizeRouterXUpstreamHeaders(headers map[string]string) map[string]string {
@@ -1182,6 +1217,33 @@ func mergeRelayUpstreamBody(body []byte, extra map[string]json.RawMessage) ([]by
 		payload[key] = append(json.RawMessage(nil), value...)
 	}
 	return json.Marshal(payload)
+}
+
+func relayUpstreamBodyForChannel(options relayUpstreamOptions, channelType int) map[string]json.RawMessage {
+	merged := cloneRawMessageMap(options.Body)
+	for provider, body := range options.ProviderBody {
+		if !channelMatchesProvider(channelType, provider) {
+			continue
+		}
+		if merged == nil {
+			merged = map[string]json.RawMessage{}
+		}
+		for key, value := range body {
+			merged[key] = append(json.RawMessage(nil), value...)
+		}
+	}
+	return merged
+}
+
+func cloneRawMessageMap(values map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]json.RawMessage, len(values))
+	for key, value := range values {
+		cloned[key] = append(json.RawMessage(nil), value...)
+	}
+	return cloned
 }
 
 func rewriteMultipartRelayBody(body []byte, contentType string, modelName string) ([]byte, string, error) {

@@ -228,6 +228,7 @@ API Key 是调用 `/v1/*` 的唯一模型调用凭据。User JWT 只用于控制
 - RouterX-Compatible 上游可以继续接收 `routerx`，但必须有 hop 限制，避免循环。
 - `routerx.upstream.headers` 和 `routerx.upstream.query` 只能补充安全字段，不能覆盖 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`、`api-key`、provider API key query 等敏感鉴权字段。
 - `routerx.upstream.body` 只补充 JSON 请求体中原本不存在的字段，不能覆盖 `model`、`routerx`、`stream` 或调用方已经显式提交的字段。
+- `routerx.provider.<provider>` 只在最终选中对应上游 provider 时生效；当前基础实现把匹配 provider 下的 JSON 字段作为 body 缺省补充，适合 xAI `search_parameters` 这类 OpenAI-compatible 扩展。
 - 非 JSON 请求当前可通过 `routerx` 表单字段或 `X-RouterX-Options` header 传递路由偏好和安全 header/query 补充；body/form 中的 `routerx` 优先于 header，两者都必须校验和脱敏。
 
 调用方应预期：
