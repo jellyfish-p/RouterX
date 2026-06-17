@@ -105,6 +105,7 @@
 | `TestAzureChatCompletionUsesDeploymentPathAndAPIKey` | Azure OpenAI Chat 基础转发，deployment 路径、`api-version` query、`api-key` header、`model/routerx` 剥离、usage 日志和扣费 |
 | `TestAzureCompletionsUsesDeploymentPathAndAPIKey` | Azure OpenAI Legacy Completions 基础转发，deployment 路径、`api-version` query、`api-key` header、`model/routerx` 剥离、usage 日志和扣费 |
 | `TestAzureChannelFetchModelsUsesDeploymentsEndpoint` | Azure OpenAI 管理端模型拉取使用 `/openai/deployments`、`api-version` query 和 `api-key` header，并返回 deployment id |
+| `TestAzureResponsesUsesV1EndpointAndUsage` | Azure OpenAI Responses 基础转发，`/openai/v1/responses?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 剥离、`input_tokens/output_tokens/total_tokens` usage 日志和扣费 |
 | `TestAzureEmbeddingsUsesDeploymentPathAndAPIKey` | Azure OpenAI Embeddings 基础转发，deployment 路径、`api-version` query、`api-key` header、`model/routerx` 剥离、usage 日志和扣费 |
 | `TestAzureImageGenerationsUsesV1EndpointAndMinimumCharge` | Azure OpenAI Image Generations 基础转发，`/openai/v1/images/generations?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 剥离、无 usage 最低计费日志和扣费 |
 | `TestAzureImageEditsMultipartUsesV1EndpointAndMinimumCharge` | Azure OpenAI Image Edits multipart 基础转发，`/openai/v1/images/edits?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 表单字段剥离、图像/遮罩文件字段保留、无 usage 最低计费日志和扣费 |

@@ -831,7 +831,7 @@ Authorization: Bearer sk-xxxxxxxx
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/v1/responses` | 基础实现，OpenAI-compatible Responses JSON 透传和 usage 映射 |
+| POST | `/v1/responses` | 基础实现，OpenAI-compatible Responses JSON 透传；Azure OpenAI 通道转发到 `/openai/v1/responses?api-version=preview`；usage 映射和扣费 |
 | POST | `/v1/chat/completions` | 基础实现，Chat Completions；支持非流式和 OpenAI-compatible SSE 流式 |
 | POST | `/v1/completions` | 基础实现，Legacy Completions；支持非流式、Azure deployment 路径转发和 OpenAI-compatible SSE 流式 |
 | POST | `/v1/embeddings` | 基础实现，OpenAI-compatible Embeddings JSON 透传、Azure deployment 路径转发、`routerx` 剥离和 usage 扣费 |
