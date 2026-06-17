@@ -10151,6 +10151,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		&model.Token{},
 		&model.Channel{},
 		&model.Log{},
+		&model.LogReplicationOutbox{},
 		&model.RedemCode{},
 		&model.QuotaTransaction{},
 		&model.ModelPrice{},

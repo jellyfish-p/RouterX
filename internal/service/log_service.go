@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"routerx/internal/relay"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type LogService struct {
@@ -30,6 +32,34 @@ func NewLogServiceWithLogDB(logDB *gorm.DB) *LogService {
 	return &LogService{logDB: logDB}
 }
 
+func (s *LogService) StartLogReplicationWorker(ctx context.Context, interval time.Duration, batchSize int) {
+	if !s.usesExternalLogDB() {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+	go func() {
+		s.replayLogReplicationBatch(batchSize)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.replayLogReplicationBatch(batchSize)
+			}
+		}
+	}()
+}
+
 // Record 写入请求日志 (异步/同步可选)。
 func (s *LogService) Record(log *model.Log) error {
 	if log == nil {
@@ -42,30 +72,150 @@ func (s *LogService) Record(log *model.Log) error {
 	log.ErrorSource = normalizeLogErrorSource(log)
 	log.UpstreamStatus = normalizeLogUpstreamStatus(log)
 	log.BillingSnapshot = normalizeLogBillingSnapshot(log)
+	needsExternalReplication := s.usesExternalLogDB()
 	if err := internal.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(log).Error; err != nil {
 			return err
 		}
-		return updateTokenLastUsageSummary(tx, log)
+		if err := updateTokenLastUsageSummary(tx, log); err != nil {
+			return err
+		}
+		if needsExternalReplication {
+			return enqueueLogReplication(tx, log.ID)
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
-	s.recordExternalLog(log)
+	if needsExternalReplication {
+		if err := s.replicateLogToExternal(log); err != nil {
+			if markErr := markLogReplicationFailed(log.ID, err); markErr != nil {
+				stdlog.Printf("[LogService] WARN: log replication outbox update failed request_id=%s: %v", log.RequestID, markErr)
+			}
+			stdlog.Printf("[LogService] WARN: external log DB write failed request_id=%s: %v", log.RequestID, err)
+			return nil
+		}
+		if err := markLogReplicationCompleted(log.ID); err != nil {
+			stdlog.Printf("[LogService] WARN: log replication completion update failed request_id=%s: %v", log.RequestID, err)
+		}
+	}
 	return nil
 }
 
-func (s *LogService) recordExternalLog(entry *model.Log) {
+func enqueueLogReplication(tx *gorm.DB, logID uint) error {
+	return tx.Create(&model.LogReplicationOutbox{
+		LogID:         logID,
+		Status:        model.LogReplicationStatusPending,
+		NextAttemptAt: time.Now(),
+	}).Error
+}
+
+func (s *LogService) ReplayLogReplicationOutbox(limit int) (int, error) {
+	if !s.usesExternalLogDB() {
+		return 0, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	var items []model.LogReplicationOutbox
+	if err := internal.DB.
+		Where("status = ? AND next_attempt_at <= ?", model.LogReplicationStatusPending, time.Now()).
+		Order("id ASC").
+		Limit(limit).
+		Find(&items).Error; err != nil {
+		return 0, err
+	}
+
+	replayed := 0
+	var firstErr error
+	for _, item := range items {
+		var entry model.Log
+		if err := internal.DB.First(&entry, item.LogID).Error; err != nil {
+			if markErr := markLogReplicationTerminalFailed(item.LogID, err); markErr != nil && firstErr == nil {
+				firstErr = markErr
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if err := s.replicateLogToExternal(&entry); err != nil {
+			if markErr := markLogReplicationFailed(item.LogID, err); markErr != nil && firstErr == nil {
+				firstErr = markErr
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if err := markLogReplicationCompleted(item.LogID); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		replayed++
+	}
+	return replayed, firstErr
+}
+
+func (s *LogService) replayLogReplicationBatch(batchSize int) {
+	if replayed, err := s.ReplayLogReplicationOutbox(batchSize); err != nil {
+		stdlog.Printf("[LogService] WARN: log replication replay failed replayed=%d: %v", replayed, err)
+	}
+}
+
+func (s *LogService) replicateLogToExternal(entry *model.Log) error {
 	if s == nil || s.logDB == nil || s.logDB == internal.DB || entry == nil {
-		return
+		return nil
 	}
 	external := *entry
-	external.ID = 0
 	external.User = nil
 	external.Token = nil
 	external.Channel = nil
-	if err := s.logDB.Create(&external).Error; err != nil {
-		stdlog.Printf("[LogService] WARN: external log DB write failed request_id=%s: %v", entry.RequestID, err)
+	return s.logDB.Clauses(clause.OnConflict{DoNothing: true}).Create(&external).Error
+}
+
+func markLogReplicationCompleted(logID uint) error {
+	now := time.Now()
+	return internal.DB.Model(&model.LogReplicationOutbox{}).
+		Where("log_id = ?", logID).
+		Updates(map[string]interface{}{
+			"status":       model.LogReplicationStatusCompleted,
+			"last_error":   "",
+			"completed_at": &now,
+		}).Error
+}
+
+func markLogReplicationFailed(logID uint, cause error) error {
+	return internal.DB.Model(&model.LogReplicationOutbox{}).
+		Where("log_id = ?", logID).
+		Updates(map[string]interface{}{
+			"status":          model.LogReplicationStatusPending,
+			"attempts":        gorm.Expr("attempts + ?", 1),
+			"last_error":      truncateLogReplicationError(cause),
+			"next_attempt_at": time.Now(),
+		}).Error
+}
+
+func markLogReplicationTerminalFailed(logID uint, cause error) error {
+	return internal.DB.Model(&model.LogReplicationOutbox{}).
+		Where("log_id = ?", logID).
+		Updates(map[string]interface{}{
+			"status":     model.LogReplicationStatusFailed,
+			"last_error": truncateLogReplicationError(cause),
+		}).Error
+}
+
+func truncateLogReplicationError(cause error) string {
+	if cause == nil {
+		return ""
 	}
+	msg := strings.TrimSpace(cause.Error())
+	if len(msg) > 2048 {
+		return msg[:2048]
+	}
+	return msg
 }
 
 func updateTokenLastUsageSummary(tx *gorm.DB, log *model.Log) error {

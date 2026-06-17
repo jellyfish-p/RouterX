@@ -354,8 +354,8 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 日志数据库边界：
 
 - 默认情况下 `logs` 位于主业务数据库。
-- 配置 `LOG_SQL_DSN` 后，启动时会为独立日志数据库迁移 `logs` schema，高流量调用日志和诊断快照会最佳努力写入独立日志数据库，便于定期备份、归档和清理。
-- 用户余额扣减、Key 预算消耗和结算最小事实必须在主业务数据库同事务内保留，或先写主库 outbox，再异步写入日志数据库；当前实现会在主库保留完整调用事实，再写独立日志库副本。
+- 配置 `LOG_SQL_DSN` 后，启动时会为独立日志数据库迁移 `logs` schema，高流量调用日志和诊断快照会通过主库 outbox 补写到独立日志数据库，便于定期备份、归档和清理。
+- 用户余额扣减、Key 预算消耗和结算最小事实必须在主业务数据库同事务内保留，或先写主库 outbox，再异步写入日志数据库；当前实现会在主库保留完整调用事实，并在配置独立日志库时同事务写入 `log_replication_outboxes`。
 - 独立日志数据库不可成为扣费成功的唯一证据；运行期日志库写入失败时必须保留主库事实并产生可排查告警。
 
 | 字段 | 类型 | 说明 |
@@ -416,6 +416,29 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 - 高频生产环境建议按月分区或归档。
 - `content` 和 `response` 默认截断，支持配置关闭。
 - 管理端清理日志应按时间范围执行，避免无条件全表删除。
+
+### `log_replication_outboxes`
+
+独立日志数据库补写队列表，位于主业务数据库。它只记录“主库日志事实是否已经镜像到 `LOG_SQL_DSN`”，不参与用户余额扣减。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | uint | 主键 |
+| `log_id` | uint | 主库 `logs.id`，唯一 |
+| `status` | string | `pending`、`completed` 或 `failed` |
+| `attempts` | int | 补写尝试次数 |
+| `last_error` | text | 最近一次补写失败摘要 |
+| `next_attempt_at` | time | 下次可补写时间 |
+| `completed_at` | nullable time | 成功补写时间 |
+| `created_at` / `updated_at` | time | 创建和更新时间 |
+
+索引：
+
+- `log_id` 唯一索引
+- `status`
+- `next_attempt_at`
+
+当前 `LogService` 会在主库事务内创建 pending outbox，外部日志库写入成功后标记 completed；失败时保留 pending 并记录错误。服务启动后后台 worker 会周期性重放 pending outbox，将恢复后的日志库补齐。
 
 ### `redem_codes`
 

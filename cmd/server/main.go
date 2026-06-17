@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"time"
 
 	"routerx/internal"
 	"routerx/internal/handler"
@@ -37,6 +39,7 @@ func main() {
 	if err := settingSvc.EnsureDefaults(); err != nil {
 		log.Fatalf("[FATAL] settings defaults failed: %v", err)
 	}
+	logSvc.StartLogReplicationWorker(context.Background(), time.Minute, 100)
 
 	// 4. 依赖注入: Handler 层
 	adminH := handler.NewAdminHandler(adminSvc)

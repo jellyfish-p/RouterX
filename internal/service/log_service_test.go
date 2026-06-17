@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -103,6 +104,120 @@ func TestLogServiceFallsBackWhenExternalLogDBWriteFails(t *testing.T) {
 	if mainLog.QuotaUsed != 11 || mainLog.BillingSnapshot == "" {
 		t.Fatalf("main DB should keep recoverable billing fact, got %+v", mainLog)
 	}
+
+	var pending model.LogReplicationOutbox
+	if err := mainDB.Where("log_id = ?", mainLog.ID).First(&pending).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pending.Status != model.LogReplicationStatusPending || pending.Attempts != 1 || pending.LastError == "" {
+		t.Fatalf("external log DB failure should leave a retryable outbox item, got %+v", pending)
+	}
+}
+
+func TestLogServiceReplaysPendingExternalLogOutbox(t *testing.T) {
+	mainDB := newLogServiceTestDB(t, "main-replay")
+	failedLogDB := newLogServiceTestDB(t, "external-replay-failed")
+	withMainDB(t, mainDB)
+
+	user, token := createLogServiceUserAndToken(t, mainDB)
+	tokenID := token.ID
+	sqlDB, err := failedLogDB.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewLogServiceWithLogDB(failedLogDB)
+	if err := svc.Record(&model.Log{
+		UserID:      user.ID,
+		TokenID:     &tokenID,
+		Model:       "gpt-log-replay",
+		TotalTokens: 5,
+		QuotaUsed:   13,
+		UsageSource: common.LogUsageSourceUpstream,
+		Status:      common.LogStatusSuccess,
+		RequestID:   "req-log-db-replay",
+	}); err != nil {
+		t.Fatalf("external log DB failure should not fail main record: %v", err)
+	}
+
+	recoveredLogDB := newLogServiceTestDB(t, "external-replay-recovered")
+	replaySvc := NewLogServiceWithLogDB(recoveredLogDB)
+	replayed, err := replaySvc.ReplayLogReplicationOutbox(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed != 1 {
+		t.Fatalf("expected one pending log to replay, got %d", replayed)
+	}
+
+	var externalLog model.Log
+	if err := recoveredLogDB.Where("request_id = ?", "req-log-db-replay").First(&externalLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if externalLog.QuotaUsed != 13 || externalLog.Model != "gpt-log-replay" {
+		t.Fatalf("external log DB should receive replayed log fact, got %+v", externalLog)
+	}
+
+	var outbox model.LogReplicationOutbox
+	if err := mainDB.Where("log_id = ?", externalLog.ID).First(&outbox).Error; err != nil {
+		t.Fatal(err)
+	}
+	if outbox.Status != model.LogReplicationStatusCompleted || outbox.CompletedAt == nil {
+		t.Fatalf("successful replay should mark outbox completed, got %+v", outbox)
+	}
+}
+
+func TestLogServiceWorkerReplaysPendingExternalLogOutbox(t *testing.T) {
+	mainDB := newLogServiceTestDB(t, "main-worker")
+	logDB := newLogServiceTestDB(t, "external-worker")
+	withMainDB(t, mainDB)
+
+	user, token := createLogServiceUserAndToken(t, mainDB)
+	tokenID := token.ID
+	if err := mainDB.Create(&model.Log{
+		UserID:      user.ID,
+		TokenID:     &tokenID,
+		Model:       "gpt-log-worker",
+		TotalTokens: 3,
+		QuotaUsed:   8,
+		UsageSource: common.LogUsageSourceUpstream,
+		Status:      common.LogStatusSuccess,
+		RequestID:   "req-log-db-worker",
+		CreatedAt:   time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var entry model.Log
+	if err := mainDB.Where("request_id = ?", "req-log-db-worker").First(&entry).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := mainDB.Create(&model.LogReplicationOutbox{
+		LogID:         entry.ID,
+		Status:        model.LogReplicationStatusPending,
+		NextAttemptAt: time.Now().Add(-time.Second),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	NewLogServiceWithLogDB(logDB).StartLogReplicationWorker(ctx, 10*time.Millisecond, 10)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		var externalCount int64
+		if err := logDB.Model(&model.Log{}).Where("request_id = ?", "req-log-db-worker").Count(&externalCount).Error; err != nil {
+			t.Fatal(err)
+		}
+		if externalCount == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("log replication worker should replay pending outbox item")
 }
 
 func TestLogServiceListsFromExternalLogDBWhenConfigured(t *testing.T) {
@@ -168,7 +283,7 @@ func newLogServiceTestDB(t *testing.T, name string) *gorm.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Log{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Log{}, &model.LogReplicationOutbox{}); err != nil {
 		t.Fatal(err)
 	}
 	return db
