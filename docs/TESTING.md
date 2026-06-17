@@ -77,6 +77,11 @@
 | `TestAdminSettingUpdateWritesAuditLog` | 超级管理员批量更新 settings 后按 key 写 `setting.update` 审计，敏感 payment 配置值不完整泄露 |
 | `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |
 | `TestSettingCacheRefreshesStaleRedisValues` | settings 读取缓存、单项更新和批量更新后的 Redis 刷新边界 |
+| `TestInitLogDBUsesConfiguredDSN` | 启动期读取 `LOG_SQL_DSN`，初始化独立日志数据库并迁移 `logs` schema |
+| `TestLogServiceWritesMainFactAndExternalLogDB` | 配置独立日志库时，`LogService` 先在主库保留调用/结算事实并更新 API Key 最近使用摘要，再写日志库副本 |
+| `TestLogServiceFallsBackWhenExternalLogDBWriteFails` | 独立日志库运行期写入失败时，主库调用事实和基础 `billing_snapshot` 仍可恢复 |
+| `TestLogServiceListsFromExternalLogDBWhenConfigured` | 配置独立日志库时，管理日志列表读取日志库数据 |
+| `TestLogServiceListFallsBackToMainDBWhenExternalLogDBFails` | 独立日志库查询失败时，管理日志列表回退读取主库事实 |
 | `TestAPIKeyAuthErrorsUseEntryProtocolShape` | Anthropic/Gemini 入口 API Key 鉴权错误外形 |
 | `TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields` | Anthropic/Gemini 非流式成功响应、usage、扣费和非文本 content/parts 降级 |
 | `TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini embedContent 转 OpenAI-compatible Embeddings 上游，返回 Gemini `embedding.values` 外形，usage 写日志和扣费 |
@@ -434,7 +439,7 @@ Gemini-compatible 最小断言：
 | P1 | 可靠性 | 已覆盖非流式安全重试、Redis 全局/IP/Token 基础限流和 `error_count` 自动熔断候选过滤；继续补半开恢复、探测任务、更多限流维度和生产 fail-open/fail-closed 策略 |
 | P1 | 运行模式 | SQLite 单镜像无 Redis 可运行；外部数据库无 Redis 不就绪或启动失败 |
 | P1 | 通道候选缓存 | 已覆盖进程内缓存命中、`routing.channel_cache.version` 变化后回源、默认 settings 和非法配置校验；继续补启动预加载、Redis 共享快照和集群实例广播失效 |
-| P1 | 独立日志数据库 | `LOG_SQL_DSN` 写入、日志库故障降级、主库结算最小事实可恢复 |
+| P1 | 独立日志数据库 | 已覆盖 `LOG_SQL_DSN` 初始化、日志库副本写入、运行期写入失败时主库事实可恢复、管理日志列表读取日志库和查询失败回退主库；继续补 outbox 异步补写、日志库健康指标和冷热归档策略 |
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝和 RPM/TPM 拒绝已覆盖；风险视图和缓存失效待补 |
 | P2 | 支付充值 | 充值码批次/备注/过期策略、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回审计、支付人工退款落账审计；更多 provider 自动退款适配待补 |

@@ -66,7 +66,7 @@ paths:
     get:
       tags: [Health]
       summary: 服务就绪检查
-      description: 检查数据库可用性；初始化后还会检查 JWT 配置、关键 settings，以及已启用支付 provider 的必需环境密钥。
+      description: 检查数据库可用性；初始化后还会检查 JWT 配置、关键 settings，以及已启用支付 provider 的必需环境密钥。配置 LOG_SQL_DSN 时，独立日志库在启动期初始化，初始化失败会阻止服务启动；运行期日志库写入失败会保留主库调用事实并写应用告警。
       responses:
         "200":
           description: Ready
@@ -1772,6 +1772,7 @@ paths:
     get:
       tags: [Admin Logs]
       summary: 全局调用日志
+      description: 超级管理员查询调用日志；配置 LOG_SQL_DSN 时读取独立日志数据库，未配置时读取主业务数据库，日志库查询失败时回退读取主库事实。无论是否配置独立日志库，主库都会保留可恢复结算事实，避免日志库故障导致账单不可解释。
       security:
         - UserJWT: []
       parameters:
@@ -1799,7 +1800,7 @@ paths:
     delete:
       tags: [Admin Logs]
       summary: 清理历史日志
-      description: 需要 before 查询参数，删除该时间之前的日志；成功后写入 log.clear 管理审计，摘要记录 before 截止时间。
+      description: 需要 before 查询参数，删除该时间之前的日志；配置 LOG_SQL_DSN 时清理独立日志数据库，未配置时清理主库日志；成功后写入 log.clear 管理审计，摘要记录 before 截止时间。
       security:
         - UserJWT: []
       parameters:
@@ -1817,6 +1818,7 @@ paths:
     get:
       tags: [Admin Logs]
       summary: 管理看板统计
+      description: 返回用户、通道、API Key、今日调用和今日额度统计；配置 LOG_SQL_DSN 时今日调用和今日额度优先来自独立日志数据库，基础用户/通道/API Key 数仍来自主业务数据库。
       security:
         - UserJWT: []
       responses:

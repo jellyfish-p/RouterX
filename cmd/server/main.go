@@ -15,6 +15,9 @@ func main() {
 	if err := internal.InitDB(); err != nil {
 		log.Fatalf("[FATAL] database init failed: %v", err)
 	}
+	if err := internal.InitLogDB(); err != nil {
+		log.Fatalf("[FATAL] log database init failed: %v", err)
+	}
 
 	// 2. 初始化 Redis
 	if err := internal.InitRedis(); err != nil {

@@ -5,21 +5,29 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"routerx/internal"
-	"routerx/internal/common"
-	"routerx/internal/model"
-	"routerx/internal/relay"
+	stdlog "log"
 	"strconv"
 	"strings"
 	"time"
 
+	"routerx/internal"
+	"routerx/internal/common"
+	"routerx/internal/model"
+	"routerx/internal/relay"
+
 	"gorm.io/gorm"
 )
 
-type LogService struct{}
+type LogService struct {
+	logDB *gorm.DB
+}
 
 func NewLogService() *LogService {
-	return &LogService{}
+	return &LogService{logDB: internal.LogDB}
+}
+
+func NewLogServiceWithLogDB(logDB *gorm.DB) *LogService {
+	return &LogService{logDB: logDB}
 }
 
 // Record 写入请求日志 (异步/同步可选)。
@@ -34,12 +42,30 @@ func (s *LogService) Record(log *model.Log) error {
 	log.ErrorSource = normalizeLogErrorSource(log)
 	log.UpstreamStatus = normalizeLogUpstreamStatus(log)
 	log.BillingSnapshot = normalizeLogBillingSnapshot(log)
-	return internal.DB.Transaction(func(tx *gorm.DB) error {
+	if err := internal.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(log).Error; err != nil {
 			return err
 		}
 		return updateTokenLastUsageSummary(tx, log)
-	})
+	}); err != nil {
+		return err
+	}
+	s.recordExternalLog(log)
+	return nil
+}
+
+func (s *LogService) recordExternalLog(entry *model.Log) {
+	if s == nil || s.logDB == nil || s.logDB == internal.DB || entry == nil {
+		return
+	}
+	external := *entry
+	external.ID = 0
+	external.User = nil
+	external.Token = nil
+	external.Channel = nil
+	if err := s.logDB.Create(&external).Error; err != nil {
+		stdlog.Printf("[LogService] WARN: external log DB write failed request_id=%s: %v", entry.RequestID, err)
+	}
 }
 
 func updateTokenLastUsageSummary(tx *gorm.DB, log *model.Log) error {
@@ -230,7 +256,16 @@ func normalizeLogBillingSnapshot(log *model.Log) string {
 // List 日志分页查询, 支持多维筛选。
 func (s *LogService) List(userID, tokenID, channelID *uint, modelName string, status *int, startTime, endTime string, page, pageSize int) ([]model.Log, int64, error) {
 	page, pageSize = normalizePage(page, pageSize)
-	query := internal.DB.Model(&model.Log{})
+	logs, total, err := s.listFromDB(s.logReadDB(), userID, tokenID, channelID, modelName, status, startTime, endTime, page, pageSize)
+	if err != nil && s.usesExternalLogDB() {
+		stdlog.Printf("[LogService] WARN: external log DB query failed, falling back to main DB: %v", err)
+		return s.listFromDB(internal.DB, userID, tokenID, channelID, modelName, status, startTime, endTime, page, pageSize)
+	}
+	return logs, total, err
+}
+
+func (s *LogService) listFromDB(db *gorm.DB, userID, tokenID, channelID *uint, modelName string, status *int, startTime, endTime string, page, pageSize int) ([]model.Log, int64, error) {
+	query := db.Model(&model.Log{})
 	if userID != nil {
 		query = query.Where("user_id = ?", *userID)
 	}
@@ -261,6 +296,17 @@ func (s *LogService) List(userID, tokenID, channelID *uint, modelName string, st
 	return logs, total, err
 }
 
+func (s *LogService) logReadDB() *gorm.DB {
+	if s != nil && s.logDB != nil {
+		return s.logDB
+	}
+	return internal.DB
+}
+
+func (s *LogService) usesExternalLogDB() bool {
+	return s != nil && s.logDB != nil && s.logDB != internal.DB
+}
+
 // Clear 清空日志 (软删除或 TRUNCATE)。
 func (s *LogService) Clear() error {
 	before := time.Now().AddDate(0, 0, -90)
@@ -271,7 +317,7 @@ func (s *LogService) ClearBefore(before time.Time) error {
 	if before.IsZero() || before.After(time.Now()) {
 		return errors.New("valid before time is required")
 	}
-	return internal.DB.Where("created_at < ?", before).Delete(&model.Log{}).Error
+	return s.logReadDB().Where("created_at < ?", before).Delete(&model.Log{}).Error
 }
 
 // GetUserStats 用户用量统计 (指定时间段内的调用次数 + 总消耗)。
@@ -313,7 +359,7 @@ func (s *LogService) GetDashboardStats() (userCount, channelCount, tokenCount, t
 		TodayQuota int64
 	}
 	var result aggregate
-	err = internal.DB.Model(&model.Log{}).
+	err = s.logReadDB().Model(&model.Log{}).
 		Where("created_at >= ?", start).
 		Select("COUNT(*) AS today_calls, COALESCE(SUM(quota_used), 0) AS today_quota").
 		Scan(&result).Error

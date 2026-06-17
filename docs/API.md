@@ -561,9 +561,9 @@ Provider 退款请求：
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
-| GET | `/v0/admin/log` | 已实现 | 调用日志列表 |
-| DELETE | `/v0/admin/log` | 基础实现 | 按 `before` 清理日志，成功后写 `log.clear` 管理审计 |
-| GET | `/v0/admin/dashboard` | 基础实现 | 仪表盘统计 |
+| GET | `/v0/admin/log` | 已实现 | 调用日志列表；配置 `LOG_SQL_DSN` 时读取独立日志库 |
+| DELETE | `/v0/admin/log` | 基础实现 | 按 `before` 清理日志；配置 `LOG_SQL_DSN` 时清理独立日志库；成功后写 `log.clear` 管理审计 |
+| GET | `/v0/admin/dashboard` | 基础实现 | 仪表盘统计；基础用户/通道/API Key 数来自主库，今日调用和额度在配置 `LOG_SQL_DSN` 时来自日志库 |
 | GET | `/v0/admin/setting` | 已实现 | 获取系统设置，仅超级管理员 |
 | PUT | `/v0/admin/setting` | 已实现 | 批量更新系统设置，仅超级管理员，成功后按 key 写管理审计 |
 
@@ -581,7 +581,7 @@ Provider 退款请求：
 | `start_at` | string | 开始时间 |
 | `end_at` | string | 结束时间 |
 
-日志响应字段至少包含 `user_id`、`token_id`、`channel_id`、`model`、usage、`usage_source`、`quota_used`、`status`、`request_id`、`error_code`、`error_source`、`upstream_status`、`request_snapshot`、`policy_snapshot`、`route_snapshot`、`billing_snapshot`、`error_msg`、`ip` 和 `created_at`。`usage_source` 当前会记录 `upstream` 或 `minimum`；`request_id` 用于关联 HTTP 访问日志和审计日志；`error_code` 成功调用为空，失败调用按 `docs/ERRORS.md` 使用稳定 code；`error_source` 和 `upstream_status` 用于排查失败来源；`request_snapshot`、`policy_snapshot`、`route_snapshot` 和 `billing_snapshot` 当前是脱敏 JSON 字符串，分别记录基础请求事实、基础策略事实、基础路由选择事实和基础计费事实，其中请求快照包含入口协议、API 类型、请求模型和 stream 标记，策略快照包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要，路由快照包含候选过滤、模型重写和非流式重试摘要，计费快照包含价格表达式或 P0 回退表达式、规则 ID/版本、倍率快照、Key 预算和用户余额前后摘要。
+日志响应字段至少包含 `user_id`、`token_id`、`channel_id`、`model`、usage、`usage_source`、`quota_used`、`status`、`request_id`、`error_code`、`error_source`、`upstream_status`、`request_snapshot`、`policy_snapshot`、`route_snapshot`、`billing_snapshot`、`error_msg`、`ip` 和 `created_at`。`usage_source` 当前会记录 `upstream` 或 `minimum`；`request_id` 用于关联 HTTP 访问日志和审计日志；`error_code` 成功调用为空，失败调用按 `docs/ERRORS.md` 使用稳定 code；`error_source` 和 `upstream_status` 用于排查失败来源；`request_snapshot`、`policy_snapshot`、`route_snapshot` 和 `billing_snapshot` 当前是脱敏 JSON 字符串，分别记录基础请求事实、基础策略事实、基础路由选择事实和基础计费事实，其中请求快照包含入口协议、API 类型、请求模型和 stream 标记，策略快照包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要，路由快照包含候选过滤、模型重写和非流式重试摘要，计费快照包含价格表达式或 P0 回退表达式、规则 ID/版本、倍率快照、Key 预算和用户余额前后摘要。配置 `LOG_SQL_DSN` 时，`LogService` 会先在主库事务内保存可恢复结算事实，再最佳努力写入独立日志库；日志查询和清理优先使用独立日志库，日志库查询失败时回退读取主库事实，独立日志库运行期写入失败不应抹掉主库事实。
 
 删除日志目标要求：
 
