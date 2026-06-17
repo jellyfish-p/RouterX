@@ -75,6 +75,7 @@ func ContextWithRelayRequestID(ctx context.Context, requestID string) context.Co
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = relay.ContextWithRequestID(ctx, requestID)
 	return context.WithValue(ctx, relayRequestIDContextKey{}, strings.TrimSpace(requestID))
 }
 

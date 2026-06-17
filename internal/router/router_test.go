@@ -6142,11 +6142,13 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	upstreamCalls := 0
 	upstreamAuth := ""
 	upstreamPath := ""
+	upstreamRequestID := ""
 	var upstreamBody map[string]interface{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		upstreamCalls++
 		upstreamAuth = req.Header.Get("Authorization")
 		upstreamPath = req.URL.Path
+		upstreamRequestID = req.Header.Get("X-Request-Id")
 		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -6216,16 +6218,13 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
 	}
 
-	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+	requestID := "req-upstream-propagation"
+	chatResp := performRawWithHeaders(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, `{
 		"model": "gpt-test",
-		"messages": []map[string]string{
-			{"role": "user", "content": "hello"},
-		},
+		"messages": [{"role": "user", "content": "hello"}],
 		"stream": false,
-		"routerx": map[string]interface{}{
-			"route": map[string]string{"channel_group": "paid"},
-		},
-	})
+		"routerx": {"route": {"channel_group": "paid"}}
+	}`, map[string]string{"X-Request-Id": requestID})
 	if chatResp.Code != http.StatusOK {
 		t.Fatalf("chat completion failed: %d %s", chatResp.Code, chatResp.Body.String())
 	}
@@ -6237,6 +6236,9 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	}
 	if upstreamAuth != "Bearer upstream-secret" {
 		t.Fatalf("upstream authorization should use channel secret, got %q", upstreamAuth)
+	}
+	if upstreamRequestID != requestID {
+		t.Fatalf("upstream should receive request id header, got %q", upstreamRequestID)
 	}
 	if upstreamBody["model"] != "gpt-test" {
 		t.Fatalf("unexpected upstream model: %#v", upstreamBody["model"])

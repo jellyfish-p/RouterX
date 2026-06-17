@@ -72,6 +72,7 @@ func (a *AzureAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey 
 		return nil, err
 	}
 	req.Header.Set("api-key", apiKey)
+	SetRequestIDHeader(req)
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

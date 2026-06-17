@@ -125,6 +125,7 @@ func (a *GeminiAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey
 	if err != nil {
 		return nil, err
 	}
+	SetRequestIDHeader(req)
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

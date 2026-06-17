@@ -76,7 +76,7 @@
 | 多层 RouterX | 传递 `X-RouterX-Hop` 和 `X-RouterX-Chain`，防止循环并保留链路摘要。 |
 | 日志 | HTTP 日志、调用日志、审计日志和系统错误日志都写 request_id。 |
 
-当前 HTTP 中间件会按 `observability.request_id_header` 读取或生成请求 ID，并通过同名响应头返回；模型调用日志和管理审计已持久化 `request_id`。上游透传、系统错误日志和跨实例追踪仍需按目标规则继续补齐。
+当前 HTTP 中间件会按 `observability.request_id_header` 读取或生成请求 ID，并通过同名响应头返回；模型调用日志和管理审计已持久化 `request_id`；`/v1` 调用真实上游时会用当前配置的 request id header 透传同一个请求 ID。系统错误日志和跨实例追踪仍需按目标规则继续补齐。
 
 ## 模型调用日志
 

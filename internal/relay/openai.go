@@ -95,6 +95,7 @@ func (a *OpenAIAdapter) doRequest(ctx context.Context, baseURL, endpoint, apiKey
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
+	SetRequestIDHeader(req)
 	if body != nil {
 		contentType = strings.TrimSpace(contentType)
 		if contentType == "" {

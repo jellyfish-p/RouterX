@@ -104,6 +104,7 @@ func (a *ClaudeAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey
 		return nil, err
 	}
 	req.Header.Set("x-api-key", apiKey)
+	SetRequestIDHeader(req)
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
