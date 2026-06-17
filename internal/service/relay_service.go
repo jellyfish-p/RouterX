@@ -2577,10 +2577,14 @@ func (s *RelayService) markChannelFailure(channel *model.Channel, responseMs int
 	if channel == nil {
 		return nil
 	}
-	return internal.DB.Model(channel).Updates(map[string]interface{}{
+	err := internal.DB.Model(channel).Updates(map[string]interface{}{
 		"response_ms": responseMs,
 		"error_count": gorm.Expr("error_count + ?", 1),
 	}).Error
+	if err == nil && s.channelService != nil {
+		s.channelService.InvalidateCandidateCache()
+	}
+	return err
 }
 
 func (s *RelayService) markChannelSuccess(channel *model.Channel, responseMs int) error {

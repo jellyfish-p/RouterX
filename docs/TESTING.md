@@ -433,7 +433,7 @@ Gemini-compatible 最小断言：
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |
 | P1 | 可靠性 | 已覆盖非流式安全重试、Redis 全局/IP/Token 基础限流和 `error_count` 自动熔断候选过滤；继续补半开恢复、探测任务、更多限流维度和生产 fail-open/fail-closed 策略 |
 | P1 | 运行模式 | SQLite 单镜像无 Redis 可运行；外部数据库无 Redis 不就绪或启动失败 |
-| P1 | 通道候选缓存 | 预加载、缓存命中、管理员修改后版本失效、集群实例回源一致 |
+| P1 | 通道候选缓存 | 已覆盖进程内缓存命中、`routing.channel_cache.version` 变化后回源、默认 settings 和非法配置校验；继续补启动预加载、Redis 共享快照和集群实例广播失效 |
 | P1 | 独立日志数据库 | `LOG_SQL_DSN` 写入、日志库故障降级、主库结算最小事实可恢复 |
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝和 RPM/TPM 拒绝已覆盖；风险视图和缓存失效待补 |

@@ -129,10 +129,10 @@ P0 补齐这些配置时，应同时补测试：
 
 | key | 默认 | stage | 说明 |
 |-----|------|-------|------|
-| `routing.channel_cache.enabled` | `true` | P1 | 是否启用模型到通道候选集缓存 |
-| `routing.channel_cache.preload` | `true` | P1 | 启动后或配置变更后是否预加载候选索引 |
-| `routing.channel_cache.ttl_seconds` | `60` | P1 | 进程内缓存兜底 TTL，`0` 表示只靠版本失效 |
-| `routing.channel_cache.version` | `1` | P1 | 管理端修改通道、分组、价格或访问策略后递增 |
+| `routing.channel_cache.enabled` | `true` | P1 | 当前已落地；是否启用进程内通道候选缓存，必须是 boolean |
+| `routing.channel_cache.preload` | `true` | P1 | 当前已校验；启动后或配置变更后是否预加载候选索引，预加载执行仍属后续增强 |
+| `routing.channel_cache.ttl_seconds` | `60` | P1 | 当前已落地；进程内缓存兜底 TTL，`0` 表示只靠版本失效，必须是非负整数 |
+| `routing.channel_cache.version` | `1` | P1 | 当前已落地；管理端修改通道后递增，必须是正整数 |
 
 ### Observability
 

@@ -174,6 +174,12 @@ func buildDefaultSettings() map[string]map[string]string {
 			"relay.error_ban_threshold": "10",
 			"relay.log_body_max_bytes":  "0",
 		},
+		"routing": {
+			"routing.channel_cache.enabled":     "true",
+			"routing.channel_cache.preload":     "true",
+			"routing.channel_cache.ttl_seconds": "60",
+			"routing.channel_cache.version":     "1",
+		},
 		"billing": {
 			"billing.default_ratio":                     "1.0",
 			"billing.bootstrap_admin_quota":             "100000000",

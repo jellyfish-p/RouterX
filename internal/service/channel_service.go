@@ -7,7 +7,9 @@ import (
 	"errors"
 	"math/big"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -29,11 +31,27 @@ const (
 	routeFilterReasonRoutePreference = "route_preference"
 )
 
-type ChannelService struct{}
+type ChannelService struct {
+	candidateCacheMu sync.Mutex
+	candidateCache   channelCandidateCache
+}
 
 type circuitBreakerConfig struct {
 	autoBan   bool
 	threshold int
+}
+
+type channelCandidateCache struct {
+	loaded    bool
+	version   int
+	expiresAt time.Time
+	channels  []model.Channel
+}
+
+type channelCandidateCacheConfig struct {
+	enabled bool
+	version int
+	ttl     time.Duration
 }
 
 type ChannelUpstreamTarget struct {
@@ -90,9 +108,9 @@ func (s *ChannelService) SelectChannelCandidatesWithRoute(modelName string, rout
 // SelectChannelCandidatesWithRouteFacts 同时返回候选和按首个过滤原因汇总的数量，供路由快照解释选择过程。
 func (s *ChannelService) SelectChannelCandidatesWithRouteFacts(modelName string, route RoutePreference) ([]model.Channel, map[string]int, error) {
 	modelName = strings.TrimSpace(modelName)
-	var channels []model.Channel
 	breaker := s.circuitBreakerConfig()
-	if err := internal.DB.Order("priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC").Find(&channels).Error; err != nil {
+	channels, err := s.channelsForCandidateSelection()
+	if err != nil {
 		return nil, nil, err
 	}
 	filteredReasons := map[string]int{}
@@ -138,6 +156,93 @@ func (s *ChannelService) circuitBreakerConfig() circuitBreakerConfig {
 		cfg.threshold = threshold
 	}
 	return cfg
+}
+
+func (s *ChannelService) channelsForCandidateSelection() ([]model.Channel, error) {
+	cfg := s.channelCandidateCacheConfig()
+	if !cfg.enabled {
+		return loadChannelsForCandidateSelection()
+	}
+
+	now := time.Now()
+	s.candidateCacheMu.Lock()
+	defer s.candidateCacheMu.Unlock()
+	if s.candidateCache.loaded &&
+		s.candidateCache.version == cfg.version &&
+		(cfg.ttl == 0 || now.Before(s.candidateCache.expiresAt)) {
+		return cloneChannels(s.candidateCache.channels), nil
+	}
+
+	channels, err := loadChannelsForCandidateSelection()
+	if err != nil {
+		return nil, err
+	}
+	s.candidateCache = channelCandidateCache{
+		loaded:    true,
+		version:   cfg.version,
+		expiresAt: now.Add(cfg.ttl),
+		channels:  cloneChannels(channels),
+	}
+	return channels, nil
+}
+
+func (s *ChannelService) channelCandidateCacheConfig() channelCandidateCacheConfig {
+	cfg := channelCandidateCacheConfig{
+		enabled: true,
+		version: 1,
+		ttl:     60 * time.Second,
+	}
+	if internal.DB == nil {
+		return cfg
+	}
+	settingSvc := NewSettingService()
+	if enabled, err := settingSvc.GetBool("routing.channel_cache.enabled"); err == nil {
+		cfg.enabled = enabled
+	}
+	if ttlSeconds, err := settingSvc.GetInt("routing.channel_cache.ttl_seconds"); err == nil && ttlSeconds >= 0 {
+		cfg.ttl = time.Duration(ttlSeconds) * time.Second
+	}
+	if version, err := settingSvc.GetInt("routing.channel_cache.version"); err == nil && version > 0 {
+		cfg.version = version
+	}
+	return cfg
+}
+
+func loadChannelsForCandidateSelection() ([]model.Channel, error) {
+	var channels []model.Channel
+	err := internal.DB.Order("priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC").Find(&channels).Error
+	return channels, err
+}
+
+func cloneChannels(channels []model.Channel) []model.Channel {
+	if len(channels) == 0 {
+		return nil
+	}
+	cloned := make([]model.Channel, len(channels))
+	copy(cloned, channels)
+	return cloned
+}
+
+func (s *ChannelService) InvalidateCandidateCache() {
+	if s == nil {
+		return
+	}
+	s.candidateCacheMu.Lock()
+	defer s.candidateCacheMu.Unlock()
+	s.candidateCache = channelCandidateCache{}
+}
+
+func (s *ChannelService) touchCandidateCacheVersion() {
+	s.InvalidateCandidateCache()
+	if internal.DB == nil {
+		return
+	}
+	settingSvc := NewSettingService()
+	version, err := settingSvc.GetInt("routing.channel_cache.version")
+	if err != nil || version < 1 {
+		version = 1
+	}
+	_ = settingSvc.Set("routing.channel_cache.version", strconv.Itoa(version+1))
 }
 
 // ResolveUpstream 解析某个通道本次请求应该使用的 base_url/api_key。
@@ -219,7 +324,11 @@ func (s *ChannelService) Create(channel *model.Channel) error {
 	if err := encryptChannelSecrets(channel); err != nil {
 		return err
 	}
-	return internal.DB.Create(channel).Error
+	if err := internal.DB.Create(channel).Error; err != nil {
+		return err
+	}
+	s.touchCandidateCacheVersion()
+	return nil
 }
 
 // Update 编辑通道。
@@ -236,25 +345,41 @@ func (s *ChannelService) Update(id uint, updates map[string]interface{}) error {
 	if err := normalizeUpdateValues(allowed); err != nil {
 		return err
 	}
-	return internal.DB.Model(&model.Channel{}).Where("id = ?", id).Updates(allowed).Error
+	if err := internal.DB.Model(&model.Channel{}).Where("id = ?", id).Updates(allowed).Error; err != nil {
+		return err
+	}
+	s.touchCandidateCacheVersion()
+	return nil
 }
 
 // Delete 完全删除通道。历史日志保留，但解除 channel_id 引用。
 func (s *ChannelService) Delete(id uint) error {
-	return internal.DB.Transaction(func(tx *gorm.DB) error {
+	if err := internal.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.Log{}).Where("channel_id = ?", id).Update("channel_id", nil).Error; err != nil {
 			return err
 		}
 		return tx.Unscoped().Delete(&model.Channel{}, id).Error
-	})
+	}); err != nil {
+		return err
+	}
+	s.touchCandidateCacheVersion()
+	return nil
 }
 
 func (s *ChannelService) Disable(id uint) error {
-	return internal.DB.Model(&model.Channel{}).Where("id = ?", id).Update("status", common.ChannelStatusDisabled).Error
+	if err := internal.DB.Model(&model.Channel{}).Where("id = ?", id).Update("status", common.ChannelStatusDisabled).Error; err != nil {
+		return err
+	}
+	s.touchCandidateCacheVersion()
+	return nil
 }
 
 func (s *ChannelService) Enable(id uint) error {
-	return internal.DB.Model(&model.Channel{}).Where("id = ?", id).Update("status", common.ChannelStatusEnabled).Error
+	if err := internal.DB.Model(&model.Channel{}).Where("id = ?", id).Update("status", common.ChannelStatusEnabled).Error; err != nil {
+		return err
+	}
+	s.touchCandidateCacheVersion()
+	return nil
 }
 
 // Test 测试通道连通性：向厂商 API 发探测请求, 记录 response_ms + model_count。
@@ -271,12 +396,14 @@ func (s *ChannelService) Test(channelID uint) (bool, int64, int, error) {
 			"response_ms": responseMs,
 			"error_count": gorm.Expr("error_count + ?", 1),
 		}).Error
+		s.InvalidateCandidateCache()
 		return false, responseMs, 0, err
 	}
 	_ = internal.DB.Model(channel).Updates(map[string]interface{}{
 		"response_ms": responseMs,
 		"error_count": 0,
 	}).Error
+	s.InvalidateCandidateCache()
 	return true, responseMs, len(models), nil
 }
 

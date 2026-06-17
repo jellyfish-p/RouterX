@@ -226,14 +226,16 @@ func validateSettingValue(key, value string) error {
 	case "server.mode":
 		return validateServerModeSetting(key, value)
 	case "jwt.admin_expire_hours", "jwt.user_expire_hours",
-		"relay.timeout", "relay.error_ban_threshold", "payment.order_expire_minutes":
+		"relay.timeout", "relay.error_ban_threshold", "routing.channel_cache.version", "payment.order_expire_minutes":
 		return validatePositiveIntSetting(key, value)
 	case "rate_limit.global_per_min", "rate_limit.per_token_per_min", "rate_limit.per_ip_per_min":
 		return validateNonNegativeIntSetting(key, value)
 	case "relay.retry_count", "relay.log_body_max_bytes", "log.body_max_bytes", "billing.bootstrap_admin_quota",
+		"routing.channel_cache.ttl_seconds",
 		"payment.manual_adjust.large_amount_threshold":
 		return validateNonNegativeIntSetting(key, value)
 	case "rate_limit.enabled", "relay.error_auto_ban", "log.request_body_enabled", "log.response_body_enabled",
+		"routing.channel_cache.enabled", "routing.channel_cache.preload",
 		"ready.production_strict", "payment.epay.enabled", "payment.stripe.enabled",
 		"payment.refund.auto_deduct", "payment.refund.allow_negative_balance", "payment.dispute.auto_disable_tokens", "payment.manual_adjust.require_reason",
 		"observability.metrics_enabled", "observability.audit_enabled":

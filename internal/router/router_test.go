@@ -3413,6 +3413,10 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"observability.audit_enabled",
 		"observability.request_id_header",
 		"ready.production_strict",
+		"routing.channel_cache.enabled",
+		"routing.channel_cache.preload",
+		"routing.channel_cache.ttl_seconds",
+		"routing.channel_cache.version",
 		"billing.default_ratio",
 		"billing.bootstrap_admin_quota",
 		"billing.default_user_channel_group_access",
@@ -3843,6 +3847,24 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badNestedRatio.Code != http.StatusBadRequest {
 		t.Fatalf("user group channel ratios should reject zero nested values, got %d %s", badNestedRatio.Code, badNestedRatio.Body.String())
+	}
+	badChannelCacheEnabled := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"routing.channel_cache.enabled": "maybe",
+	})
+	if badChannelCacheEnabled.Code != http.StatusBadRequest {
+		t.Fatalf("channel cache enabled should be boolean, got %d %s", badChannelCacheEnabled.Code, badChannelCacheEnabled.Body.String())
+	}
+	badChannelCacheTTL := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"routing.channel_cache.ttl_seconds": "-1",
+	})
+	if badChannelCacheTTL.Code != http.StatusBadRequest {
+		t.Fatalf("channel cache ttl should reject negative values, got %d %s", badChannelCacheTTL.Code, badChannelCacheTTL.Body.String())
+	}
+	badChannelCacheVersion := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"routing.channel_cache.version": "0",
+	})
+	if badChannelCacheVersion.Code != http.StatusBadRequest {
+		t.Fatalf("channel cache version should reject zero values, got %d %s", badChannelCacheVersion.Code, badChannelCacheVersion.Body.String())
 	}
 
 	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
