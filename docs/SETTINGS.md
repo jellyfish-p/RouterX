@@ -42,6 +42,13 @@
 | `jwt.secret` | `jwt` | string | `JWT_SECRET` 或初始化生成 | 是 | restart/cache_refresh | auth | 长度不少于 32，生产必须固定 |
 | `jwt.admin_expire_hours` | `jwt` | int | `24` | 否 | cache_refresh | auth | `>0` |
 | `jwt.user_expire_hours` | `jwt` | int | `168` | 否 | cache_refresh | auth | `>0` |
+| `auth.login.username_password.enabled` | `auth` | bool | `true` | 否 | hot | auth | 必须为 `true` |
+| `auth.login.email_password.enabled` | `auth` | bool | `false` | 否 | hot | auth | bool；只作用于已有本地邮箱身份 |
+| `auth.login.phone_password.enabled` | `auth` | bool | `false` | 否 | hot | auth | bool；只作用于已有本地手机号身份 |
+| `auth.login.email_code.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前登录接口暂未使用 |
+| `auth.login.phone_code.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前登录接口暂未使用 |
+| `auth.login.oauth.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前登录接口暂未使用 |
+| `auth.login.oidc.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前登录接口暂未使用 |
 | `auth.register.enabled` | `auth` | bool | `false` | 否 | hot | auth | bool |
 | `auth.register.username.enabled` | `auth` | bool | `true` | 否 | hot | auth | bool |
 | `auth.register.email.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前注册接口暂未使用 |
@@ -73,6 +80,7 @@
 说明：
 
 - `jwt.secret` 可以由 `JWT_SECRET` 注入；生产和多实例部署必须显式固定，不能让各实例随机生成不同值。
+- `auth.login.username_password.enabled=true` 是商业级基础登录硬约束，配置层会拒绝关闭；email/phone 密码登录默认关闭，只有已有本地 email/phone identity 且对应开关开启时才会命中。
 - `auth.register.enabled=false` 是商业级自部署安全默认；当前基础用户名注册还会检查 `auth.register.username.enabled`，并在 `auth.register.captcha.required=true` 时拒绝无验证码注册请求。完整验证码、邮箱和手机号注册仍按 `docs/ACCOUNTS.md` 分阶段补齐。
 - `rate_limit.global_per_min`、`rate_limit.per_token_per_min` 和 `rate_limit.per_ip_per_min` 为 `0` 时表示关闭对应维度；Redis 可用时这些 hot setting 会影响后续请求。
 - `relay.retry_count` 默认是 `0`，表示不做自动重试；大于 0 时，非流式 Relay 只对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败进行有限候选通道重试。默认白名单为 429/500/502/503/504，生产环境不建议把 401/403 加入白名单。
@@ -107,6 +115,13 @@ P0 补齐这些配置时，应同时补测试：
 
 | key | 默认 | stage | 说明 |
 |-----|------|-------|------|
+| `auth.login.username_password.enabled` | `true` | P1 | 当前已落地；用户名密码登录基线，配置层不得关闭 |
+| `auth.login.email_password.enabled` | `false` | P1 | 当前已落地；已有本地邮箱身份可在开启后使用邮箱 + 密码登录 |
+| `auth.login.phone_password.enabled` | `false` | P1 | 当前已落地；已有本地手机号身份可在开启后使用手机号 + 密码登录 |
+| `auth.login.email_code.enabled` | `false` | P1 | 当前已校验；邮箱验证码登录仍属后续增强 |
+| `auth.login.phone_code.enabled` | `false` | P1 | 当前已校验；手机号验证码登录仍属后续增强 |
+| `auth.login.oauth.enabled` | `false` | P1 | 当前已校验；OAuth 登录仍属后续增强 |
+| `auth.login.oidc.enabled` | `false` | P1 | 当前已校验；OIDC 登录仍属后续增强 |
 | `auth.register.enabled` | `false` | P1 | 当前已落地；是否开放公开自助注册，默认关闭 |
 | `auth.register.username.enabled` | `true` | P1 | 当前已落地；开启注册后是否允许用户名注册 |
 | `auth.register.email.enabled` | `false` | P1 | 当前已校验；邮箱注册入口仍属后续增强 |
@@ -230,7 +245,8 @@ validate key exists
 生产模式下，以下配置缺失或非法时 `/ready` 应返回不就绪：
 
 - `jwt.secret` 缺失、过短或多实例不一致。
-- `auth.register.*.enabled` 或 `auth.register.captcha.required` 不是 boolean。
+- `auth.login.*.enabled`、`auth.register.*.enabled` 或 `auth.register.captcha.required` 不是 boolean。
+- `auth.login.username_password.enabled=false`。
 - `auth.register.default_quota < 0`。
 - `auth.register.default_group_id` 为空。
 - `ENCRYPTION_KEY` 或 KMS 不可用，且数据库存在 `enc:v1:` 下游密钥。

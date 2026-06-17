@@ -792,6 +792,106 @@ func TestUserRegisterRespectsRegistrationSettings(t *testing.T) {
 	}
 }
 
+func TestUserLoginRespectsLoginMethodSettings(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "login-method-user",
+		"password":     "password123",
+		"display_name": "Login Method User",
+		"email":        "method@example.com",
+		"role":         common.RoleUser,
+		"quota":        10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "login-method-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	hash, err := common.HashPassword("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := internal.DB.Create(&[]model.UserIdentity{
+		{
+			UserID:       user.ID,
+			Method:       model.UserIdentityMethodEmail,
+			Provider:     model.UserIdentityProviderLocal,
+			Identifier:   "method@example.com",
+			PasswordHash: hash,
+			VerifiedAt:   &now,
+		},
+		{
+			UserID:       user.ID,
+			Method:       model.UserIdentityMethodPhone,
+			Provider:     model.UserIdentityProviderLocal,
+			Identifier:   "+15550001111",
+			PasswordHash: hash,
+			VerifiedAt:   &now,
+		},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	usernameLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "login-method-user",
+		"password": "password123",
+	})
+	if usernameLogin.Code != http.StatusOK {
+		t.Fatalf("username/password login should stay enabled by default, got %d %s", usernameLogin.Code, usernameLogin.Body.String())
+	}
+	emailDisabledLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "method@example.com",
+		"password": "password123",
+	})
+	if emailDisabledLogin.Code != http.StatusUnauthorized {
+		t.Fatalf("email/password login should be disabled by default, got %d %s", emailDisabledLogin.Code, emailDisabledLogin.Body.String())
+	}
+	phoneDisabledLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "+15550001111",
+		"password": "password123",
+	})
+	if phoneDisabledLogin.Code != http.StatusUnauthorized {
+		t.Fatalf("phone/password login should be disabled by default, got %d %s", phoneDisabledLogin.Code, phoneDisabledLogin.Body.String())
+	}
+
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("auth.login.email_password.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.login.phone_password.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	emailEnabledLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "method@example.com",
+		"password": "password123",
+	})
+	if emailEnabledLogin.Code != http.StatusOK {
+		t.Fatalf("email/password login should work when enabled, got %d %s", emailEnabledLogin.Code, emailEnabledLogin.Body.String())
+	}
+	phoneEnabledLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "+15550001111",
+		"password": "password123",
+	})
+	if phoneEnabledLogin.Code != http.StatusOK {
+		t.Fatalf("phone/password login should work when enabled, got %d %s", phoneEnabledLogin.Code, phoneEnabledLogin.Body.String())
+	}
+}
+
 func TestAdminPrivilegeBoundaries(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -3674,6 +3774,13 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 	}
 
 	for _, key := range []string{
+		"auth.login.username_password.enabled",
+		"auth.login.email_password.enabled",
+		"auth.login.phone_password.enabled",
+		"auth.login.email_code.enabled",
+		"auth.login.phone_code.enabled",
+		"auth.login.oauth.enabled",
+		"auth.login.oidc.enabled",
 		"auth.register.enabled",
 		"auth.register.username.enabled",
 		"auth.register.email.enabled",
@@ -4285,6 +4392,18 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badRegisterGroup.Code != http.StatusBadRequest {
 		t.Fatalf("register default group should reject empty values, got %d %s", badRegisterGroup.Code, badRegisterGroup.Body.String())
+	}
+	badEmailPasswordLogin := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"auth.login.email_password.enabled": "maybe",
+	})
+	if badEmailPasswordLogin.Code != http.StatusBadRequest {
+		t.Fatalf("email password login setting should be boolean, got %d %s", badEmailPasswordLogin.Code, badEmailPasswordLogin.Body.String())
+	}
+	disableUsernamePasswordLogin := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"auth.login.username_password.enabled": "false",
+	})
+	if disableUsernamePasswordLogin.Code != http.StatusBadRequest {
+		t.Fatalf("username password login must not be disabled, got %d %s", disableUsernamePasswordLogin.Code, disableUsernamePasswordLogin.Body.String())
 	}
 
 	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {

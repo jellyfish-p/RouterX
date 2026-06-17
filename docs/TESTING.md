@@ -84,6 +84,7 @@
 | `TestSettingCacheRefreshesStaleRedisValues` | settings 读取缓存、单项更新和批量更新后的 Redis 刷新边界 |
 | `TestSettingLoadCacheAppliesRequestIDHeaderRuntimeConfig` | 启动加载 settings 时会把已有 `observability.request_id_header` 应用到进程内 request id header 配置 |
 | `TestUserRegisterRespectsRegistrationSettings` | 自助注册默认关闭；开启后仍受用户名注册和验证码开关约束，并应用默认额度/分组 |
+| `TestUserLoginRespectsLoginMethodSettings` | 用户名密码登录保持可用；email/phone 密码登录默认关闭，开启对应 setting 后已有本地身份可登录 |
 | `TestInitRedisSkipsEmptyConfig` | `REDIS_CONN` 为空时不隐式连接本机 Redis，SQLite 单机模式保持可降级 |
 | `TestReadinessRequiresRedisForExternalDatabaseMode` | `SQL_DSN` 指向外部数据库且 Redis 不可用时 `/ready` 返回不就绪 |
 | `TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets` | 数据库已有 `enc:v1:` 通道密钥但缺少 `ENCRYPTION_KEY` 时 `/ready` 返回不就绪 |

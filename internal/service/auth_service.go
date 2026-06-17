@@ -294,6 +294,9 @@ func findLocalIdentity(account string) (*model.UserIdentity, error) {
 
 	var lastErr error
 	for _, candidate := range candidates {
+		if !localPasswordLoginEnabled(candidate.method) {
+			continue
+		}
 		var identity model.UserIdentity
 		err := internal.DB.Preload("User").Where(
 			"method = ? AND provider = ? AND identifier = ?",
@@ -310,6 +313,28 @@ func findLocalIdentity(account string) (*model.UserIdentity, error) {
 		lastErr = gorm.ErrRecordNotFound
 	}
 	return nil, lastErr
+}
+
+func localPasswordLoginEnabled(method string) bool {
+	switch method {
+	case model.UserIdentityMethodUsername:
+		// Username/password is the baseline local login method and cannot be disabled by settings.
+		return true
+	case model.UserIdentityMethodEmail:
+		return loginBoolSettingDefault("auth.login.email_password.enabled", false)
+	case model.UserIdentityMethodPhone:
+		return loginBoolSettingDefault("auth.login.phone_password.enabled", false)
+	default:
+		return false
+	}
+}
+
+func loginBoolSettingDefault(key string, fallback bool) bool {
+	enabled, err := NewSettingService().GetBool(key)
+	if err != nil {
+		return fallback
+	}
+	return enabled
 }
 
 func normalizeEmail(email string) string {

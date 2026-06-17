@@ -122,13 +122,13 @@ password_hash = bcrypt hash
 
 | key | 默认 | 说明 |
 |-----|------|------|
-| `auth.login.username_password.enabled` | `true` | 强制为 true，不允许关闭 |
-| `auth.login.email_password.enabled` | `false` | 是否允许邮箱 + 密码登录 |
-| `auth.login.phone_password.enabled` | `false` | 是否允许手机号 + 密码登录 |
-| `auth.login.email_code.enabled` | `false` | 是否允许邮箱验证码登录 |
-| `auth.login.phone_code.enabled` | `false` | 是否允许手机号验证码登录 |
-| `auth.login.oauth.enabled` | `false` | 是否允许 OAuth 登录 |
-| `auth.login.oidc.enabled` | `false` | 是否允许 OIDC 登录 |
+| `auth.login.username_password.enabled` | `true` | 当前已落地；强制为 true，不允许关闭 |
+| `auth.login.email_password.enabled` | `false` | 当前已落地；是否允许已有本地邮箱身份使用邮箱 + 密码登录 |
+| `auth.login.phone_password.enabled` | `false` | 当前已落地；是否允许已有本地手机号身份使用手机号 + 密码登录 |
+| `auth.login.email_code.enabled` | `false` | 当前已校验；邮箱验证码登录仍属后续增强 |
+| `auth.login.phone_code.enabled` | `false` | 当前已校验；手机号验证码登录仍属后续增强 |
+| `auth.login.oauth.enabled` | `false` | 当前已校验；OAuth 登录仍属后续增强 |
+| `auth.login.oidc.enabled` | `false` | 当前已校验；OIDC 登录仍属后续增强 |
 
 ### 注册开关
 
@@ -158,8 +158,8 @@ password_hash = bcrypt hash
 
 - `auth.login.username_password.enabled` 是系统硬约束，配置层不得关闭。
 - 服务端必须校验登录和注册开关，不依赖前端隐藏。
-- 可以开启邮箱登录但关闭邮箱注册，此时只有已绑定邮箱的用户可以用邮箱登录。
-- 可以开启手机号登录但关闭手机号注册，此时只有已绑定手机号的用户可以用手机号登录。
+- 可以开启邮箱密码登录但关闭邮箱注册，此时只有已绑定本地邮箱身份的用户可以用邮箱密码登录。
+- 可以开启手机号密码登录但关闭手机号注册，此时只有已绑定本地手机号身份的用户可以用手机号密码登录。
 - 关闭某种登录方式不删除已绑定身份，只禁止继续使用该方式登录。
 - 管理员创建账户不受自助注册开关限制，但仍必须设置用户名和密码。
 - 默认关闭自助注册不影响用户名密码登录，也不影响管理员创建用户或后续邀请用户。

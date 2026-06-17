@@ -245,13 +245,18 @@ func validateSettingValue(key, value string) error {
 	case "relay.retry_on_status":
 		return validateHTTPErrorStatusArraySetting(key, value)
 	case "rate_limit.enabled", "relay.error_auto_ban", "log.request_body_enabled", "log.response_body_enabled",
+		"auth.login.username_password.enabled", "auth.login.email_password.enabled", "auth.login.phone_password.enabled", "auth.login.email_code.enabled", "auth.login.phone_code.enabled", "auth.login.oauth.enabled", "auth.login.oidc.enabled",
 		"auth.register.enabled", "auth.register.username.enabled", "auth.register.email.enabled", "auth.register.phone.enabled", "auth.register.captcha.required",
 		"routing.channel_cache.enabled", "routing.channel_cache.preload",
 		"ready.production_strict", "payment.epay.enabled", "payment.stripe.enabled",
 		"payment.refund.auto_deduct", "payment.refund.allow_negative_balance", "payment.dispute.auto_disable_tokens", "payment.manual_adjust.require_reason",
 		"observability.metrics_enabled", "observability.audit_enabled":
-		if _, err := strconv.ParseBool(value); err != nil {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
 			return errors.New(key + " must be a boolean")
+		}
+		if key == "auth.login.username_password.enabled" && !enabled {
+			return errors.New("auth.login.username_password.enabled cannot be disabled")
 		}
 	case "auth.register.default_group_id":
 		return validateNonEmptySetting(key, value)

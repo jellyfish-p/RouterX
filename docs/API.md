@@ -604,6 +604,7 @@ Provider 退款请求：
 鉴权：
 
 - 注册和登录不需要 User JWT，但需要系统已初始化。
+- 用户名密码登录是当前本地登录基线；email/phone 密码登录只对已有本地身份生效，并分别受 `auth.login.email_password.enabled` 与 `auth.login.phone_password.enabled` 控制，默认关闭。
 - 自部署商业级默认关闭公开自助注册；`POST /v0/user/register` 当前基础用户名密码路径需要 `auth.register.enabled=true`、`auth.register.username.enabled=true` 且 `auth.register.captcha.required=false` 才可用。完整验证码注册属于后续增强。
 - 管理员创建用户不受自助注册开关影响。
 - 个人信息、日志和账单需要 User JWT。
@@ -613,7 +614,7 @@ Provider 退款请求：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | POST | `/v0/user/register` | 已实现 | 基础用户名密码注册，受自助注册 settings 控制 |
-| POST | `/v0/user/login` | 已实现 | 用户统一登录 |
+| POST | `/v0/user/login` | 已实现 | 用户统一登录；用户名密码始终可用，email/phone 密码登录受 settings 控制 |
 | GET | `/v0/user/self` | 已实现 | 获取个人信息 |
 | PUT | `/v0/user/self` | 已实现 | 修改个人信息 |
 | POST | `/v0/user/self/password` | 已实现 | 修改密码 |
