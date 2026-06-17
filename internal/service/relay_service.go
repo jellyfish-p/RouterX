@@ -607,7 +607,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		_ = s.markChannelFailure(channel, latencyMs)
 		message := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, message, clientIP)
-		return nil, nil, retryableUpstreamStatus(resp.StatusCode), &HTTPError{
+		return nil, nil, s.retryableUpstreamStatus(resp.StatusCode), &HTTPError{
 			Status:  clientStatusFromUpstream(resp.StatusCode),
 			Message: message,
 			Type:    upstreamErrorType(resp.StatusCode),
@@ -2082,6 +2082,43 @@ func (s *RelayService) relayRetryCount() int {
 	return value
 }
 
+func (s *RelayService) retryableUpstreamStatus(status int) bool {
+	statuses := s.retryableUpstreamStatuses()
+	_, ok := statuses[status]
+	return ok
+}
+
+func (s *RelayService) retryableUpstreamStatuses() map[int]struct{} {
+	statuses := defaultRetryableUpstreamStatuses()
+	if s == nil || s.settingService == nil {
+		return statuses
+	}
+	raw, err := s.settingService.Get("relay.retry_on_status")
+	if err != nil {
+		return statuses
+	}
+	// Settings validation rejects bad values on write; this fallback protects older or manually edited databases.
+	values, err := parseHTTPErrorStatusArraySetting("relay.retry_on_status", raw)
+	if err != nil {
+		return statuses
+	}
+	statuses = make(map[int]struct{}, len(values))
+	for _, value := range values {
+		statuses[value] = struct{}{}
+	}
+	return statuses
+}
+
+func defaultRetryableUpstreamStatuses() map[int]struct{} {
+	return map[int]struct{}{
+		429: {},
+		500: {},
+		502: {},
+		503: {},
+		504: {},
+	}
+}
+
 func (s *RelayService) CheckTokenAPIScope(token *model.Token, apiType relay.APIType, clientIP string) error {
 	return s.enforceTokenAPIScope(context.Background(), token, apiType, "", clientIP)
 }
@@ -2995,10 +3032,6 @@ func usageFromOpenAIStreamLine(line []byte) *relay.Usage {
 	}
 	_ = json.Unmarshal(payload, &envelope)
 	return envelope.Usage
-}
-
-func retryableUpstreamStatus(status int) bool {
-	return status == 429 || status >= 500
 }
 
 func supportsOpenAICompatibleStream(channelType int) bool {

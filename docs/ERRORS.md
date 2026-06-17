@@ -113,8 +113,8 @@
 | `upstream_400` | 502 或 400 | `upstream_error` / `INVALID_ARGUMENT` | 上游认为请求错误 | 是 | 否 | 否 | 上游状态、脱敏摘要 | 检查转换和请求参数 |
 | `upstream_401` | 502 | `upstream_error` / `UNAVAILABLE` | 上游认证失败 | 是 | 否 | 否 | channel_id、provider | 检查上游密钥 |
 | `upstream_403` | 502 | `upstream_error` / `UNAVAILABLE` | 上游权限不足 | 是 | 否 | 否 | channel_id、provider | 检查上游账号权限 |
-| `upstream_429` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 上游限流 | 是 | 非流式可按 `relay.retry_count` 换候选通道 | 否，除非已有 usage | channel_id、provider、上游状态 | 降低并发或切换通道 |
-| `upstream_5xx` | 502 | `upstream_error` / `UNAVAILABLE` | 上游临时故障 | 是 | 非流式可重试 | 否，除非已有 usage | status、channel_id、重试次数 | 检查上游健康和熔断 |
+| `upstream_429` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 上游限流 | 是 | 非流式可按 `relay.retry_count` 和 `relay.retry_on_status` 换候选通道 | 否，除非已有 usage | channel_id、provider、上游状态 | 降低并发或切换通道 |
+| `upstream_5xx` | 502 | `upstream_error` / `UNAVAILABLE` | 上游临时故障 | 是 | 默认 500/502/503/504 可按白名单重试 | 否，除非已有 usage | status、channel_id、重试次数 | 检查上游健康和熔断 |
 | `billing_failed` | 500 | `server_error` / `INTERNAL` | 扣费事务或日志事实异常 | 可能已调用 | 否 | 按事务结果 | quota_used、事务错误 | 人工核对账单 |
 | `insufficient_quota_after_usage` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 实际 usage 超过可扣额度 | 是 | 否 | 按事务结果 | usage、quota_used、余额 | 调整预留和并发策略 |
 | `model_list_failed` | 500 | `server_error` / `INTERNAL` | 模型列表聚合失败 | 不一定 | 否 | 否 | provider、channel 摘要 | 检查通道模型列表 |
@@ -128,7 +128,7 @@
 |----------|----------|
 | Anthropic/Gemini wrapper 转换失败当前可能返回 `response_conversion_failed`。 | 统一归入 `upstream_conversion_failed`，可保留 `response_conversion_failed` 作为兼容别名。 |
 | `parseRelayRequest` 对缺少 model 当前可能走 `invalid_request`。 | 对外目标使用 `model_required`，日志可保留原始解析错误摘要。 |
-| 上游 400/401/403 当前多以 502 + `upstream_<status>` 返回。 | P1 可按入口协议细化，但 401/403 仍应归因通道配置且不重试。 |
+| 上游 400/401/403 当前多以 502 + `upstream_<status>` 返回。 | P1 可按入口协议细化；默认不重试，只有管理员显式加入 `relay.retry_on_status` 时才会换候选，401/403 仍应优先归因通道配置。 |
 | 超时已拆分为 `upstream_timeout`。 | 由 `TestChatCompletionUpstreamTimeoutMapping` 覆盖，便于告警和客户端重试判断。 |
 | `/v0` 统一响应当前没有稳定 code 字段。 | 若增加 code，需要保持旧字段并更新 API 文档和测试。 |
 
@@ -154,10 +154,10 @@
 | 鉴权或权限错误 | 否 | 否 | 重试会扩大风险。 |
 | 余额不足 | 否 | 否 | 需要充值或调整额度。 |
 | 限流 | 可延迟重试 | 可按策略换候选通道 | 需要保留 Retry-After 或日志摘要。 |
-| 上游 400 | 否 | 否 | 多数是转换或参数问题。 |
-| 上游 401/403 | 否 | 否 | 通道密钥或权限问题，不应放大请求。 |
-| 上游 429 | 可延迟重试 | 非流式可按 `relay.retry_count` 换候选通道 | 注意供应商风控。 |
-| 上游 5xx/网络错误/超时 | 可重试 | 非流式未输出前可按 `relay.retry_count` 重试 | 流式输出后不能切换通道。 |
+| 上游 400 | 否 | 默认否；显式加入 `relay.retry_on_status` 后非流式可换候选 | 多数是转换或参数问题，只有确认多通道差异时才建议放开。 |
+| 上游 401/403 | 否 | 默认否；生产环境不建议加入 `relay.retry_on_status` | 通道密钥或权限问题，不应放大请求。 |
+| 上游 429 | 可延迟重试 | 非流式可按 `relay.retry_count` 和 `relay.retry_on_status` 换候选通道 | 注意供应商风控。 |
+| 上游 5xx/网络错误/超时 | 可重试 | 非流式未输出前可按 `relay.retry_count` 重试；HTTP 状态码由 `relay.retry_on_status` 控制 | 流式输出后不能切换通道。 |
 | 计费失败 | 否 | 否 | 需要保护账单事实。 |
 
 ## 日志字段要求

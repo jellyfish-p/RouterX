@@ -3588,6 +3588,7 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"jwt.secret",
 		"relay.timeout",
 		"relay.retry_count",
+		"relay.retry_on_status",
 		"relay.max_request_body_bytes",
 		"relay.max_response_body_bytes",
 		"relay.routerx_max_hops",
@@ -4164,6 +4165,12 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	})
 	if badRouterXHopLimit.Code != http.StatusBadRequest {
 		t.Fatalf("routerx max hops should reject zero values, got %d %s", badRouterXHopLimit.Code, badRouterXHopLimit.Body.String())
+	}
+	badRelayRetryStatus := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"relay.retry_on_status": "[200]",
+	})
+	if badRelayRetryStatus.Code != http.StatusBadRequest {
+		t.Fatalf("relay retry statuses should reject non-error status codes, got %d %s", badRelayRetryStatus.Code, badRelayRetryStatus.Body.String())
 	}
 
 	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
@@ -11577,6 +11584,136 @@ func TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce(t *testing.T) {
 	}
 	if channelID, ok := firstAttempt["channel_id"].(float64); !ok || uint(channelID) != firstChannelPayload.Data.ID {
 		t.Fatalf("retry attempt summary should reference failed primary channel: %+v", firstAttempt)
+	}
+}
+
+func TestChatCompletionUsesConfiguredRetryStatuses(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	firstCalls := 0
+	firstUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		firstCalls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"retryable by config"}}`))
+	}))
+	defer firstUpstream.Close()
+
+	secondCalls := 0
+	secondUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		secondCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-retry-status","object":"chat.completion","model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":4,"total_tokens":6}}`))
+	}))
+	defer secondUpstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("relay.retry_count", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("relay.retry_on_status", "[400]"); err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "retry-status",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	firstChannelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "retry-status-primary",
+		"models":   "gpt-test",
+		"base_url": firstUpstream.URL,
+		"api_key":  "first-secret",
+		"priority": 20,
+		"idx":      1,
+	})
+	if firstChannelResp.Code != http.StatusOK {
+		t.Fatalf("create first channel failed: %d %s", firstChannelResp.Code, firstChannelResp.Body.String())
+	}
+	secondChannelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "retry-status-backup",
+		"models":   "gpt-test",
+		"base_url": secondUpstream.URL,
+		"api_key":  "second-secret",
+		"priority": 10,
+		"idx":      2,
+	})
+	if secondChannelResp.Code != http.StatusOK {
+		t.Fatalf("create second channel failed: %d %s", secondChannelResp.Code, secondChannelResp.Body.String())
+	}
+
+	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-test",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	})
+	if chatResp.Code != http.StatusOK {
+		t.Fatalf("configured retry status should recover through backup, got %d %s", chatResp.Code, chatResp.Body.String())
+	}
+	if firstCalls != 1 || secondCalls != 1 {
+		t.Fatalf("expected configured retry to call each upstream once, first=%d second=%d", firstCalls, secondCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 44 {
+		t.Fatalf("configured retry success should deduct once by usage total 6, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 94 {
+		t.Fatalf("configured retry success should deduct user quota once by 6, got %d", root.Quota)
+	}
+	var logs []model.Log
+	if err := internal.DB.Where("model = ?", "gpt-test").Order("id ASC").Find(&logs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 2 || logs[0].Status != common.LogStatusFailed || logs[0].ErrorCode != "upstream_400" || logs[1].Status != common.LogStatusSuccess || logs[1].QuotaUsed != 6 {
+		t.Fatalf("configured retry should log failed upstream_400 then final success, logs=%+v", logs)
+	}
+	var routeSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(logs[1].RouteSnapshot), &routeSnapshot); err != nil {
+		t.Fatalf("successful retry should store route snapshot JSON, got %q: %v", logs[1].RouteSnapshot, err)
+	}
+	retryAttempts, ok := routeSnapshot["retry_attempts"].([]interface{})
+	if !ok || len(retryAttempts) != 1 {
+		t.Fatalf("successful retry snapshot should include configured failed attempt: %+v", routeSnapshot)
+	}
+	firstAttempt, ok := retryAttempts[0].(map[string]interface{})
+	if !ok || firstAttempt["error_code"] != "upstream_400" || firstAttempt["upstream_status"] != float64(400) {
+		t.Fatalf("retry attempt summary should preserve configured upstream status: %+v", retryAttempts[0])
 	}
 }
 

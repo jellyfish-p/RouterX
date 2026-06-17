@@ -137,8 +137,9 @@
 | `TestRelayMaxResponseBodyBytesRejectsOversizedUpstream` | `relay.max_response_body_bytes` 超限时返回 OpenAI-compatible 502 `upstream_response_too_large`，不反射下游响应体、不扣额度，并写失败日志 |
 | `TestChatCompletionUpstreamTimeoutMapping` | 下游超时错误映射、失败日志、通道错误计数和不扣费 |
 | `TestRelayFailureLogPersistsRequestIDAndErrorCode` | 下游失败时调用日志和用户日志接口持久化 `request_id`、稳定 `error_code`、`error_source` 和 `upstream_status` |
-| `TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce` | 非流式 5xx 按 `relay.retry_count` 换候选通道，最终只按成功 usage 扣费一次，并在 route_snapshot 记录实际通道和重试摘要 |
-| `TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus` | 下游 400 不触发候选通道重试 |
+| `TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce` | 非流式默认可重试状态码按 `relay.retry_count` 换候选通道，最终只按成功 usage 扣费一次，并在 route_snapshot 记录实际通道和重试摘要 |
+| `TestChatCompletionUsesConfiguredRetryStatuses` | `relay.retry_on_status` 显式加入 400 后，非流式 400 可按 `relay.retry_count` 换候选通道并只按最终成功扣费一次 |
+| `TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus` | 默认白名单不含 400 时，下游 400 不触发候选通道重试 |
 | `TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold` | `relay.error_ban_threshold` 生效后跳过达到阈值的故障通道 |
 | `TestChatCompletionHonorsDisabledAutoBanSetting` | `relay.error_auto_ban=false` 时高 `error_count` 通道仍可参与候选并在成功后恢复计数 |
 | `TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol` | Anthropic/Gemini 入口下游错误按各自协议外形返回且不泄密、不扣费 |
@@ -379,10 +380,10 @@ Gemini-compatible 最小断言：
 
 | 下游行为 | 期望 |
 |----------|------|
-| 400 | 返回兼容 400，不重试 |
+| 400 | 默认返回兼容 400，不重试；显式加入 `relay.retry_on_status` 后可按非流式重试规则换候选 |
 | 401/403 | 返回兼容 502 或配置错误摘要，不重试，增加通道错误计数 |
-| 429 | `relay.retry_count > 0` 时非流式可换候选通道，否则返回兼容上游错误 |
-| 500/502/503/504 | `relay.retry_count > 0` 时非流式未写出前可重试候选通道 |
+| 429 | 默认在 `relay.retry_on_status` 中，`relay.retry_count > 0` 时非流式可换候选通道，否则返回兼容上游错误 |
+| 500/502/503/504 | 默认在 `relay.retry_on_status` 中，`relay.retry_count > 0` 时非流式未写出前可重试候选通道 |
 | 超时 | 返回 504 或上游超时 code |
 | 非法响应 JSON | 返回 `upstream_conversion_failed` |
 

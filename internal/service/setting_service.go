@@ -241,6 +241,8 @@ func validateSettingValue(key, value string) error {
 		"routing.channel_cache.ttl_seconds",
 		"payment.manual_adjust.large_amount_threshold":
 		return validateNonNegativeIntSetting(key, value)
+	case "relay.retry_on_status":
+		return validateHTTPErrorStatusArraySetting(key, value)
 	case "rate_limit.enabled", "relay.error_auto_ban", "log.request_body_enabled", "log.response_body_enabled",
 		"routing.channel_cache.enabled", "routing.channel_cache.preload",
 		"ready.production_strict", "payment.epay.enabled", "payment.stripe.enabled",
@@ -342,6 +344,32 @@ func validateStringArrayJSONSetting(key, value string) error {
 		}
 	}
 	return nil
+}
+
+func validateHTTPErrorStatusArraySetting(key, value string) error {
+	_, err := parseHTTPErrorStatusArraySetting(key, value)
+	return err
+}
+
+func parseHTTPErrorStatusArraySetting(key, value string) ([]int, error) {
+	var values []int
+	if err := json.Unmarshal([]byte(value), &values); err != nil {
+		return nil, errors.New(key + " must be a JSON integer array")
+	}
+	if len(values) == 0 {
+		return nil, errors.New(key + " cannot be empty")
+	}
+	seen := make(map[int]struct{}, len(values))
+	for _, status := range values {
+		if status < 400 || status > 599 {
+			return nil, errors.New(key + " values must be HTTP error status codes")
+		}
+		if _, ok := seen[status]; ok {
+			return nil, errors.New(key + " cannot contain duplicate status codes")
+		}
+		seen[status] = struct{}{}
+	}
+	return values, nil
 }
 
 func validatePositiveRatioMapSetting(key, value string) error {

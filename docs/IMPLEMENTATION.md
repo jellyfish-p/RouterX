@@ -20,7 +20,7 @@ P0 的交付目标是：
 | API Key 存储 | 明文只返回一次，数据库保存 SHA256 哈希，兼容早期明文存量迁移。 |
 | 有限 API Key 预算 | 创建时只设置最大消耗额度，不扣 `users.quota`；调用成功同时扣用户余额并消耗 Key 预算。 |
 | 无限 API Key 预算 | `unlimited=true` 或 `remain_quota=-1` 时，调用成功只扣用户 `quota`。 |
-| Relay 重试 | `relay.retry_count=0` 默认单次调用；大于 0 时仅非流式可对安全错误换候选通道。 |
+| Relay 重试 | `relay.retry_count=0` 默认单次调用；大于 0 时仅非流式可对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败换候选通道。 |
 | P0 body 日志 | `log.body_max_bytes=0`、`relay.log_body_max_bytes=0`，默认不记录请求/响应 body。 |
 | `/v1` 错误 | 必须返回入口协议兼容错误，不返回 RouterX `{success,data,message}` 包装。 |
 | 用户路由偏好 | `routerx.route` 只能收窄管理员允许的候选集，不能绕过策略。 |
@@ -126,7 +126,7 @@ P0 的交付目标是：
 2. API Key 无效返回 401，用户或 Token 禁用返回 403，余额不足返回 429。
 3. OpenAI Chat `stream=true` 命中非 OpenAI SSE 通道时返回 502 `unsupported_stream_channel`，不调用下游、不扣费。
 4. 无可用通道返回 502 `no_available_channel`，不调用下游。
-5. 下游 400 不重试；401/403 归因通道配置；429/5xx/网络错误/超时在非流式且 `relay.retry_count > 0` 时可换候选通道。
+5. 下游状态码命中 `relay.retry_on_status`（默认 429/500/502/503/504）、网络错误或超时时，在非流式且 `relay.retry_count > 0` 时可换候选通道；400/401/403 默认不重试，401/403 仍应优先归因通道配置。
 6. 错误日志记录可排障摘要，不记录完整敏感响应体。
 
 验收：

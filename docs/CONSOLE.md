@@ -272,7 +272,7 @@ P0 控制台必须能支撑以下路径。
 - `no_available_channel`：展示候选过滤摘要。
 - `upstream_secret_error`：提示检查 `ENCRYPTION_KEY` 和通道密钥，不展示明文。
 - 上游 401/403：提示密钥、模型权限、base URL 或 provider 配置。
-- 上游 429/5xx：提示限流、余额、上游状态、重试和熔断策略。
+- 上游 429/5xx：提示限流、余额、上游状态、`relay.retry_on_status` 白名单、重试和熔断策略。
 
 ### 5.5 settings 管理
 

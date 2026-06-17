@@ -89,6 +89,7 @@ rediss://:password@redis.example.com:6379/0
 | `rate_limit.per_ip_per_min` | `30` | IP 每分钟限制；`0` 表示关闭该维度 |
 | `relay.timeout` | `120` | 下游超时秒数 |
 | `relay.retry_count` | `0` | 默认不自动重试；大于 0 时非流式仅对可安全重试错误换候选 |
+| `relay.retry_on_status` | `[429,500,502,503,504]` | 非流式可重试 HTTP 状态码白名单 |
 | `relay.error_auto_ban` | `true` | 是否按 `error_count` 自动排除故障通道 |
 | `relay.error_ban_threshold` | `10` | 自动排除通道的连续错误阈值 |
 | `relay.log_body_max_bytes` | `0` | Relay 请求/响应 body 日志上限，`0` 表示不记录 |
@@ -395,7 +396,7 @@ Redis 失败处理：
 1. 看 `/ready`：确认 DB、初始化状态、JWT 和关键 settings 可用。
 2. 看用户和 API Key：确认用户启用、Token 未禁用或过期、额度足够。
 3. 看通道和协议矩阵：确认通道启用、模型匹配、provider adapter 存在、能力等级支持该 APIType、密钥可解密。
-4. 看下游桩或真实上游：区分通道配置错误、上游 401/403、上游 429/5xx 和超时。
+4. 看下游桩或真实上游：区分通道配置错误、上游 401/403、`relay.retry_on_status` 覆盖的状态码、上游 429/5xx 和超时。
 5. 看日志账单：确认失败是否应扣费、成功是否写入 usage 和 `quota_used`。
 6. 看脱敏：确认错误响应、调用日志和应用日志不包含 API Key、下游密钥或 DSN。
 

@@ -170,6 +170,7 @@ func buildDefaultSettings() map[string]map[string]string {
 		"relay": {
 			"relay.timeout":                 "120",
 			"relay.retry_count":             "0",
+			"relay.retry_on_status":         "[429,500,502,503,504]",
 			"relay.error_auto_ban":          "true",
 			"relay.error_ban_threshold":     "10",
 			"relay.max_request_body_bytes":  "10485760",

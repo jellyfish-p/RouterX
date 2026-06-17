@@ -37,7 +37,7 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 | RXD-008 | 下游通道密钥使用 `ENCRYPTION_KEY` 或 KMS 加密 | Active | 已定 | `DATA_MODEL`、`OPERATIONS` |
 | RXD-009 | 有最大消耗额度的 API Key 是预算上限，不在创建时划拨用户余额 | Active | 已定 | `API_KEYS`、`BILLING`、`API`、`TESTING` |
 | RXD-010 | API Key 调用成功后始终扣用户余额；有限 Key 还要同时消耗自身预算上限 | Active | 已定 | `API_KEYS`、`BILLING`、`API`、`TESTING` |
-| RXD-011 | `relay.retry_count=0` 默认单次调用；大于 0 开启非流式安全重试 | Active | 已定 | `SETTINGS`、`RELAY`、`IMPLEMENTATION` |
+| RXD-011 | `relay.retry_count=0` 默认单次调用；大于 0 按 `relay.retry_on_status` 开启非流式安全重试 | Active | 已定 | `SETTINGS`、`RELAY`、`IMPLEMENTATION` |
 | RXD-012 | P0 默认不记录请求和响应 body | Active | 已定 | `SETTINGS`、`OPERATIONS`、`RELAY` |
 | RXD-013 | `/v1` 必须返回入口协议兼容响应和错误格式 | Active | 已定 | `API`、`PROTOCOLS`、`RELAY`、`TESTING` |
 | RXD-014 | `routerx.route` 只能表达偏好，不能绕过管理员策略 | Active | 已定 | `RELAY`、`API`、`DESIGN` |
@@ -87,7 +87,7 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 
 - 当前 `relay.retry_count=0`。
 - 默认只做一次明确的下游调用，先保证错误归因、日志、扣费和排障稳定。
-- 当前已支持通过 `relay.retry_count > 0` 为非流式请求开启有限候选通道重试。
+- 当前已支持通过 `relay.retry_count > 0` 为非流式请求开启有限候选通道重试，HTTP 状态码由 `relay.retry_on_status` 白名单控制。
 - 熔断、限流和半开恢复仍按 P1/P2 继续推进。
 
 为什么这样选：
@@ -99,7 +99,7 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 代价：
 
 - 默认配置下，单个上游临时故障不会自动换通道重试。
-- 管理员需要显式设置 `relay.retry_count`，并继续通过多通道、监控、熔断和限流增强可用性。
+- 管理员需要显式设置 `relay.retry_count`，必要时调整 `relay.retry_on_status`，并继续通过多通道、监控、熔断和限流增强可用性。
 
 ### RXD-019：生产 readiness 严格化
 
