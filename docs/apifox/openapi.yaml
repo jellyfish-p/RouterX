@@ -2183,7 +2183,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 语音转文字转发
-      description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、文件大小、安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，Azure OpenAI 通道转发到 /openai/v1/audio/transcriptions?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、文件大小、安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2203,7 +2203,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 语音翻译转发
-      description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、文件大小、安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，Azure OpenAI 通道转发到 /openai/v1/audio/translations?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、文件大小、安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:

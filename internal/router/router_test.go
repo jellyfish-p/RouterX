@@ -9215,6 +9215,180 @@ func TestAzureAudioSpeechUsesV1EndpointAndMinimumCharge(t *testing.T) {
 	}
 }
 
+func TestAzureAudioMultipartUsesV1EndpointAndMinimumCharge(t *testing.T) {
+	for _, tt := range []struct {
+		name             string
+		downstreamPath   string
+		wantUpstreamPath string
+		wantText         string
+	}{
+		{
+			name:             "transcriptions",
+			downstreamPath:   "/v1/audio/transcriptions",
+			wantUpstreamPath: "/openai/v1/audio/transcriptions",
+			wantText:         "azure transcript",
+		},
+		{
+			name:             "translations",
+			downstreamPath:   "/v1/audio/translations",
+			wantUpstreamPath: "/openai/v1/audio/translations",
+			wantText:         "azure translation",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("JWT_SECRET", "test-jwt-secret")
+			t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+			audioBytes := []byte("RIFF-azure-audio")
+			upstreamCalls := 0
+			upstreamPath := ""
+			upstreamAPIVersion := ""
+			upstreamAPIKey := ""
+			upstreamAuth := ""
+			upstreamModel := ""
+			upstreamPrompt := ""
+			var upstreamFile []byte
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				upstreamCalls++
+				upstreamPath = req.URL.Path
+				upstreamAPIVersion = req.URL.Query().Get("api-version")
+				upstreamAPIKey = req.Header.Get("api-key")
+				upstreamAuth = req.Header.Get("Authorization")
+				if !strings.Contains(req.Header.Get("Content-Type"), "multipart/form-data") {
+					t.Errorf("azure audio %s upstream should receive multipart content type, got %q", tt.name, req.Header.Get("Content-Type"))
+				}
+				if err := req.ParseMultipartForm(20 << 20); err != nil {
+					t.Errorf("azure audio %s upstream received invalid multipart body: %v", tt.name, err)
+				}
+				upstreamModel = req.FormValue("model")
+				upstreamPrompt = req.FormValue("prompt")
+				if leaked := req.FormValue("routerx"); leaked != "" {
+					t.Errorf("azure audio %s leaked routerx private form field: %q", tt.name, leaked)
+				}
+				file, _, err := req.FormFile("file")
+				if err != nil {
+					t.Errorf("azure audio %s upstream missing audio file: %v", tt.name, err)
+				} else {
+					defer file.Close()
+					raw := new(bytes.Buffer)
+					_, _ = raw.ReadFrom(file)
+					upstreamFile = raw.Bytes()
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"text":"` + tt.wantText + `"}`))
+			}))
+			defer upstream.Close()
+
+			r := newTestRouter(t)
+			initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+				"username": "root",
+				"password": "password123",
+			})
+			if initResp.Code != http.StatusOK {
+				t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+			}
+			rootJWT := loginBearer(t, r, "root", "password123")
+			if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+				t.Fatal(err)
+			}
+			tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+				"name":         "azure-audio-" + tt.name,
+				"remain_quota": 50,
+			})
+			var tokenPayload struct {
+				Data struct {
+					ID  uint   `json:"id"`
+					Key string `json:"key"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+				t.Fatal(err)
+			}
+			if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+				t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+			}
+			channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+				"type":     common.ChannelTypeAzure,
+				"name":     "azure-audio-" + tt.name,
+				"models":   "whisper-azure",
+				"base_url": upstream.URL,
+				"api_key":  "azure-secret",
+			})
+			if channelResp.Code != http.StatusOK {
+				t.Fatalf("create azure audio channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+			}
+
+			var reqBody bytes.Buffer
+			writer := multipart.NewWriter(&reqBody)
+			if err := writer.WriteField("model", "whisper-azure"); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.WriteField("prompt", "domain words"); err != nil {
+				t.Fatal(err)
+			}
+			routerxOptions, err := json.Marshal(map[string]interface{}{
+				"route": map[string]string{"provider": "azure"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.WriteField("routerx", string(routerxOptions)); err != nil {
+				t.Fatal(err)
+			}
+			fileWriter, err := writer.CreateFormFile("file", "sample.wav")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fileWriter.Write(audioBytes); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			req := httptest.NewRequest(http.MethodPost, tt.downstreamPath, &reqBody)
+			req.Header.Set("Authorization", "Bearer "+tokenPayload.Data.Key)
+			req.Header.Set("Content-Type", writer.FormDataContentType())
+			resp := httptest.NewRecorder()
+			r.ServeHTTP(resp, req)
+
+			if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"text":"`+tt.wantText+`"`) {
+				t.Fatalf("azure audio %s should return upstream response, got %d %s", tt.name, resp.Code, resp.Body.String())
+			}
+			if upstreamCalls != 1 || upstreamPath != tt.wantUpstreamPath || upstreamAPIVersion != "preview" {
+				t.Fatalf("azure audio %s should use Azure v1 path and preview api-version, calls=%d path=%q api-version=%q", tt.name, upstreamCalls, upstreamPath, upstreamAPIVersion)
+			}
+			if upstreamAPIKey != "azure-secret" || upstreamAuth != "" {
+				t.Fatalf("azure audio %s should use api-key header only, api-key=%q authorization=%q", tt.name, upstreamAPIKey, upstreamAuth)
+			}
+			if upstreamModel != "whisper-azure" || upstreamPrompt != "domain words" || !bytes.Equal(upstreamFile, audioBytes) {
+				t.Fatalf("azure audio %s should preserve multipart fields without routerx, model=%q prompt=%q file=%q", tt.name, upstreamModel, upstreamPrompt, string(upstreamFile))
+			}
+			var storedToken model.Token
+			if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if storedToken.RemainQuota != 49 {
+				t.Fatalf("azure audio %s without usage should deduct minimum token budget charge, got %d", tt.name, storedToken.RemainQuota)
+			}
+			var root model.User
+			if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+				t.Fatal(err)
+			}
+			if root.Quota != 99 {
+				t.Fatalf("azure audio %s without usage should deduct minimum user quota charge, got %d", tt.name, root.Quota)
+			}
+			var callLog model.Log
+			if err := internal.DB.First(&callLog).Error; err != nil {
+				t.Fatal(err)
+			}
+			if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 1 || callLog.TotalTokens != 0 || callLog.UsageSource != common.LogUsageSourceMinimum {
+				t.Fatalf("unexpected azure audio %s success log: %+v", tt.name, callLog)
+			}
+		})
+	}
+}
+
 func TestResponsesPassthroughExtractsUsageAndDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

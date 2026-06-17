@@ -63,12 +63,24 @@ func (a *AzureAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 		return "/openai/v1/images/generations?api-version=" + azureV1PreviewAPIVersion
 	case APIAudioSpeech:
 		return "/openai/v1/audio/speech?api-version=" + azureV1PreviewAPIVersion
+	case APIAudioTranscriptions:
+		return "/openai/v1/audio/transcriptions?api-version=" + azureV1PreviewAPIVersion
+	case APIAudioTranslations:
+		return "/openai/v1/audio/translations?api-version=" + azureV1PreviewAPIVersion
 	default:
 		return ""
 	}
 }
 
 func (a *AzureAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey string, body []byte) (*http.Response, error) {
+	return a.doRequest(ctx, baseURL, endpoint, apiKey, body, "application/json")
+}
+
+func (a *AzureAdapter) DoRequestWithContentType(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error) {
+	return a.doRequest(ctx, baseURL, endpoint, apiKey, body, contentType)
+}
+
+func (a *AzureAdapter) doRequest(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error) {
 	if endpoint == "" {
 		return nil, errors.New("unsupported api type")
 	}
@@ -87,14 +99,18 @@ func (a *AzureAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey 
 	SetRequestIDHeader(req)
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		contentType = strings.TrimSpace(contentType)
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		req.Header.Set("Content-Type", contentType)
 	}
 	ApplyUpstreamOptions(req)
 	return http.DefaultClient.Do(req)
 }
 
 func (a *AzureAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
-	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings && apiType != APIImagesGenerations {
+	if apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings && apiType != APIImagesGenerations && apiType != APIAudioTranscriptions && apiType != APIAudioTranslations {
 		return nil, nil, errors.New("unsupported api type")
 	}
 	if !json.Valid(body) {

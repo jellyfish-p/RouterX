@@ -203,7 +203,7 @@ type Adapter interface {
 
 扩展原因：
 
-- Azure 使用 `api-key` header；Chat/Completions/Embeddings 使用 deployment 路径，Image Generations/Audio Speech 使用 `/openai/v1`。
+- Azure 使用 `api-key` header；Chat/Completions/Embeddings 使用 deployment 路径，Images/Audio 使用 `/openai/v1`。
 - Gemini 使用 query key 和不同的 body 结构。
 - Anthropic 需要 `x-api-key` 和 `anthropic-version`。
 - xAI/Grok 基本使用 OpenAI-Compatible API，但有 provider-specific 扩展参数。
@@ -464,6 +464,7 @@ Endpoint 示例：
 - Chat Completions、Completions 和 Embeddings 已按 deployment 路径调用 Azure OpenAI。
 - Image Generations 已按 Azure `/openai/v1/images/generations?api-version=preview` 调用；请求体保留 `model` 作为 deployment 名，剥离 RouterX 私有字段。
 - Audio Speech 已按 Azure `/openai/v1/audio/speech?api-version=preview` 调用；请求体保留 `model` 作为 deployment 名，剥离 RouterX 私有字段，并透传上游音频 Content-Type。
+- Audio Transcriptions/Translations 已按 Azure `/openai/v1/audio/transcriptions|translations?api-version=preview` 调用；保留 multipart Content-Type、文件字段和 `model` deployment 名，并剥离 RouterX 私有表单字段。
 - 当前默认 `api-version` 为 `2024-02-15-preview`。
 - 发往 Azure deployment-path API 前会剥离 `model` 和 `routerx`，因为 deployment 已经由路径表达；`/openai/v1` API 只剥离 `routerx`。
 - Azure 返回的 OpenAI-compatible `usage` 会写入 RouterX 日志并扣费。
@@ -473,7 +474,7 @@ Endpoint 示例：
 
 - 后续通道配置需要保存 `api_version`，可放在扩展配置字段或 settings。
 - `model` 到 deployment 的映射需要支持别名。
-- Azure Image Edits/Variations、Audio Transcriptions/Translations 等 API 仍需逐项补齐。
+- Azure Image Edits/Variations 等 API 仍需逐项补齐。
 
 ### Anthropic / Claude
 
