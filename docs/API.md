@@ -957,7 +957,7 @@ P0 明确失败：
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/v1/messages` | 基础实现，Messages；当前转 OpenAI-compatible Chat，非文本 content blocks 降级为 compact JSON 文本；`stream=true` 输出 Anthropic SSE 事件 |
-| POST | `/v1/messages/count_tokens` | 基础实现，Token 计数 |
+| POST | `/v1/messages/count_tokens` | 基础实现，本地近似 Token 计数；优先统计 `system` 和 `messages[].content` 的文本内容，不把 JSON 字段名当作 token；非法 JSON 返回 Anthropic 兼容 `invalid_json` |
 | GET | `/v1/models` | 基础实现，模型列表 |
 | GET | `/v1/models/:model` | 基础实现，模型详情；支持协议选择器返回 Anthropic 或 Gemini 外形 |
 

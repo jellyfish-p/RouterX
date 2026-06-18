@@ -497,8 +497,12 @@ func (s *RelayService) RelayGeminiGenerateContentStream(ctx context.Context, tok
 }
 
 func (s *RelayService) AnthropicCountTokens(body []byte) ([]byte, error) {
+	inputTokens, err := anthropicCountTokensFromBody(body)
+	if err != nil {
+		return nil, relayInvalidRequestHTTPError(err)
+	}
 	return json.Marshal(map[string]interface{}{
-		"input_tokens": approximateTokenCount(body),
+		"input_tokens": inputTokens,
 	})
 }
 
@@ -510,6 +514,38 @@ func (s *RelayService) GeminiCountTokens(body []byte) ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
 		"totalTokens": totalTokens,
 	})
+}
+
+type anthropicCountTokenMessage struct {
+	Content json.RawMessage `json:"content"`
+}
+
+func anthropicCountTokensFromBody(body []byte) (int, error) {
+	var input struct {
+		System   json.RawMessage              `json:"system"`
+		Messages []anthropicCountTokenMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return 0, errInvalidJSONBody
+	}
+	text := anthropicCountTokenText(input.System, input.Messages)
+	if strings.TrimSpace(text) == "" {
+		return approximateTokenCount(body), nil
+	}
+	return approximateTokenCount([]byte(text)), nil
+}
+
+func anthropicCountTokenText(system json.RawMessage, messages []anthropicCountTokenMessage) string {
+	values := make([]string, 0, len(messages)+1)
+	if text := strings.TrimSpace(relay.TextFromContent(system)); text != "" {
+		values = append(values, text)
+	}
+	for _, message := range messages {
+		if text := strings.TrimSpace(relay.TextFromContent(message.Content)); text != "" {
+			values = append(values, text)
+		}
+	}
+	return strings.Join(values, "\n")
 }
 
 type geminiCountTokenContent struct {

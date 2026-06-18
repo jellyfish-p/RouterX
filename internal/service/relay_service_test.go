@@ -125,6 +125,47 @@ func TestGeminiEmbeddingOutputDimensionalityValidation(t *testing.T) {
 	}
 }
 
+func TestAnthropicCountTokensUsesPromptTextInsteadOfJSONEnvelope(t *testing.T) {
+	svc := NewRelayService(nil, nil, nil, nil)
+	resp, err := svc.AnthropicCountTokens([]byte(`{
+		"model": "claude-test",
+		"system": "be kind",
+		"messages": [
+			{"role":"user","content":"hello world"},
+			{"role":"assistant","content":[{"type":"text","text":"again"}]}
+		],
+		"metadata": {"user_id": "ignored-wrapper"}
+	}`))
+	if err != nil {
+		t.Fatalf("AnthropicCountTokens returned error: %v", err)
+	}
+
+	var out struct {
+		InputTokens int `json:"input_tokens"`
+	}
+	if err := json.Unmarshal(resp, &out); err != nil {
+		t.Fatalf("AnthropicCountTokens response should be JSON: %v", err)
+	}
+	if out.InputTokens != 5 {
+		t.Fatalf("AnthropicCountTokens should count prompt text only, got %d", out.InputTokens)
+	}
+}
+
+func TestAnthropicCountTokensRejectsInvalidJSON(t *testing.T) {
+	svc := NewRelayService(nil, nil, nil, nil)
+	_, err := svc.AnthropicCountTokens([]byte(`{"messages":`))
+	if err == nil {
+		t.Fatal("AnthropicCountTokens should reject invalid JSON")
+	}
+	httpErr, ok := err.(*HTTPError)
+	if !ok {
+		t.Fatalf("expected HTTPError, got %T %v", err, err)
+	}
+	if httpErr.Status != 400 || httpErr.Code != "invalid_json" {
+		t.Fatalf("expected invalid_json HTTP 400, got status=%d code=%q", httpErr.Status, httpErr.Code)
+	}
+}
+
 func TestGeminiCountTokensUsesPromptTextInsteadOfJSONEnvelope(t *testing.T) {
 	svc := NewRelayService(nil, nil, nil, nil)
 	resp, err := svc.GeminiCountTokens([]byte(`{
