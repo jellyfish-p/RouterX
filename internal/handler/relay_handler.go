@@ -290,14 +290,42 @@ func (h *RelayHandler) GeminiModelAction(c *gin.Context) {
 }
 
 func (h *RelayHandler) listModelsForRequest(c *gin.Context) ([]byte, error) {
-	format := strings.ToLower(strings.TrimSpace(c.Query("format")))
-	switch {
-	case format == "gemini" || format == "google":
+	switch modelListProtocol(c) {
+	case "gemini":
 		return h.svc.ListGeminiModels()
-	case format == "anthropic" || strings.TrimSpace(c.GetHeader("anthropic-version")) != "":
+	case "anthropic":
 		return h.svc.ListAnthropicModels()
 	default:
 		return h.svc.ListModels()
+	}
+}
+
+func modelListProtocol(c *gin.Context) string {
+	if protocol := normalizeModelListProtocol(c.Query("format")); protocol != "" {
+		return protocol
+	}
+	if protocol := normalizeModelListProtocol(c.Query("routerx_protocol")); protocol != "" {
+		return protocol
+	}
+	if protocol := normalizeModelListProtocol(c.GetHeader("X-RouterX-Protocol")); protocol != "" {
+		return protocol
+	}
+	if strings.TrimSpace(c.GetHeader("anthropic-version")) != "" {
+		return "anthropic"
+	}
+	return "openai"
+}
+
+func normalizeModelListProtocol(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "google", "gemini":
+		return "gemini"
+	case "claude", "anthropic":
+		return "anthropic"
+	case "openai", "openai-compatible", "openai_compatible":
+		return "openai"
+	default:
+		return ""
 	}
 }
 

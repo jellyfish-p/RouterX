@@ -992,7 +992,7 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 - 敏感鉴权 header/query 必须来自通道配置，不能由用户请求覆盖；已有请求字段、`model`、`routerx` 和 `stream` 不会被 `routerx.upstream.body` 改写。
 - `routerx.provider.<provider>` 仅在选中对应上游 provider 时生效；当前基础实现会把匹配 provider 下的 JSON 字段作为 body 缺省补充，优先级高于通用 `routerx.upstream.body`，但仍不能覆盖调用方原请求字段、`model`、`routerx` 或 `stream`。
 - multipart 或非 JSON 请求当前可通过 `routerx` 表单字段或 `X-RouterX-Options` header 传递 JSON 字符串；body/form 中的 `routerx` 优先于 header，multipart 当前只应用路由偏好和安全 header/query 补充，不重写文件表单 body。
-- 对 `GET /v1/models` 这类无 JSON body 的冲突路径，当前可使用 `?format=gemini` 或 `?format=anthropic`，并可通过 `anthropic-version` header 识别 Anthropic 格式；目标设计可扩展 `?routerx_protocol=` 或 `X-RouterX-Protocol`。
+- 对 `GET /v1/models` 这类无 JSON body 的冲突路径，当前按 `format`、`routerx_protocol`、`X-RouterX-Protocol`、`anthropic-version`、OpenAI 默认值的顺序选择返回外形；`format` 继续保持最高优先级以兼容已有调用方。
 
 路由偏好处理：
 

@@ -207,6 +207,77 @@ func TestP0BackendFlow(t *testing.T) {
 	}
 }
 
+func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "models-protocol",
+		"remain_quota": 10,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "models-protocol-channel",
+		"models":   "gpt-protocol",
+		"base_url": "http://127.0.0.1",
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	geminiResp := performJSON(r, http.MethodGet, "/v1/models?routerx_protocol=gemini", "Bearer "+tokenPayload.Data.Key, nil)
+	if geminiResp.Code != http.StatusOK || !strings.Contains(geminiResp.Body.String(), `"models"`) || !strings.Contains(geminiResp.Body.String(), `"name":"models/gpt-protocol"`) {
+		t.Fatalf("routerx_protocol=gemini should return Gemini model shape, got %d %s", geminiResp.Code, geminiResp.Body.String())
+	}
+	anthropicResp := performRawWithHeaders(r, http.MethodGet, "/v1/models", "Bearer "+tokenPayload.Data.Key, "", map[string]string{
+		"X-RouterX-Protocol": "anthropic",
+	})
+	if anthropicResp.Code != http.StatusOK || !strings.Contains(anthropicResp.Body.String(), `"has_more":false`) || !strings.Contains(anthropicResp.Body.String(), `"type":"model"`) {
+		t.Fatalf("X-RouterX-Protocol=anthropic should return Anthropic model shape, got %d %s", anthropicResp.Code, anthropicResp.Body.String())
+	}
+	precedenceResp := performRawWithHeaders(r, http.MethodGet, "/v1/models?format=gemini&routerx_protocol=anthropic", "Bearer "+tokenPayload.Data.Key, "", map[string]string{
+		"X-RouterX-Protocol": "openai",
+	})
+	if precedenceResp.Code != http.StatusOK || !strings.Contains(precedenceResp.Body.String(), `"name":"models/gpt-protocol"`) {
+		t.Fatalf("format should keep precedence over routerx protocol selectors, got %d %s", precedenceResp.Code, precedenceResp.Body.String())
+	}
+	openAIResp := performJSON(r, http.MethodGet, "/v1/models?routerx_protocol=openai", "Bearer "+tokenPayload.Data.Key, nil)
+	if openAIResp.Code != http.StatusOK || !strings.Contains(openAIResp.Body.String(), `"object":"list"`) || !strings.Contains(openAIResp.Body.String(), `"id":"gpt-protocol"`) {
+		t.Fatalf("routerx_protocol=openai should return OpenAI model shape, got %d %s", openAIResp.Code, openAIResp.Body.String())
+	}
+	invalidGeminiResp := performJSON(r, http.MethodGet, "/v1/models?routerx_protocol=gemini", "Bearer sk-invalid-models-protocol", nil)
+	if invalidGeminiResp.Code != http.StatusUnauthorized || !strings.Contains(invalidGeminiResp.Body.String(), `"status":"UNAUTHENTICATED"`) {
+		t.Fatalf("routerx_protocol=gemini should return Gemini auth error shape, got %d %s", invalidGeminiResp.Code, invalidGeminiResp.Body.String())
+	}
+	invalidAnthropicResp := performRawWithHeaders(r, http.MethodGet, "/v1/models", "Bearer sk-invalid-models-protocol", "", map[string]string{
+		"X-RouterX-Protocol": "anthropic",
+	})
+	if invalidAnthropicResp.Code != http.StatusUnauthorized || !strings.Contains(invalidAnthropicResp.Body.String(), `"type":"error"`) || !strings.Contains(invalidAnthropicResp.Body.String(), `"type":"authentication_error"`) {
+		t.Fatalf("X-RouterX-Protocol=anthropic should return Anthropic auth error shape, got %d %s", invalidAnthropicResp.Code, invalidAnthropicResp.Body.String())
+	}
+}
+
 func TestUserAPIKeyManagementAuditLogs(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	r := newTestRouter(t)

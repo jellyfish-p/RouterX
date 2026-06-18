@@ -176,18 +176,38 @@ func writeProtocolAuthError(c *gin.Context, status int, message, typ, code strin
 // entryProtocol resolves the client-facing protocol before the relay handler runs.
 func entryProtocol(c *gin.Context) string {
 	path := c.Request.URL.Path
-	format := strings.ToLower(strings.TrimSpace(c.Query("format")))
+	isModelListPath := path == "/v1/models"
+	format := normalizeEntryProtocol(c.Query("format"))
+	routerxProtocol := normalizeEntryProtocol(c.Query("routerx_protocol"))
+	headerProtocol := normalizeEntryProtocol(c.GetHeader("X-RouterX-Protocol"))
 	switch {
 	case strings.HasPrefix(path, "/v1/messages"):
 		return "anthropic"
-	case strings.TrimSpace(c.GetHeader("anthropic-version")) != "" || format == "anthropic":
+	case format != "":
+		return format
+	case isModelListPath && routerxProtocol != "":
+		return routerxProtocol
+	case isModelListPath && headerProtocol != "":
+		return headerProtocol
+	case strings.TrimSpace(c.GetHeader("anthropic-version")) != "":
 		return "anthropic"
 	case strings.Contains(path, ":generateContent") || strings.Contains(path, ":streamGenerateContent") || strings.Contains(path, ":countTokens"):
 		return "gemini"
-	case format == "gemini" || format == "google":
-		return "gemini"
 	default:
 		return "openai"
+	}
+}
+
+func normalizeEntryProtocol(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "google", "gemini":
+		return "gemini"
+	case "claude", "anthropic":
+		return "anthropic"
+	case "openai", "openai-compatible", "openai_compatible":
+		return "openai"
+	default:
+		return ""
 	}
 }
 

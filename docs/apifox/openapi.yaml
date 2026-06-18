@@ -2493,7 +2493,7 @@ paths:
     get:
       tags: [OpenAI Compatible]
       summary: 模型列表
-      description: 默认返回 OpenAI models 外形；format=gemini 或 format=anthropic 返回对应协议外形。
+      description: 默认返回 OpenAI models 外形；协议外形按 format、routerx_protocol、X-RouterX-Protocol、anthropic-version、OpenAI 默认值的顺序选择，format 保持最高优先级。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2503,12 +2503,26 @@ paths:
           schema:
             type: string
             enum: [openai, gemini, google, anthropic]
-          description: 路径冲突时指定响应协议。
+          description: 路径冲突时指定响应协议；优先级高于 RouterX 协议选择器。
+        - name: routerx_protocol
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [openai, openai-compatible, gemini, google, anthropic, claude]
+          description: format 未设置时指定响应协议。
+        - name: X-RouterX-Protocol
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [openai, openai-compatible, gemini, google, anthropic, claude]
+          description: format 和 routerx_protocol 未设置时指定响应协议。
         - name: anthropic-version
           in: header
           required: false
           schema: { type: string }
-          description: 存在时按 Anthropic 模型列表外形返回。
+          description: 未设置 format、routerx_protocol 和 X-RouterX-Protocol 时，存在该 header 会按 Anthropic 模型列表外形返回。
       responses:
         "200":
           description: 模型列表。
@@ -2520,9 +2534,23 @@ paths:
                   - $ref: "#/components/schemas/GeminiModelList"
                   - $ref: "#/components/schemas/AnthropicModelList"
         "401":
-          $ref: "#/components/responses/OpenAIError"
+          description: API Key 无效；错误外形跟随所选入口协议。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/OpenAIErrorEnvelope"
+                  - $ref: "#/components/schemas/AnthropicErrorEnvelope"
+                  - $ref: "#/components/schemas/GeminiErrorEnvelope"
         "429":
-          $ref: "#/components/responses/OpenAIError"
+          description: 额度或限流拒绝；错误外形跟随所选入口协议。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/OpenAIErrorEnvelope"
+                  - $ref: "#/components/schemas/AnthropicErrorEnvelope"
+                  - $ref: "#/components/schemas/GeminiErrorEnvelope"
   /v1/models/{model}:
     get:
       tags: [OpenAI Compatible]
