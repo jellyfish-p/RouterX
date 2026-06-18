@@ -225,7 +225,7 @@ P2 验收标准：
 | 6 | 日志、usage、扣费和用户账单聚合一致 | 已覆盖：`TestUserBillingMatchesLogs` | 证明账单不是从多个互相矛盾的事实源拼出来。 |
 | 7 | Responses 基础 JSON 透传和 usage 映射 | 已覆盖：`TestResponsesPassthroughExtractsUsageAndDeductsQuota` | 先保证 OpenAI-compatible Responses 调用事实可计费。 |
 | 8 | Embeddings 基础 JSON 透传、usage 映射和本地 input 边界 | 已覆盖：`TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota`、`TestEmbeddingsRejectsInvalidInputBeforeUpstream` | 证明 Embeddings 不是只注册路由，而是能上游转发、剥离私有字段、扣费，并在无效 input 或超大批量时不调用上游。 |
-| 9 | Gemini Embeddings 基础转换和 usage 扣费 | 已覆盖：`TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage`、`TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage` | 证明 Gemini 单条和批量 Embedding 入口不是只注册路径，能转 OpenAI-compatible Embeddings 上游并返回 Gemini 外形。 |
+| 9 | Gemini Embeddings 基础转换、usage 扣费和批量响应边界 | 已覆盖：`TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage`、`TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage`、`TestGeminiBatchEmbedContentsRejectsMismatchedEmbeddingCount` | 证明 Gemini 单条和批量 Embedding 入口不是只注册路径，能转 OpenAI-compatible Embeddings 上游、返回 Gemini 外形，并拒绝上游 embedding 数量与请求数不一致的批量响应。 |
 | 10 | Moderations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明内容审核不是只注册路由，且 P0 最低计费边界可解释。 |
 | 11 | Image Generations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明图像生成 JSON 入口不是只注册路由，且无 usage 响应有明确最低计费。 |
 | 12 | Image Edits/Variations multipart 表单透传、路由偏好和最低计费 | 已覆盖：`TestImageMultipartPassthroughUsesRouteAndMinimumCharge` | 证明图像文件类接口不是只注册路由，multipart 表单能保留图像/遮罩字段、剥离 `routerx` 并按路由偏好选择通道。 |

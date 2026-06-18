@@ -6002,6 +6002,77 @@ func TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage(t *test
 	}
 }
 
+func TestGeminiBatchEmbedContentsRejectsMismatchedEmbeddingCount(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"text-embedding-test","usage":{"prompt_tokens":8,"total_tokens":8}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "gemini-batch-mismatch",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "gemini-batch-mismatch",
+		"models":   "text-embedding-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/models/text-embedding-test:batchEmbedContents", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"requests": []map[string]interface{}{
+			{
+				"content": map[string]interface{}{
+					"parts": []map[string]interface{}{{"text": "hello"}},
+				},
+			},
+			{
+				"content": map[string]interface{}{
+					"parts": []map[string]interface{}{{"text": "world"}},
+				},
+			},
+		},
+	})
+	if resp.Code != http.StatusBadGateway ||
+		!strings.Contains(resp.Body.String(), `"status":"UNAVAILABLE"`) ||
+		!strings.Contains(resp.Body.String(), "response conversion failed") {
+		t.Fatalf("mismatched embedding count should be a Gemini conversion error, got %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("mismatched count is detected after one upstream response, calls=%d", upstreamCalls)
+	}
+}
+
 func TestGeminiStreamGenerateContentConvertsOpenAISSEAndDeductsUsage(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
