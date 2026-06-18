@@ -86,6 +86,7 @@
 | `invalid_request` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 请求转换或通用参数错误 | 否 | 否 | 否 | 解析失败摘要 | 修正请求 |
 | `invalid_json` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | JSON 解析失败 | 否 | 否 | 否 | body 读取或解析摘要，不保存完整 body | 修正 JSON |
 | `invalid_multipart` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | multipart 表单解析失败 | 否 | 否 | 否 | content-type、boundary 和字段摘要，不保存完整文件内容 | 修正表单边界、字段或文件 |
+| `unsafe_multipart_file` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | multipart 文件名命中危险扩展名基础扫描 | 否 | 否 | 否 | 字段名和文件名摘要，不保存完整文件内容 | 更换为真实图片/音频文件名并重新上传 |
 | `model_required` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 缺少模型 | 否 | 否 | 否 | 缺少字段 | 补充 model |
 | `invalid_embedding_input` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | Embeddings `input` 类型或内容非法 | 否 | 否 | 否 | input 类型、空值或混合类型摘要 | 使用非空 string、非空 string 数组、token id 数组或 token id 数组批量 |
 | `embedding_batch_too_large` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | Embeddings 字符串批量或 token 数组批量超过 2048 | 否 | 否 | 否 | batch_size、limit | 拆分批量请求 |

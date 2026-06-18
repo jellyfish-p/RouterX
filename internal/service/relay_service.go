@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -331,6 +332,7 @@ var (
 	errInvalidJSONBody        = errors.New("invalid json body")
 	errInvalidMultipartBody   = errors.New("invalid multipart body")
 	errMultipartFileTooLarge  = errors.New("multipart file exceeds maximum size")
+	errUnsafeMultipartFile    = errors.New("multipart file name is not allowed")
 	errModelRequired          = errors.New("model is required")
 	errUnsupportedMultipart   = errors.New("multipart relay is not supported for selected upstream channel")
 	errInvalidRouterXOptions  = errors.New("invalid routerx options")
@@ -1353,6 +1355,9 @@ func parseMultipartRelayRequest(body []byte, contentType string, headerRouterX j
 			return relayRequestInfo{}, errInvalidMultipartBody
 		}
 		if part.FileName() != "" {
+			if err := validateMultipartFileName(part); err != nil {
+				return relayRequestInfo{}, err
+			}
 			if err := discardMultipartFileWithLimit(part, maxFileBytes); err != nil {
 				return relayRequestInfo{}, err
 			}
@@ -1403,6 +1408,8 @@ func relayRequestErrorCode(err error) string {
 		return "invalid_multipart"
 	case errors.Is(err, errMultipartFileTooLarge):
 		return "request_file_too_large"
+	case errors.Is(err, errUnsafeMultipartFile):
+		return "unsafe_multipart_file"
 	case errors.Is(err, errModelRequired):
 		return "model_required"
 	case errors.Is(err, errInvalidRouterXOptions):
@@ -1821,6 +1828,9 @@ func rewriteMultipartRelayBody(body []byte, contentType string, modelName string
 		name := part.FormName()
 		if name == "routerx" {
 			if part.FileName() != "" {
+				if err := validateMultipartFileName(part); err != nil {
+					return nil, "", err
+				}
 				if err := discardMultipartFileWithLimit(part, maxFileBytes); err != nil {
 					return nil, "", err
 				}
@@ -1842,6 +1852,9 @@ func rewriteMultipartRelayBody(body []byte, contentType string, modelName string
 			continue
 		}
 		if part.FileName() != "" {
+			if err := validateMultipartFileName(part); err != nil {
+				return nil, "", err
+			}
 			if err := copyMultipartFileWithLimit(dst, part, maxFileBytes); err != nil {
 				return nil, "", err
 			}
@@ -1855,6 +1868,27 @@ func rewriteMultipartRelayBody(body []byte, contentType string, modelName string
 		return nil, "", errInvalidMultipartBody
 	}
 	return out.Bytes(), writer.FormDataContentType(), nil
+}
+
+func validateMultipartFileName(part *multipart.Part) error {
+	filename := strings.TrimSpace(part.FileName())
+	if filename == "" {
+		return nil
+	}
+	if unsafeMultipartFileExtension(filepath.Ext(filename)) {
+		return errUnsafeMultipartFile
+	}
+	return nil
+}
+
+func unsafeMultipartFileExtension(ext string) bool {
+	// 这里只做基础入口防护，完整内容扫描应由后续专门的安全策略承接。
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".bat", ".cmd", ".com", ".dll", ".exe", ".js", ".msi", ".php", ".ps1", ".scr", ".sh", ".vbs":
+		return true
+	default:
+		return false
+	}
 }
 
 func discardMultipartFileWithLimit(src io.Reader, maxBytes int64) error {
