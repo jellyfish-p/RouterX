@@ -467,9 +467,66 @@ func (s *RelayService) AnthropicCountTokens(body []byte) ([]byte, error) {
 }
 
 func (s *RelayService) GeminiCountTokens(body []byte) ([]byte, error) {
+	totalTokens, err := geminiCountTokensFromBody(body)
+	if err != nil {
+		return nil, relayInvalidRequestHTTPError(err)
+	}
 	return json.Marshal(map[string]interface{}{
-		"totalTokens": approximateTokenCount(body),
+		"totalTokens": totalTokens,
 	})
+}
+
+type geminiCountTokenContent struct {
+	Parts []json.RawMessage `json:"parts"`
+}
+
+type geminiCountTokenGenerateRequest struct {
+	Contents          []geminiCountTokenContent `json:"contents"`
+	SystemInstruction *geminiCountTokenContent  `json:"systemInstruction"`
+}
+
+func geminiCountTokensFromBody(body []byte) (int, error) {
+	var input struct {
+		Contents               []geminiCountTokenContent        `json:"contents"`
+		SystemInstruction      *geminiCountTokenContent         `json:"systemInstruction"`
+		GenerateContentRequest *geminiCountTokenGenerateRequest `json:"generateContentRequest"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return 0, errInvalidJSONBody
+	}
+
+	contents := input.Contents
+	systemInstruction := input.SystemInstruction
+	fallbackBody := body
+	if input.GenerateContentRequest != nil {
+		// Gemini ignores top-level contents when generateContentRequest is set.
+		contents = input.GenerateContentRequest.Contents
+		systemInstruction = input.GenerateContentRequest.SystemInstruction
+		if nestedBody, err := json.Marshal(input.GenerateContentRequest); err == nil {
+			fallbackBody = nestedBody
+		}
+	}
+
+	text := geminiCountTokenText(contents, systemInstruction)
+	if strings.TrimSpace(text) == "" {
+		return approximateTokenCount(fallbackBody), nil
+	}
+	return approximateTokenCount([]byte(text)), nil
+}
+
+func geminiCountTokenText(contents []geminiCountTokenContent, systemInstruction *geminiCountTokenContent) string {
+	values := make([]string, 0, len(contents)+1)
+	if systemInstruction != nil {
+		if text := strings.TrimSpace(geminiTextFromParts(systemInstruction.Parts)); text != "" {
+			values = append(values, text)
+		}
+	}
+	for _, content := range contents {
+		if text := strings.TrimSpace(geminiTextFromParts(content.Parts)); text != "" {
+			values = append(values, text)
+		}
+	}
+	return strings.Join(values, "\n")
 }
 
 // GetAdapter 根据通道类型返回对应的适配器实例。

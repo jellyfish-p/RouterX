@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -121,5 +122,68 @@ func TestGeminiEmbeddingOutputDimensionalityValidation(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", tt.want, err)
 			}
 		})
+	}
+}
+
+func TestGeminiCountTokensUsesPromptTextInsteadOfJSONEnvelope(t *testing.T) {
+	svc := NewRelayService(nil, nil, nil, nil)
+	resp, err := svc.GeminiCountTokens([]byte(`{
+		"contents": [
+			{"role":"user","parts":[{"text":"hello world"},{"text":"again"}]},
+			{"role":"model","parts":[{"text":"ok"}]}
+		],
+		"systemInstruction": {"parts":[{"text":"be concise"}]}
+	}`))
+	if err != nil {
+		t.Fatalf("GeminiCountTokens returned error: %v", err)
+	}
+
+	var out struct {
+		TotalTokens int `json:"totalTokens"`
+	}
+	if err := json.Unmarshal(resp, &out); err != nil {
+		t.Fatalf("GeminiCountTokens response should be JSON: %v", err)
+	}
+	if out.TotalTokens != 6 {
+		t.Fatalf("GeminiCountTokens should count prompt text only, got %d", out.TotalTokens)
+	}
+}
+
+func TestGeminiCountTokensUsesGenerateContentRequestWhenPresent(t *testing.T) {
+	svc := NewRelayService(nil, nil, nil, nil)
+	resp, err := svc.GeminiCountTokens([]byte(`{
+		"contents": [{"parts":[{"text":"ignored top level"}]}],
+		"generateContentRequest": {
+			"contents": [{"parts":[{"text":"wrapped prompt"}]}],
+			"systemInstruction": {"parts":[{"text":"stay brief"}]}
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("GeminiCountTokens returned error: %v", err)
+	}
+
+	var out struct {
+		TotalTokens int `json:"totalTokens"`
+	}
+	if err := json.Unmarshal(resp, &out); err != nil {
+		t.Fatalf("GeminiCountTokens response should be JSON: %v", err)
+	}
+	if out.TotalTokens != 4 {
+		t.Fatalf("GeminiCountTokens should prefer generateContentRequest over top-level contents, got %d", out.TotalTokens)
+	}
+}
+
+func TestGeminiCountTokensRejectsInvalidJSON(t *testing.T) {
+	svc := NewRelayService(nil, nil, nil, nil)
+	_, err := svc.GeminiCountTokens([]byte(`{"contents":`))
+	if err == nil {
+		t.Fatal("GeminiCountTokens should reject invalid JSON")
+	}
+	httpErr, ok := err.(*HTTPError)
+	if !ok {
+		t.Fatalf("expected HTTPError, got %T %v", err, err)
+	}
+	if httpErr.Status != 400 || httpErr.Code != "invalid_json" {
+		t.Fatalf("expected invalid_json HTTP 400, got status=%d code=%q", httpErr.Status, httpErr.Code)
 	}
 }

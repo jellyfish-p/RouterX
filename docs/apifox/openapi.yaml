@@ -2880,7 +2880,7 @@ paths:
     post:
       tags: [Gemini Compatible]
       summary: Gemini countTokens
-      description: 当前为近似计数。
+      description: 本地近似 Token 计数；优先统计 contents[].parts[]、systemInstruction.parts[] 或 generateContentRequest 内的实际 prompt 文本，不把 JSON 字段名计入 prompt。generateContentRequest 存在时按 Gemini 语义忽略顶层 contents；该结果不等同于真实 Gemini tokenizer。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2889,7 +2889,7 @@ paths:
           required: true
           schema: { type: string }
       requestBody:
-        $ref: "#/components/requestBodies/GenericJSON"
+        $ref: "#/components/requestBodies/GeminiCountTokensJSON"
       responses:
         "200":
           description: Token 计数结果。
@@ -3077,6 +3077,78 @@ components:
                   - content:
                       parts:
                         - text: world
+    GeminiCountTokensJSON:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            description: 本地近似 countTokens 请求；generateContentRequest 存在时忽略顶层 contents。
+            properties:
+              contents:
+                type: array
+                description: Gemini Content 数组；基础实现会统计 parts 中的 text，非文本 part 以紧凑 JSON 降级参与近似计数。
+                items:
+                  type: object
+                  properties:
+                    role:
+                      type: string
+                      enum: [user, model]
+                    parts:
+                      type: array
+                      items:
+                        type: object
+                        additionalProperties: true
+                        properties:
+                          text:
+                            type: string
+                example:
+                  - role: user
+                    parts:
+                      - text: hello world
+              systemInstruction:
+                type: object
+                description: Gemini system instruction；基础实现会统计 parts 中的 text。
+                properties:
+                  parts:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      properties:
+                        text:
+                          type: string
+              generateContentRequest:
+                type: object
+                description: Gemini GenerateContentRequest 包裹体；设置后会忽略顶层 contents，统计该对象内的 contents 和 systemInstruction。
+                properties:
+                  contents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        role:
+                          type: string
+                          enum: [user, model]
+                        parts:
+                          type: array
+                          items:
+                            type: object
+                            additionalProperties: true
+                            properties:
+                              text:
+                                type: string
+                  systemInstruction:
+                    type: object
+                    properties:
+                      parts:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: true
+                          properties:
+                            text:
+                              type: string
     EmbeddingsJSON:
       required: true
       content:

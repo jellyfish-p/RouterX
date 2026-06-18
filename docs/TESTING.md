@@ -114,6 +114,9 @@
 | `TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini embedContent 转 OpenAI-compatible Embeddings 上游，`outputDimensionality` 映射为 `dimensions`，返回 Gemini `embedding.values` 外形，usage 写日志和扣费 |
 | `TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini batchEmbedContents 转 OpenAI-compatible Embeddings 批量 input，`outputDimensionality` 映射为 `dimensions`，上游 embedding list 返回 Gemini `embeddings[].values` 外形，usage 写日志和扣费 |
 | `TestGeminiEmbeddingOutputDimensionalityValidation` | Gemini embedding 请求拒绝非正数 `outputDimensionality`，batchEmbedContents 拒绝同批次维度不一致 |
+| `TestGeminiCountTokensUsesPromptTextInsteadOfJSONEnvelope` | Gemini countTokens 本地近似计数只统计 `contents` 和 `systemInstruction` 中的 prompt 文本，不把 JSON 字段名当作 token |
+| `TestGeminiCountTokensUsesGenerateContentRequestWhenPresent` | Gemini countTokens 在存在 `generateContentRequest` 时按 Gemini 语义忽略顶层 `contents`，只统计包裹请求内的 prompt 文本 |
+| `TestGeminiCountTokensRejectsInvalidJSON` | Gemini countTokens 非法 JSON 返回稳定 `invalid_json` 400 错误语义 |
 | `TestGeminiBatchEmbedContentsRejectsMismatchedEmbeddingCount` | Gemini batchEmbedContents 上游返回 embedding 数量与请求数量不一致时返回 Gemini 兼容 502/UNAVAILABLE，错误语义为 `upstream_conversion_failed` |
 | `TestRateLimitUsesSettingsAndEntryProtocolErrorShape` | Redis Token 限流读取 `rate_limit.*`，本地 429 不调用上游，返回入口协议兼容错误，并写失败日志、拒绝分支 `policy_snapshot` 和 `rate_limit_snapshot` |
 | `TestRateLimitGlobalAndIPWriteSnapshotDetails` | Redis 全局/IP 限流命中时本地 429，不调用上游、不额外扣费，并在失败日志 `policy_snapshot` 中写 `scope_result` 和 `rate_limit_snapshot` 的维度、分钟窗口、阈值、当前计数、剩余量和拒绝决策 |
