@@ -76,8 +76,9 @@ const (
 	usageMissingStrategyMinimum = "minimum"
 	usageMissingStrategyReject  = "reject"
 
-	defaultRelayMaxRequestBodyBytes  int64 = 20 << 20
-	defaultRelayMaxResponseBodyBytes int64 = 20 << 20
+	defaultRelayMaxRequestBodyBytes   int64 = 20 << 20
+	defaultRelayMaxMultipartFileBytes int64 = 10 << 20
+	defaultRelayMaxResponseBodyBytes  int64 = 20 << 20
 )
 
 var errRelayResponseBodyTooLarge = errors.New("relay upstream response body too large")
@@ -329,6 +330,7 @@ type channelGroupAccessPolicy struct {
 var (
 	errInvalidJSONBody        = errors.New("invalid json body")
 	errInvalidMultipartBody   = errors.New("invalid multipart body")
+	errMultipartFileTooLarge  = errors.New("multipart file exceeds maximum size")
 	errModelRequired          = errors.New("model is required")
 	errUnsupportedMultipart   = errors.New("multipart relay is not supported for selected upstream channel")
 	errInvalidRouterXOptions  = errors.New("invalid routerx options")
@@ -373,8 +375,12 @@ func upstreamConversionHTTPError() *HTTPError {
 }
 
 func relayInvalidRequestHTTPError(err error) *HTTPError {
+	status := http.StatusBadRequest
+	if errors.Is(err, errMultipartFileTooLarge) {
+		status = http.StatusRequestEntityTooLarge
+	}
 	return &HTTPError{
-		Status:  http.StatusBadRequest,
+		Status:  status,
 		Message: err.Error(),
 		Type:    "invalid_request_error",
 		Code:    relayRequestErrorCode(err),
@@ -638,9 +644,9 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	if token == nil {
 		return nil, nil, &HTTPError{Status: 401, Message: "invalid api key", Type: "authentication_error", Code: "invalid_api_key"}
 	}
-	reqInfo, err := parseRelayRequestWithContentType(apiType, body, contentType, relayRouterXOptionsFromContext(ctx))
+	reqInfo, err := parseRelayRequestWithContentType(apiType, body, contentType, relayRouterXOptionsFromContext(ctx), s.MaxMultipartFileBytes())
 	if err != nil {
-		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: relayRequestErrorCode(err)}
+		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
 	if reqInfo.Stream {
 		return nil, nil, &HTTPError{Status: 400, Message: "stream is not supported in P0 relay", Type: "invalid_request_error", Code: "unsupported_stream"}
@@ -747,9 +753,9 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	outBody := body
 	outContentType := ""
 	if isMultipartRelayContentType(contentType) {
-		outBody, outContentType, err = rewriteMultipartRelayBody(body, contentType, upstreamModel)
+		outBody, outContentType, err = rewriteMultipartRelayBody(body, contentType, upstreamModel, s.MaxMultipartFileBytes())
 		if err != nil {
-			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid multipart body", Type: "invalid_request_error", Code: "invalid_multipart"}
+			return nil, nil, false, relayInvalidRequestHTTPError(err)
 		}
 	} else {
 		outInputBody, err := mergeRelayUpstreamBody(body, relayUpstreamBodyForChannel(reqInfo.Upstream, channel.Type))
@@ -1184,9 +1190,9 @@ type relayUpstreamOptions struct {
 	ProviderBody map[string]map[string]json.RawMessage
 }
 
-func parseRelayRequestWithContentType(apiType relay.APIType, body []byte, contentType string, headerRouterX json.RawMessage) (relayRequestInfo, error) {
+func parseRelayRequestWithContentType(apiType relay.APIType, body []byte, contentType string, headerRouterX json.RawMessage, maxMultipartFileBytes int64) (relayRequestInfo, error) {
 	if isMultipartRelayContentType(contentType) {
-		return parseMultipartRelayRequest(body, contentType, headerRouterX)
+		return parseMultipartRelayRequest(body, contentType, headerRouterX, maxMultipartFileBytes)
 	}
 	return parseRelayRequest(apiType, body, headerRouterX)
 }
@@ -1330,7 +1336,7 @@ func validEmbeddingTokenID(raw json.RawMessage) bool {
 	return err == nil && tokenID >= 0
 }
 
-func parseMultipartRelayRequest(body []byte, contentType string, headerRouterX json.RawMessage) (relayRequestInfo, error) {
+func parseMultipartRelayRequest(body []byte, contentType string, headerRouterX json.RawMessage, maxFileBytes int64) (relayRequestInfo, error) {
 	boundary, err := multipartBoundary(contentType)
 	if err != nil {
 		return relayRequestInfo{}, err
@@ -1345,6 +1351,12 @@ func parseMultipartRelayRequest(body []byte, contentType string, headerRouterX j
 		}
 		if err != nil {
 			return relayRequestInfo{}, errInvalidMultipartBody
+		}
+		if part.FileName() != "" {
+			if err := discardMultipartFileWithLimit(part, maxFileBytes); err != nil {
+				return relayRequestInfo{}, err
+			}
+			continue
 		}
 		name := part.FormName()
 		if name == "" {
@@ -1389,6 +1401,8 @@ func relayRequestErrorCode(err error) string {
 		return "invalid_json"
 	case errors.Is(err, errInvalidMultipartBody):
 		return "invalid_multipart"
+	case errors.Is(err, errMultipartFileTooLarge):
+		return "request_file_too_large"
 	case errors.Is(err, errModelRequired):
 		return "model_required"
 	case errors.Is(err, errInvalidRouterXOptions):
@@ -1788,7 +1802,7 @@ func routerXHopHTTPError(err error) *HTTPError {
 	}
 }
 
-func rewriteMultipartRelayBody(body []byte, contentType string, modelName string) ([]byte, string, error) {
+func rewriteMultipartRelayBody(body []byte, contentType string, modelName string, maxFileBytes int64) ([]byte, string, error) {
 	boundary, err := multipartBoundary(contentType)
 	if err != nil {
 		return nil, "", err
@@ -1806,7 +1820,13 @@ func rewriteMultipartRelayBody(body []byte, contentType string, modelName string
 		}
 		name := part.FormName()
 		if name == "routerx" {
-			_, _ = io.Copy(io.Discard, part)
+			if part.FileName() != "" {
+				if err := discardMultipartFileWithLimit(part, maxFileBytes); err != nil {
+					return nil, "", err
+				}
+			} else {
+				_, _ = io.Copy(io.Discard, part)
+			}
 			continue
 		}
 		header := cloneMIMEHeader(part.Header)
@@ -1821,6 +1841,12 @@ func rewriteMultipartRelayBody(body []byte, contentType string, modelName string
 			_, _ = io.Copy(io.Discard, part)
 			continue
 		}
+		if part.FileName() != "" {
+			if err := copyMultipartFileWithLimit(dst, part, maxFileBytes); err != nil {
+				return nil, "", err
+			}
+			continue
+		}
 		if _, err := io.Copy(dst, part); err != nil {
 			return nil, "", errInvalidMultipartBody
 		}
@@ -1829,6 +1855,29 @@ func rewriteMultipartRelayBody(body []byte, contentType string, modelName string
 		return nil, "", errInvalidMultipartBody
 	}
 	return out.Bytes(), writer.FormDataContentType(), nil
+}
+
+func discardMultipartFileWithLimit(src io.Reader, maxBytes int64) error {
+	return copyMultipartFileWithLimit(io.Discard, src, maxBytes)
+}
+
+func copyMultipartFileWithLimit(dst io.Writer, src io.Reader, maxBytes int64) error {
+	if maxBytes <= 0 {
+		if _, err := io.Copy(dst, src); err != nil {
+			return errInvalidMultipartBody
+		}
+		return nil
+	}
+	// 多读 1 字节即可判断是否超限，同时避免把整个文件先读入内存。
+	limited := &io.LimitedReader{R: src, N: maxBytes + 1}
+	written, err := io.Copy(dst, limited)
+	if err != nil {
+		return errInvalidMultipartBody
+	}
+	if written > maxBytes {
+		return errMultipartFileTooLarge
+	}
+	return nil
 }
 
 func isMultipartRelayContentType(contentType string) bool {
@@ -2596,6 +2645,17 @@ func (s *RelayService) MaxRequestBodyBytes() int64 {
 	value, err := s.settingService.GetInt("relay.max_request_body_bytes")
 	if err != nil || value < 0 {
 		return defaultRelayMaxRequestBodyBytes
+	}
+	return int64(value)
+}
+
+func (s *RelayService) MaxMultipartFileBytes() int64 {
+	if s == nil || s.settingService == nil {
+		return defaultRelayMaxMultipartFileBytes
+	}
+	value, err := s.settingService.GetInt("relay.max_multipart_file_bytes")
+	if err != nil || value < 0 {
+		return defaultRelayMaxMultipartFileBytes
 	}
 	return int64(value)
 }

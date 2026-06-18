@@ -197,6 +197,7 @@ func buildDefaultSettings() map[string]map[string]string {
 			"relay.error_probe_interval_seconds": "60",
 			"relay.error_probe_batch_size":       "20",
 			"relay.max_request_body_bytes":       "10485760",
+			"relay.max_multipart_file_bytes":     "10485760",
 			"relay.max_response_body_bytes":      "10485760",
 			"relay.routerx_max_hops":             "3",
 			"relay.log_body_max_bytes":           "0",

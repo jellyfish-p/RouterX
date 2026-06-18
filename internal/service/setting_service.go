@@ -237,7 +237,7 @@ func validateSettingValue(key, value string) error {
 		return validatePositiveIntSetting(key, value)
 	case "rate_limit.global_per_min", "rate_limit.per_token_per_min", "rate_limit.per_ip_per_min", "rate_limit.per_user_per_min", "rate_limit.per_model_per_min", "rate_limit.per_channel_per_min":
 		return validateNonNegativeIntSetting(key, value)
-	case "relay.retry_count", "relay.max_request_body_bytes", "relay.max_response_body_bytes", "relay.log_body_max_bytes", "log.body_max_bytes", "billing.bootstrap_admin_quota",
+	case "relay.retry_count", "relay.max_request_body_bytes", "relay.max_multipart_file_bytes", "relay.max_response_body_bytes", "relay.log_body_max_bytes", "log.body_max_bytes", "billing.bootstrap_admin_quota",
 		"relay.error_ban_cooldown_seconds", "relay.error_probe_interval_seconds",
 		"auth.register.default_quota",
 		"routing.channel_cache.ttl_seconds",

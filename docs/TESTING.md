@@ -133,6 +133,7 @@
 | `TestRateLimitPerChannelRejectsBeforeUpstream` | Redis 通道限流读取 `rate_limit.per_channel_per_min`，同一通道达到分钟阈值后本地 429，不调用上游、不额外扣费，并写通道维度拒绝 `policy_snapshot` 和 `rate_limit_snapshot` |
 | `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model 在本地失败且不污染通道和账单 |
 | `TestRelayMaxRequestBodyBytesRejectsBeforeUpstream` | `relay.max_request_body_bytes` 超限时本地返回 OpenAI-compatible 413 `request_body_too_large`，不调用上游、不扣用户额度或 API Key 预算 |
+| `TestRelayMaxMultipartFileBytesRejectsBeforeUpstream` | OpenAI-compatible multipart 单个文件字段超过 `relay.max_multipart_file_bytes` 时本地返回 413 `request_file_too_large`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
 | `TestUserBillingMatchesLogs` | 多次成功/失败混合后，用户账单、日志、余额和 Key 预算一致 |
 | `TestChatCompletionSuccessLogsAndDeductsQuota` | Chat 非流式成功调用、request id 上游透传、body 日志默认关闭、基础 request_snapshot、基础 policy_snapshot、上游 usage_source、基础 route_snapshot、含 P0 回退表达式/倍率/预算前后摘要的基础 billing_snapshot、日志、用户额度、Key 预算和账单聚合 |

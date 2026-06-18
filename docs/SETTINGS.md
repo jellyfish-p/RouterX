@@ -73,6 +73,7 @@
 | `relay.error_probe_interval_seconds` | `relay` | int | `60` | 否 | hot | relay | `>=0` |
 | `relay.error_probe_batch_size` | `relay` | int | `20` | 否 | hot | relay | `>0` |
 | `relay.max_request_body_bytes` | `relay` | int | `10485760` | 否 | hot | relay | `>=0`，`0` 表示不限制 |
+| `relay.max_multipart_file_bytes` | `relay` | int | `10485760` | 否 | hot | relay | `>=0`，`0` 表示不限制单个文件字段 |
 | `relay.max_response_body_bytes` | `relay` | int | `10485760` | 否 | hot | relay | `>=0`，`0` 表示不限制 |
 | `relay.routerx_max_hops` | `relay` | int | `3` | 否 | hot | relay | `>0` |
 | `relay.log_body_max_bytes` | `relay` | int | `0` | 否 | hot | relay/log | `>=0`，`0` 表示不记录 body |
@@ -93,6 +94,7 @@
 - `relay.retry_count` 默认是 `0`，表示不做自动重试；大于 0 时，非流式 Relay 只对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败进行有限候选通道重试。默认白名单为 429/500/502/503/504，生产环境不建议把 401/403 加入白名单。
 - `relay.error_auto_ban=false` 时仍会记录通道 `error_count`，但候选查询不会因为 `relay.error_ban_threshold` 排除通道；`relay.error_ban_cooldown_seconds>0` 时，达到阈值的通道在最近一次健康状态更新超过冷却窗口后可重新进入候选做半开探测，后台 worker 也会按 `relay.error_probe_*` 定期复测这些通道；`relay.error_ban_cooldown_seconds=0` 表示关闭自动半开和后台探测恢复，只能人工测试或后续成功调用清零。
 - `relay.max_request_body_bytes` 当前已在 `/v1` 模型入口生效，超过限制时按入口协议返回 413 且不调用上游。
+- `relay.max_multipart_file_bytes` 当前已在 OpenAI-compatible Images/Audio multipart 文件字段生效，单个文件字段超过限制时返回 413 `request_file_too_large`，且不调用上游、不扣费。
 - `relay.max_response_body_bytes` 当前已在非流式上游响应读取路径生效，超过限制时返回 502 `upstream_response_too_large`，不反射下游响应体且不扣费。
 - `relay.routerx_max_hops` 当前已在 RouterX-Compatible 上游转发路径生效，达到或超过上限时返回 `routerx_hop_exceeded` 且不调用上游。
 - `relay.log_body_max_bytes` 和 `log.body_max_bytes` 当前默认是 `0`，表示默认不记录请求/响应 body；显式开启 `log.request_body_enabled` / `log.response_body_enabled` 且配置正数上限后，非流式 Relay 日志会保存截断和脱敏后的请求/响应片段。
@@ -157,6 +159,7 @@ P0 补齐这些配置时，应同时补测试：
 | key | 默认 | stage | 说明 |
 |-----|------|-------|------|
 | `relay.max_request_body_bytes` | `10485760` | P1 | 当前已落地；模型请求体最大字节数，必须为非负整数，`0` 表示不限制 |
+| `relay.max_multipart_file_bytes` | `10485760` | P1 | 当前已落地；OpenAI-compatible multipart 单个文件字段最大字节数，必须为非负整数，`0` 表示不限制 |
 | `relay.max_response_body_bytes` | `10485760` | P1 | 当前已落地；非流式下游响应读取上限，必须为非负整数，`0` 表示不限制 |
 | `relay.stream_usage_strategy` | `provider_or_estimate` | P1 | 流式 usage 策略 |
 | `relay.routerx_max_hops` | `3` | P1 | 当前已落地；多层 RouterX 最大跳数，必须为正整数 |
@@ -264,6 +267,7 @@ validate key exists
 - `SQL_DSN` 指向 PostgreSQL/MySQL 等外部数据库但 Redis 不可用。
 - `relay.timeout <= 0`。
 - `relay.max_request_body_bytes < 0`。
+- `relay.max_multipart_file_bytes < 0`。
 - `relay.max_response_body_bytes < 0`。
 - `relay.routerx_max_hops <= 0`。
 - `relay.retry_on_status` 不是非空 JSON 整数数组，或包含 `400..599` 之外/重复状态码。
