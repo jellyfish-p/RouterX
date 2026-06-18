@@ -15373,6 +15373,17 @@ func TestRelayFailureLogPersistsRequestIDAndErrorCode(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := internal.DB.Create(&model.Log{
+		UserID:      callLog.UserID,
+		TokenID:     callLog.TokenID,
+		Model:       "gpt-request-id-log",
+		Status:      common.LogStatusFailed,
+		ErrorCode:   "usage_missing",
+		ErrorSource: common.LogErrorSourceBilling,
+		RequestID:   "req-billing-error-source",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	filteredLogResp := performJSON(r, http.MethodGet, "/v0/user/log?error_code=upstream_400", rootJWT, nil)
 	filteredLogBody := filteredLogResp.Body.String()
@@ -15383,12 +15394,31 @@ func TestRelayFailureLogPersistsRequestIDAndErrorCode(t *testing.T) {
 		t.Fatalf("user log API should filter by error_code, got %d %s", filteredLogResp.Code, filteredLogBody)
 	}
 
+	sourceStatusResp := performJSON(r, http.MethodGet, "/v0/user/log?error_source=upstream&upstream_status=400", rootJWT, nil)
+	sourceStatusBody := sourceStatusResp.Body.String()
+	if sourceStatusResp.Code != http.StatusOK ||
+		!strings.Contains(sourceStatusBody, `"total":1`) ||
+		!strings.Contains(sourceStatusBody, `"error_source":"upstream"`) ||
+		!strings.Contains(sourceStatusBody, `"upstream_status":400`) ||
+		strings.Contains(sourceStatusBody, `"upstream_status":500`) ||
+		strings.Contains(sourceStatusBody, `"error_source":"billing"`) {
+		t.Fatalf("user log API should filter by error_source and upstream_status, got %d %s", sourceStatusResp.Code, sourceStatusBody)
+	}
+
 	exportResp := performRaw(r, http.MethodGet, "/v0/admin/log/export?error_code=upstream_400", rootJWT, "")
 	exportBody := exportResp.Body.String()
 	if exportResp.Code != http.StatusOK ||
 		!strings.Contains(exportBody, "upstream_400") ||
 		strings.Contains(exportBody, "upstream_500") {
 		t.Fatalf("admin log export should filter by error_code, got %d %s", exportResp.Code, exportBody)
+	}
+	sourceStatusExportResp := performRaw(r, http.MethodGet, "/v0/admin/log/export?error_source=upstream&upstream_status=400", rootJWT, "")
+	sourceStatusExportBody := sourceStatusExportResp.Body.String()
+	if sourceStatusExportResp.Code != http.StatusOK ||
+		!strings.Contains(sourceStatusExportBody, "upstream_400") ||
+		strings.Contains(sourceStatusExportBody, "upstream_500") ||
+		strings.Contains(sourceStatusExportBody, "usage_missing") {
+		t.Fatalf("admin log export should filter by error_source and upstream_status, got %d %s", sourceStatusExportResp.Code, sourceStatusExportBody)
 	}
 }
 

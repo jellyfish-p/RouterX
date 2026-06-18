@@ -628,6 +628,8 @@ Provider 退款请求：
 | `model` | string | 模型过滤 |
 | `status` | int | 状态过滤 |
 | `error_code` | string | 稳定错误 code 过滤，例如 `upstream_400`、`rate_limit_exceeded` |
+| `error_source` | string | 失败来源过滤，例如 `request`、`quota`、`route`、`channel`、`upstream`、`billing` |
+| `upstream_status` | int | 上游 HTTP 状态过滤，例如 `400`、`429`、`500` |
 | `start_time` | string | 开始时间 |
 | `end_time` | string | 结束时间 |
 

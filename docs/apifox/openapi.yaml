@@ -575,7 +575,7 @@ paths:
     get:
       tags: [User Usage]
       summary: 当前用户调用日志
-      description: 查询当前用户自己的模型调用日志，支持按 API Key、通道、模型、状态、稳定 error_code 和时间窗口过滤；响应中的请求/响应体、IP、错误原文和快照字段按服务端脱敏策略返回。
+      description: 查询当前用户自己的模型调用日志，支持按 API Key、通道、模型、状态、稳定 error_code、失败来源 error_source、上游 HTTP 状态 upstream_status 和时间窗口过滤；响应中的请求/响应体、IP、错误原文和快照字段按服务端脱敏策略返回。
       security:
         - UserJWT: []
       parameters:
@@ -586,6 +586,8 @@ paths:
         - $ref: "#/components/parameters/Model"
         - $ref: "#/components/parameters/Status"
         - $ref: "#/components/parameters/ErrorCode"
+        - $ref: "#/components/parameters/ErrorSource"
+        - $ref: "#/components/parameters/UpstreamStatus"
         - $ref: "#/components/parameters/StartTime"
         - $ref: "#/components/parameters/EndTime"
       responses:
@@ -2132,7 +2134,7 @@ paths:
     get:
       tags: [Admin Logs]
       summary: 全局调用日志
-      description: 超级管理员查询调用日志；支持按用户、API Key、通道、模型、状态、稳定 error_code 和时间窗口过滤。配置 LOG_SQL_DSN 时读取独立日志数据库，未配置时读取主业务数据库，日志库查询失败时回退读取主库事实。无论是否配置独立日志库，主库都会保留可恢复结算事实，避免日志库故障导致账单不可解释。
+      description: 超级管理员查询调用日志；支持按用户、API Key、通道、模型、状态、稳定 error_code、失败来源 error_source、上游 HTTP 状态 upstream_status 和时间窗口过滤。配置 LOG_SQL_DSN 时读取独立日志数据库，未配置时读取主业务数据库，日志库查询失败时回退读取主库事实。无论是否配置独立日志库，主库都会保留可恢复结算事实，避免日志库故障导致账单不可解释。
       security:
         - UserJWT: []
       parameters:
@@ -2144,6 +2146,8 @@ paths:
         - $ref: "#/components/parameters/Model"
         - $ref: "#/components/parameters/Status"
         - $ref: "#/components/parameters/ErrorCode"
+        - $ref: "#/components/parameters/ErrorSource"
+        - $ref: "#/components/parameters/UpstreamStatus"
         - $ref: "#/components/parameters/StartTime"
         - $ref: "#/components/parameters/EndTime"
       responses:
@@ -2189,6 +2193,8 @@ paths:
         - $ref: "#/components/parameters/Model"
         - $ref: "#/components/parameters/Status"
         - $ref: "#/components/parameters/ErrorCode"
+        - $ref: "#/components/parameters/ErrorSource"
+        - $ref: "#/components/parameters/UpstreamStatus"
         - $ref: "#/components/parameters/StartTime"
         - $ref: "#/components/parameters/EndTime"
         - name: limit
@@ -2962,6 +2968,18 @@ components:
       in: query
       schema: { type: string }
       description: 调用日志稳定错误 code 过滤，例如 upstream_400、rate_limit_exceeded 或 usage_missing。
+    ErrorSource:
+      name: error_source
+      in: query
+      schema:
+        type: string
+        enum: [request, auth, quota, route, channel, upstream, billing, system]
+      description: 调用日志失败来源过滤。
+    UpstreamStatus:
+      name: upstream_status
+      in: query
+      schema: { type: integer }
+      description: 上游 HTTP 状态过滤；未调用上游的本地错误通常为 0 或空。
     GroupID:
       name: group_id
       in: query

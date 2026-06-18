@@ -32,8 +32,11 @@ type LogFilters struct {
 	ModelName string
 	Status    *int
 	ErrorCode string
-	StartTime string
-	EndTime   string
+	// ErrorSource and UpstreamStatus let operators narrow failure logs without parsing snapshots.
+	ErrorSource    string
+	UpstreamStatus *int
+	StartTime      string
+	EndTime        string
 }
 
 const (
@@ -435,17 +438,19 @@ func normalizeLogBillingSnapshot(log *model.Log) string {
 }
 
 // List 日志分页查询, 支持多维筛选。
-func (s *LogService) List(userID, tokenID, channelID *uint, modelName string, status *int, errorCode, startTime, endTime string, page, pageSize int) ([]model.Log, int64, error) {
+func (s *LogService) List(userID, tokenID, channelID *uint, modelName string, status *int, errorCode, errorSource string, upstreamStatus *int, startTime, endTime string, page, pageSize int) ([]model.Log, int64, error) {
 	page, pageSize = normalizePage(page, pageSize)
 	filter := LogFilters{
-		UserID:    userID,
-		TokenID:   tokenID,
-		ChannelID: channelID,
-		ModelName: modelName,
-		Status:    status,
-		ErrorCode: errorCode,
-		StartTime: startTime,
-		EndTime:   endTime,
+		UserID:         userID,
+		TokenID:        tokenID,
+		ChannelID:      channelID,
+		ModelName:      modelName,
+		Status:         status,
+		ErrorCode:      errorCode,
+		ErrorSource:    errorSource,
+		UpstreamStatus: upstreamStatus,
+		StartTime:      startTime,
+		EndTime:        endTime,
 	}
 	logs, total, err := s.listFromDB(s.logReadDB(), filter, page, pageSize)
 	if err != nil && s.usesExternalLogDB() {
@@ -506,6 +511,12 @@ func applyLogFilters(query *gorm.DB, filter LogFilters) *gorm.DB {
 	}
 	if errorCode := strings.TrimSpace(filter.ErrorCode); errorCode != "" {
 		query = query.Where("error_code = ?", errorCode)
+	}
+	if errorSource := strings.TrimSpace(filter.ErrorSource); errorSource != "" {
+		query = query.Where("error_source = ?", errorSource)
+	}
+	if filter.UpstreamStatus != nil {
+		query = query.Where("upstream_status = ?", *filter.UpstreamStatus)
 	}
 	if t, ok := parseTime(filter.StartTime); ok {
 		query = query.Where("created_at >= ?", t)

@@ -178,7 +178,7 @@
 | `TestChatCompletionUpstreamErrorStatusMapping` | 下游 401/403/429/5xx 错误映射、失败日志、通道错误计数和不扣费 |
 | `TestRelayMaxResponseBodyBytesRejectsOversizedUpstream` | `relay.max_response_body_bytes` 超限时返回 OpenAI-compatible 502 `upstream_response_too_large`，不反射下游响应体、不扣额度，并写失败日志 |
 | `TestChatCompletionUpstreamTimeoutMapping` | 下游超时错误映射、失败日志、通道错误计数和不扣费 |
-| `TestRelayFailureLogPersistsRequestIDAndErrorCode` | 下游失败时调用日志和用户日志接口持久化 `request_id`、稳定 `error_code`、`error_source` 和 `upstream_status`，并支持按 `error_code` 过滤用户日志和管理端 CSV 导出 |
+| `TestRelayFailureLogPersistsRequestIDAndErrorCode` | 下游失败时调用日志和用户日志接口持久化 `request_id`、稳定 `error_code`、`error_source` 和 `upstream_status`，并支持按 `error_code`、`error_source` 和 `upstream_status` 过滤用户日志和管理端 CSV 导出 |
 | `TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce` | 非流式默认可重试状态码按 `relay.retry_count` 换候选通道，最终只按成功 usage 扣费一次，并在 route_snapshot 记录实际通道和重试摘要 |
 | `TestChatCompletionUsesConfiguredRetryStatuses` | `relay.retry_on_status` 显式加入 400 后，非流式 400 可按 `relay.retry_count` 换候选通道并只按最终成功扣费一次 |
 | `TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus` | 默认白名单不含 400 时，下游 400 不触发候选通道重试 |
