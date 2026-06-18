@@ -141,6 +141,7 @@ func metricsHandler(c *gin.Context) {
 	writeLabeledCounter(&b, "routerx_quota_used_total", "Quota used by model, provider and user group.", extended.QuotaUsed)
 	writeLabeledGauge(&b, "routerx_channel_available", "Channel availability by channel and provider.", extended.ChannelAvailable)
 	writeLabeledGauge(&b, "routerx_channel_error_count", "Channel error counters by channel and provider.", extended.ChannelErrorCounts)
+	writeLabeledCounter(&b, "routerx_channel_probe_total", "Background channel breaker probes by result.", extended.ChannelProbes)
 	writeLabeledCounter(&b, "routerx_rate_limit_rejections_total", "Rate limit rejections by dimension.", extended.RateLimitRejections)
 	writeLabeledCounter(&b, "routerx_billing_failures_total", "Billing failures by reason.", extended.BillingFailures)
 	writeLabeledGauge(&b, "routerx_payment_orders_total", "Payment orders by provider and status.", extended.PaymentOrders)
@@ -187,6 +188,7 @@ type extendedMetrics struct {
 	QuotaUsed            []metricSample
 	ChannelErrorCounts   []metricSample
 	ChannelAvailable     []metricSample
+	ChannelProbes        []metricSample
 	RateLimitRejections  []metricSample
 	BillingFailures      []metricSample
 	PaymentOrders        []metricSample
@@ -260,6 +262,7 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		return extendedMetrics{}, err
 	}
 	metrics.ChannelErrorCounts = channelErrorCounts
+	metrics.ChannelProbes = collectChannelProbeMetrics()
 
 	rateLimitRejections, err := collectRateLimitRejectionMetrics()
 	if err != nil {
@@ -392,6 +395,18 @@ func collectRelayDurationMetrics() ([]metricHistogramSample, []metricHistogramSa
 		})
 	}
 	return relaySamples, upstreamSamples
+}
+
+func collectChannelProbeMetrics() []metricSample {
+	rows := service.ChannelProbeMetricsSnapshot()
+	samples := make([]metricSample, 0, len(rows))
+	for _, row := range rows {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{{Name: "result", Value: row.Result}},
+			Value:  row.Count,
+		})
+	}
+	return samples
 }
 
 func serviceBucketsToMetricBuckets(buckets []service.HistogramBucket) []metricHistogramBucket {

@@ -25,6 +25,10 @@ type upstreamDurationMetricKey struct {
 	Status    string
 }
 
+type channelProbeMetricKey struct {
+	Result string
+}
+
 type relayHistogramValue struct {
 	Buckets    []int64
 	Count      int64
@@ -51,6 +55,12 @@ type UpstreamDurationMetricSample struct {
 	SumSeconds float64
 }
 
+// ChannelProbeMetricSample is a low-cardinality breaker probe counter sample.
+type ChannelProbeMetricSample struct {
+	Result string
+	Count  int64
+}
+
 // HistogramBucket stores one cumulative histogram bucket.
 type HistogramBucket struct {
 	Le    string
@@ -61,9 +71,11 @@ var relayMetrics = struct {
 	sync.Mutex
 	relayDurations    map[relayDurationMetricKey]relayHistogramValue
 	upstreamDurations map[upstreamDurationMetricKey]relayHistogramValue
+	channelProbes     map[channelProbeMetricKey]int64
 }{
 	relayDurations:    map[relayDurationMetricKey]relayHistogramValue{},
 	upstreamDurations: map[upstreamDurationMetricKey]relayHistogramValue{},
+	channelProbes:     map[channelProbeMetricKey]int64{},
 }
 
 // ResetRelayMetrics clears in-memory relay metrics between router instances.
@@ -72,6 +84,7 @@ func ResetRelayMetrics() {
 	defer relayMetrics.Unlock()
 	relayMetrics.relayDurations = map[relayDurationMetricKey]relayHistogramValue{}
 	relayMetrics.upstreamDurations = map[upstreamDurationMetricKey]relayHistogramValue{}
+	relayMetrics.channelProbes = map[channelProbeMetricKey]int64{}
 }
 
 // RelayMetricsSnapshot returns stable, sorted histogram copies for /metrics rendering.
@@ -133,6 +146,28 @@ func RelayMetricsSnapshot() ([]RelayDurationMetricSample, []UpstreamDurationMetr
 	return relaySamples, upstreamSamples
 }
 
+func ChannelProbeMetricsSnapshot() []ChannelProbeMetricSample {
+	relayMetrics.Lock()
+	defer relayMetrics.Unlock()
+
+	keys := make([]channelProbeMetricKey, 0, len(relayMetrics.channelProbes))
+	for key := range relayMetrics.channelProbes {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i].Result < keys[j].Result
+	})
+
+	samples := make([]ChannelProbeMetricSample, 0, len(keys))
+	for _, key := range keys {
+		samples = append(samples, ChannelProbeMetricSample{
+			Result: key.Result,
+			Count:  relayMetrics.channelProbes[key],
+		})
+	}
+	return samples
+}
+
 func (s *RelayService) recordRelayDuration(apiType relay.APIType, channel *model.Channel, duration time.Duration) {
 	if channel == nil {
 		return
@@ -155,6 +190,16 @@ func (s *RelayService) recordUpstreamDuration(channel *model.Channel, status str
 		Status:    status,
 	}
 	recordRelayHistogramValue(relayMetrics.upstreamDurations, key, duration)
+}
+
+func recordChannelProbeResult(success bool) {
+	result := "failed"
+	if success {
+		result = "success"
+	}
+	relayMetrics.Lock()
+	defer relayMetrics.Unlock()
+	relayMetrics.channelProbes[channelProbeMetricKey{Result: result}]++
 }
 
 func recordRelayHistogramValue[K comparable](target map[K]relayHistogramValue, key K, duration time.Duration) {

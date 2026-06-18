@@ -269,7 +269,7 @@ volumes:
 
 完整指标目录、标签控制和告警建议以 `docs/OBSERVABILITY.md` 为准。
 
-当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、HTTP 请求量/耗时、调用日志状态、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、逐通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标，后续继续补更细错误维度。
+当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、HTTP 请求量/耗时、调用日志状态、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标，后续继续补更细错误维度。
 
 核心指标：
 
@@ -286,6 +286,7 @@ volumes:
 | `routerx_quota_used_total` | counter | 按模型、供应商和用户组统计的额度消耗 |
 | `routerx_channel_available` | gauge | 通道可用状态 |
 | `routerx_channel_error_count` | gauge | 通道连续错误数 |
+| `routerx_channel_probe_total` | counter | 后台熔断探测结果计数，标签为 `result=success|failed` |
 | `routerx_payment_orders_total` | gauge | 支付订单状态计数 |
 | `routerx_payment_events_total` | gauge | 支付事件处理状态 |
 | `routerx_db_up` | gauge | 数据库 ping 状态 |

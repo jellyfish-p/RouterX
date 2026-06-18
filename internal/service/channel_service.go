@@ -300,9 +300,11 @@ func (s *ChannelService) ProbeTrippedChannelsOnce(ctx context.Context, limit int
 		ok, _, _, err := s.Test(channel.ID)
 		if ok && err == nil {
 			summary.Succeeded++
+			recordChannelProbeResult(true)
 			continue
 		}
 		summary.Failed++
+		recordChannelProbeResult(false)
 	}
 	return summary, nil
 }

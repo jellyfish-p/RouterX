@@ -4807,6 +4807,91 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 	}
 }
 
+func TestMetricsEndpointIncludesChannelProbeCounters(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+
+	successUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1/models" {
+			t.Fatalf("successful probe should call /v1/models, got %s", req.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-probe-metrics"}]}`))
+	}))
+	defer successUpstream.Close()
+
+	failedUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		http.Error(w, "no models", http.StatusInternalServerError)
+	}))
+	defer failedUpstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"observability.metrics_enabled":      "true",
+		"routing.channel_cache.enabled":      "false",
+		"relay.error_auto_ban":               "true",
+		"relay.error_ban_threshold":          "2",
+		"relay.error_ban_cooldown_seconds":   "60",
+		"relay.error_probe_enabled":          "true",
+		"relay.error_probe_interval_seconds": "60",
+		"relay.error_probe_batch_size":       "10",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cooledFailure := time.Now().Add(-2 * time.Minute)
+	channels := []model.Channel{
+		{
+			Type:       common.ChannelTypeOpenAICompat,
+			Name:       "probe-metrics-success",
+			Models:     "gpt-probe-metrics",
+			BaseURL:    successUpstream.URL,
+			APIKey:     "probe-key",
+			Status:     common.ChannelStatusEnabled,
+			ErrorCount: 2,
+			UpdatedAt:  cooledFailure,
+		},
+		{
+			Type:       common.ChannelTypeOpenAICompat,
+			Name:       "probe-metrics-failed",
+			Models:     "gpt-probe-metrics",
+			BaseURL:    failedUpstream.URL,
+			APIKey:     "probe-key",
+			Status:     common.ChannelStatusEnabled,
+			ErrorCount: 2,
+			UpdatedAt:  cooledFailure.Add(time.Second),
+		},
+	}
+	if err := internal.DB.Create(&channels).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := service.NewChannelService().ProbeTrippedChannelsOnce(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("probe should complete: %v", err)
+	}
+	if summary.Checked != 2 || summary.Succeeded != 1 || summary.Failed != 1 {
+		t.Fatalf("expected one successful and one failed probe, got %+v", summary)
+	}
+
+	resp := performJSON(r, http.MethodGet, "/metrics", "", nil)
+	body := resp.Body.String()
+	if resp.Code != http.StatusOK ||
+		!strings.Contains(body, `routerx_channel_probe_total{result="success"} 1`) ||
+		!strings.Contains(body, `routerx_channel_probe_total{result="failed"} 1`) {
+		t.Fatalf("metrics should include channel probe counters, got %d %s", resp.Code, body)
+	}
+}
+
 func TestMetricsEndpointReportsIndependentLogDBHealth(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	r := newTestRouter(t)
