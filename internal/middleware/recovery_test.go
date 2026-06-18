@@ -57,3 +57,53 @@ func TestRecoveryLogsRequestContextAndRedactsPanicValue(t *testing.T) {
 		t.Fatalf("panic log should not include raw panic value, got %q", logBody)
 	}
 }
+
+func TestRecoveryUsesEntryProtocolErrorEnvelopeForV1Panics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var logs bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	})
+
+	r := gin.New()
+	r.Use(Recovery())
+	r.Use(Logger())
+	r.POST("/v1/messages", func(c *gin.Context) {
+		panic("anthropic-secret")
+	})
+	r.POST("/v1/models/:model", func(c *gin.Context) {
+		panic("gemini-secret")
+	})
+
+	anthropicReq := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{}`))
+	anthropicReq.Header.Set("anthropic-version", "2023-06-01")
+	anthropicResp := httptest.NewRecorder()
+	r.ServeHTTP(anthropicResp, anthropicReq)
+	if anthropicResp.Code != http.StatusInternalServerError ||
+		!strings.Contains(anthropicResp.Body.String(), `"type":"error"`) ||
+		!strings.Contains(anthropicResp.Body.String(), `"type":"server_error"`) ||
+		strings.Contains(anthropicResp.Body.String(), `"code":"internal_error"`) {
+		t.Fatalf("anthropic v1 panic should use Anthropic error envelope, got %d %s", anthropicResp.Code, anthropicResp.Body.String())
+	}
+
+	geminiReq := httptest.NewRequest(http.MethodPost, "/v1/models/gemini-test:generateContent", strings.NewReader(`{}`))
+	geminiResp := httptest.NewRecorder()
+	r.ServeHTTP(geminiResp, geminiReq)
+	if geminiResp.Code != http.StatusInternalServerError ||
+		!strings.Contains(geminiResp.Body.String(), `"code":500`) ||
+		!strings.Contains(geminiResp.Body.String(), `"status":"INTERNAL"`) ||
+		strings.Contains(geminiResp.Body.String(), `"type":"server_error"`) {
+		t.Fatalf("gemini v1 panic should use Gemini error envelope, got %d %s", geminiResp.Code, geminiResp.Body.String())
+	}
+
+	logBody := logs.String()
+	if strings.Contains(logBody, "anthropic-secret") || strings.Contains(logBody, "gemini-secret") {
+		t.Fatalf("panic logs should remain redacted for protocol panics, got %q", logBody)
+	}
+}

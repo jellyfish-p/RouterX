@@ -120,11 +120,11 @@
 | `billing_failed` | 500 | `server_error` / `INTERNAL` | 扣费事务或日志事实异常 | 可能已调用 | 否 | 按事务结果 | quota_used、事务错误 | 人工核对账单 |
 | `insufficient_quota_after_usage` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 实际 usage 超过可扣额度 | 是 | 否 | 按事务结果 | usage、quota_used、余额 | 调整预留和并发策略 |
 | `model_list_failed` | 500 | `server_error` / `INTERNAL` | 模型列表聚合失败 | 不一定 | 否 | 否 | provider、channel 摘要 | 检查通道模型列表 |
-| `internal_error` | 500 | `server_error` / `INTERNAL` | 未分类内部错误或 panic | 不确定 | 否 | 按日志事实 | request_id、脱敏错误 | 查看系统日志 |
+| `internal_error` | 500 | `server_error` / `INTERNAL` | 未分类内部错误或 panic | 不确定 | 否 | 按日志事实 | request_id、脱敏错误、panic 类型、堆栈 | 查看系统日志 |
 
 ## 当前代码事实和目标收敛
 
-当前代码已经使用 `service.HTTPError` 表达 `/v1` 主链路错误；API Key 鉴权、用户禁用、配额预检查和基础下游错误会按入口协议输出 OpenAI-compatible、Anthropic 或 Gemini 错误结构。以下记录已收敛事实和仍需在后续处理的差异：
+当前代码已经使用 `service.HTTPError` 表达 `/v1` 主链路错误；API Key 鉴权、用户禁用、配额预检查、Recovery panic 和基础下游错误会按入口协议输出 OpenAI-compatible、Anthropic 或 Gemini 错误结构。以下记录已收敛事实和仍需在后续处理的差异：
 
 | 当前事实 | 目标口径 |
 |----------|----------|

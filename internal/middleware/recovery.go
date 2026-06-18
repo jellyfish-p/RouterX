@@ -27,7 +27,7 @@ func Recovery() gin.HandlerFunc {
 					string(debug.Stack()),
 				)
 				if strings.HasPrefix(path, "/v1/") || path == "/v1" {
-					c.AbortWithStatusJSON(http.StatusInternalServerError, common.OpenAIError("internal server error", "server_error", "internal_error"))
+					abortV1Panic(c)
 					return
 				}
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
@@ -38,5 +38,17 @@ func Recovery() gin.HandlerFunc {
 		}()
 
 		c.Next()
+	}
+}
+
+func abortV1Panic(c *gin.Context) {
+	const message = "internal server error"
+	switch entryProtocol(c) {
+	case "anthropic":
+		c.AbortWithStatusJSON(http.StatusInternalServerError, common.AnthropicError(message, "server_error"))
+	case "gemini":
+		c.AbortWithStatusJSON(http.StatusInternalServerError, common.GeminiError(http.StatusInternalServerError, message, geminiStatusText(http.StatusInternalServerError)))
+	default:
+		c.AbortWithStatusJSON(http.StatusInternalServerError, common.OpenAIError(message, "server_error", "internal_error"))
 	}
 }

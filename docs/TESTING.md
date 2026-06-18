@@ -85,6 +85,7 @@
 | `TestMetricsEndpointReportsIndependentLogDBHealth` | `/metrics` 输出独立日志库配置和 ping 状态，日志库不可用时仍回退主库事实并保持指标可用 |
 | `TestRequestIDHeaderUsesConfiguredSetting` | `observability.request_id_header` 修改后，请求 ID 从配置 header 读取并通过同名响应头返回，缺失时生成新 ID |
 | `TestRecoveryLogsRequestContextAndRedactsPanicValue` | Recovery 捕获 panic 时返回统一 500，并在系统错误日志写入 request_id、method、path、client_ip 和堆栈，同时不记录原始 panic 值 |
+| `TestRecoveryUsesEntryProtocolErrorEnvelopeForV1Panics` | `/v1` panic 会按入口协议返回 Anthropic 或 Gemini 兼容 500，而不是固定 OpenAI 错误外形 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、request id header 名校验、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |
 | `TestAdminSettingUpdateWritesAuditLog` | 超级管理员批量更新 settings 后按 key 写 `setting.update` 审计，敏感 payment 配置值不完整泄露 |
 | `TestAdminSettingValidationFailureWritesDeniedAuditLog` | 超级管理员提交非法 settings 值时不落库，写 `setting.denied` 审计并脱敏敏感尝试值 |

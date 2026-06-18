@@ -128,7 +128,7 @@ Recovery
 
 | 中间件 | 当前状态 | 目标职责 |
 |--------|----------|----------|
-| `Recovery` | 已存在 | 捕获 panic，返回统一错误，记录堆栈 |
+| `Recovery` | 已存在 | 捕获 panic，记录脱敏 request_id/method/path/client_ip/panic 类型/堆栈；管理 API 返回统一 500，`/v1` 返回入口协议兼容 500 |
 | `Logger` | 已存在 | 按 `observability.request_id_header` 读取或生成 request_id，写响应头并记录 method/path/status/latency/ip，后续切结构化日志 |
 | `SetupCheck` | 已存在 | 系统未初始化时拦截非 setup/health 请求 |
 | `AdminAuthRequired` | 已存在 | 校验 User JWT 和管理员角色 |
