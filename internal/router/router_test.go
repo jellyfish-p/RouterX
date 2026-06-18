@@ -260,6 +260,24 @@ func TestApifoxOpenAPIOperationsHaveHumanReadableDocs(t *testing.T) {
 	}
 }
 
+func TestApifoxOpenAPIPathParametersAreDeclared(t *testing.T) {
+	operations := loadApifoxOperations(t)
+	missing := make([]string, 0)
+
+	for _, operation := range operations {
+		for _, name := range openAPIPathVariables(operation.Path) {
+			if !operation.hasRequiredPathParameter(name) {
+				missing = append(missing, operation.Key+" missing required path parameter "+name)
+			}
+		}
+	}
+
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml path variables need matching path parameters:\n%s", strings.Join(missing, "\n"))
+	}
+}
+
 func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -15124,9 +15142,27 @@ func loadApifoxOperationSet(t *testing.T) map[string]struct{} {
 
 type apifoxOperationDoc struct {
 	Key          string
+	Path         string
 	Summary      string
 	Description  string
 	HasResponses bool
+	Parameters   []apifoxParameterDoc
+}
+
+type apifoxParameterDoc struct {
+	Ref      string `yaml:"$ref"`
+	Name     string `yaml:"name"`
+	In       string `yaml:"in"`
+	Required bool   `yaml:"required"`
+}
+
+func (o apifoxOperationDoc) hasRequiredPathParameter(name string) bool {
+	for _, parameter := range o.Parameters {
+		if parameter.Name == name && parameter.In == "path" && parameter.Required {
+			return true
+		}
+	}
+	return false
 }
 
 func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
@@ -15139,8 +15175,12 @@ func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
 		Paths map[string]map[string]struct {
 			Summary     string                 `yaml:"summary"`
 			Description string                 `yaml:"description"`
+			Parameters  []apifoxParameterDoc   `yaml:"parameters"`
 			Responses   map[string]interface{} `yaml:"responses"`
 		} `yaml:"paths"`
+		Components struct {
+			Parameters map[string]apifoxParameterDoc `yaml:"parameters"`
+		} `yaml:"components"`
 	}
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("docs/apifox/openapi.yaml should parse as YAML: %v", err)
@@ -15153,9 +15193,11 @@ func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
 			}
 			operations = append(operations, apifoxOperationDoc{
 				Key:          strings.ToUpper(method) + " " + path,
+				Path:         path,
 				Summary:      operation.Summary,
 				Description:  operation.Description,
 				HasResponses: len(operation.Responses) > 0,
+				Parameters:   resolveApifoxParameters(operation.Parameters, doc.Components.Parameters),
 			})
 		}
 	}
@@ -15163,6 +15205,41 @@ func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
 		return operations[i].Key < operations[j].Key
 	})
 	return operations
+}
+
+func resolveApifoxParameters(parameters []apifoxParameterDoc, components map[string]apifoxParameterDoc) []apifoxParameterDoc {
+	resolved := make([]apifoxParameterDoc, 0, len(parameters))
+	for _, parameter := range parameters {
+		if strings.TrimSpace(parameter.Ref) != "" {
+			name := strings.TrimPrefix(parameter.Ref, "#/components/parameters/")
+			if component, ok := components[name]; ok {
+				parameter = component
+			}
+		}
+		resolved = append(resolved, parameter)
+	}
+	return resolved
+}
+
+func openAPIPathVariables(path string) []string {
+	var names []string
+	rest := path
+	for {
+		start := strings.Index(rest, "{")
+		if start < 0 {
+			break
+		}
+		rest = rest[start+1:]
+		end := strings.Index(rest, "}")
+		if end < 0 {
+			break
+		}
+		if name := strings.TrimSpace(rest[:end]); name != "" {
+			names = append(names, name)
+		}
+		rest = rest[end+1:]
+	}
+	return names
 }
 
 func registeredPublicOperationSet(r *gin.Engine) map[string]struct{} {
