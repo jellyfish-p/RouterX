@@ -151,10 +151,10 @@ Gemini-compatible 错误示例：
 
 | HTTP 状态 | 内部 code 示例 | type/status 示例 | 调用方含义 |
 |-----------|----------------|------------------|------------|
-| 400 | `invalid_json`、`invalid_multipart`、`model_required`、`invalid_routerx_options`、`routerx_hop_exceeded`、`unsupported_api` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数或换用已支持接口 |
+| 400 | `invalid_json`、`invalid_multipart`、`model_required`、`invalid_routerx_options`、`routerx_hop_exceeded` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数 |
 | 401 | `invalid_api_key`、`expired_api_key` | `authentication_error` / `UNAUTHENTICATED` | 更换或重新创建 API Key |
 | 403 | `user_disabled`、`token_forbidden`、`model_not_allowed`、`route_forbidden` | `permission_error` / `PERMISSION_DENIED` | 联系管理员调整权限或通道分组 |
-| 404 | `model_not_found`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名或资源 ID |
+| 404 | `model_not_found`、`unsupported_api`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名、接口路径或资源 ID |
 | 429 | `insufficient_quota`、`rate_limit_exceeded` | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 充值、降低并发或等待限流窗口 |
 | 502 | `no_available_channel`、`unsupported_channel`、`unsupported_multipart_channel`、`upstream_request_failed`、`upstream_secret_error`、`upstream_response_too_large`、`upstream_conversion_failed`、`usage_missing` | `upstream_error` / `UNAVAILABLE` | 管理员检查通道、密钥、响应大小、usage 或上游状态 |
 | 504 | `upstream_timeout` | `upstream_error` / `DEADLINE_EXCEEDED` | 重试或检查下游耗时 |
@@ -166,7 +166,7 @@ Gemini-compatible 错误示例：
 - 余额不足、访问控制不通过、没有可用通道时必须在日志中记录可排障原因。
 - 下游原始错误可保存脱敏摘要；对客户端返回时必须转换为当前入口协议兼容格式。
 - 下游非流式响应超过 `relay.max_response_body_bytes` 时返回 502 `upstream_response_too_large`，不反射完整下游响应体且不扣费。
-- `/v1` API Key 鉴权、用户禁用、配额预检查、本地解析错误、`/v1/models/{model}` 的 `model_not_found` 和基础下游错误会按入口协议返回 OpenAI-compatible、Anthropic 或 Gemini 错误外形；本地解析错误语义统一使用 `invalid_json`、`model_required` 等稳定 code。Anthropic/Gemini 基础非流式成功、Anthropic Messages Stream、Gemini streamGenerateContent 基础 SSE、字段降级和基础下游错误外形已有测试，更深层的原生字段保真和 SDK 行为继续按 P1 测试矩阵收敛。
+- `/v1` API Key 鉴权、用户禁用、配额预检查、本地解析错误、未知 `/v1` 路径、`/v1/models/{model}` 的 `model_not_found` 和基础下游错误会按入口协议返回 OpenAI-compatible、Anthropic 或 Gemini 错误外形；本地解析错误语义统一使用 `invalid_json`、`model_required` 等稳定 code，未知 `/v1` 路径在通过 API Key 鉴权后返回 OpenAI-compatible 404 `unsupported_api`。Anthropic/Gemini 基础非流式成功、Anthropic Messages Stream、Gemini streamGenerateContent 基础 SSE、字段降级和基础下游错误外形已有测试，更深层的原生字段保真和 SDK 行为继续按 P1 测试矩阵收敛。
 
 ## 公共接口
 
@@ -1087,5 +1087,5 @@ API Key 校验规则：
 - `/v1` 错误应尽量兼容当前路由对应格式的错误对象。
 - 能力状态以 `docs/PROTOCOLS.md` 为准；已注册路由不能在产品文案中写成完整协议兼容。
 - 对未知兼容格式字段默认透传，不应无故拒绝。
-- 对不支持的接口返回明确的 `404` 或当前格式兼容的 `unsupported_api` 错误。
+- 对不支持的接口返回明确的 `404` 或当前格式兼容的 `unsupported_api` 错误；未知 `/v1` 路径仍必须先经过初始化、API Key 和限流中间件。
 - 管理端和用户端 API 使用 `/v0` 版本前缀，后续破坏性变更使用 `/v1/admin` 或 `/v1/user`，不与模型 API 混淆。

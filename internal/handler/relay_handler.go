@@ -418,6 +418,12 @@ func writeUnsupported(c *gin.Context) {
 	c.JSON(http.StatusNotFound, common.OpenAIError("unsupported api", "invalid_request_error", "unsupported_api"))
 }
 
+// Unsupported returns the OpenAI-compatible error used by authenticated unknown
+// /v1 routes.
+func (h *RelayHandler) Unsupported(c *gin.Context) {
+	writeUnsupported(c)
+}
+
 func (h *RelayHandler) readRelayBody(c *gin.Context) ([]byte, error) {
 	var reader io.Reader = c.Request.Body
 	if h != nil && h.svc != nil {

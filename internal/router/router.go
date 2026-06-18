@@ -64,8 +64,33 @@ func SetupRouter(
 
 	// /v1 OpenAI-Compatible 转发路由 (需要 ApiKeyAuth + 系统已初始化)
 	setupV1Routes(r, relayH)
+	setupV1NoRoute(r, relayH)
 
 	return r
+}
+
+// setupV1NoRoute keeps unknown model API paths on the same auth and rate-limit
+// path as registered /v1 routes. A catch-all route inside the /v1 group would
+// conflict with existing wildcard model routes, so this stays on Engine.NoRoute.
+func setupV1NoRoute(r *gin.Engine, relayH *handler.RelayHandler) {
+	r.NoRoute(
+		func(c *gin.Context) {
+			path := ""
+			if c.Request != nil && c.Request.URL != nil {
+				path = c.Request.URL.Path
+			}
+			if path == "/v1" || strings.HasPrefix(path, "/v1/") {
+				c.Next()
+				return
+			}
+			c.String(http.StatusNotFound, "404 page not found")
+			c.Abort()
+		},
+		middleware.SetupCheck(),
+		middleware.ApiKeyAuthRequired(),
+		middleware.RateLimit(),
+		relayH.Unsupported,
+	)
 }
 
 func readyHandler(c *gin.Context) {

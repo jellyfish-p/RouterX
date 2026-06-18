@@ -308,6 +308,48 @@ func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	}
 }
 
+func TestV1UnsupportedRouteUsesOpenAIErrorAndAuth(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "unsupported-v1",
+		"remain_quota": 10,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	invalidKeyResp := performJSON(r, http.MethodPost, "/v1/unknown", "Bearer sk-invalid-unsupported", map[string]interface{}{})
+	if invalidKeyResp.Code != http.StatusUnauthorized || !strings.Contains(invalidKeyResp.Body.String(), `"code":"invalid_api_key"`) {
+		t.Fatalf("unsupported /v1 routes should still require API key auth, got %d %s", invalidKeyResp.Code, invalidKeyResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/unknown", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{})
+	if resp.Code != http.StatusNotFound ||
+		!strings.Contains(resp.Body.String(), `"type":"invalid_request_error"`) ||
+		!strings.Contains(resp.Body.String(), `"code":"unsupported_api"`) {
+		t.Fatalf("unsupported /v1 route should use OpenAI-compatible unsupported_api, got %d %s", resp.Code, resp.Body.String())
+	}
+}
+
 func TestUserAPIKeyManagementAuditLogs(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	r := newTestRouter(t)

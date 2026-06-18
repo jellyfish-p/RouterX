@@ -106,6 +106,7 @@
 | `TestLogServiceListFallsBackToMainDBWhenExternalLogDBFails` | 独立日志库查询失败时，管理日志列表回退读取主库事实 |
 | `TestAPIKeyAuthErrorsUseEntryProtocolShape` | Anthropic/Gemini 入口 API Key 鉴权错误外形 |
 | `TestProtocolWrapperRequestErrorsUseStableCodes` | Anthropic/Gemini wrapper 本地解析失败复用稳定错误语义：非法 JSON 为 `invalid_json`，缺少 model 为 `model_required` |
+| `TestV1UnsupportedRouteUsesOpenAIErrorAndAuth` | 未知 `/v1` 路径仍经过 API Key 鉴权；鉴权通过后返回 OpenAI-compatible 404 `unsupported_api`，不落入 Gin 默认纯文本 404 |
 | `TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields` | Anthropic/Gemini 非流式成功响应、usage、扣费和非文本 content/parts 降级 |
 | `TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini embedContent 转 OpenAI-compatible Embeddings 上游，返回 Gemini `embedding.values` 外形，usage 写日志和扣费 |
 | `TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini batchEmbedContents 转 OpenAI-compatible Embeddings 批量 input，上游 embedding list 返回 Gemini `embeddings[].values` 外形，usage 写日志和扣费 |
