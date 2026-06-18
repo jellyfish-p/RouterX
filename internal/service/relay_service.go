@@ -460,11 +460,11 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	ctx = ContextWithRelayPolicySnapshot(ctx, buildRelayPolicySnapshot(ctx, token, reqInfo))
 
 	filteredReasons := map[string]int{}
-	candidates, selectionReasons, err := s.channelService.SelectChannelCandidatesWithRouteFacts(reqInfo.Model, reqInfo.Route)
-	mergeRouteFilterReasons(filteredReasons, selectionReasons)
+	candidates, selectionFacts, err := s.channelService.SelectChannelCandidatesWithRouteDetailedFacts(reqInfo.Model, reqInfo.Route)
+	mergeRouteFilterReasons(filteredReasons, selectionFacts.FilteredReasons)
 	if err != nil {
 		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, nil, nil, nil, filteredReasons))
-		logCtx = ContextWithRelayPolicySnapshot(logCtx, buildRelayNoAvailableChannelPolicySnapshot(ctx, token))
+		logCtx = ContextWithRelayPolicySnapshot(logCtx, buildRelayNoAvailableChannelPolicySnapshot(ctx, token, selectionFacts.BreakerSnapshot))
 		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
@@ -695,11 +695,11 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	ctx = ContextWithRelayPolicySnapshot(ctx, buildRelayPolicySnapshot(ctx, token, reqInfo))
 
 	filteredReasons := map[string]int{}
-	candidates, selectionReasons, err := s.channelService.SelectChannelCandidatesWithRouteFacts(reqInfo.Model, reqInfo.Route)
-	mergeRouteFilterReasons(filteredReasons, selectionReasons)
+	candidates, selectionFacts, err := s.channelService.SelectChannelCandidatesWithRouteDetailedFacts(reqInfo.Model, reqInfo.Route)
+	mergeRouteFilterReasons(filteredReasons, selectionFacts.FilteredReasons)
 	if err != nil {
 		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, nil, nil, nil, filteredReasons))
-		logCtx = ContextWithRelayPolicySnapshot(logCtx, buildRelayNoAvailableChannelPolicySnapshot(ctx, token))
+		logCtx = ContextWithRelayPolicySnapshot(logCtx, buildRelayNoAvailableChannelPolicySnapshot(ctx, token, selectionFacts.BreakerSnapshot))
 		_ = s.recordLog(logCtx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "no available channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "no available upstream channel", Type: "upstream_error", Code: "no_available_channel"}
 	}
@@ -2811,13 +2811,26 @@ func buildRelayChannelModelAccessDenyPolicySnapshot(ctx context.Context, token *
 	})
 }
 
-func buildRelayNoAvailableChannelPolicySnapshot(ctx context.Context, token *model.Token) string {
-	return buildRelayPolicyDenySnapshot(ctx, token, "no_available_channel", "available", map[string]interface{}{
+func buildRelayNoAvailableChannelPolicySnapshot(ctx context.Context, token *model.Token, breakerSnapshot map[string]interface{}) string {
+	raw := buildRelayPolicyDenySnapshot(ctx, token, "no_available_channel", "available", map[string]interface{}{
 		"api_type":        "allow",
 		"model":           "allow",
 		"channel_group":   "allow",
 		"route_candidate": "deny",
 	})
+	if len(breakerSnapshot) == 0 || strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return raw
+	}
+	snapshot["breaker_snapshot"] = breakerSnapshot
+	withBreaker, err := json.Marshal(snapshot)
+	if err != nil {
+		return raw
+	}
+	return string(withBreaker)
 }
 
 func tokenStatusSnapshot(status int) string {

@@ -88,7 +88,7 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 - 当前 `relay.retry_count=0`。
 - 默认只做一次明确的下游调用，先保证错误归因、日志、扣费和排障稳定。
 - 当前已支持通过 `relay.retry_count > 0` 为非流式请求开启有限候选通道重试，HTTP 状态码由 `relay.retry_on_status` 白名单控制。
-- `error_count` 熔断、基础限流和冷却窗口后的半开候选探测已进入 P1；限流拒绝已写入基础 `rate_limit_snapshot`，后台探测任务和完整熔断快照继续推进。
+- `error_count` 熔断、基础限流和冷却窗口后的半开候选探测已进入 P1；限流拒绝已写入基础 `rate_limit_snapshot`，熔断无候选拒绝已写入基础 `breaker_snapshot`，后台探测任务继续推进。
 
 为什么这样选：
 

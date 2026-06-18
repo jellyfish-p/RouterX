@@ -13329,6 +13329,144 @@ func TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold(t *testing.T) {
 	}
 }
 
+func TestNoAvailableChannelWritesBreakerSnapshot(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-breaker-snapshot","object":"chat.completion","model":"gpt-breaker-snapshot","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"relay.error_auto_ban":             "true",
+		"relay.error_ban_threshold":        "1",
+		"relay.error_ban_cooldown_seconds": "300",
+		"routing.channel_cache.enabled":    "false",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "breaker-snapshot",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "breaker-snapshot-channel",
+		"models":   "gpt-breaker-snapshot",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+		"group":    "default",
+	})
+	var channelPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(channelResp.Body.Bytes(), &channelPayload); err != nil {
+		t.Fatal(err)
+	}
+	if channelResp.Code != http.StatusOK || channelPayload.Data.ID == 0 {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+	if err := internal.DB.Model(&model.Channel{}).Where("id = ?", channelPayload.Data.ID).UpdateColumns(map[string]interface{}{
+		"error_count": 3,
+		"updated_at":  time.Now(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]interface{}{
+		"model": "gpt-breaker-snapshot",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	resp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	if resp.Code != http.StatusBadGateway || !strings.Contains(resp.Body.String(), `"code":"no_available_channel"`) {
+		t.Fatalf("request should fail before upstream because breaker blocks all candidates, got %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("health-blocked channel should not be called, got %d calls", upstreamCalls)
+	}
+
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg = ?", common.LogStatusFailed, tokenPayload.Data.ID, "no available channel").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("breaker denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok || scopeResult["route_candidate"] != "deny" {
+		t.Fatalf("unexpected no-candidate scope result: %+v", policySnapshot)
+	}
+	breakerSnapshot, ok := policySnapshot["breaker_snapshot"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("breaker denial should include breaker_snapshot: %+v", policySnapshot)
+	}
+	if breakerSnapshot["decision"] != "deny" ||
+		breakerSnapshot["reason"] != "health_blocked" ||
+		breakerSnapshot["auto_ban"] != true ||
+		breakerSnapshot["threshold"] != float64(1) ||
+		breakerSnapshot["cooldown_seconds"] != float64(300) ||
+		breakerSnapshot["blocked_channel_count"] != float64(1) {
+		t.Fatalf("unexpected breaker snapshot summary: %+v", breakerSnapshot)
+	}
+	blockedChannels, ok := breakerSnapshot["blocked_channels"].([]interface{})
+	if !ok || len(blockedChannels) != 1 {
+		t.Fatalf("breaker snapshot should include one blocked channel summary: %+v", breakerSnapshot)
+	}
+	blockedChannel, ok := blockedChannels[0].(map[string]interface{})
+	if !ok ||
+		blockedChannel["channel_id"] != float64(channelPayload.Data.ID) ||
+		blockedChannel["provider"] != "openai-compatible" ||
+		blockedChannel["channel_group"] != "default" ||
+		blockedChannel["error_count"] != float64(3) {
+		t.Fatalf("unexpected blocked channel summary: %+v", blockedChannels[0])
+	}
+	remaining, ok := blockedChannel["cooldown_remaining_seconds"].(float64)
+	if !ok || remaining <= 0 || remaining > 300 {
+		t.Fatalf("blocked channel should report cooldown remaining within window: %+v", blockedChannel)
+	}
+	if blockedChannel["updated_at"] == "" {
+		t.Fatalf("blocked channel should report updated_at: %+v", blockedChannel)
+	}
+}
+
 func TestChatCompletionHonorsDisabledAutoBanSetting(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

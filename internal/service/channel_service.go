@@ -42,6 +42,11 @@ type circuitBreakerConfig struct {
 	cooldown  time.Duration
 }
 
+type RouteSelectionFacts struct {
+	FilteredReasons map[string]int
+	BreakerSnapshot map[string]interface{}
+}
+
 type channelCandidateCache struct {
 	loaded    bool
 	version   int
@@ -109,38 +114,88 @@ func (s *ChannelService) SelectChannelCandidatesWithRoute(modelName string, rout
 
 // SelectChannelCandidatesWithRouteFacts 同时返回候选和按首个过滤原因汇总的数量，供路由快照解释选择过程。
 func (s *ChannelService) SelectChannelCandidatesWithRouteFacts(modelName string, route RoutePreference) ([]model.Channel, map[string]int, error) {
+	candidates, facts, err := s.SelectChannelCandidatesWithRouteDetailedFacts(modelName, route)
+	return candidates, facts.FilteredReasons, err
+}
+
+// SelectChannelCandidatesWithRouteDetailedFacts 返回候选以及用于路由/策略快照的结构化过滤事实。
+func (s *ChannelService) SelectChannelCandidatesWithRouteDetailedFacts(modelName string, route RoutePreference) ([]model.Channel, RouteSelectionFacts, error) {
 	modelName = strings.TrimSpace(modelName)
 	breaker := s.circuitBreakerConfig()
 	channels, err := s.channelsForCandidateSelection()
 	if err != nil {
-		return nil, nil, err
+		return nil, RouteSelectionFacts{}, err
 	}
 	now := time.Now()
-	filteredReasons := map[string]int{}
+	facts := RouteSelectionFacts{FilteredReasons: map[string]int{}}
 	candidates := make([]model.Channel, 0, len(channels))
 	for _, channel := range channels {
 		if channel.Status != common.ChannelStatusEnabled {
-			addRouteFilterReason(filteredReasons, routeFilterReasonDisabled, 1)
+			addRouteFilterReason(facts.FilteredReasons, routeFilterReasonDisabled, 1)
 			continue
 		}
 		if channelHealthBlocked(channel, breaker, now) {
-			addRouteFilterReason(filteredReasons, routeFilterReasonHealthBlocked, 1)
+			addRouteFilterReason(facts.FilteredReasons, routeFilterReasonHealthBlocked, 1)
+			facts.addHealthBlockedChannel(channel, breaker, now)
 			continue
 		}
 		if !channelSupportsModel(channel.Models, modelName) {
-			addRouteFilterReason(filteredReasons, routeFilterReasonModelMismatch, 1)
+			addRouteFilterReason(facts.FilteredReasons, routeFilterReasonModelMismatch, 1)
 			continue
 		}
 		if !channelMatchesRoute(channel, route) {
-			addRouteFilterReason(filteredReasons, routeFilterReasonRoutePreference, 1)
+			addRouteFilterReason(facts.FilteredReasons, routeFilterReasonRoutePreference, 1)
 			continue
 		}
 		candidates = append(candidates, channel)
 	}
 	if len(candidates) == 0 {
-		return nil, filteredReasons, errors.New("no available channel")
+		return nil, facts, errors.New("no available channel")
 	}
-	return candidates, filteredReasons, nil
+	return candidates, facts, nil
+}
+
+func (f *RouteSelectionFacts) addHealthBlockedChannel(channel model.Channel, breaker circuitBreakerConfig, now time.Time) {
+	if f == nil {
+		return
+	}
+	if f.BreakerSnapshot == nil {
+		f.BreakerSnapshot = map[string]interface{}{
+			"decision":              "deny",
+			"reason":                routeFilterReasonHealthBlocked,
+			"auto_ban":              breaker.autoBan,
+			"threshold":             breaker.threshold,
+			"cooldown_seconds":      int64(breaker.cooldown.Seconds()),
+			"blocked_channel_count": int64(0),
+			"blocked_channels":      []map[string]interface{}{},
+		}
+	}
+	blockedCount, _ := f.BreakerSnapshot["blocked_channel_count"].(int64)
+	blockedCount++
+	f.BreakerSnapshot["blocked_channel_count"] = blockedCount
+
+	blockedChannels, _ := f.BreakerSnapshot["blocked_channels"].([]map[string]interface{})
+	if len(blockedChannels) >= 10 {
+		f.BreakerSnapshot["blocked_channels_truncated"] = true
+		return
+	}
+	summary := map[string]interface{}{
+		"channel_id":    channel.ID,
+		"provider":      channelProviderName(channel.Type),
+		"channel_group": normalizeChannelGroupName(channel.ChannelGroup),
+		"error_count":   channel.ErrorCount,
+	}
+	if !channel.UpdatedAt.IsZero() {
+		summary["updated_at"] = channel.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	if breaker.cooldown > 0 && !channel.UpdatedAt.IsZero() {
+		remaining := breaker.cooldown - now.Sub(channel.UpdatedAt)
+		if remaining < 0 {
+			remaining = 0
+		}
+		summary["cooldown_remaining_seconds"] = int64(remaining.Seconds())
+	}
+	f.BreakerSnapshot["blocked_channels"] = append(blockedChannels, summary)
 }
 
 func (s *ChannelService) circuitBreakerConfig() circuitBreakerConfig {

@@ -229,9 +229,9 @@ access allowed
 
 限流或预算拒绝必须返回稳定 code，并写入限流维度和 key 摘要。指标标签不得包含完整 API Key、prompt、响应正文或高基数长尾模型名。
 
-当前已实现全局、IP、API Key、用户、模型和通道六个 Redis 固定窗口维度。本地命中限流时不调用上游，并按入口协议返回兼容 429：OpenAI 为 `rate_limit_exceeded`，Anthropic 为 `rate_limit_error`，Gemini 为 `RESOURCE_EXHAUSTED`。全局、IP、Token、用户、模型和通道维度限流拒绝会写失败日志、基础 `policy_snapshot` 和 `rate_limit_snapshot` 摘要；完整熔断快照仍属于后续增强。
+当前已实现全局、IP、API Key、用户、模型和通道六个 Redis 固定窗口维度。本地命中限流时不调用上游，并按入口协议返回兼容 429：OpenAI 为 `rate_limit_exceeded`，Anthropic 为 `rate_limit_error`，Gemini 为 `RESOURCE_EXHAUSTED`。全局、IP、Token、用户、模型和通道维度限流拒绝会写失败日志、基础 `policy_snapshot` 和 `rate_limit_snapshot` 摘要。
 
-当前自动熔断通过通道候选过滤实现：`relay.error_auto_ban=true` 时排除 `error_count >= relay.error_ban_threshold` 且仍处于 `relay.error_ban_cooldown_seconds` 冷却窗口内的通道；关闭自动熔断时仍记录错误计数，但不因阈值排除候选。冷却后的半开候选探测已落地，后台探测任务和完整熔断快照仍属于后续增强。
+当前自动熔断通过通道候选过滤实现：`relay.error_auto_ban=true` 时排除 `error_count >= relay.error_ban_threshold` 且仍处于 `relay.error_ban_cooldown_seconds` 冷却窗口内的通道；关闭自动熔断时仍记录错误计数，但不因阈值排除候选。冷却后的半开候选探测已落地；当无可用候选由 `health_blocked` 造成时，失败日志会写基础 `policy_snapshot` 和 `breaker_snapshot`，记录阈值、冷却窗口和被挡通道摘要。后台定时探测任务仍属于后续增强。
 
 ## 11. 快照和审计
 
@@ -246,6 +246,7 @@ access allowed
 | `access_rule_snapshot` | 用户分组、通道分组、模型/API 类型访问判断和规则版本。 |
 | `multiplier_snapshot` | 用户分组倍率、通道分组倍率、组合覆盖倍率、倍率模式和最终 `effective_ratio`。 |
 | `rate_limit_snapshot` | 命中的限流维度、窗口、阈值和剩余量摘要。 |
+| `breaker_snapshot` | 命中的熔断策略、阈值、冷却窗口和被挡通道摘要。 |
 | `billing_expression_snapshot` | 价格表达式、变量和基础费用。 |
 
 策略相关审计事件：
