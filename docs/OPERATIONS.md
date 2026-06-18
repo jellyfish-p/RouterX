@@ -89,6 +89,7 @@ rediss://:password@redis.example.com:6379/0
 | `rate_limit.per_ip_per_min` | `30` | IP 每分钟限制；`0` 表示关闭该维度 |
 | `rate_limit.per_user_per_min` | `0` | 用户每分钟限制；`0` 表示关闭该维度 |
 | `rate_limit.per_model_per_min` | `0` | 模型每分钟限制；`0` 表示关闭该维度 |
+| `rate_limit.per_channel_per_min` | `0` | 通道每分钟限制；`0` 表示关闭该维度 |
 | `relay.timeout` | `120` | 下游超时秒数 |
 | `relay.retry_count` | `0` | 默认不自动重试；大于 0 时非流式仅对可安全重试错误换候选 |
 | `relay.retry_on_status` | `[429,500,502,503,504]` | 非流式可重试 HTTP 状态码白名单 |

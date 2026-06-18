@@ -527,6 +527,9 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		s.recordRelayDuration(apiType, channel, time.Since(relayStart))
 	}()
 
+	if err := s.enforceChannelRateLimit(ctx, token, channel, reqInfo.Model, clientIP); err != nil {
+		return nil, nil, false, err
+	}
 	adapter, err := s.GetAdapter(channel.Type)
 	if err != nil {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
@@ -725,6 +728,9 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	}
 	channel := pickRelayChannelCandidate(candidates)
 	ctx = ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, channel, nil, filteredReasons))
+	if err := s.enforceChannelRateLimit(ctx, token, channel, reqInfo.Model, clientIP); err != nil {
+		return nil, err
+	}
 	if !supportsOpenAICompatibleStream(channel.Type) {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "streaming is not supported for selected upstream channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "streaming is not supported for selected upstream channel", Type: "upstream_error", Code: "unsupported_stream_channel"}
@@ -2482,6 +2488,36 @@ func (s *RelayService) enforceModelRateLimit(ctx context.Context, token *model.T
 		"rate_limit_dimension": "model",
 	}))
 	_ = s.recordLog(logCtx, token, nil, modelName, nil, common.LogStatusFailed, 0, "model rate limit exceeded", clientIP)
+	return &HTTPError{Status: 429, Message: "rate limit exceeded", Type: "rate_limit_error", Code: "rate_limit_exceeded"}
+}
+
+func (s *RelayService) enforceChannelRateLimit(ctx context.Context, token *model.Token, channel *model.Channel, modelName, clientIP string) error {
+	if channel == nil || channel.ID == 0 || internal.RDB == nil {
+		return nil
+	}
+	settingSvc := s.settingService
+	if settingSvc == nil {
+		settingSvc = NewSettingService()
+	}
+	if enabled, err := settingSvc.GetBool("rate_limit.enabled"); err == nil && !enabled {
+		return nil
+	}
+	limit, err := settingSvc.GetInt("rate_limit.per_channel_per_min")
+	if err != nil || limit <= 0 {
+		return nil
+	}
+	now := time.Now().Unix() / 60
+	if !relayRateLimitExceeded(fmt.Sprintf("rl:channel:%d:%d", channel.ID, now), int64(limit)) {
+		return nil
+	}
+	logCtx := ContextWithRelayPolicySnapshot(ctx, buildRelayPolicyDenySnapshot(ctx, token, "rate_limit_exceeded", "rate_limit_exceeded", map[string]interface{}{
+		"api_type":             "allow",
+		"model":                "allow",
+		"channel_group":        "allow",
+		"rate_limit":           "deny",
+		"rate_limit_dimension": "channel",
+	}))
+	_ = s.recordLog(logCtx, token, channel, modelName, nil, common.LogStatusFailed, 0, "channel rate limit exceeded", clientIP)
 	return &HTTPError{Status: 429, Message: "rate limit exceeded", Type: "rate_limit_error", Code: "rate_limit_exceeded"}
 }
 

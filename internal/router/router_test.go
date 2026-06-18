@@ -4420,6 +4420,13 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"auth.register.default_quota",
 		"auth.register.default_group_id",
 		"jwt.secret",
+		"rate_limit.enabled",
+		"rate_limit.global_per_min",
+		"rate_limit.per_token_per_min",
+		"rate_limit.per_ip_per_min",
+		"rate_limit.per_user_per_min",
+		"rate_limit.per_model_per_min",
+		"rate_limit.per_channel_per_min",
 		"relay.timeout",
 		"relay.retry_count",
 		"relay.retry_on_status",
@@ -4890,6 +4897,12 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	}
 	if tokenLimit.Value != "0" {
 		t.Fatalf("rate_limit.per_token_per_min=0 should be persisted, got %q", tokenLimit.Value)
+	}
+	badChannelRateLimit := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"rate_limit.per_channel_per_min": "-1",
+	})
+	if badChannelRateLimit.Code != http.StatusBadRequest {
+		t.Fatalf("rate_limit.per_channel_per_min should reject negative values, got %d %s", badChannelRateLimit.Code, badChannelRateLimit.Body.String())
 	}
 
 	badPort := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
@@ -6306,6 +6319,130 @@ func TestRateLimitPerModelRejectsBeforeUpstream(t *testing.T) {
 		scopeResult["rate_limit"] != "deny" ||
 		scopeResult["rate_limit_dimension"] != "model" {
 		t.Fatalf("unexpected model rate limit policy snapshot: %+v", policySnapshot)
+	}
+}
+
+func TestRateLimitPerChannelRejectsBeforeUpstream(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-channel-limit","object":"chat.completion","model":"gpt-channel-limit","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = nil
+	})
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"rate_limit.global_per_min":      "0",
+		"rate_limit.per_ip_per_min":      "0",
+		"rate_limit.per_token_per_min":   "0",
+		"rate_limit.per_user_per_min":    "0",
+		"rate_limit.per_model_per_min":   "0",
+		"rate_limit.per_channel_per_min": "1",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "channel-limited",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "channel-limit",
+		"models":   "gpt-channel-limit",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	var channelPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(channelResp.Body.Bytes(), &channelPayload); err != nil {
+		t.Fatal(err)
+	}
+	if channelResp.Code != http.StatusOK || channelPayload.Data.ID == 0 {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+	body := map[string]interface{}{
+		"model": "gpt-channel-limit",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	first := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first request should pass channel limit, got %d %s", first.Code, first.Body.String())
+	}
+	second := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	if second.Code != http.StatusTooManyRequests || !strings.Contains(second.Body.String(), `"code":"rate_limit_exceeded"`) {
+		t.Fatalf("second request for same channel should be blocked by channel limit, got %d %s", second.Code, second.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("channel-level limited request should not call upstream, got %d", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 48 {
+		t.Fatalf("only first request should be charged, got %d", storedToken.RemainQuota)
+	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND channel_id = ? AND model = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, channelPayload.Data.ID, "gpt-channel-limit", "%channel rate limit%").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("channel rate limit rejection should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["reject_code"] != "rate_limit_exceeded" ||
+		policySnapshot["quota_precheck"] != "rate_limit_exceeded" ||
+		scopeResult["channel_group"] != "allow" ||
+		scopeResult["rate_limit"] != "deny" ||
+		scopeResult["rate_limit_dimension"] != "channel" {
+		t.Fatalf("unexpected channel rate limit policy snapshot: %+v", policySnapshot)
 	}
 }
 

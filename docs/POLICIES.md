@@ -32,7 +32,7 @@
 - 通道候选按 `priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC` 排序，并在最高 priority 组内按 `weight` 加权选择。
 - 管理端已支持 `GET/POST/PUT/DELETE /v0/admin/groups` 维护用户分组；删除会保护 `default` 和仍被用户引用的分组，并写 `user_group.*` 审计。
 - 通道已具备 `channel_group` 字段，新通道默认写入 `default`；Relay 已按 `billing.default_user_channel_group_access` 和 `billing.user_group_channel_group_access` 在候选阶段过滤用户可访问通道分组。完整策略快照仍属于目标增强。
-- Redis 限流已有全局、IP、Token、用户和模型维度的基础设置与执行路径；阈值来自 `rate_limit.*`，`0` 表示关闭对应维度。
+- Redis 限流已有全局、IP、Token、用户、模型和通道维度的基础设置与执行路径；阈值来自 `rate_limit.*`，`0` 表示关闭对应维度。
 
 因此，本文档中的 P1/P2 策略能力是对现有 P0 闭环的增强，不应破坏当前开箱路径。
 
@@ -229,7 +229,7 @@ access allowed
 
 限流或预算拒绝必须返回稳定 code，并写入限流维度和 key 摘要。指标标签不得包含完整 API Key、prompt、响应正文或高基数长尾模型名。
 
-当前已实现全局、IP、API Key、用户和模型五个 Redis 固定窗口维度。本地命中限流时不调用上游，并按入口协议返回兼容 429：OpenAI 为 `rate_limit_exceeded`，Anthropic 为 `rate_limit_error`，Gemini 为 `RESOURCE_EXHAUSTED`。Token、用户和模型维度限流拒绝会写失败日志和基础 `policy_snapshot`；全局/IP 日志摘要、通道维度以及完整 `rate_limit_snapshot` 仍属于后续增强。
+当前已实现全局、IP、API Key、用户、模型和通道六个 Redis 固定窗口维度。本地命中限流时不调用上游，并按入口协议返回兼容 429：OpenAI 为 `rate_limit_exceeded`，Anthropic 为 `rate_limit_error`，Gemini 为 `RESOURCE_EXHAUSTED`。Token、用户、模型和通道维度限流拒绝会写失败日志和基础 `policy_snapshot`；全局/IP 日志摘要以及完整 `rate_limit_snapshot` 仍属于后续增强。
 
 当前自动熔断通过通道候选过滤实现：`relay.error_auto_ban=true` 时排除 `error_count >= relay.error_ban_threshold` 且仍处于 `relay.error_ban_cooldown_seconds` 冷却窗口内的通道；关闭自动熔断时仍记录错误计数，但不因阈值排除候选。冷却后的半开候选探测已落地，后台探测任务和完整熔断快照仍属于后续增强。
 
