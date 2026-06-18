@@ -238,6 +238,28 @@ func TestApifoxOpenAPICoversRegisteredRoutes(t *testing.T) {
 	}
 }
 
+func TestApifoxOpenAPIOperationsHaveHumanReadableDocs(t *testing.T) {
+	operations := loadApifoxOperations(t)
+	missing := make([]string, 0)
+
+	for _, operation := range operations {
+		if strings.TrimSpace(operation.Summary) == "" {
+			missing = append(missing, operation.Key+" missing summary")
+		}
+		if strings.TrimSpace(operation.Description) == "" {
+			missing = append(missing, operation.Key+" missing description")
+		}
+		if !operation.HasResponses {
+			missing = append(missing, operation.Key+" missing responses")
+		}
+	}
+
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml operations need human-readable docs:\n%s", strings.Join(missing, "\n"))
+	}
+}
+
 func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -15093,25 +15115,53 @@ func newTestRouter(t *testing.T) *gin.Engine {
 
 func loadApifoxOperationSet(t *testing.T) map[string]struct{} {
 	t.Helper()
+	operations := map[string]struct{}{}
+	for _, operation := range loadApifoxOperations(t) {
+		operations[operation.Key] = struct{}{}
+	}
+	return operations
+}
+
+type apifoxOperationDoc struct {
+	Key          string
+	Summary      string
+	Description  string
+	HasResponses bool
+}
+
+func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "apifox", "openapi.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var doc struct {
-		Paths map[string]map[string]interface{} `yaml:"paths"`
+		Paths map[string]map[string]struct {
+			Summary     string                 `yaml:"summary"`
+			Description string                 `yaml:"description"`
+			Responses   map[string]interface{} `yaml:"responses"`
+		} `yaml:"paths"`
 	}
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("docs/apifox/openapi.yaml should parse as YAML: %v", err)
 	}
-	operations := map[string]struct{}{}
+	operations := make([]apifoxOperationDoc, 0)
 	for path, methods := range doc.Paths {
-		for method := range methods {
+		for method, operation := range methods {
 			if !isOpenAPIHTTPMethod(method) {
 				continue
 			}
-			operations[strings.ToUpper(method)+" "+path] = struct{}{}
+			operations = append(operations, apifoxOperationDoc{
+				Key:          strings.ToUpper(method) + " " + path,
+				Summary:      operation.Summary,
+				Description:  operation.Description,
+				HasResponses: len(operation.Responses) > 0,
+			})
 		}
 	}
+	sort.Slice(operations, func(i, j int) bool {
+		return operations[i].Key < operations[j].Key
+	})
 	return operations
 }
 

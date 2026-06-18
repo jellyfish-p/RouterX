@@ -149,6 +149,7 @@ paths:
     get:
       tags: [Setup]
       summary: 查询初始化状态
+      description: 公共初始化探测接口；返回系统是否已完成首次初始化，以及是否允许进入 /v0/setup/init。该接口不要求鉴权，也不受 SetupCheck 限制。
       responses:
         "200":
           description: 初始化状态
@@ -247,6 +248,7 @@ paths:
     get:
       tags: [User Auth]
       summary: 获取个人信息
+      description: 返回当前 User JWT 对应的用户基础信息；不会返回密码、API Key 明文或其他敏感凭据。
       security:
         - UserJWT: []
       responses:
@@ -266,6 +268,7 @@ paths:
     put:
       tags: [User Auth]
       summary: 修改个人信息
+      description: 当前用户修改自己的展示名等个人资料；不能通过该接口提升角色、修改余额、切换分组或绕过管理员权限。
       security:
         - UserJWT: []
       requestBody:
@@ -298,6 +301,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 修改登录密码
+      description: 当前用户在登录态下修改本地密码；服务端校验旧密码后更新本地身份凭据，不会返回密码摘要或其他认证秘密。
       security:
         - UserJWT: []
       requestBody:
@@ -317,6 +321,7 @@ paths:
     get:
       tags: [User API Key]
       summary: 当前用户 API Key 列表
+      description: 返回当前用户自己的 API Key 分页列表；仅包含脱敏前缀、状态、过期时间、额度和最近使用摘要，不返回完整 sk- 明文或哈希。
       security:
         - UserJWT: []
       parameters:
@@ -568,6 +573,7 @@ paths:
     get:
       tags: [User Usage]
       summary: 当前用户调用日志
+      description: 查询当前用户自己的模型调用日志，支持按 API Key、通道、模型、状态和时间窗口过滤；响应中的请求/响应体、IP、错误原文和快照字段按服务端脱敏策略返回。
       security:
         - UserJWT: []
       parameters:
@@ -752,6 +758,7 @@ paths:
     get:
       tags: [User Payment]
       summary: 当前用户支付订单列表
+      description: 查询当前用户自己的支付订单分页列表；只返回本用户订单和服务端保存的订单快照，不允许通过筛选读取其他用户订单。
       security:
         - UserJWT: []
       parameters:
@@ -773,6 +780,7 @@ paths:
     get:
       tags: [User Payment]
       summary: 当前用户支付订单详情
+      description: 查询当前用户自己的单个支付订单详情；订单不存在或不属于当前用户时返回 404，不泄露其他用户订单状态。
       security:
         - UserJWT: []
       parameters:
@@ -914,6 +922,7 @@ paths:
     get:
       tags: [Admin Users]
       summary: 用户列表
+      description: 管理员分页查询用户列表，支持关键词、角色、状态和分组过滤；响应不包含密码摘要、API Key 明文或下游密钥。
       security:
         - UserJWT: []
       parameters:
