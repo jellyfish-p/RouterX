@@ -24,8 +24,9 @@ const (
 	keySelectionRoundRobin = "round_robin"
 	keySelectionRandom     = "random"
 
-	channelCandidateCacheRedisHash  = "routing:channel_candidate_cache"
-	channelCandidateCacheRedisField = "snapshot"
+	channelCandidateCacheRedisHash                = "routing:channel_candidate_cache"
+	channelCandidateCacheRedisField               = "snapshot"
+	channelCandidateCacheInvalidationRedisChannel = "routing:channel_candidate_cache:invalidate"
 
 	routeFilterReasonAccessDenied    = "access_denied"
 	routeFilterReasonDisabled        = "disabled"
@@ -87,6 +88,11 @@ type channelCandidateCacheRedisSnapshot struct {
 	Version       int             `json:"version"`
 	ExpiresAtUnix int64           `json:"expires_at_unix"`
 	Channels      []model.Channel `json:"channels"`
+}
+
+type channelCandidateCacheInvalidationMessage struct {
+	Version    int   `json:"version"`
+	SentAtUnix int64 `json:"sent_at_unix"`
 }
 
 type ChannelUpstreamTarget struct {
@@ -389,6 +395,33 @@ func (s *ChannelService) StartBreakerProbeWorker(ctx context.Context) {
 	}()
 }
 
+func (s *ChannelService) StartCandidateCacheInvalidationSubscriber(ctx context.Context) {
+	if s == nil || internal.RDB == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		pubsub := internal.RDB.Subscribe(ctx, channelCandidateCacheInvalidationRedisChannel)
+		defer pubsub.Close()
+		messages := pubsub.Channel()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-messages:
+				if !ok {
+					return
+				}
+				if msg != nil {
+					s.handleCandidateCacheInvalidationMessage(msg.Payload)
+				}
+			}
+		}
+	}()
+}
+
 func (s *ChannelService) channelsForCandidateSelection() ([]model.Channel, error) {
 	cfg := s.channelCandidateCacheConfig()
 	if !cfg.enabled {
@@ -526,6 +559,40 @@ func (s *ChannelService) storeCandidateCacheInRedis(cfg channelCandidateCacheCon
 	_ = internal.RDB.HSet(ctx, channelCandidateCacheRedisHash, channelCandidateCacheRedisField, string(raw)).Err()
 }
 
+func (s *ChannelService) publishCandidateCacheInvalidation(version int) {
+	if internal.RDB == nil || version <= 0 {
+		return
+	}
+	raw, err := json.Marshal(channelCandidateCacheInvalidationMessage{
+		Version:    version,
+		SentAtUnix: time.Now().Unix(),
+	})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = internal.RDB.Publish(ctx, channelCandidateCacheInvalidationRedisChannel, string(raw)).Err()
+}
+
+func (s *ChannelService) handleCandidateCacheInvalidationMessage(raw string) {
+	if s == nil || strings.TrimSpace(raw) == "" {
+		return
+	}
+	var message channelCandidateCacheInvalidationMessage
+	if err := json.Unmarshal([]byte(raw), &message); err != nil || message.Version <= 0 {
+		return
+	}
+	s.candidateCacheMu.Lock()
+	defer s.candidateCacheMu.Unlock()
+	if !s.candidateCache.loaded {
+		return
+	}
+	if message.Version >= s.candidateCache.version {
+		s.candidateCache = channelCandidateCache{}
+	}
+}
+
 func loadChannelsForCandidateSelection() ([]model.Channel, error) {
 	var channels []model.Channel
 	err := internal.DB.Order("priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC").Find(&channels).Error
@@ -560,7 +627,10 @@ func (s *ChannelService) touchCandidateCacheVersion() {
 	if err != nil || version < 1 {
 		version = 1
 	}
-	_ = settingSvc.Set("routing.channel_cache.version", strconv.Itoa(version+1))
+	nextVersion := version + 1
+	if err := settingSvc.Set("routing.channel_cache.version", strconv.Itoa(nextVersion)); err == nil {
+		s.publishCandidateCacheInvalidation(nextVersion)
+	}
 	// Preload is an optimization; request-time cache reload remains authoritative if warmup fails.
 	_ = s.PreloadCandidateCache()
 }

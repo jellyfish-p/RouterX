@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -178,6 +179,122 @@ func TestChannelCandidateCacheUsesRedisSharedSnapshotAcrossServices(t *testing.T
 	}
 	if len(refreshed) != 2 || refreshed[0].Name != "redis-newer-db-only" || refreshed[1].Name != "redis-stable" {
 		t.Fatalf("version bump should bypass stale Redis snapshot and reload DB, got %+v", refreshed)
+	}
+}
+
+func TestChannelCandidateCacheVersionTouchPublishesInvalidation(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:channel_service_cache_publish_"+time.Now().Format("150405.000000000")+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Channel{}, &model.Setting{}); err != nil {
+		t.Fatal(err)
+	}
+	redisServer := newFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	oldDB, oldRDB := internal.DB, internal.RDB
+	internal.DB = db
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.DB = oldDB
+		internal.RDB = oldRDB
+	})
+
+	if err := db.Create([]model.Setting{
+		{Key: "routing.channel_cache.enabled", Value: "true", Category: "routing"},
+		{Key: "routing.channel_cache.preload", Value: "false", Category: "routing"},
+		{Key: "routing.channel_cache.ttl_seconds", Value: "60", Category: "routing"},
+		{Key: "routing.channel_cache.version", Value: "1", Category: "routing"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewChannelService()
+	svc.touchCandidateCacheVersion()
+
+	version, err := NewSettingService().Get("routing.channel_cache.version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != "2" {
+		t.Fatalf("touch should increment cache version before publishing, got %q", version)
+	}
+	published := redisServer.Published(channelCandidateCacheInvalidationRedisChannel)
+	if len(published) != 1 {
+		t.Fatalf("touch should publish one cache invalidation message, got %d", len(published))
+	}
+	var payload channelCandidateCacheInvalidationMessage
+	if err := json.Unmarshal([]byte(published[0]), &payload); err != nil {
+		t.Fatalf("published invalidation should be JSON, got %q: %v", published[0], err)
+	}
+	if payload.Version != 2 || payload.SentAtUnix <= 0 {
+		t.Fatalf("published invalidation should include next version and timestamp, got %+v", payload)
+	}
+}
+
+func TestChannelCandidateCacheInvalidationMessageClearsLocalCache(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:channel_service_cache_invalidate_message_"+time.Now().Format("150405.000000000")+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Channel{}, &model.Setting{}); err != nil {
+		t.Fatal(err)
+	}
+	oldDB, oldRDB := internal.DB, internal.RDB
+	internal.DB = db
+	internal.RDB = nil
+	t.Cleanup(func() {
+		internal.DB = oldDB
+		internal.RDB = oldRDB
+	})
+
+	if err := db.Create([]model.Setting{
+		{Key: "routing.channel_cache.enabled", Value: "true", Category: "routing"},
+		{Key: "routing.channel_cache.preload", Value: "true", Category: "routing"},
+		{Key: "routing.channel_cache.ttl_seconds", Value: "60", Category: "routing"},
+		{Key: "routing.channel_cache.version", Value: "1", Category: "routing"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Channel{
+		Type:     common.ChannelTypeOpenAICompat,
+		Name:     "cached-before-message",
+		Models:   "gpt-cache-message",
+		BaseURL:  "http://cached-before-message.example",
+		APIKey:   "cached-before-message-key",
+		Priority: 1,
+		Weight:   1,
+		Status:   common.ChannelStatusEnabled,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewChannelService()
+	if _, _, err := svc.SelectChannelCandidatesWithRouteFacts("gpt-cache-message", RoutePreference{}); err != nil {
+		t.Fatal(err)
+	}
+	svc.candidateCacheMu.Lock()
+	loadedBefore := svc.candidateCache.loaded
+	svc.candidateCacheMu.Unlock()
+	if !loadedBefore {
+		t.Fatal("selection should warm local candidate cache")
+	}
+
+	raw, err := json.Marshal(channelCandidateCacheInvalidationMessage{
+		Version:    2,
+		SentAtUnix: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.handleCandidateCacheInvalidationMessage(string(raw))
+
+	svc.candidateCacheMu.Lock()
+	loadedAfter := svc.candidateCache.loaded
+	svc.candidateCacheMu.Unlock()
+	if loadedAfter {
+		t.Fatal("fresh invalidation message should clear local candidate cache")
 	}
 }
 

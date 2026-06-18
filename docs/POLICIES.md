@@ -154,7 +154,7 @@ Scope 合成规则：
 - API Key scope 不能启用被禁用或熔断的通道。
 - API Key scope 不能绕过用户余额、API Key 预算、限流和安全过滤。
 - 空 scope 表示继承用户和系统策略，不表示超级权限。
-- Scope、用户分组、通道分组、通道模型、价格或 settings 变更后，必须递增策略或路由版本，并清理或刷新 API Key 鉴权、策略缓存和通道候选缓存。
+- Scope、用户分组、通道分组、通道模型、价格或 settings 变更后，必须递增策略或路由版本，并清理或刷新 API Key 鉴权、策略缓存和通道候选缓存；通道候选缓存的跨实例一致性依赖 `routing.channel_cache.version`、Redis 共享快照和主动 pub/sub 失效广播。
 
 ## 8. `routerx.route`
 

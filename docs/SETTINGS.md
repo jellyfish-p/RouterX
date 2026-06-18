@@ -172,10 +172,10 @@ P0 补齐这些配置时，应同时补测试：
 
 | key | 默认 | stage | 说明 |
 |-----|------|-------|------|
-| `routing.channel_cache.enabled` | `true` | P1 | 当前已落地；是否启用通道候选缓存；Redis 可用时会同时使用共享候选快照，必须是 boolean |
-| `routing.channel_cache.preload` | `true` | P1 | 当前已落地；启动后和通道版本变更后是否预加载候选索引并暖 Redis 共享快照，必须是 boolean |
+| `routing.channel_cache.enabled` | `true` | P1 | 当前已落地；是否启用通道候选缓存；Redis 可用时会同时使用共享候选快照和 pub/sub 失效广播，必须是 boolean |
+| `routing.channel_cache.preload` | `true` | P1 | 当前已落地；启动后和通道版本变更后是否预加载候选索引并暖 Redis 共享快照；通道变更还会发布失效广播，必须是 boolean |
 | `routing.channel_cache.ttl_seconds` | `60` | P1 | 当前已落地；进程内和 Redis 共享候选快照 TTL，`0` 表示只靠版本失效，必须是非负整数 |
-| `routing.channel_cache.version` | `1` | P1 | 当前已落地；管理端修改通道后递增，跨实例会用该版本忽略旧候选快照，必须是正整数 |
+| `routing.channel_cache.version` | `1` | P1 | 当前已落地；管理端修改通道后递增，跨实例会用该版本忽略旧候选快照并通过 Redis pub/sub 主动清理本地缓存，必须是正整数 |
 
 ### Observability
 

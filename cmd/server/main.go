@@ -44,6 +44,7 @@ func main() {
 	}
 	logSvc.StartLogReplicationWorker(context.Background(), time.Minute, 100)
 	channelSvc.StartBreakerProbeWorker(context.Background())
+	channelSvc.StartCandidateCacheInvalidationSubscriber(context.Background())
 
 	// 4. 依赖注入: Handler 层
 	adminH := handler.NewAdminHandler(adminSvc)

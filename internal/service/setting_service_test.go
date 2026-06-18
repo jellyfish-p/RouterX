@@ -118,9 +118,15 @@ func TestSettingLoadCacheAppliesRequestIDHeaderRuntimeConfig(t *testing.T) {
 
 // fakeRedisServer implements the tiny Redis subset SettingService needs in tests.
 type fakeRedisServer struct {
-	listener net.Listener
-	mu       sync.Mutex
-	hashes   map[string]map[string]string
+	listener  net.Listener
+	mu        sync.Mutex
+	hashes    map[string]map[string]string
+	published []fakeRedisPublish
+}
+
+type fakeRedisPublish struct {
+	Channel string
+	Message string
 }
 
 func newFakeRedisServer(t *testing.T) *fakeRedisServer {
@@ -153,6 +159,18 @@ func (s *fakeRedisServer) HashValue(hash, field string) (string, bool) {
 	}
 	value, ok := values[field]
 	return value, ok
+}
+
+func (s *fakeRedisServer) Published(channel string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	messages := []string{}
+	for _, item := range s.published {
+		if item.Channel == channel {
+			messages = append(messages, item.Message)
+		}
+	}
+	return messages
 }
 
 func (s *fakeRedisServer) accept() {
@@ -220,6 +238,15 @@ func (s *fakeRedisServer) writeResponse(writer *bufio.Writer, args []string) {
 		_, _ = writer.WriteString(":" + strconv.Itoa(added) + "\r\n")
 	case "ping":
 		_, _ = writer.WriteString("+PONG\r\n")
+	case "publish":
+		if len(args) != 3 {
+			writeRESPError(writer, "publish requires channel and message")
+			return
+		}
+		s.mu.Lock()
+		s.published = append(s.published, fakeRedisPublish{Channel: args[1], Message: args[2]})
+		s.mu.Unlock()
+		_, _ = writer.WriteString(":1\r\n")
 	case "hello":
 		writeRESPError(writer, "unknown command 'HELLO'")
 	case "client", "select":
