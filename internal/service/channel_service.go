@@ -24,6 +24,9 @@ const (
 	keySelectionRoundRobin = "round_robin"
 	keySelectionRandom     = "random"
 
+	channelCandidateCacheRedisHash  = "routing:channel_candidate_cache"
+	channelCandidateCacheRedisField = "snapshot"
+
 	routeFilterReasonAccessDenied    = "access_denied"
 	routeFilterReasonDisabled        = "disabled"
 	routeFilterReasonHealthBlocked   = "health_blocked"
@@ -78,6 +81,12 @@ type channelCandidateCacheConfig struct {
 	preload bool
 	version int
 	ttl     time.Duration
+}
+
+type channelCandidateCacheRedisSnapshot struct {
+	Version       int             `json:"version"`
+	ExpiresAtUnix int64           `json:"expires_at_unix"`
+	Channels      []model.Channel `json:"channels"`
 }
 
 type ChannelUpstreamTarget struct {
@@ -394,6 +403,15 @@ func (s *ChannelService) channelsForCandidateSelection() ([]model.Channel, error
 		(cfg.ttl == 0 || now.Before(s.candidateCache.expiresAt)) {
 		return cloneChannels(s.candidateCache.channels), nil
 	}
+	if channels, expiresAt, ok := s.loadCandidateCacheFromRedis(cfg, now); ok {
+		s.candidateCache = channelCandidateCache{
+			loaded:    true,
+			version:   cfg.version,
+			expiresAt: expiresAt,
+			channels:  cloneChannels(channels),
+		}
+		return cloneChannels(channels), nil
+	}
 
 	channels, err := loadChannelsForCandidateSelection()
 	if err != nil {
@@ -405,6 +423,7 @@ func (s *ChannelService) channelsForCandidateSelection() ([]model.Channel, error
 		expiresAt: now.Add(cfg.ttl),
 		channels:  cloneChannels(channels),
 	}
+	s.storeCandidateCacheInRedis(cfg, now, channels)
 	return channels, nil
 }
 
@@ -455,7 +474,56 @@ func (s *ChannelService) PreloadCandidateCache() error {
 		expiresAt: now.Add(cfg.ttl),
 		channels:  cloneChannels(channels),
 	}
+	s.storeCandidateCacheInRedis(cfg, now, channels)
 	return nil
+}
+
+func (s *ChannelService) loadCandidateCacheFromRedis(cfg channelCandidateCacheConfig, now time.Time) ([]model.Channel, time.Time, bool) {
+	if internal.RDB == nil {
+		return nil, time.Time{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	raw, err := internal.RDB.HGet(ctx, channelCandidateCacheRedisHash, channelCandidateCacheRedisField).Result()
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil, time.Time{}, false
+	}
+	var snapshot channelCandidateCacheRedisSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return nil, time.Time{}, false
+	}
+	if snapshot.Version != cfg.version {
+		return nil, time.Time{}, false
+	}
+	expiresAt := time.Unix(snapshot.ExpiresAtUnix, 0)
+	if cfg.ttl > 0 && (snapshot.ExpiresAtUnix <= 0 || !now.Before(expiresAt)) {
+		return nil, time.Time{}, false
+	}
+	if cfg.ttl == 0 {
+		expiresAt = time.Time{}
+	}
+	return cloneChannels(snapshot.Channels), expiresAt, true
+}
+
+func (s *ChannelService) storeCandidateCacheInRedis(cfg channelCandidateCacheConfig, now time.Time, channels []model.Channel) {
+	if internal.RDB == nil {
+		return
+	}
+	expiresAtUnix := int64(0)
+	if cfg.ttl > 0 {
+		expiresAtUnix = now.Add(cfg.ttl).Unix()
+	}
+	raw, err := json.Marshal(channelCandidateCacheRedisSnapshot{
+		Version:       cfg.version,
+		ExpiresAtUnix: expiresAtUnix,
+		Channels:      cloneChannels(channels),
+	})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = internal.RDB.HSet(ctx, channelCandidateCacheRedisHash, channelCandidateCacheRedisField, string(raw)).Err()
 }
 
 func loadChannelsForCandidateSelection() ([]model.Channel, error) {

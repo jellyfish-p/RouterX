@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -90,6 +92,92 @@ func TestChannelCandidateCacheUsesVersionInvalidation(t *testing.T) {
 	}
 	if len(refreshed) != 2 || refreshed[0].Name != "newer" || refreshed[1].Name != "stable" {
 		t.Fatalf("version bump should reload ordered candidates, got %+v", refreshed)
+	}
+}
+
+func TestChannelCandidateCacheUsesRedisSharedSnapshotAcrossServices(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:channel_service_redis_cache_"+time.Now().Format("150405.000000000")+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Channel{}, &model.Setting{}); err != nil {
+		t.Fatal(err)
+	}
+	redisServer := newFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	oldDB, oldRDB := internal.DB, internal.RDB
+	internal.DB = db
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.DB = oldDB
+		internal.RDB = oldRDB
+	})
+
+	if err := db.Create([]model.Setting{
+		{Key: "routing.channel_cache.enabled", Value: "true", Category: "routing"},
+		{Key: "routing.channel_cache.preload", Value: "true", Category: "routing"},
+		{Key: "routing.channel_cache.ttl_seconds", Value: "60", Category: "routing"},
+		{Key: "routing.channel_cache.version", Value: "1", Category: "routing"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Channel{
+		Type:     common.ChannelTypeOpenAICompat,
+		Name:     "redis-stable",
+		Models:   "gpt-redis-cache",
+		BaseURL:  "http://redis-stable.example",
+		APIKey:   "redis-stable-key",
+		Priority: 1,
+		Weight:   1,
+		Status:   common.ChannelStatusEnabled,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	firstSvc := NewChannelService()
+	first, _, err := firstSvc.SelectChannelCandidatesWithRouteFacts("gpt-redis-cache", RoutePreference{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || first[0].Name != "redis-stable" {
+		t.Fatalf("initial service should load stable channel, got %+v", first)
+	}
+	if cached, ok := redisServer.HashValue("routing:channel_candidate_cache", "snapshot"); !ok || !strings.Contains(cached, "redis-stable") {
+		t.Fatalf("first service should warm Redis shared snapshot, ok=%v value=%q", ok, cached)
+	}
+
+	if err := db.Create(&model.Channel{
+		Type:     common.ChannelTypeOpenAICompat,
+		Name:     "redis-newer-db-only",
+		Models:   "gpt-redis-cache",
+		BaseURL:  "http://redis-newer.example",
+		APIKey:   "redis-newer-key",
+		Priority: 99,
+		Weight:   1,
+		Status:   common.ChannelStatusEnabled,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	secondSvc := NewChannelService()
+	shared, _, err := secondSvc.SelectChannelCandidatesWithRouteFacts("gpt-redis-cache", RoutePreference{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shared) != 1 || shared[0].Name != "redis-stable" {
+		t.Fatalf("second service should reuse Redis snapshot before version bump, got %+v", shared)
+	}
+
+	if err := NewSettingService().Set("routing.channel_cache.version", "2"); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, _, err := secondSvc.SelectChannelCandidatesWithRouteFacts("gpt-redis-cache", RoutePreference{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refreshed) != 2 || refreshed[0].Name != "redis-newer-db-only" || refreshed[1].Name != "redis-stable" {
+		t.Fatalf("version bump should bypass stale Redis snapshot and reload DB, got %+v", refreshed)
 	}
 }
 
