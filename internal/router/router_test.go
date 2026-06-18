@@ -269,6 +269,21 @@ func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	if openAIResp.Code != http.StatusOK || !strings.Contains(openAIResp.Body.String(), `"object":"list"`) || !strings.Contains(openAIResp.Body.String(), `"id":"gpt-protocol"`) {
 		t.Fatalf("routerx_protocol=openai should return OpenAI model shape, got %d %s", openAIResp.Code, openAIResp.Body.String())
 	}
+	geminiDetailResp := performJSON(r, http.MethodGet, "/v1/models/gpt-protocol?routerx_protocol=gemini", "Bearer "+tokenPayload.Data.Key, nil)
+	if geminiDetailResp.Code != http.StatusOK ||
+		!strings.Contains(geminiDetailResp.Body.String(), `"name":"models/gpt-protocol"`) ||
+		!strings.Contains(geminiDetailResp.Body.String(), `"supportedGenerationMethods"`) {
+		t.Fatalf("routerx_protocol=gemini model detail should return Gemini model shape, got %d %s", geminiDetailResp.Code, geminiDetailResp.Body.String())
+	}
+	anthropicDetailResp := performRawWithHeaders(r, http.MethodGet, "/v1/models/gpt-protocol", "Bearer "+tokenPayload.Data.Key, "", map[string]string{
+		"X-RouterX-Protocol": "anthropic",
+	})
+	if anthropicDetailResp.Code != http.StatusOK ||
+		!strings.Contains(anthropicDetailResp.Body.String(), `"id":"gpt-protocol"`) ||
+		!strings.Contains(anthropicDetailResp.Body.String(), `"type":"model"`) ||
+		!strings.Contains(anthropicDetailResp.Body.String(), `"display_name":"gpt-protocol"`) {
+		t.Fatalf("X-RouterX-Protocol=anthropic model detail should return Anthropic model shape, got %d %s", anthropicDetailResp.Code, anthropicDetailResp.Body.String())
+	}
 	invalidGeminiResp := performJSON(r, http.MethodGet, "/v1/models?routerx_protocol=gemini", "Bearer sk-invalid-models-protocol", nil)
 	if invalidGeminiResp.Code != http.StatusUnauthorized || !strings.Contains(invalidGeminiResp.Body.String(), `"status":"UNAUTHENTICATED"`) {
 		t.Fatalf("routerx_protocol=gemini should return Gemini auth error shape, got %d %s", invalidGeminiResp.Code, invalidGeminiResp.Body.String())

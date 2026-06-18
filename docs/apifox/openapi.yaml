@@ -2621,8 +2621,9 @@ paths:
                   - $ref: "#/components/schemas/GeminiErrorEnvelope"
   /v1/models/{model}:
     get:
-      tags: [OpenAI Compatible]
+      tags: [OpenAI Compatible, Gemini Compatible, Anthropic Compatible]
       summary: 模型详情
+      description: 默认返回 OpenAI model 外形；协议外形按 format、routerx_protocol、X-RouterX-Protocol、anthropic-version、OpenAI 默认值的顺序选择，和 /v1/models 列表保持一致。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2630,13 +2631,42 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [openai, gemini, google, anthropic]
+          description: 路径冲突时指定响应协议；优先级高于 RouterX 协议选择器。
+        - name: routerx_protocol
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [openai, openai-compatible, gemini, google, anthropic, claude]
+          description: format 未设置时指定响应协议。
+        - name: X-RouterX-Protocol
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [openai, openai-compatible, gemini, google, anthropic, claude]
+          description: format 和 routerx_protocol 未设置时指定响应协议。
+        - name: anthropic-version
+          in: header
+          required: false
+          schema: { type: string }
+          description: 未设置 format、routerx_protocol 和 X-RouterX-Protocol 时，存在该 header 会按 Anthropic 模型详情外形返回。
       responses:
         "200":
-          description: OpenAI-compatible 模型详情。
+          description: 模型详情。
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OpenAIModel"
+                oneOf:
+                  - $ref: "#/components/schemas/OpenAIModel"
+                  - $ref: "#/components/schemas/GeminiModel"
+                  - $ref: "#/components/schemas/AnthropicModel"
         "404":
           $ref: "#/components/responses/OpenAIError"
   /v1/messages:
@@ -5007,34 +5037,38 @@ components:
         models:
           type: array
           items:
-            type: object
-            properties:
-              name: { type: string }
-              version: { type: string }
-              displayName: { type: string }
-              supportedGenerationMethods:
-                type: array
-                items:
-                  type: string
-                  enum:
-                    - generateContent
-                    - streamGenerateContent
-                    - countTokens
-                    - embedContent
-                    - batchEmbedContents
-                example: [generateContent, streamGenerateContent, countTokens, embedContent, batchEmbedContents]
+            $ref: "#/components/schemas/GeminiModel"
+    GeminiModel:
+      type: object
+      properties:
+        name: { type: string, example: models/gpt-4o-mini }
+        version: { type: string }
+        displayName: { type: string, example: gpt-4o-mini }
+        supportedGenerationMethods:
+          type: array
+          items:
+            type: string
+            enum:
+              - generateContent
+              - streamGenerateContent
+              - countTokens
+              - embedContent
+              - batchEmbedContents
+          example: [generateContent, streamGenerateContent, countTokens, embedContent, batchEmbedContents]
     AnthropicModelList:
       type: object
       properties:
         data:
           type: array
           items:
-            type: object
-            properties:
-              id: { type: string }
-              type: { type: string }
-              display_name: { type: string }
+            $ref: "#/components/schemas/AnthropicModel"
         has_more: { type: boolean }
+    AnthropicModel:
+      type: object
+      properties:
+        id: { type: string, example: claude-3-5-sonnet }
+        type: { type: string, example: model }
+        display_name: { type: string, example: claude-3-5-sonnet }
     AnthropicMessageRequest:
       type: object
       required: [model, messages]

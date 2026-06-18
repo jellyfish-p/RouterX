@@ -891,6 +891,23 @@ func (s *RelayService) ModelDetail(modelName string) ([]byte, error) {
 	return nil, &HTTPError{Status: 404, Message: "model not found", Type: "invalid_request_error", Code: "model_not_found"}
 }
 
+func (s *RelayService) GeminiModelDetail(modelName string) ([]byte, error) {
+	modelName = strings.TrimPrefix(strings.TrimSpace(modelName), "models/")
+	if modelName == "" {
+		return nil, errors.New("model is required")
+	}
+	models, err := s.channelService.ListModels()
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range models {
+		if candidate == modelName {
+			return json.Marshal(geminiModelInfo(candidate))
+		}
+	}
+	return nil, &HTTPError{Status: 404, Message: "model not found", Type: "invalid_request_error", Code: "model_not_found"}
+}
+
 func (s *RelayService) ListGeminiModels() ([]byte, error) {
 	models, err := s.channelService.ListModels()
 	if err != nil {
@@ -898,15 +915,36 @@ func (s *RelayService) ListGeminiModels() ([]byte, error) {
 	}
 	data := make([]map[string]interface{}, 0, len(models))
 	for _, modelName := range models {
-		// RouterX 的 Gemini 外形会把生成、计数和 Embeddings 都落到同一模型名上。
-		data = append(data, map[string]interface{}{
-			"name":                       "models/" + modelName,
-			"version":                    "",
-			"displayName":                modelName,
-			"supportedGenerationMethods": []string{"generateContent", "streamGenerateContent", "countTokens", "embedContent", "batchEmbedContents"},
-		})
+		data = append(data, geminiModelInfo(modelName))
 	}
 	return json.Marshal(map[string]interface{}{"models": data})
+}
+
+func geminiModelInfo(modelName string) map[string]interface{} {
+	// RouterX 的 Gemini 外形会把生成、计数和 Embeddings 都落到同一模型名上。
+	return map[string]interface{}{
+		"name":                       "models/" + modelName,
+		"version":                    "",
+		"displayName":                modelName,
+		"supportedGenerationMethods": []string{"generateContent", "streamGenerateContent", "countTokens", "embedContent", "batchEmbedContents"},
+	}
+}
+
+func (s *RelayService) AnthropicModelDetail(modelName string) ([]byte, error) {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return nil, errors.New("model is required")
+	}
+	models, err := s.channelService.ListModels()
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range models {
+		if candidate == modelName {
+			return json.Marshal(anthropicModelInfo(candidate))
+		}
+	}
+	return nil, &HTTPError{Status: 404, Message: "model not found", Type: "invalid_request_error", Code: "model_not_found"}
 }
 
 func (s *RelayService) ListAnthropicModels() ([]byte, error) {
@@ -916,13 +954,17 @@ func (s *RelayService) ListAnthropicModels() ([]byte, error) {
 	}
 	data := make([]map[string]interface{}, 0, len(models))
 	for _, modelName := range models {
-		data = append(data, map[string]interface{}{
-			"id":           modelName,
-			"type":         "model",
-			"display_name": modelName,
-		})
+		data = append(data, anthropicModelInfo(modelName))
 	}
 	return json.Marshal(map[string]interface{}{"data": data, "has_more": false})
+}
+
+func anthropicModelInfo(modelName string) map[string]interface{} {
+	return map[string]interface{}{
+		"id":           modelName,
+		"type":         "model",
+		"display_name": modelName,
+	}
 }
 
 type relayRequestInfo struct {

@@ -162,7 +162,16 @@ func (h *RelayHandler) ModelDetail(c *gin.Context) {
 			return
 		}
 	}
-	body, err := h.svc.ModelDetail(c.Param("model"))
+	var body []byte
+	var err error
+	switch modelListProtocol(c) {
+	case "gemini":
+		body, err = h.svc.GeminiModelDetail(c.Param("model"))
+	case "anthropic":
+		body, err = h.svc.AnthropicModelDetail(c.Param("model"))
+	default:
+		body, err = h.svc.ModelDetail(c.Param("model"))
+	}
 	if err != nil {
 		writeRelayError(c, err)
 		return

@@ -892,7 +892,7 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/audio/translations` | 基础实现，OpenAI-compatible multipart 音频表单透传；Azure OpenAI 通道转发到 `/openai/v1/audio/translations?api-version=preview`；`routerx` 表单字段剥离和路由偏好；无 usage 时按 P0 最低计费 |
 | POST | `/v1/audio/speech` | 基础实现，OpenAI-compatible 文本转语音 JSON 透传，Azure OpenAI 通道转发到 `/openai/v1/audio/speech?api-version=preview`，二进制音频响应透传；无 usage 时按 P0 最低计费 |
 | GET | `/v1/models` | 基础实现，模型列表；Gemini 外形会在 `supportedGenerationMethods` 声明 `generateContent`、`streamGenerateContent`、`countTokens`、`embedContent` 和 `batchEmbedContents` |
-| GET | `/v1/models/:model` | 基础实现，模型详情 |
+| GET | `/v1/models/:model` | 基础实现，模型详情；支持 `format`、`routerx_protocol` 或 `X-RouterX-Protocol` 选择 OpenAI、Gemini 或 Anthropic 外形 |
 | POST | `/v1/moderations` | 基础实现，OpenAI-compatible Moderations JSON 透传；无 usage 时按 P0 最低计费 |
 
 #### Chat Completions 契约
@@ -945,7 +945,7 @@ P0 明确失败：
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/v1/models` | 基础实现，模型列表 |
-| GET | `/v1/models/{model}` | 基础实现，模型详情 |
+| GET | `/v1/models/{model}` | 基础实现，模型详情；支持协议选择器返回 Gemini 或 Anthropic 外形 |
 | POST | `/v1/models/{model}:generateContent` | 基础实现，内容生成；当前转 OpenAI-compatible Chat，非文本 parts 降级为 compact JSON 文本 |
 | POST | `/v1/models/{model}:streamGenerateContent` | 基础实现，流式内容生成；当前将 Gemini 请求转 OpenAI-compatible Chat SSE，再输出 Gemini SSE 事件 |
 | POST | `/v1/models/{model}:countTokens` | 基础实现，Token 计数 |
@@ -959,7 +959,7 @@ P0 明确失败：
 | POST | `/v1/messages` | 基础实现，Messages；当前转 OpenAI-compatible Chat，非文本 content blocks 降级为 compact JSON 文本；`stream=true` 输出 Anthropic SSE 事件 |
 | POST | `/v1/messages/count_tokens` | 基础实现，Token 计数 |
 | GET | `/v1/models` | 基础实现，模型列表 |
-| GET | `/v1/models/:model` | 基础实现，模型详情 |
+| GET | `/v1/models/:model` | 基础实现，模型详情；支持协议选择器返回 Anthropic 或 Gemini 外形 |
 
 ### 额外参数
 

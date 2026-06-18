@@ -237,7 +237,7 @@ APIType、入口协议、路由状态和能力等级的权威矩阵见 `docs/PRO
 | Gemini | `APIGeminiBatchEmbedContents` | `/v1/models/{model}:batchEmbedContents` | P1 |
 | Gemini | `APIGeminiModels` | `/v1/models` | P1 |
 
-路径冲突处理：`/v1/models` 同时服务 OpenAI、Anthropic、Gemini 模型列表。当前实现默认返回 OpenAI `models` 结构；协议外形按 `format`、`routerx_protocol`、`X-RouterX-Protocol`、`anthropic-version`、OpenAI 默认值的顺序解析。`format=gemini|anthropic` 保持最高优先级，`routerx_protocol=openai|anthropic|gemini` 和 `X-RouterX-Protocol` 用于无 body 调用方表达 RouterX 协议偏好。Gemini 外形会在 `supportedGenerationMethods` 中声明生成、流式生成、计数和 Embeddings 入口。
+路径冲突处理：`/v1/models` 和 `/v1/models/{model}` 同时服务 OpenAI、Anthropic、Gemini 模型列表/详情。当前实现默认返回 OpenAI `models` 结构；协议外形按 `format`、`routerx_protocol`、`X-RouterX-Protocol`、`anthropic-version`、OpenAI 默认值的顺序解析。`format=gemini|anthropic` 保持最高优先级，`routerx_protocol=openai|anthropic|gemini` 和 `X-RouterX-Protocol` 用于无 body 调用方表达 RouterX 协议偏好。Gemini 外形会在 `supportedGenerationMethods` 中声明生成、流式生成、计数和 Embeddings 入口。
 
 ## 阶段矩阵
 
