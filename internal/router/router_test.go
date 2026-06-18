@@ -571,6 +571,15 @@ func TestAdminAPIKeyQueryAndBatchDisable(t *testing.T) {
 	if noFilterResp.Code != http.StatusBadRequest {
 		t.Fatalf("batch disable without filters should be rejected, got %d %s", noFilterResp.Code, noFilterResp.Body.String())
 	}
+	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=api_key&resource_id=batch&result=denied", rootJWT, nil)
+	deniedAuditBody := deniedAuditResp.Body.String()
+	if deniedAuditResp.Code != http.StatusOK ||
+		!strings.Contains(deniedAuditBody, `"action":"api_key.batch_disable_denied"`) ||
+		!strings.Contains(deniedAuditBody, `"error_code":"api_key_batch_filter_required"`) ||
+		strings.Contains(deniedAuditBody, alicePlainKey) ||
+		strings.Contains(deniedAuditBody, "sk-") {
+		t.Fatalf("batch disable denial audit mismatch or leaked key: %d %s", deniedAuditResp.Code, deniedAuditBody)
+	}
 	batchResp := performJSON(r, http.MethodPost, "/v0/admin/token/batch-disable", rootJWT, map[string]interface{}{
 		"user_id": alice.ID,
 		"reason":  "risk_review",
@@ -827,6 +836,15 @@ func TestAdminAPIKeyBatchExpire(t *testing.T) {
 	noFilterResp := performJSON(r, http.MethodPost, "/v0/admin/token/batch-expire", rootJWT, map[string]interface{}{})
 	if noFilterResp.Code != http.StatusBadRequest {
 		t.Fatalf("batch expire without filters should be rejected, got %d %s", noFilterResp.Code, noFilterResp.Body.String())
+	}
+	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=api_key&resource_id=batch&result=denied", rootJWT, nil)
+	deniedAuditBody := deniedAuditResp.Body.String()
+	if deniedAuditResp.Code != http.StatusOK ||
+		!strings.Contains(deniedAuditBody, `"action":"api_key.batch_expire_denied"`) ||
+		!strings.Contains(deniedAuditBody, `"error_code":"api_key_batch_filter_required"`) ||
+		strings.Contains(deniedAuditBody, alicePlainKey) ||
+		strings.Contains(deniedAuditBody, "sk-") {
+		t.Fatalf("batch expire denial audit mismatch or leaked key: %d %s", deniedAuditResp.Code, deniedAuditBody)
 	}
 	batchResp := performJSON(r, http.MethodPost, "/v0/admin/token/batch-expire", rootJWT, map[string]interface{}{
 		"user_id": alice.ID,

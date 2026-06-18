@@ -494,6 +494,8 @@ Provider 退款请求：
 | `api_key.scope_updated` | `PUT /v0/user/token/:id/scope` |
 | `api_key.batch_disabled` | `POST /v0/admin/token/batch-disable` |
 | `api_key.batch_expired` | `POST /v0/admin/token/batch-expire` |
+| `api_key.batch_disable_denied` | `POST /v0/admin/token/batch-disable` 缺少 `token_ids` 和 `user_id` 被拒绝 |
+| `api_key.batch_expire_denied` | `POST /v0/admin/token/batch-expire` 缺少 `token_ids` 和 `user_id` 被拒绝 |
 | `api_key.quota_limit_denied` | 用户端尝试通过 `PUT /v0/user/token/:id` 修改额度或无限标记被拒绝 |
 | `setting.create` | `PUT /v0/admin/setting` 新增 key |
 | `setting.update` | `PUT /v0/admin/setting` 修改已有 key |
@@ -711,8 +713,8 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | GET | `/v0/admin/token` | 已实现 | 管理员跨用户查询脱敏 API Key 摘要，可按 `user_id` 和 `status` 过滤 |
 | GET | `/v0/admin/token/risk` | 基础实现 | 管理员查看异常 API Key 风险视图，支持 `user_id`、`window_hours`、`min_error_count` 和 `low_quota_below` 过滤，不返回明文 Key 或哈希 |
 | GET | `/v0/admin/token/:id/leak-window` | 基础实现 | 管理员跨用户查询单 Key 泄露窗口摘要；输出字段与用户侧一致，用于泄露处置和工单排障 |
-| POST | `/v0/admin/token/batch-disable` | 已实现 | 管理员按 `token_ids` 或 `user_id` 批量禁用 Key，必须提供筛选条件，成功后写 `api_key.batch_disabled` 审计 |
-| POST | `/v0/admin/token/batch-expire` | 已实现 | 管理员按 `token_ids` 或 `user_id` 立即过期 Key，必须提供筛选条件，成功后写 `api_key.batch_expired` 审计 |
+| POST | `/v0/admin/token/batch-disable` | 已实现 | 管理员按 `token_ids` 或 `user_id` 批量禁用 Key，必须提供筛选条件；成功后写 `api_key.batch_disabled` 审计，缺少筛选条件时返回 400 并写 `api_key.batch_disable_denied` |
+| POST | `/v0/admin/token/batch-expire` | 已实现 | 管理员按 `token_ids` 或 `user_id` 立即过期 Key，必须提供筛选条件；成功后写 `api_key.batch_expired` 审计，缺少筛选条件时返回 400 并写 `api_key.batch_expire_denied` |
 
 用户端 API Key 不允许直接编辑最大消耗额度和无限额度标记，避免普通用户绕过预算策略；拒绝记录会写入管理审计，审计摘要不包含完整 API Key 明文或哈希。当前 scope 请求格式：
 

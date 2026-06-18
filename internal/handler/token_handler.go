@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
 	"time"
 
@@ -410,6 +411,13 @@ func (h *TokenHandler) BatchDisable(c *gin.Context) {
 		Reason:   req.Reason,
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrBatchDisableNoFilter) {
+			after := tokenBatchDeniedAuditSummary(req.TokenIDs, req.UserID, req.Reason, err)
+			if auditErr := h.recordAPIKeyAuditResource(c, operator, "api_key.batch_disable_denied", "batch", nil, after, "denied", "api_key_batch_filter_required"); auditErr != nil {
+				common.FailWithStatus(c, 500, "写入审计日志失败")
+				return
+			}
+		}
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
@@ -444,6 +452,13 @@ func (h *TokenHandler) BatchExpire(c *gin.Context) {
 		Reason:   req.Reason,
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrBatchExpireNoFilter) {
+			after := tokenBatchDeniedAuditSummary(req.TokenIDs, req.UserID, req.Reason, err)
+			if auditErr := h.recordAPIKeyAuditResource(c, operator, "api_key.batch_expire_denied", "batch", nil, after, "denied", "api_key_batch_filter_required"); auditErr != nil {
+				common.FailWithStatus(c, 500, "写入审计日志失败")
+				return
+			}
+		}
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
@@ -631,5 +646,16 @@ func tokenBatchExpireAuditSummary(req dto.BatchExpireTokensRequest, resp dto.Bat
 		},
 		"result": resp,
 		"tokens": tokens,
+	}
+}
+
+func tokenBatchDeniedAuditSummary(tokenIDs []uint, userID *uint, reason string, cause error) map[string]interface{} {
+	return map[string]interface{}{
+		"filters": map[string]interface{}{
+			"token_ids": tokenIDs,
+			"user_id":   userID,
+		},
+		"reason":  reason,
+		"message": cause.Error(),
 	}
 }
