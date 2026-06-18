@@ -49,11 +49,19 @@ type relayRouterXOptionsContextKey struct{}
 type relayRouterXHopContextKey struct{}
 type relayRouterXChainContextKey struct{}
 type relayRequestSnapshotContextKey struct{}
+type relayAdapterDegradationsContextKey struct{}
 type relayPolicySnapshotContextKey struct{}
 type relayRouteSnapshotContextKey struct{}
 type relayBillingSnapshotContextKey struct{}
 type relayLogRequestBodyContextKey struct{}
 type relayLogResponseBodyContextKey struct{}
+
+type relayAdapterDegradation struct {
+	Protocol string `json:"protocol"`
+	Field    string `json:"field"`
+	Action   string `json:"action"`
+	Reason   string `json:"reason"`
+}
 
 type contentTypeRelayAdapter interface {
 	DoRequestWithContentType(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error)
@@ -61,6 +69,9 @@ type contentTypeRelayAdapter interface {
 
 const (
 	defaultRouterXMaxHops = 3
+
+	inputProtocolAnthropic = "anthropic"
+	inputProtocolGemini    = "gemini"
 
 	usageMissingStrategyMinimum = "minimum"
 	usageMissingStrategyReject  = "reject"
@@ -149,6 +160,16 @@ func ContextWithRelayRequestSnapshot(ctx context.Context, snapshot string) conte
 	return context.WithValue(ctx, relayRequestSnapshotContextKey{}, strings.TrimSpace(snapshot))
 }
 
+func contextWithRelayAdapterDegradations(ctx context.Context, degradations []relayAdapterDegradation) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(degradations) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, relayAdapterDegradationsContextKey{}, append([]relayAdapterDegradation(nil), degradations...))
+}
+
 func ContextWithRelayPolicySnapshot(ctx context.Context, snapshot string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -234,6 +255,17 @@ func relayRequestSnapshotFromContext(ctx context.Context) string {
 	}
 	value, _ := ctx.Value(relayRequestSnapshotContextKey{}).(string)
 	return strings.TrimSpace(value)
+}
+
+func relayAdapterDegradationsFromContext(ctx context.Context) []relayAdapterDegradation {
+	if ctx == nil {
+		return nil
+	}
+	values, _ := ctx.Value(relayAdapterDegradationsContextKey{}).([]relayAdapterDegradation)
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]relayAdapterDegradation(nil), values...)
 }
 
 func relayPolicySnapshotFromContext(ctx context.Context) string {
@@ -354,6 +386,7 @@ func (s *RelayService) RelayAnthropicMessages(ctx context.Context, token *model.
 	if err != nil {
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayAdapterDegradations(ctx, anthropicAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
 		return nil, usage, err
@@ -370,6 +403,7 @@ func (s *RelayService) RelayAnthropicMessagesStream(ctx context.Context, token *
 	if err != nil {
 		return nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayAdapterDegradations(ctx, anthropicAdapterDegradations(body))
 	result, err := s.RelayStream(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
 		return nil, err
@@ -394,6 +428,7 @@ func (s *RelayService) RelayGeminiGenerateContent(ctx context.Context, token *mo
 	if err != nil {
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayAdapterDegradations(ctx, geminiGenerateAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
 		return nil, usage, err
@@ -442,6 +477,7 @@ func (s *RelayService) RelayGeminiGenerateContentStream(ctx context.Context, tok
 	if err != nil {
 		return nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayAdapterDegradations(ctx, geminiGenerateAdapterDegradations(body))
 	result, err := s.RelayStream(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
 		return nil, err
@@ -2015,6 +2051,156 @@ func geminiTextFromParts(parts []json.RawMessage) string {
 	return strings.Join(values, "\n")
 }
 
+func anthropicAdapterDegradations(body []byte) []relayAdapterDegradation {
+	var input struct {
+		System   json.RawMessage `json:"system"`
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+		Tools      json.RawMessage `json:"tools"`
+		ToolChoice json.RawMessage `json:"tool_choice"`
+		Thinking   json.RawMessage `json:"thinking"`
+		Metadata   json.RawMessage `json:"metadata"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil
+	}
+	degradations := make([]relayAdapterDegradation, 0)
+	for _, message := range input.Messages {
+		degradations = appendAnthropicContentDegradations(degradations, inputProtocolAnthropic, "messages.content", message.Content)
+	}
+	degradations = appendAnthropicContentDegradations(degradations, inputProtocolAnthropic, "system", input.System)
+	degradations = appendDroppedFieldDegradation(degradations, inputProtocolAnthropic, "tools", input.Tools)
+	degradations = appendDroppedFieldDegradation(degradations, inputProtocolAnthropic, "tool_choice", input.ToolChoice)
+	degradations = appendDroppedFieldDegradation(degradations, inputProtocolAnthropic, "thinking", input.Thinking)
+	degradations = appendDroppedFieldDegradation(degradations, inputProtocolAnthropic, "metadata", input.Metadata)
+	return degradations
+}
+
+func appendAnthropicContentDegradations(degradations []relayAdapterDegradation, protocol, prefix string, raw json.RawMessage) []relayAdapterDegradation {
+	var blocks []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return degradations
+	}
+	for _, block := range blocks {
+		var blockType string
+		_ = json.Unmarshal(block["type"], &blockType)
+		blockType = strings.TrimSpace(blockType)
+		if blockType == "" || blockType == "text" {
+			continue
+		}
+		degradations = appendUniqueAdapterDegradation(degradations, relayAdapterDegradation{
+			Protocol: protocol,
+			Field:    prefix + "." + blockType,
+			Action:   "serialized_as_text",
+			Reason:   "non_text_content_block_serialized_as_compact_json",
+		})
+	}
+	return degradations
+}
+
+func geminiGenerateAdapterDegradations(body []byte) []relayAdapterDegradation {
+	var input struct {
+		Contents []struct {
+			Parts []json.RawMessage `json:"parts"`
+		} `json:"contents"`
+		SystemInstruction *struct {
+			Parts []json.RawMessage `json:"parts"`
+		} `json:"systemInstruction"`
+		Tools          json.RawMessage `json:"tools"`
+		ToolConfig     json.RawMessage `json:"toolConfig"`
+		SafetySettings json.RawMessage `json:"safetySettings"`
+		CachedContent  json.RawMessage `json:"cachedContent"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil
+	}
+	degradations := make([]relayAdapterDegradation, 0)
+	for _, content := range input.Contents {
+		degradations = appendGeminiPartDegradations(degradations, "contents.parts", content.Parts)
+	}
+	if input.SystemInstruction != nil {
+		degradations = appendGeminiPartDegradations(degradations, "systemInstruction.parts", input.SystemInstruction.Parts)
+	}
+	degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "tools", input.Tools)
+	degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "toolConfig", input.ToolConfig)
+	degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "safetySettings", input.SafetySettings)
+	degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "cachedContent", input.CachedContent)
+	return degradations
+}
+
+func appendGeminiPartDegradations(degradations []relayAdapterDegradation, prefix string, parts []json.RawMessage) []relayAdapterDegradation {
+	for _, part := range parts {
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(part, &object); err != nil {
+			continue
+		}
+		if rawText, ok := object["text"]; ok {
+			var text string
+			if err := json.Unmarshal(rawText, &text); err == nil && strings.TrimSpace(text) != "" {
+				continue
+			}
+		}
+		field := firstGeminiPartField(object)
+		if field == "" {
+			continue
+		}
+		degradations = appendUniqueAdapterDegradation(degradations, relayAdapterDegradation{
+			Protocol: inputProtocolGemini,
+			Field:    prefix + "." + field,
+			Action:   "serialized_as_text",
+			Reason:   "non_text_part_serialized_as_compact_json",
+		})
+	}
+	return degradations
+}
+
+func firstGeminiPartField(object map[string]json.RawMessage) string {
+	for _, key := range []string{"functionCall", "functionResponse", "inlineData", "fileData", "executableCode", "codeExecutionResult"} {
+		if _, ok := object[key]; ok {
+			return key
+		}
+	}
+	for key := range object {
+		if key != "text" {
+			return key
+		}
+	}
+	return ""
+}
+
+func appendDroppedFieldDegradation(degradations []relayAdapterDegradation, protocol, field string, raw json.RawMessage) []relayAdapterDegradation {
+	if !rawJSONHasValue(raw) {
+		return degradations
+	}
+	return appendUniqueAdapterDegradation(degradations, relayAdapterDegradation{
+		Protocol: protocol,
+		Field:    field,
+		Action:   "dropped",
+		Reason:   "no_equivalent_openai_chat_field",
+	})
+}
+
+func appendUniqueAdapterDegradation(degradations []relayAdapterDegradation, next relayAdapterDegradation) []relayAdapterDegradation {
+	if strings.TrimSpace(next.Protocol) == "" || strings.TrimSpace(next.Field) == "" || strings.TrimSpace(next.Action) == "" {
+		return degradations
+	}
+	for _, existing := range degradations {
+		if existing.Protocol == next.Protocol && existing.Field == next.Field && existing.Action == next.Action {
+			return degradations
+		}
+	}
+	return append(degradations, next)
+}
+
+func rawJSONHasValue(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" || trimmed == "[]" || trimmed == "{}" {
+		return false
+	}
+	return true
+}
+
 func openAIChatToAnthropic(body []byte) ([]byte, error) {
 	var input struct {
 		ID      string `json:"id"`
@@ -3081,6 +3267,9 @@ func buildRelayRequestSnapshot(ctx context.Context, apiType relay.APIType, reqIn
 		snapshot["routerx_summary"] = map[string]interface{}{
 			"route": preference,
 		}
+	}
+	if degradations := relayAdapterDegradationsFromContext(ctx); len(degradations) > 0 {
+		snapshot["adapter_degradations"] = degradations
 	}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {

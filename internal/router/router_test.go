@@ -5999,6 +5999,28 @@ func TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields(t *testing.
 		t.Fatalf("gemini conversion should preserve system, config and degraded non-text parts, got %#v", upstreamBodies)
 	}
 
+	var callLogs []model.Log
+	if err := internal.DB.Where("token_id = ? AND status = ?", tokenPayload.Data.ID, common.LogStatusSuccess).Order("id ASC").Find(&callLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(callLogs) != 2 {
+		t.Fatalf("expected two protocol success logs, got %d", len(callLogs))
+	}
+	var anthropicSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLogs[0].RequestSnapshot), &anthropicSnapshot); err != nil {
+		t.Fatalf("anthropic request snapshot should be JSON, got %q: %v", callLogs[0].RequestSnapshot, err)
+	}
+	if !snapshotHasAdapterDegradation(anthropicSnapshot, "anthropic", "messages.content.tool_use", "serialized_as_text") {
+		t.Fatalf("anthropic request snapshot should explain content block degradation: %+v", anthropicSnapshot)
+	}
+	var geminiSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLogs[1].RequestSnapshot), &geminiSnapshot); err != nil {
+		t.Fatalf("gemini request snapshot should be JSON, got %q: %v", callLogs[1].RequestSnapshot, err)
+	}
+	if !snapshotHasAdapterDegradation(geminiSnapshot, "gemini", "contents.parts.functionCall", "serialized_as_text") {
+		t.Fatalf("gemini request snapshot should explain non-text part degradation: %+v", geminiSnapshot)
+	}
+
 	var storedToken model.Token
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
@@ -6013,6 +6035,23 @@ func TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields(t *testing.
 	if root.Quota != 82 {
 		t.Fatalf("protocol calls should deduct combined usage from user quota, got %d", root.Quota)
 	}
+}
+
+func snapshotHasAdapterDegradation(snapshot map[string]interface{}, protocol, field, action string) bool {
+	values, ok := snapshot["adapter_degradations"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, value := range values {
+		entry, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if entry["protocol"] == protocol && entry["field"] == field && entry["action"] == action {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage(t *testing.T) {
