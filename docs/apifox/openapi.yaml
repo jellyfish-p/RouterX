@@ -2841,7 +2841,7 @@ paths:
     post:
       tags: [Gemini Compatible]
       summary: Gemini batchEmbedContents
-      description: 基础实现；Gemini requests[].content.parts 文本会转换为 OpenAI-compatible Embeddings input 数组并调用 /v1/embeddings 上游，OpenAI embedding list 会转换为 Gemini embeddings[].values。usage 写入 RouterX 日志并扣费；批量请求继承 OpenAI Embeddings 2048 上限，上游返回 embedding 数量必须与请求数量一致，否则返回 Gemini 兼容转换失败错误；taskType/title 和 Gemini 原生上游以 docs/PROTOCOLS.md 为准。
+      description: 基础实现；Gemini requests[].content.parts 文本会转换为 OpenAI-compatible Embeddings input 数组并调用 /v1/embeddings 上游，OpenAI embedding list 会转换为 Gemini embeddings[].values。usage 写入 RouterX 日志并扣费；批量请求继承 OpenAI Embeddings 2048 上限，上游返回 embedding 数量必须与请求数量一致，否则返回 Gemini 兼容 502/UNAVAILABLE，message 为 upstream response conversion failed，对应 RouterX 错误语义 upstream_conversion_failed；taskType/title 和 Gemini 原生上游以 docs/PROTOCOLS.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:

@@ -6095,7 +6095,7 @@ func TestGeminiBatchEmbedContentsRejectsMismatchedEmbeddingCount(t *testing.T) {
 	})
 	if resp.Code != http.StatusBadGateway ||
 		!strings.Contains(resp.Body.String(), `"status":"UNAVAILABLE"`) ||
-		!strings.Contains(resp.Body.String(), "response conversion failed") {
+		!strings.Contains(resp.Body.String(), "upstream response conversion failed") {
 		t.Fatalf("mismatched embedding count should be a Gemini conversion error, got %d %s", resp.Code, resp.Body.String())
 	}
 	if upstreamCalls != 1 {

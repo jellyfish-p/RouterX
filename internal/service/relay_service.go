@@ -331,6 +331,15 @@ func (s *RelayService) RelayCompletions(ctx context.Context, token *model.Token,
 	return s.Relay(ctx, token, relay.APICompletions, body, clientIP)
 }
 
+func upstreamConversionHTTPError() *HTTPError {
+	return &HTTPError{
+		Status:  http.StatusBadGateway,
+		Message: "upstream response conversion failed",
+		Type:    "upstream_error",
+		Code:    "upstream_conversion_failed",
+	}
+}
+
 func (s *RelayService) RelayAnthropicMessages(ctx context.Context, token *model.Token, body []byte, clientIP string) ([]byte, *relay.Usage, error) {
 	canonical, err := anthropicMessagesToOpenAI(body)
 	if err != nil {
@@ -342,7 +351,7 @@ func (s *RelayService) RelayAnthropicMessages(ctx context.Context, token *model.
 	}
 	converted, err := openAIChatToAnthropic(resp)
 	if err != nil {
-		return nil, usage, &HTTPError{Status: 502, Message: "response conversion failed", Type: "upstream_error", Code: "response_conversion_failed"}
+		return nil, usage, upstreamConversionHTTPError()
 	}
 	return converted, usage, nil
 }
@@ -382,7 +391,7 @@ func (s *RelayService) RelayGeminiGenerateContent(ctx context.Context, token *mo
 	}
 	converted, err := openAIChatToGemini(resp)
 	if err != nil {
-		return nil, usage, &HTTPError{Status: 502, Message: "response conversion failed", Type: "upstream_error", Code: "response_conversion_failed"}
+		return nil, usage, upstreamConversionHTTPError()
 	}
 	return converted, usage, nil
 }
@@ -398,7 +407,7 @@ func (s *RelayService) RelayGeminiEmbedContent(ctx context.Context, token *model
 	}
 	converted, err := openAIEmbeddingsToGemini(resp)
 	if err != nil {
-		return nil, usage, &HTTPError{Status: 502, Message: "response conversion failed", Type: "upstream_error", Code: "response_conversion_failed"}
+		return nil, usage, upstreamConversionHTTPError()
 	}
 	return converted, usage, nil
 }
@@ -414,7 +423,7 @@ func (s *RelayService) RelayGeminiBatchEmbedContents(ctx context.Context, token 
 	}
 	converted, err := openAIEmbeddingsToGeminiBatch(resp, requestCount)
 	if err != nil {
-		return nil, usage, &HTTPError{Status: 502, Message: "response conversion failed", Type: "upstream_error", Code: "response_conversion_failed"}
+		return nil, usage, upstreamConversionHTTPError()
 	}
 	return converted, usage, nil
 }

@@ -124,11 +124,11 @@
 
 ## 当前代码事实和目标收敛
 
-当前代码已经使用 `service.HTTPError` 表达 `/v1` 主链路错误；API Key 鉴权、用户禁用、配额预检查和基础下游错误会按入口协议输出 OpenAI-compatible、Anthropic 或 Gemini 错误结构。以下差异需要在后续收敛时保持兼容：
+当前代码已经使用 `service.HTTPError` 表达 `/v1` 主链路错误；API Key 鉴权、用户禁用、配额预检查和基础下游错误会按入口协议输出 OpenAI-compatible、Anthropic 或 Gemini 错误结构。以下记录已收敛事实和仍需在后续处理的差异：
 
 | 当前事实 | 目标口径 |
 |----------|----------|
-| Anthropic/Gemini wrapper 转换失败当前可能返回 `response_conversion_failed`。 | 统一归入 `upstream_conversion_failed`，可保留 `response_conversion_failed` 作为兼容别名。 |
+| Anthropic/Gemini wrapper 转换失败已返回 `upstream_conversion_failed`，响应文案为 `upstream response conversion failed`。 | 由 `TestGeminiBatchEmbedContentsRejectsMismatchedEmbeddingCount` 覆盖，旧 `response_conversion_failed` 不再作为主口径。 |
 | `parseRelayRequest` 对缺少 model 当前可能走 `invalid_request`。 | 对外目标使用 `model_required`，日志可保留原始解析错误摘要。 |
 | 上游 400/401/403 当前多以 502 + `upstream_<status>` 返回。 | P1 可按入口协议细化；默认不重试，只有管理员显式加入 `relay.retry_on_status` 时才会换候选，401/403 仍应优先归因通道配置。 |
 | 超时已拆分为 `upstream_timeout`。 | 由 `TestChatCompletionUpstreamTimeoutMapping` 覆盖，便于告警和客户端重试判断。 |
