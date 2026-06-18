@@ -532,6 +532,38 @@ paths:
                         $ref: "#/components/schemas/TokenUsage"
         "404":
           $ref: "#/components/responses/StandardNotFound"
+  /v0/user/token/{id}/leak-window:
+    get:
+      tags: [User API Key]
+      summary: API Key 泄露窗口摘要
+      description: 当前用户查询自己的单 Key 最近调用窗口；window_hours 默认 24，最大 720。响应基于调用日志聚合调用数、成功/失败数、额度、tokens、模型、错误 code 和来源 IP 哈希计数，不返回完整明文 Key、Key 哈希或原始 IP。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: window_hours
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 720
+            default: 24
+          description: 分析窗口，单位小时；服务端会把小于等于 0 的值归一为 24，大于 720 的值归一为 720。
+      responses:
+        "200":
+          description: 单 Key 泄露窗口摘要。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenLeakWindow"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
   /v0/user/log:
     get:
       tags: [User Usage]
@@ -1200,6 +1232,38 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/TokenRiskPage"
+  /v0/admin/token/{id}/leak-window:
+    get:
+      tags: [Admin API Key]
+      summary: 管理员 API Key 泄露窗口摘要
+      description: 管理员跨用户查询单 Key 最近调用窗口；window_hours 默认 24，最大 720。响应基于调用日志聚合调用数、成功/失败数、额度、tokens、模型、错误 code 和来源 IP 哈希计数，不返回完整明文 Key、Key 哈希或原始 IP。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: window_hours
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 720
+            default: 24
+          description: 分析窗口，单位小时；服务端会把小于等于 0 的值归一为 24，大于 720 的值归一为 720。
+      responses:
+        "200":
+          description: 单 Key 泄露窗口摘要。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenLeakWindow"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
   /v0/admin/token/batch-disable:
     post:
       tags: [Admin API Key]
@@ -4181,6 +4245,83 @@ components:
         last_error_msg:
           type: string
           description: 最近失败摘要；为空表示最近调用无错误或没有日志。
+    TokenLeakWindowCounter:
+      type: object
+      properties:
+        value:
+          type: string
+          description: 聚合值；模型名、错误 code 或来源 IP 的 SHA-256 摘要。
+        count:
+          type: integer
+          format: int64
+          description: 该值在窗口内出现次数。
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 该值在窗口内最后出现时间。
+    TokenLeakWindow:
+      type: object
+      properties:
+        token:
+          $ref: "#/components/schemas/Token"
+        token_id:
+          type: integer
+          format: uint64
+        window_hours:
+          type: integer
+          description: 归一化后的分析窗口小时数。
+        window_start:
+          type: string
+          format: date-time
+        window_end:
+          type: string
+          format: date-time
+        call_count:
+          type: integer
+          format: int64
+          description: 窗口内成功和失败日志总数。
+        success_count:
+          type: integer
+          format: int64
+        error_count:
+          type: integer
+          format: int64
+        total_quota:
+          type: integer
+          format: int64
+          description: 窗口内累计额度消耗。
+        total_tokens:
+          type: integer
+          format: int64
+          description: 窗口内累计模型 token。
+        first_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenLeakWindowCounter"
+        error_codes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenLeakWindowCounter"
+        source_ip_hashes:
+          type: array
+          description: 来源 IP 的 SHA-256 摘要计数，不返回原始 IP。
+          items:
+            $ref: "#/components/schemas/TokenLeakWindowCounter"
+        last_used_ip_hash:
+          type: string
+          description: Token 最近来源 IP 摘要。
+        last_user_agent_hash:
+          type: string
+          description: Token 最近 User-Agent 摘要。
     TokenRisk:
       type: object
       properties:

@@ -685,6 +685,99 @@ func TestAdminAPIKeyRiskViewSummarizesRiskyKeys(t *testing.T) {
 	}
 }
 
+func TestAPIKeyLeakWindowSummarizesRecentUse(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenSvc := service.NewTokenService()
+	leakedToken, err := tokenSvc.Create(root.ID, "leak-window-key", 1000, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainKey := leakedToken.Key
+	leakedTokenID := leakedToken.ID
+	otherToken, err := tokenSvc.Create(root.ID, "other-key", 1000, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTokenID := otherToken.ID
+
+	now := time.Now()
+	logs := []model.Log{
+		{UserID: root.ID, TokenID: &leakedTokenID, Model: "gpt-leak", Status: common.LogStatusSuccess, TotalTokens: 7, QuotaUsed: 7, IP: "10.0.0.1", CreatedAt: now.Add(-90 * time.Minute)},
+		{UserID: root.ID, TokenID: &leakedTokenID, Model: "gpt-leak", Status: common.LogStatusFailed, ErrorCode: "upstream_timeout", ErrorMsg: "upstream timeout", IP: "10.0.0.2", CreatedAt: now.Add(-30 * time.Minute)},
+		{UserID: root.ID, TokenID: &leakedTokenID, Model: "gpt-old", Status: common.LogStatusSuccess, TotalTokens: 99, QuotaUsed: 99, IP: "10.0.0.3", CreatedAt: now.Add(-48 * time.Hour)},
+		{UserID: root.ID, TokenID: &otherTokenID, Model: "gpt-other", Status: common.LogStatusSuccess, TotalTokens: 11, QuotaUsed: 11, IP: "10.0.0.4", CreatedAt: now.Add(-10 * time.Minute)},
+	}
+	if err := internal.DB.Create(&logs).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	leakResp := performJSON(r, http.MethodGet, "/v0/user/token/"+uintString(leakedTokenID)+"/leak-window?window_hours=24", rootJWT, nil)
+	var payload struct {
+		Data struct {
+			Token struct {
+				ID   uint   `json:"id"`
+				Name string `json:"name"`
+			} `json:"token"`
+			CallCount    int64 `json:"call_count"`
+			SuccessCount int64 `json:"success_count"`
+			ErrorCount   int64 `json:"error_count"`
+			TotalQuota   int64 `json:"total_quota"`
+			TotalTokens  int64 `json:"total_tokens"`
+			Models       []struct {
+				Value string `json:"value"`
+				Count int64  `json:"count"`
+			} `json:"models"`
+			ErrorCodes []struct {
+				Value string `json:"value"`
+				Count int64  `json:"count"`
+			} `json:"error_codes"`
+			SourceIPHashes []struct {
+				Value string `json:"value"`
+				Count int64  `json:"count"`
+			} `json:"source_ip_hashes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(leakResp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("leak window response should be json: %v", err)
+	}
+	if leakResp.Code != http.StatusOK {
+		t.Fatalf("leak window should succeed, got %d %s", leakResp.Code, leakResp.Body.String())
+	}
+	data := payload.Data
+	if data.Token.ID != leakedTokenID || data.Token.Name != "leak-window-key" || data.CallCount != 2 || data.SuccessCount != 1 || data.ErrorCount != 1 || data.TotalQuota != 7 || data.TotalTokens != 7 {
+		t.Fatalf("leak window summary should include only recent logs for the token, got %+v", data)
+	}
+	if len(data.Models) != 1 || data.Models[0].Value != "gpt-leak" || data.Models[0].Count != 2 {
+		t.Fatalf("leak window should aggregate recent models only, got %+v", data.Models)
+	}
+	if len(data.ErrorCodes) != 1 || data.ErrorCodes[0].Value != "upstream_timeout" || data.ErrorCodes[0].Count != 1 {
+		t.Fatalf("leak window should aggregate error codes, got %+v", data.ErrorCodes)
+	}
+	if len(data.SourceIPHashes) != 2 || data.SourceIPHashes[0].Value == "" || strings.Contains(leakResp.Body.String(), "10.0.0.") || strings.Contains(leakResp.Body.String(), plainKey) || strings.Contains(leakResp.Body.String(), "sk-") {
+		t.Fatalf("leak window should return hashed source summaries without raw IP or plaintext key: %s", leakResp.Body.String())
+	}
+
+	adminResp := performJSON(r, http.MethodGet, "/v0/admin/token/"+uintString(leakedTokenID)+"/leak-window?window_hours=24", rootJWT, nil)
+	if adminResp.Code != http.StatusOK || !strings.Contains(adminResp.Body.String(), `"call_count":2`) {
+		t.Fatalf("admin leak window should return token summary, got %d %s", adminResp.Code, adminResp.Body.String())
+	}
+}
+
 func TestAdminAPIKeyBatchExpire(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	r := newTestRouter(t)

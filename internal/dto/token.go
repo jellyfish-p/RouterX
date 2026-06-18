@@ -126,6 +126,32 @@ type TokenRiskResponse struct {
 	WindowStart       time.Time     `json:"window_start"`
 }
 
+type TokenLeakWindowCounterResponse struct {
+	Value      string     `json:"value"`
+	Count      int64      `json:"count"`
+	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+}
+
+type TokenLeakWindowResponse struct {
+	Token             TokenResponse                    `json:"token"`
+	TokenID           uint                             `json:"token_id"`
+	WindowHours       int                              `json:"window_hours"`
+	WindowStart       time.Time                        `json:"window_start"`
+	WindowEnd         time.Time                        `json:"window_end"`
+	CallCount         int64                            `json:"call_count"`
+	SuccessCount      int64                            `json:"success_count"`
+	ErrorCount        int64                            `json:"error_count"`
+	TotalQuota        int64                            `json:"total_quota"`
+	TotalTokens       int64                            `json:"total_tokens"`
+	FirstUsedAt       *time.Time                       `json:"first_used_at,omitempty"`
+	LastUsedAt        *time.Time                       `json:"last_used_at,omitempty"`
+	Models            []TokenLeakWindowCounterResponse `json:"models"`
+	ErrorCodes        []TokenLeakWindowCounterResponse `json:"error_codes"`
+	SourceIPHashes    []TokenLeakWindowCounterResponse `json:"source_ip_hashes"`
+	LastUsedIPHash    string                           `json:"last_used_ip_hash,omitempty"`
+	LastUserAgentHash string                           `json:"last_user_agent_hash,omitempty"`
+}
+
 type ReportTokenLeakResponse struct {
 	ID                     uint   `json:"id"`
 	Status                 int    `json:"status"`

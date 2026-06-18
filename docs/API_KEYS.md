@@ -83,7 +83,7 @@ User JWT 登录
 | 禁用 | 用户主动停用、管理员风控、用户禁用 | 更新状态、清理缓存、后续鉴权失败 | `token_forbidden` 或等价错误 | 禁用动作可审计 |
 | 删除 | 用户删除、清理长期不用 Key | 软删除 Token，保留历史日志和账单引用 | 列表不再作为可用 Key 展示 | 不删除账单事实 |
 | 过期 | 到达 `expired_at` | 鉴权失败，后续可清理或提示重建 | `expired_api_key` 目标错误 | 不自动延长有效期 |
-| 泄露处置 | Key 出现在外部仓库、日志、工单或异常流量中 | 立即禁用、清缓存、查最近使用、创建替换 Key | 泄露窗口和额度消耗可解释 | 不把泄露明文再次写入系统 |
+| 泄露处置 | Key 出现在外部仓库、日志、工单或异常流量中 | 立即禁用、清缓存、查最近使用、查询泄露窗口、创建替换 Key | 泄露窗口和额度消耗可解释 | 不把泄露明文再次写入系统 |
 
 ## 6. 小白开箱路径
 
@@ -238,6 +238,7 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 | POST | `/v0/user/token/:id/report-leak` | 上报泄露并立即禁用 Key，写 `api_key.leak_reported` 审计。 |
 | PUT | `/v0/user/token/:id/scope` | 更新 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`entry_protocols` 入口协议 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list、`daily_quota` 日预算、`monthly_quota` 月预算、`max_concurrency` 并发上限、`rpm` 和 `tpm`，并写 `api_key.scope_updated` 审计。 |
 | GET | `/v0/user/token/:id/usage` | 查看单 Key 调用数、成功/失败数、额度消耗、总 tokens 和最近调用摘要。 |
+| GET | `/v0/user/token/:id/leak-window` | 查看单 Key 最近窗口调用摘要；`window_hours` 默认 24、最大 720，返回模型、错误 code 和来源 IP 哈希计数。 |
 
 用户接口必须保持这些边界：
 
@@ -255,6 +256,7 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 | 禁用 | `POST /v0/user/token/:id/disable` | Key 所属用户或管理员 | 立即禁用并清理缓存。 |
 | 泄露上报 | `POST /v0/user/token/:id/report-leak` | Key 所属用户或管理员 | 禁用 Key、写审计、提示创建替换 Key。 |
 | 用量摘要 | `GET /v0/user/token/:id/usage` | Key 所属用户或管理员 | 返回该 Key 的调用量、额度消耗、错误和最近使用摘要。 |
+| 泄露窗口 | `GET /v0/user/token/:id/leak-window`、`GET /v0/admin/token/:id/leak-window` | Key 所属用户或管理员 | 基于现有调用日志聚合窗口内调用、额度、模型、错误 code 和来源 IP 哈希，不返回明文 Key 或原始 IP。 |
 | 作用域扩展 | `PUT /v0/user/token/:id/scope` | 管理员或具备策略权限的用户 | 在已实现 `allow_models`、`api_types`、`channel_groups`、`entry_protocols`、`ip_cidrs`、`methods`、`daily_quota`、`monthly_quota`、`max_concurrency`、`rpm` 和 `tpm` 基础上继续扩展更完整策略快照。 |
 | 批量禁用 | `POST /v0/admin/token/batch-disable` | 管理员 | 按用户、标签、环境、异常条件批量禁用。 |
 | 批量过期 | `POST /v0/admin/token/batch-expire` | 管理员 | 按 `token_ids` 或 `user_id` 立即设置过期时间，必须带筛选条件并写审计。 |
@@ -367,10 +369,10 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 
 ### P2 验收
 
-- 管理员已支持跨用户查询、批量禁用、批量过期和基础异常 Key 风险视图；基础鉴权映射缓存失效已覆盖，更完整泄露窗口分析仍待补。
+- 管理员已支持跨用户查询、批量禁用、批量过期、基础异常 Key 风险视图和单 Key 泄露窗口分析；基础鉴权映射缓存失效已覆盖，自动轮换建议和告警仍待补。
 - 支持企业团队、服务账号、标签、环境和导出脱敏摘要。
 - 已支持入口协议 allow-list、IP/CIDR allow-list、日预算、月预算、并发上限和 RPM/TPM；更完整策略快照仍待补。
-- 已支持泄露上报和替换建议；泄露窗口分析、自动轮换建议和告警仍待补。
+- 已支持泄露上报、替换建议和基于调用日志的窗口分析；自动轮换建议和告警仍待补。
 - API Key 预算调整、支付入账、退款、充值码和人工补账统一走对应审计或额度流水。
 
 ## 16. 测试矩阵
@@ -390,6 +392,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 | 管理审计 | 创建、编辑、禁用、删除和禁止用户端改额度会写 `api_key.*`，审计中不含 `sk-` 明文。 |
 | 泄露处理 | 旧 Key 失效，新 Key 可用，审计不含明文。 |
 | 风险视图 | 管理员能按窗口查看异常 Key 的失败峰值、低剩余额度、泄露上报、禁用、过期和最近错误风险，响应不包含明文 Key 或哈希。 |
+| 泄露窗口 | 用户和管理员能查询单 Key 最近窗口内调用数、成功/失败数、额度、tokens、模型、错误 code 和来源 IP 哈希计数；响应不包含完整 API Key 或原始 IP。 |
 | 作用域拒绝 | 模型 allow-list 未命中时返回 `model_not_allowed`，APIType、入口协议、IP/CIDR 或方法路径 allow-list 未命中时返回 `token_forbidden`，通道分组 allow-list 未命中时返回 `route_forbidden`，日/月预算达到上限时返回 `insufficient_quota`，并发上限或 RPM/TPM 命中时返回 `rate_limit_exceeded`；都会写失败日志且不调用上游。 |
 
 ## 17. 文档同步

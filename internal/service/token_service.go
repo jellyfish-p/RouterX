@@ -123,6 +123,31 @@ type TokenRiskItem struct {
 	WindowStart       time.Time
 }
 
+type TokenLeakWindowStats struct {
+	Token             model.Token
+	WindowHours       int
+	WindowStart       time.Time
+	WindowEnd         time.Time
+	CallCount         int64
+	SuccessCount      int64
+	ErrorCount        int64
+	TotalQuota        int64
+	TotalTokens       int64
+	FirstUsedAt       *time.Time
+	LastUsedAt        *time.Time
+	Models            []TokenLeakWindowCounter
+	ErrorCodes        []TokenLeakWindowCounter
+	SourceIPHashes    []TokenLeakWindowCounter
+	LastUsedIPHash    string
+	LastUserAgentHash string
+}
+
+type TokenLeakWindowCounter struct {
+	Value      string
+	Count      int64
+	LastSeenAt *time.Time
+}
+
 type BatchDisableTokensInput struct {
 	TokenIDs []uint
 	UserID   *uint
@@ -1054,6 +1079,121 @@ func (s *TokenService) GetUsageForUser(id, userID uint) (TokenUsageStats, error)
 	stats.LastStatus = last.Status
 	stats.LastErrorMsg = last.ErrorMsg
 	return stats, nil
+}
+
+func (s *TokenService) GetLeakWindowForUser(id, userID uint, windowHours int) (TokenLeakWindowStats, error) {
+	return s.getLeakWindow(id, &userID, windowHours)
+}
+
+func (s *TokenService) GetLeakWindow(id uint, windowHours int) (TokenLeakWindowStats, error) {
+	return s.getLeakWindow(id, nil, windowHours)
+}
+
+func (s *TokenService) getLeakWindow(id uint, userID *uint, windowHours int) (TokenLeakWindowStats, error) {
+	windowHours = normalizeLeakWindowHours(windowHours)
+	var token model.Token
+	query := internal.DB.Where("id = ?", id)
+	if userID != nil {
+		query = query.Where("user_id = ?", *userID)
+	}
+	if err := query.First(&token).Error; err != nil {
+		return TokenLeakWindowStats{}, err
+	}
+
+	windowEnd := tokenNow()
+	windowStart := windowEnd.Add(-time.Duration(windowHours) * time.Hour)
+	stats := TokenLeakWindowStats{
+		Token:             token,
+		WindowHours:       windowHours,
+		WindowStart:       windowStart,
+		WindowEnd:         windowEnd,
+		Models:            []TokenLeakWindowCounter{},
+		ErrorCodes:        []TokenLeakWindowCounter{},
+		SourceIPHashes:    []TokenLeakWindowCounter{},
+		LastUsedIPHash:    token.LastUsedIPHash,
+		LastUserAgentHash: token.LastUserAgentHash,
+	}
+
+	var logs []model.Log
+	if err := internal.DB.
+		Where("token_id = ? AND created_at >= ? AND created_at <= ?", id, windowStart, windowEnd).
+		Order("created_at ASC, id ASC").
+		Find(&logs).Error; err != nil {
+		return TokenLeakWindowStats{}, err
+	}
+	modelCounters := map[string]TokenLeakWindowCounter{}
+	errorCounters := map[string]TokenLeakWindowCounter{}
+	sourceCounters := map[string]TokenLeakWindowCounter{}
+	for i := range logs {
+		log := logs[i]
+		stats.CallCount++
+		if log.Status == common.LogStatusSuccess {
+			stats.SuccessCount++
+		}
+		if log.Status == common.LogStatusFailed {
+			stats.ErrorCount++
+		}
+		stats.TotalQuota += log.QuotaUsed
+		stats.TotalTokens += int64(log.TotalTokens)
+		if stats.FirstUsedAt == nil {
+			first := log.CreatedAt
+			stats.FirstUsedAt = &first
+		}
+		last := log.CreatedAt
+		stats.LastUsedAt = &last
+		addLeakWindowCounter(modelCounters, log.Model, log.CreatedAt)
+		if log.Status == common.LogStatusFailed {
+			addLeakWindowCounter(errorCounters, normalizeLogErrorCode(&log), log.CreatedAt)
+		}
+		addLeakWindowCounter(sourceCounters, usageSourceHash(log.IP), log.CreatedAt)
+	}
+	stats.Models = sortedLeakWindowCounters(modelCounters)
+	stats.ErrorCodes = sortedLeakWindowCounters(errorCounters)
+	stats.SourceIPHashes = sortedLeakWindowCounters(sourceCounters)
+	return stats, nil
+}
+
+func normalizeLeakWindowHours(windowHours int) int {
+	switch {
+	case windowHours <= 0:
+		return 24
+	case windowHours > 720:
+		return 720
+	default:
+		return windowHours
+	}
+}
+
+func addLeakWindowCounter(counters map[string]TokenLeakWindowCounter, value string, seenAt time.Time) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	counter := counters[value]
+	counter.Value = value
+	counter.Count++
+	if counter.LastSeenAt == nil || seenAt.After(*counter.LastSeenAt) {
+		last := seenAt
+		counter.LastSeenAt = &last
+	}
+	counters[value] = counter
+}
+
+func sortedLeakWindowCounters(counters map[string]TokenLeakWindowCounter) []TokenLeakWindowCounter {
+	items := make([]TokenLeakWindowCounter, 0, len(counters))
+	for _, counter := range counters {
+		items = append(items, counter)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Count != items[j].Count {
+			return items[i].Count > items[j].Count
+		}
+		if items[i].LastSeenAt != nil && items[j].LastSeenAt != nil && !items[i].LastSeenAt.Equal(*items[j].LastSeenAt) {
+			return items[i].LastSeenAt.After(*items[j].LastSeenAt)
+		}
+		return items[i].Value < items[j].Value
+	})
+	return items
 }
 
 func (s *TokenService) ListRisk(filter TokenRiskFilter) ([]TokenRiskItem, int64, error) {

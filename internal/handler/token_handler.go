@@ -320,6 +320,24 @@ func (h *TokenHandler) Usage(c *gin.Context) {
 	common.Success(c, tokenUsageResponse(stats))
 }
 
+func (h *TokenHandler) LeakWindow(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	stats, err := h.svc.GetLeakWindowForUser(id, user.ID, queryInt(c, "window_hours", 24))
+	if err != nil {
+		common.FailWithStatus(c, 404, "API Key 不存在")
+		return
+	}
+	common.Success(c, tokenLeakWindowResponse(stats))
+}
+
 func (h *TokenHandler) AdminList(c *gin.Context) {
 	userID := queryUintPtr(c, "user_id")
 	status := queryIntPtr(c, "status")
@@ -360,6 +378,19 @@ func (h *TokenHandler) AdminRisk(c *gin.Context) {
 	}
 	page, pageSize = pageValues(page, pageSize)
 	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: data})
+}
+
+func (h *TokenHandler) AdminLeakWindow(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	stats, err := h.svc.GetLeakWindow(id, queryInt(c, "window_hours", 24))
+	if err != nil {
+		common.FailWithStatus(c, 404, "API Key 不存在")
+		return
+	}
+	common.Success(c, tokenLeakWindowResponse(stats))
 }
 
 func (h *TokenHandler) BatchDisable(c *gin.Context) {
@@ -488,6 +519,40 @@ func tokenRiskResponse(item service.TokenRiskItem) dto.TokenRiskResponse {
 		RecommendedAction: item.RecommendedAction,
 		WindowStart:       item.WindowStart,
 	}
+}
+
+func tokenLeakWindowResponse(stats service.TokenLeakWindowStats) dto.TokenLeakWindowResponse {
+	return dto.TokenLeakWindowResponse{
+		Token:             dto.TokenFromModel(stats.Token),
+		TokenID:           stats.Token.ID,
+		WindowHours:       stats.WindowHours,
+		WindowStart:       stats.WindowStart,
+		WindowEnd:         stats.WindowEnd,
+		CallCount:         stats.CallCount,
+		SuccessCount:      stats.SuccessCount,
+		ErrorCount:        stats.ErrorCount,
+		TotalQuota:        stats.TotalQuota,
+		TotalTokens:       stats.TotalTokens,
+		FirstUsedAt:       stats.FirstUsedAt,
+		LastUsedAt:        stats.LastUsedAt,
+		Models:            tokenLeakWindowCounters(stats.Models),
+		ErrorCodes:        tokenLeakWindowCounters(stats.ErrorCodes),
+		SourceIPHashes:    tokenLeakWindowCounters(stats.SourceIPHashes),
+		LastUsedIPHash:    stats.LastUsedIPHash,
+		LastUserAgentHash: stats.LastUserAgentHash,
+	}
+}
+
+func tokenLeakWindowCounters(items []service.TokenLeakWindowCounter) []dto.TokenLeakWindowCounterResponse {
+	out := make([]dto.TokenLeakWindowCounterResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, dto.TokenLeakWindowCounterResponse{
+			Value:      item.Value,
+			Count:      item.Count,
+			LastSeenAt: item.LastSeenAt,
+		})
+	}
+	return out
 }
 
 // tokenAuditSummary 使用公开 DTO 字段白名单，避免把哈希或一次性明文 Key 写入审计。

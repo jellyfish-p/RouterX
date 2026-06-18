@@ -27,6 +27,7 @@
 | `TestAdminAPIKeyQueryAndBatchDisable` | 管理员跨用户脱敏查询 API Key，批量禁用必须带筛选条件，批量禁用只影响命中 Key 并写 `api_key.batch_disabled` 审计 |
 | `TestAdminAPIKeyRiskViewSummarizesRiskyKeys` | 管理员风险视图按窗口聚合异常 Key，识别失败峰值和低剩余额度，返回风险等级、原因和建议动作，响应不包含明文 Key 或明文前缀 |
 | `TestAdminAPIKeyBatchExpire` | 管理员批量过期必须带筛选条件，只影响命中 Key，过期后 `/v1` 鉴权拒绝，并写 `api_key.batch_expired` 审计 |
+| `TestAPIKeyLeakWindowSummarizesRecentUse` | 用户和管理员查询单 Key 最近窗口调用摘要；窗口外日志和其他 Key 日志不混入，响应包含模型、错误 code 和来源 IP 哈希计数且不泄露明文 Key 或原始 IP |
 | `TestAPIKeyModelScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `allow_models` scope；允许模型成功转发，未允许模型返回 `model_not_allowed`，不调用上游、不额外扣费，并写失败日志、拒绝分支 `policy_snapshot` 和 `api_key.scope_updated` 审计 |
 | `TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `api_types` scope；允许 APIType 成功转发，未允许 APIType 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyChannelGroupScopeFiltersRelayCandidates` | 用户更新 API Key `channel_groups` scope；候选通道按允许分组过滤，越权 `routerx.route` 返回 `route_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
@@ -489,7 +490,7 @@ Gemini-compatible 最小断言：
 | P1 | 通道候选缓存 | 已覆盖进程内缓存命中、Redis 共享候选快照、主动 pub/sub 广播失效、`routing.channel_cache.preload` 启动预热/关闭 no-op/通道变更后预热、`routing.channel_cache.version` 变化后回源、默认 settings 和非法配置校验 |
 | P1 | 独立日志数据库 | 已覆盖 `LOG_SQL_DSN` 初始化、日志库副本写入、运行期写入失败时主库事实可恢复、主库 outbox 异步补写、管理日志列表读取日志库、查询失败回退主库和日志库健康指标；继续补冷热归档策略 |
 | P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
-| P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、基础风险视图、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝、RPM/TPM 拒绝、基础 Redis 鉴权 lookup cache 命中/预热/禁用失效和 router Redis 兼容已覆盖；更完整泄露窗口分析待补 |
+| P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、基础风险视图、单 Key 泄露窗口分析、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝、RPM/TPM 拒绝、基础 Redis 鉴权 lookup cache 命中/预热/禁用失效和 router Redis 兼容已覆盖；自动轮换建议和告警待补 |
 | P2 | 支付充值 | 充值码批次/备注/过期策略、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回审计、支付人工退款落账审计；更多 provider 自动退款适配待补 |
 | P2 | 观测审计 | API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status 和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis/日志库指标测试已覆盖；继续补更完整结构化日志、更多管理审计动作和生产 `/ready` |
 
