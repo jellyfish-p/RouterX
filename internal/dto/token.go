@@ -110,20 +110,22 @@ type TokenUsageResponse struct {
 }
 
 type TokenRiskResponse struct {
-	Token             TokenResponse `json:"token"`
-	CallCount         int64         `json:"call_count"`
-	SuccessCount      int64         `json:"success_count"`
-	ErrorCount        int64         `json:"error_count"`
-	TotalQuota        int64         `json:"total_quota"`
-	TotalTokens       int64         `json:"total_tokens"`
-	LastUsedAt        *time.Time    `json:"last_used_at,omitempty"`
-	LastModel         string        `json:"last_model,omitempty"`
-	LastStatus        int           `json:"last_status,omitempty"`
-	LastErrorCode     string        `json:"last_error_code,omitempty"`
-	RiskLevel         string        `json:"risk_level"`
-	RiskReasons       []string      `json:"risk_reasons"`
-	RecommendedAction string        `json:"recommended_action"`
-	WindowStart       time.Time     `json:"window_start"`
+	Token               TokenResponse `json:"token"`
+	CallCount           int64         `json:"call_count"`
+	SuccessCount        int64         `json:"success_count"`
+	ErrorCount          int64         `json:"error_count"`
+	TotalQuota          int64         `json:"total_quota"`
+	TotalTokens         int64         `json:"total_tokens"`
+	LastUsedAt          *time.Time    `json:"last_used_at,omitempty"`
+	LastModel           string        `json:"last_model,omitempty"`
+	LastStatus          int           `json:"last_status,omitempty"`
+	LastErrorCode       string        `json:"last_error_code,omitempty"`
+	RiskLevel           string        `json:"risk_level"`
+	RiskReasons         []string      `json:"risk_reasons"`
+	RecommendedAction   string        `json:"recommended_action"`
+	RotationRecommended bool          `json:"rotation_recommended"`
+	RotationReason      string        `json:"rotation_reason,omitempty"`
+	WindowStart         time.Time     `json:"window_start"`
 }
 
 type TokenLeakWindowCounterResponse struct {

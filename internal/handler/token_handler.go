@@ -519,20 +519,22 @@ func tokenUsageResponse(stats service.TokenUsageStats) dto.TokenUsageResponse {
 
 func tokenRiskResponse(item service.TokenRiskItem) dto.TokenRiskResponse {
 	return dto.TokenRiskResponse{
-		Token:             dto.TokenFromModel(item.Token),
-		CallCount:         item.CallCount,
-		SuccessCount:      item.SuccessCount,
-		ErrorCount:        item.ErrorCount,
-		TotalQuota:        item.TotalQuota,
-		TotalTokens:       item.TotalTokens,
-		LastUsedAt:        item.LastUsedAt,
-		LastModel:         item.LastModel,
-		LastStatus:        item.LastStatus,
-		LastErrorCode:     item.LastErrorCode,
-		RiskLevel:         item.RiskLevel,
-		RiskReasons:       item.RiskReasons,
-		RecommendedAction: item.RecommendedAction,
-		WindowStart:       item.WindowStart,
+		Token:               dto.TokenFromModel(item.Token),
+		CallCount:           item.CallCount,
+		SuccessCount:        item.SuccessCount,
+		ErrorCount:          item.ErrorCount,
+		TotalQuota:          item.TotalQuota,
+		TotalTokens:         item.TotalTokens,
+		LastUsedAt:          item.LastUsedAt,
+		LastModel:           item.LastModel,
+		LastStatus:          item.LastStatus,
+		LastErrorCode:       item.LastErrorCode,
+		RiskLevel:           item.RiskLevel,
+		RiskReasons:         item.RiskReasons,
+		RecommendedAction:   item.RecommendedAction,
+		RotationRecommended: item.RotationRecommended,
+		RotationReason:      item.RotationReason,
+		WindowStart:         item.WindowStart,
 	}
 }
 

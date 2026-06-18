@@ -694,6 +694,73 @@ func TestAdminAPIKeyRiskViewSummarizesRiskyKeys(t *testing.T) {
 	}
 }
 
+func TestAdminAPIKeyRiskViewRecommendsRotationForLeakedKeys(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	leakedToken, err := service.NewTokenService().Create(root.ID, "leaked-rotation", 100, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainKey := leakedToken.Key
+	if err := internal.DB.Model(&model.Token{}).
+		Where("id = ?", leakedToken.ID).
+		Updates(map[string]interface{}{
+			"status":         common.TokenStatusDisabled,
+			"revoked_reason": "leak_reported",
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	riskResp := performJSON(r, http.MethodGet, "/v0/admin/token/risk?window_hours=24", rootJWT, nil)
+	var payload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				Token struct {
+					ID   uint   `json:"id"`
+					Name string `json:"name"`
+				} `json:"token"`
+				RiskReasons         []string `json:"risk_reasons"`
+				RecommendedAction   string   `json:"recommended_action"`
+				RotationRecommended bool     `json:"rotation_recommended"`
+				RotationReason      string   `json:"rotation_reason"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(riskResp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("risk view response should be json: %v", err)
+	}
+	if riskResp.Code != http.StatusOK || payload.Data.Total != 1 || len(payload.Data.Data) != 1 {
+		t.Fatalf("risk view should return leaked key risk, got %d %s", riskResp.Code, riskResp.Body.String())
+	}
+	item := payload.Data.Data[0]
+	reasons := strings.Join(item.RiskReasons, ",")
+	if item.Token.ID != leakedToken.ID || item.Token.Name != "leaked-rotation" || !strings.Contains(reasons, "leak_reported") {
+		t.Fatalf("risk view should identify leaked token, got %+v", item)
+	}
+	if item.RecommendedAction != "rotate_key" || !item.RotationRecommended || item.RotationReason != "leak_reported" {
+		t.Fatalf("risk view should recommend rotation for leaked key, got %+v", item)
+	}
+	body := riskResp.Body.String()
+	if strings.Contains(body, plainKey) || strings.Contains(body, "sk-") {
+		t.Fatalf("risk view should not include plaintext API keys: %s", body)
+	}
+}
+
 func TestAPIKeyLeakWindowSummarizesRecentUse(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	r := newTestRouter(t)

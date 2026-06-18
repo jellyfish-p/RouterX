@@ -107,20 +107,22 @@ type TokenRiskFilter struct {
 }
 
 type TokenRiskItem struct {
-	Token             model.Token
-	CallCount         int64
-	SuccessCount      int64
-	ErrorCount        int64
-	TotalQuota        int64
-	TotalTokens       int64
-	LastUsedAt        *time.Time
-	LastModel         string
-	LastStatus        int
-	LastErrorCode     string
-	RiskLevel         string
-	RiskReasons       []string
-	RecommendedAction string
-	WindowStart       time.Time
+	Token               model.Token
+	CallCount           int64
+	SuccessCount        int64
+	ErrorCount          int64
+	TotalQuota          int64
+	TotalTokens         int64
+	LastUsedAt          *time.Time
+	LastModel           string
+	LastStatus          int
+	LastErrorCode       string
+	RiskLevel           string
+	RiskReasons         []string
+	RecommendedAction   string
+	RotationRecommended bool
+	RotationReason      string
+	WindowStart         time.Time
 }
 
 type TokenLeakWindowStats struct {
@@ -1228,16 +1230,18 @@ func (s *TokenService) ListRisk(filter TokenRiskFilter) ([]TokenRiskItem, int64,
 			continue
 		}
 		item := TokenRiskItem{
-			Token:             token,
-			CallCount:         agg.CallCount,
-			SuccessCount:      agg.SuccessCount,
-			ErrorCount:        agg.ErrorCount,
-			TotalQuota:        agg.TotalQuota,
-			TotalTokens:       agg.TotalTokens,
-			RiskReasons:       reasons,
-			RiskLevel:         tokenRiskLevel(reasons),
-			RecommendedAction: tokenRiskAction(reasons),
-			WindowStart:       windowStart,
+			Token:               token,
+			CallCount:           agg.CallCount,
+			SuccessCount:        agg.SuccessCount,
+			ErrorCount:          agg.ErrorCount,
+			TotalQuota:          agg.TotalQuota,
+			TotalTokens:         agg.TotalTokens,
+			RiskReasons:         reasons,
+			RiskLevel:           tokenRiskLevel(reasons),
+			RecommendedAction:   tokenRiskAction(reasons),
+			RotationRecommended: tokenRotationRecommended(reasons),
+			RotationReason:      tokenRotationReason(reasons),
+			WindowStart:         windowStart,
 		}
 		if last, ok, err := tokenRiskLastLog(token.ID, windowStart); err != nil {
 			return nil, 0, err
@@ -1383,6 +1387,17 @@ func tokenRiskAction(reasons []string) string {
 	default:
 		return "review"
 	}
+}
+
+func tokenRotationRecommended(reasons []string) bool {
+	return tokenRotationReason(reasons) != ""
+}
+
+func tokenRotationReason(reasons []string) string {
+	if containsString(reasons, "leak_reported") {
+		return "leak_reported"
+	}
+	return ""
 }
 
 func sortTokenRiskItems(items []TokenRiskItem) {

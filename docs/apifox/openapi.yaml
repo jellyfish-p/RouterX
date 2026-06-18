@@ -1182,7 +1182,7 @@ paths:
     get:
       tags: [Admin API Key]
       summary: API Key 风险视图
-      description: 管理员按时间窗口查看异常 API Key；聚合调用数、成功/失败数、额度消耗、最近调用和风险原因。响应只返回脱敏 API Key 摘要，不返回明文 Key 或哈希。
+      description: 管理员按时间窗口查看异常 API Key；聚合调用数、成功/失败数、额度消耗、最近调用和风险原因。泄露上报 Key 会返回 rotation_recommended=true、rotation_reason=leak_reported 和 rotate_key 建议。响应只返回脱敏 API Key 摘要，不返回明文 Key 或哈希。
       security:
         - UserJWT: []
       parameters:
@@ -4375,6 +4375,13 @@ components:
           type: string
           enum: [rotate_key, review_errors, top_up_or_disable, review_expiration, review_disabled_key, review]
           description: 建议处置动作。
+        rotation_recommended:
+          type: boolean
+          description: 是否建议立即轮换该 Key；当前泄露上报风险会返回 true。
+        rotation_reason:
+          type: string
+          enum: [leak_reported]
+          description: 建议轮换的机器可读原因；未建议轮换时省略。
         window_start:
           type: string
           format: date-time
