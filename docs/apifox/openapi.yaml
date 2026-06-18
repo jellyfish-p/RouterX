@@ -3245,13 +3245,13 @@ components:
           schema:
             $ref: "#/components/schemas/OpenAIErrorEnvelope"
     AnthropicError:
-      description: Anthropic-compatible 错误。本地限流返回 type=rate_limit_error；请求体超过 relay.max_request_body_bytes 时返回 413 invalid_request_error；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_error。
+      description: Anthropic-compatible 错误。本地 JSON 解析失败语义为 invalid_json，缺少 model 语义为 model_required；本地限流返回 type=rate_limit_error；请求体超过 relay.max_request_body_bytes 时返回 413 invalid_request_error；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_error。
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/AnthropicErrorEnvelope"
     GeminiError:
-      description: Gemini-compatible 错误。本地限流返回 status=RESOURCE_EXHAUSTED；请求体超过 relay.max_request_body_bytes 时返回 413 RESOURCE_EXHAUSTED；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 UNAVAILABLE。
+      description: Gemini-compatible 错误。本地 JSON 解析失败语义为 invalid_json，缺少 model 语义为 model_required；本地限流返回 status=RESOURCE_EXHAUSTED；请求体超过 relay.max_request_body_bytes 时返回 413 RESOURCE_EXHAUSTED；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 UNAVAILABLE。
       content:
         application/json:
           schema:

@@ -340,10 +340,19 @@ func upstreamConversionHTTPError() *HTTPError {
 	}
 }
 
+func relayInvalidRequestHTTPError(err error) *HTTPError {
+	return &HTTPError{
+		Status:  http.StatusBadRequest,
+		Message: err.Error(),
+		Type:    "invalid_request_error",
+		Code:    relayRequestErrorCode(err),
+	}
+}
+
 func (s *RelayService) RelayAnthropicMessages(ctx context.Context, token *model.Token, body []byte, clientIP string) ([]byte, *relay.Usage, error) {
 	canonical, err := anthropicMessagesToOpenAI(body)
 	if err != nil {
-		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
 	resp, usage, err := s.Relay(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -359,7 +368,7 @@ func (s *RelayService) RelayAnthropicMessages(ctx context.Context, token *model.
 func (s *RelayService) RelayAnthropicMessagesStream(ctx context.Context, token *model.Token, body []byte, clientIP string) (*RelayStreamResult, error) {
 	canonical, err := anthropicMessagesToOpenAI(body)
 	if err != nil {
-		return nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+		return nil, relayInvalidRequestHTTPError(err)
 	}
 	result, err := s.RelayStream(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -383,7 +392,7 @@ func (s *RelayService) RelayAnthropicMessagesStream(ctx context.Context, token *
 func (s *RelayService) RelayGeminiGenerateContent(ctx context.Context, token *model.Token, modelName string, body []byte, stream bool, clientIP string) ([]byte, *relay.Usage, error) {
 	canonical, err := geminiGenerateToOpenAI(modelName, body, stream)
 	if err != nil {
-		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
 	resp, usage, err := s.Relay(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -399,7 +408,7 @@ func (s *RelayService) RelayGeminiGenerateContent(ctx context.Context, token *mo
 func (s *RelayService) RelayGeminiEmbedContent(ctx context.Context, token *model.Token, modelName string, body []byte, clientIP string) ([]byte, *relay.Usage, error) {
 	canonical, err := geminiEmbedContentToOpenAI(modelName, body)
 	if err != nil {
-		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
 	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
 	if err != nil {
@@ -415,7 +424,7 @@ func (s *RelayService) RelayGeminiEmbedContent(ctx context.Context, token *model
 func (s *RelayService) RelayGeminiBatchEmbedContents(ctx context.Context, token *model.Token, modelName string, body []byte, clientIP string) ([]byte, *relay.Usage, error) {
 	canonical, requestCount, err := geminiBatchEmbedContentsToOpenAI(modelName, body)
 	if err != nil {
-		return nil, nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
 	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
 	if err != nil {
@@ -431,7 +440,7 @@ func (s *RelayService) RelayGeminiBatchEmbedContents(ctx context.Context, token 
 func (s *RelayService) RelayGeminiGenerateContentStream(ctx context.Context, token *model.Token, modelName string, body []byte, clientIP string) (*RelayStreamResult, error) {
 	canonical, err := geminiGenerateToOpenAI(modelName, body, true)
 	if err != nil {
-		return nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_request"}
+		return nil, relayInvalidRequestHTTPError(err)
 	}
 	result, err := s.RelayStream(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -1749,11 +1758,11 @@ func anthropicMessagesToOpenAI(body []byte) ([]byte, error) {
 		Stream        bool     `json:"stream"`
 	}
 	if err := json.Unmarshal(body, &input); err != nil {
-		return nil, errors.New("invalid json body")
+		return nil, errInvalidJSONBody
 	}
 	input.Model = strings.TrimSpace(input.Model)
 	if input.Model == "" {
-		return nil, errors.New("model is required")
+		return nil, errModelRequired
 	}
 	messages := make([]map[string]interface{}, 0, len(input.Messages)+1)
 	if system := strings.TrimSpace(relay.TextFromContent(input.System)); system != "" {
@@ -1801,11 +1810,11 @@ func geminiGenerateToOpenAI(modelName string, body []byte, stream bool) ([]byte,
 		GenerationConfig map[string]interface{} `json:"generationConfig"`
 	}
 	if err := json.Unmarshal(body, &input); err != nil {
-		return nil, errors.New("invalid json body")
+		return nil, errInvalidJSONBody
 	}
 	modelName = strings.TrimPrefix(strings.TrimSpace(modelName), "models/")
 	if modelName == "" {
-		return nil, errors.New("model is required")
+		return nil, errModelRequired
 	}
 	messages := make([]map[string]interface{}, 0, len(input.Contents)+1)
 	if input.SystemInstruction != nil {
@@ -1861,11 +1870,11 @@ func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {
 		} `json:"content"`
 	}
 	if err := json.Unmarshal(body, &input); err != nil {
-		return nil, errors.New("invalid json body")
+		return nil, errInvalidJSONBody
 	}
 	modelName = strings.TrimPrefix(strings.TrimSpace(modelName), "models/")
 	if modelName == "" {
-		return nil, errors.New("model is required")
+		return nil, errModelRequired
 	}
 	text := geminiTextFromParts(input.Content.Parts)
 	if text == "" {
@@ -1886,11 +1895,11 @@ func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, in
 		} `json:"requests"`
 	}
 	if err := json.Unmarshal(body, &input); err != nil {
-		return nil, 0, errors.New("invalid json body")
+		return nil, 0, errInvalidJSONBody
 	}
 	modelName = strings.TrimPrefix(strings.TrimSpace(modelName), "models/")
 	if modelName == "" {
-		return nil, 0, errors.New("model is required")
+		return nil, 0, errModelRequired
 	}
 	if len(input.Requests) == 0 {
 		return nil, 0, errors.New("requests are required")

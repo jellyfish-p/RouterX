@@ -129,7 +129,7 @@
 | 当前事实 | 目标口径 |
 |----------|----------|
 | Anthropic/Gemini wrapper 转换失败已返回 `upstream_conversion_failed`，响应文案为 `upstream response conversion failed`。 | 由 `TestGeminiBatchEmbedContentsRejectsMismatchedEmbeddingCount` 覆盖，旧 `response_conversion_failed` 不再作为主口径。 |
-| `parseRelayRequest` 对缺少 model 当前可能走 `invalid_request`。 | 对外目标使用 `model_required`，日志可保留原始解析错误摘要。 |
+| OpenAI 主链路和 Anthropic/Gemini wrapper 本地解析错误已统一：非法 JSON 使用 `invalid_json`，缺少 model 使用 `model_required`。 | 由 `TestChatCompletionInvalidRequestDoesNotCallUpstream` 和 `TestProtocolWrapperRequestErrorsUseStableCodes` 覆盖；日志可保留原始解析错误摘要。 |
 | 上游 400/401/403 当前多以 502 + `upstream_<status>` 返回。 | P1 可按入口协议细化；默认不重试，只有管理员显式加入 `relay.retry_on_status` 时才会换候选，401/403 仍应优先归因通道配置。 |
 | 超时已拆分为 `upstream_timeout`。 | 由 `TestChatCompletionUpstreamTimeoutMapping` 覆盖，便于告警和客户端重试判断。 |
 | `/v0` 统一响应当前没有稳定 code 字段。 | 若增加 code，需要保持旧字段并更新 API 文档和测试。 |
