@@ -6195,6 +6195,120 @@ func TestRateLimitPerUserAppliesAcrossAPIKeys(t *testing.T) {
 	}
 }
 
+func TestRateLimitPerModelRejectsBeforeUpstream(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-model-limit","object":"chat.completion","model":"gpt-model-limit","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = nil
+	})
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"rate_limit.global_per_min":    "0",
+		"rate_limit.per_ip_per_min":    "0",
+		"rate_limit.per_token_per_min": "0",
+		"rate_limit.per_user_per_min":  "0",
+		"rate_limit.per_model_per_min": "1",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "model-limited",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "model-limit",
+		"models":   "gpt-model-limit",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+	body := map[string]interface{}{
+		"model": "gpt-model-limit",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	first := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first request should pass model limit, got %d %s", first.Code, first.Body.String())
+	}
+	second := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	if second.Code != http.StatusTooManyRequests || !strings.Contains(second.Body.String(), `"code":"rate_limit_exceeded"`) {
+		t.Fatalf("second request for same model should be blocked by model limit, got %d %s", second.Code, second.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("model-level limited request should not call upstream, got %d", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 48 {
+		t.Fatalf("only first request should be charged, got %d", storedToken.RemainQuota)
+	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-model-limit", "%model rate limit%").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("model rate limit rejection should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["reject_code"] != "rate_limit_exceeded" ||
+		policySnapshot["quota_precheck"] != "rate_limit_exceeded" ||
+		scopeResult["rate_limit"] != "deny" ||
+		scopeResult["rate_limit_dimension"] != "model" {
+		t.Fatalf("unexpected model rate limit policy snapshot: %+v", policySnapshot)
+	}
+}
+
 func TestRelayPrecheckRejectsBeforeUpstream(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -8240,9 +8354,9 @@ func TestChatCompletionUsesModelPriceExpressionForBilling(t *testing.T) {
 		UserEnabled:     true,
 		PriceMode:       "token",
 		OverrideMode:    "override",
-		PriceExpression: "total_tokens * channel_multiplier",
+		PriceExpression: "total_tokens * channel_price_per_token",
 		VariablesJSON: model.NewJSONValue(map[string]interface{}{
-			"channel_multiplier": 4,
+			"channel_price_per_token": 4,
 		}),
 		UnitTokens:  1,
 		RuleVersion: 9,
@@ -8289,7 +8403,7 @@ func TestChatCompletionUsesModelPriceExpressionForBilling(t *testing.T) {
 		t.Fatalf("billing snapshot should record channel price source and expression quota: %+v", billingSnapshot)
 	}
 	expressionSnapshot, ok = billingSnapshot["billing_expression_snapshot"].(map[string]interface{})
-	if !ok || expressionSnapshot["source"] != "channel_model_prices" || expressionSnapshot["expression"] != "total_tokens * channel_multiplier" || expressionSnapshot["base_quota"] != float64(20) || expressionSnapshot["rule_version"] != float64(9) {
+	if !ok || expressionSnapshot["source"] != "channel_model_prices" || expressionSnapshot["expression"] != "total_tokens * channel_price_per_token" || expressionSnapshot["base_quota"] != float64(20) || expressionSnapshot["rule_version"] != float64(9) {
 		t.Fatalf("billing expression snapshot should record channel price expression: %+v", billingSnapshot)
 	}
 }

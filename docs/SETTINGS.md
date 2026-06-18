@@ -61,6 +61,7 @@
 | `rate_limit.per_token_per_min` | `rate_limit` | int | `60` | 否 | hot | rate limit | `>=0` |
 | `rate_limit.per_ip_per_min` | `rate_limit` | int | `30` | 否 | hot | rate limit | `>=0` |
 | `rate_limit.per_user_per_min` | `rate_limit` | int | `0` | 否 | hot | rate limit | `>=0` |
+| `rate_limit.per_model_per_min` | `rate_limit` | int | `0` | 否 | hot | rate limit | `>=0` |
 | `relay.timeout` | `relay` | int | `120` | 否 | hot | relay | `>0` |
 | `relay.retry_count` | `relay` | int | `0` | 否 | hot | relay | `>=0` |
 | `relay.retry_on_status` | `relay` | json_int_array | `[429,500,502,503,504]` | 否 | hot | relay | 非空，元素为 `400..599` 且不重复 |
@@ -84,7 +85,7 @@
 - `jwt.secret` 可以由 `JWT_SECRET` 注入；生产和多实例部署必须显式固定，不能让各实例随机生成不同值。
 - `auth.login.username_password.enabled=true` 是商业级基础登录硬约束，配置层会拒绝关闭；email/phone 密码登录默认关闭，只有已有本地 email/phone identity 且对应开关开启时才会命中。
 - `auth.register.enabled=false` 是商业级自部署安全默认；当前基础用户名注册还会检查 `auth.register.username.enabled`，并在 `auth.register.captcha.required=true` 时拒绝无验证码注册请求。完整验证码、邮箱和手机号注册仍按 `docs/ACCOUNTS.md` 分阶段补齐。
-- `rate_limit.global_per_min`、`rate_limit.per_token_per_min`、`rate_limit.per_ip_per_min` 和 `rate_limit.per_user_per_min` 为 `0` 时表示关闭对应维度；Redis 可用时这些 hot setting 会影响后续请求。
+- `rate_limit.global_per_min`、`rate_limit.per_token_per_min`、`rate_limit.per_ip_per_min`、`rate_limit.per_user_per_min` 和 `rate_limit.per_model_per_min` 为 `0` 时表示关闭对应维度；Redis 可用时这些 hot setting 会影响后续请求。
 - `relay.retry_count` 默认是 `0`，表示不做自动重试；大于 0 时，非流式 Relay 只对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败进行有限候选通道重试。默认白名单为 429/500/502/503/504，生产环境不建议把 401/403 加入白名单。
 - `relay.error_auto_ban=false` 时仍会记录通道 `error_count`，但候选查询不会因为 `relay.error_ban_threshold` 排除通道；`relay.error_ban_cooldown_seconds>0` 时，达到阈值的通道在最近一次健康状态更新超过冷却窗口后可重新进入候选做半开探测，`0` 表示不自动探测。
 - `relay.max_request_body_bytes` 当前已在 `/v1` 模型入口生效，超过限制时按入口协议返回 413 且不调用上游。

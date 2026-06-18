@@ -454,6 +454,9 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 		_ = s.recordLog(ctx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 		return nil, nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
+	if err := s.enforceModelRateLimit(ctx, token, reqInfo.Model, clientIP); err != nil {
+		return nil, nil, err
+	}
 	ctx = ContextWithRelayPolicySnapshot(ctx, buildRelayPolicySnapshot(ctx, token, reqInfo))
 
 	filteredReasons := map[string]int{}
@@ -682,6 +685,9 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if !s.tokenService.HasAvailableQuota(token) {
 		_ = s.recordLog(ctx, token, nil, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 		return nil, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
+	}
+	if err := s.enforceModelRateLimit(ctx, token, reqInfo.Model, clientIP); err != nil {
+		return nil, err
 	}
 	ctx = ContextWithRelayPolicySnapshot(ctx, buildRelayPolicySnapshot(ctx, token, reqInfo))
 
@@ -2446,6 +2452,53 @@ func (s *RelayService) enforceTokenTPMScope(ctx context.Context, token *model.To
 		return &HTTPError{Status: 429, Message: "rate limit exceeded", Type: "rate_limit_error", Code: "rate_limit_exceeded"}
 	}
 	return nil
+}
+
+func (s *RelayService) enforceModelRateLimit(ctx context.Context, token *model.Token, modelName, clientIP string) error {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" || internal.RDB == nil {
+		return nil
+	}
+	settingSvc := s.settingService
+	if settingSvc == nil {
+		settingSvc = NewSettingService()
+	}
+	if enabled, err := settingSvc.GetBool("rate_limit.enabled"); err == nil && !enabled {
+		return nil
+	}
+	limit, err := settingSvc.GetInt("rate_limit.per_model_per_min")
+	if err != nil || limit <= 0 {
+		return nil
+	}
+	now := time.Now().Unix() / 60
+	if !relayRateLimitExceeded(fmt.Sprintf("rl:model:%s:%d", modelName, now), int64(limit)) {
+		return nil
+	}
+	logCtx := ContextWithRelayPolicySnapshot(ctx, buildRelayPolicyDenySnapshot(ctx, token, "rate_limit_exceeded", "rate_limit_exceeded", map[string]interface{}{
+		"api_type":             "allow",
+		"model":                "allow",
+		"channel_group":        "not_evaluated",
+		"rate_limit":           "deny",
+		"rate_limit_dimension": "model",
+	}))
+	_ = s.recordLog(logCtx, token, nil, modelName, nil, common.LogStatusFailed, 0, "model rate limit exceeded", clientIP)
+	return &HTTPError{Status: 429, Message: "rate limit exceeded", Type: "rate_limit_error", Code: "rate_limit_exceeded"}
+}
+
+func relayRateLimitExceeded(key string, limit int64) bool {
+	if internal.RDB == nil || limit <= 0 {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	count, err := internal.RDB.Incr(ctx, key).Result()
+	if err != nil {
+		return false
+	}
+	if count == 1 {
+		_ = internal.RDB.Expire(ctx, key, 2*time.Minute).Err()
+	}
+	return count > limit
 }
 
 // relayAPITypeScopeName keeps API Key scope names stable across internal enum values.
