@@ -7852,6 +7852,120 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	}
 }
 
+func TestChatCompletionDeductionFailureWritesBillingSnapshot(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "chatcmpl-deduct-failed",
+			"object": "chat.completion",
+			"model": "gpt-deduct-failed",
+			"choices": [
+				{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+			],
+			"usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+		}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(3)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "deduct-failure",
+		"remain_quota": 10,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "deduct-failure-channel",
+		"models":   "gpt-deduct-failed",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "gpt-deduct-failed",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	})
+	if chatResp.Code != http.StatusTooManyRequests || !strings.Contains(chatResp.Body.String(), `"code":"insufficient_quota"`) {
+		t.Fatalf("deduction failure should return insufficient_quota, got %d %s", chatResp.Code, chatResp.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("deduction failure should happen after one upstream call, got %d", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 10 {
+		t.Fatalf("failed deduction should not consume token budget, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 3 {
+		t.Fatalf("failed deduction should not consume user quota, got %d", root.Quota)
+	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-deduct-failed").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedLog.QuotaUsed != 0 || failedLog.TotalTokens != 5 || failedLog.ErrorCode != "insufficient_quota" || failedLog.ErrorSource != common.LogErrorSourceQuota {
+		t.Fatalf("deduction failure should write zero-quota failed log with usage and stable code, got %+v", failedLog)
+	}
+	var billingSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.BillingSnapshot), &billingSnapshot); err != nil {
+		t.Fatalf("deduction failure should store billing snapshot JSON, got %q: %v", failedLog.BillingSnapshot, err)
+	}
+	if billingSnapshot["billing_status"] != "failed" ||
+		billingSnapshot["deduction_result"] != "failed" ||
+		billingSnapshot["deduction_error_code"] != "insufficient_user_quota" ||
+		billingSnapshot["attempted_quota_used"] != float64(5) ||
+		billingSnapshot["final_quota_used"] != float64(0) ||
+		billingSnapshot["key_budget_before"] != float64(10) ||
+		billingSnapshot["key_budget_after"] != float64(10) ||
+		billingSnapshot["user_balance_before"] != float64(3) ||
+		billingSnapshot["user_balance_after"] != float64(3) {
+		t.Fatalf("deduction failure snapshot should explain failed charge: %+v", billingSnapshot)
+	}
+	expressionSnapshot, ok := billingSnapshot["billing_expression_snapshot"].(map[string]interface{})
+	if !ok || expressionSnapshot["base_quota"] != float64(5) {
+		t.Fatalf("deduction failure snapshot should preserve base billing expression: %+v", billingSnapshot)
+	}
+}
+
 func TestChatCompletionUsesModelPriceExpressionForBilling(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

@@ -624,7 +624,8 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		billing := s.calculateRelayBilling(token, channel, reqInfo.Model, nil)
 		deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 		if err != nil {
-			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
+			logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingFailureSnapshot(nil, billing, deduction, err))
+			_ = s.recordLog(logCtx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 			return nil, nil, false, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 		}
 		contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
@@ -650,7 +651,8 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	billing := s.calculateRelayBilling(token, channel, reqInfo.Model, usage)
 	deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 	if err != nil {
-		_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
+		logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingFailureSnapshot(usage, billing, deduction, err))
+		_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 		return nil, usage, false, &HTTPError{Status: 429, Message: "insufficient quota", Type: "insufficient_quota", Code: "insufficient_quota"}
 	}
 	_ = s.markChannelSuccess(channel, latencyMs)
@@ -819,7 +821,8 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 			billing := s.calculateRelayBilling(token, channel, reqInfo.Model, usage)
 			deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 			if err != nil {
-				_ = s.recordLog(ctx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, err.Error(), clientIP)
+				logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingFailureSnapshot(usage, billing, deduction, err))
+				_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, "insufficient quota", clientIP)
 				return usage, err
 			}
 			_ = s.markChannelSuccess(channel, latencyMs)
@@ -2885,6 +2888,73 @@ func buildRelayBillingSnapshot(usage *relay.Usage, billing relayBillingResult, d
 		return ""
 	}
 	return string(raw)
+}
+
+func buildRelayBillingFailureSnapshot(usage *relay.Usage, billing relayBillingResult, deduction QuotaDeductionResult, err error) string {
+	quotaUsed := billing.QuotaUsed
+	usageSource := logUsageSource(usage, common.LogStatusSuccess, quotaUsed)
+	payer := "token_and_user"
+	if deduction.TokenUnlimited {
+		payer = "user"
+	}
+	expressionSource := strings.TrimSpace(billing.ExpressionSource)
+	if expressionSource == "" {
+		expressionSource = "p0_usage"
+		if usageSource == common.LogUsageSourceMinimum {
+			expressionSource = "minimum"
+		}
+	}
+	priceSource := strings.TrimSpace(billing.PriceSource)
+	if priceSource == "" {
+		priceSource = expressionSource
+	}
+	expressionSnapshot := billing.ExpressionSnapshot
+	if expressionSnapshot == nil {
+		expressionSnapshot = buildP0BillingExpressionSnapshot(usage, usageSource, quotaUsed)
+	}
+	snapshot := map[string]interface{}{
+		"schema":                      "routerx.snapshot.v1",
+		"kind":                        "billing",
+		"stage":                       "p1",
+		"source":                      "billing",
+		"redacted":                    true,
+		"billing_status":              "failed",
+		"price_source":                priceSource,
+		"billing_expression_source":   expressionSource,
+		"billing_expression_snapshot": expressionSnapshot,
+		"multiplier_snapshot":         billingMultiplierSnapshot(billing),
+		"usage_source":                usageSource,
+		"payer":                       payer,
+		"attempted_quota_used":        quotaUsed,
+		"final_quota_used":            int64(0),
+		"deduction_result":            "failed",
+		"deduction_error_code":        quotaDeductionErrorCode(err),
+		"key_budget_before":           deduction.TokenQuotaBefore,
+		"key_budget_after":            deduction.TokenQuotaBefore,
+		"user_balance_before":         deduction.UserQuotaBefore,
+		"user_balance_after":          deduction.UserQuotaBefore,
+	}
+	if usage != nil {
+		snapshot["prompt_tokens"] = usage.PromptTokens
+		snapshot["completion_tokens"] = usage.CompletionTokens
+		snapshot["total_tokens"] = usage.TotalTokens
+	}
+	raw, marshalErr := json.Marshal(snapshot)
+	if marshalErr != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func quotaDeductionErrorCode(err error) string {
+	switch {
+	case errors.Is(err, ErrInsufficientUserQuota):
+		return "insufficient_user_quota"
+	case errors.Is(err, ErrInsufficientTokenQuota):
+		return "insufficient_token_quota"
+	default:
+		return "deduction_failed"
+	}
 }
 
 func buildP0BillingExpressionSnapshot(usage *relay.Usage, usageSource string, quotaUsed int64) map[string]interface{} {

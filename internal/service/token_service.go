@@ -1303,7 +1303,7 @@ func (s *TokenService) DeductQuotaWithSnapshot(tokenID uint, quota int64) (Quota
 		return nil
 	})
 	if err != nil {
-		return QuotaDeductionResult{}, err
+		return result, err
 	}
 	return result, nil
 }

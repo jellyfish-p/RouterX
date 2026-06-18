@@ -108,7 +108,7 @@
 | `request_snapshot` | 脱敏请求快照；当前包含入口协议、API 类型、请求模型、stream 标记和安全路由摘要 |
 | `policy_snapshot` | 脱敏策略快照；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝和 Redis Token 限流拒绝摘要 |
 | `route_snapshot` | 脱敏路由快照；当前包含基础选择事实、候选过滤原因、模型重写摘要和非流式重试摘要 |
-| `billing_snapshot` | 脱敏计费快照；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式摘要、规则 ID/版本、倍率摘要、Key 预算前后、用户余额前后和最终扣费 |
+| `billing_snapshot` | 脱敏计费快照；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式摘要、规则 ID/版本、倍率摘要、Key 预算前后、用户余额前后和最终扣费；扣费失败时包含试算额度和失败原因 |
 | `content` / `response` | 截断和脱敏后的请求/响应快照 |
 | `error_msg` | 脱敏错误摘要 |
 | `ip` | 调用方 IP |
@@ -133,7 +133,7 @@
 - 成功调用必须写 success 日志并记录 `quota_used`。
 - 预检拒绝可以写 failed 日志，且 `channel_id` 可为空。
 - 上游已调用但失败时，应写 failed 日志，记录上游状态和脱敏摘要。
-- 扣费失败必须写 failed 日志，便于账单核查。
+- 扣费失败必须写 failed 日志，并记录 `billing_status=failed`、`attempted_quota_used` 和 `deduction_error_code`，便于账单核查。
 - 日志写入失败本身需要系统错误日志和指标，不能静默吞掉。
 
 ## 管理审计日志

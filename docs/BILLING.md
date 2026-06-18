@@ -146,7 +146,7 @@ P0 扣费顺序：
 3. 计算 quota_used
 4. 在数据库事务中扣减用户余额，并更新 API Key 预算计数
 5. 扣费成功后写 success 日志
-6. 扣费失败时写 failed 日志并返回 429
+6. 扣费失败时写 failed 日志并返回 429；日志 `quota_used=0`，`billing_snapshot.billing_status=failed`，并记录 `attempted_quota_used` 和 `deduction_error_code`
 ```
 
 额度扣减规则：
