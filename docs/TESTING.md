@@ -33,6 +33,7 @@
 | `TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `api_types` scope；允许 APIType 成功转发，未允许 APIType 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyChannelGroupScopeFiltersRelayCandidates` | 用户更新 API Key `channel_groups` scope；候选通道按允许分组过滤，越权 `routerx.route` 返回 `route_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyEntryProtocolScopeRejectsBeforeRelay` | 用户更新 API Key `entry_protocols` scope；允许入口协议成功转发，未允许入口协议按当前协议错误外形返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyEntryProtocolScopeAllowsGeminiEmbeddingActions` | `entry_protocols=["gemini"]` 允许 Gemini embedContent 和 batchEmbedContents，不会被误判为 OpenAI 入口 |
 | `TestUserGroupChannelGroupAccessFiltersRelayCandidates` | 默认用户分组只能访问 settings 允许的通道分组；更高优先级的未授权通道会被过滤，越权 `routerx.route` 返回 `route_forbidden` 且不调用上游，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyIPScopeRejectsBeforeRelay` | 用户更新 API Key `ip_cidrs` scope；允许 IP 成功转发，未允许 IP 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyMethodScopeRejectsBeforeRelay` | 用户更新 API Key `methods` scope；允许方法路径成功转发，未允许方法路径返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |

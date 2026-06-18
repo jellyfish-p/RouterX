@@ -482,7 +482,7 @@ paths:
     put:
       tags: [User API Key]
       summary: 更新 API Key scope
-      description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list、api_types APIType allow-list、channel_groups 通道分组 allow-list、entry_protocols 入口协议 allow-list、ip_cidrs IP/CIDR allow-list、methods 方法路径 allow-list、daily_quota 日预算、monthly_quota 月预算、max_concurrency 并发上限、rpm 和 tpm。列表为空表示继承用户和系统策略；模型未命中返回 model_not_allowed，APIType、入口协议、IP 或方法路径未命中返回 token_forbidden，通道分组未命中返回 route_forbidden，日/月预算达到上限返回 insufficient_quota，并发上限或 RPM/TPM 命中返回 rate_limit_exceeded，且都不会调用上游。成功后写 api_key.scope_updated 管理审计并清理 Redis 鉴权 lookup cache，审计摘要不包含明文 Key 或哈希。
+      description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list、api_types APIType allow-list、channel_groups 通道分组 allow-list、entry_protocols 入口协议 allow-list、ip_cidrs IP/CIDR allow-list、methods 方法路径 allow-list、daily_quota 日预算、monthly_quota 月预算、max_concurrency 并发上限、rpm 和 tpm。列表为空表示继承用户和系统策略；模型未命中返回 model_not_allowed，APIType、入口协议、IP 或方法路径未命中返回 token_forbidden，通道分组未命中返回 route_forbidden，日/月预算达到上限返回 insufficient_quota，并发上限或 RPM/TPM 命中返回 rate_limit_exceeded，且都不会调用上游。entry_protocols=gemini 覆盖 generateContent、streamGenerateContent、countTokens、embedContent 和 batchEmbedContents。成功后写 api_key.scope_updated 管理审计并清理 Redis 鉴权 lookup cache，审计摘要不包含明文 Key 或哈希。
       security:
         - UserJWT: []
       parameters:

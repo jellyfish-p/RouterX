@@ -191,11 +191,27 @@ func entryProtocol(c *gin.Context) string {
 		return headerProtocol
 	case strings.TrimSpace(c.GetHeader("anthropic-version")) != "":
 		return "anthropic"
-	case strings.Contains(path, ":generateContent") || strings.Contains(path, ":streamGenerateContent") || strings.Contains(path, ":countTokens"):
+	case isGeminiEntryPath(path):
 		return "gemini"
 	default:
 		return "openai"
 	}
+}
+
+func isGeminiEntryPath(path string) bool {
+	actions := []string{
+		":generateContent",
+		":streamGenerateContent",
+		":countTokens",
+		":embedContent",
+		":batchEmbedContents",
+	}
+	for _, action := range actions {
+		if strings.Contains(path, action) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeEntryProtocol(value string) string {

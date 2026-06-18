@@ -734,7 +734,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 }
 ```
 
-`allow_models` 为空或 scope 为空时继承用户和系统策略；非空时只允许列表内模型，拒绝返回 `model_not_allowed` 且不调用上游。`api_types` 为空时不按接口能力额外收窄；非空时只允许列出的 APIType，未命中返回 `token_forbidden` 且不调用上游。`channel_groups` 为空时不按通道分组额外收窄；非空时只允许候选通道落在列表内，未命中返回 `route_forbidden`。`entry_protocols` 为空时不按入口协议额外收窄；非空时只允许 `openai`、`anthropic`、`gemini` 或 `*` 命中，未命中返回当前入口协议兼容的 `token_forbidden` 且不调用上游。`ip_cidrs` 为空时不限制来源 IP；非空时只允许命中的单 IP 或 CIDR，未命中返回 `token_forbidden`。`methods` 为空时不按路径额外收窄；非空时只允许 `METHOD path` 命中，未命中返回 `token_forbidden`。`daily_quota` 为空时不设日预算，`monthly_quota` 为空时不设月预算；非空时分别按当天或当月成功日志已消耗额度拦截，到达上限返回 `insufficient_quota`。`max_concurrency` 为空时不设单 Key 并发上限；非空时限制同一 Key 同时在途请求数，达到上限返回 `rate_limit_exceeded`。`rpm` 为空时不设单 Key 每分钟请求上限，`tpm` 为空时不设单 Key 每分钟模型 token 上限；非空时达到上限返回 `rate_limit_exceeded`。
+`allow_models` 为空或 scope 为空时继承用户和系统策略；非空时只允许列表内模型，拒绝返回 `model_not_allowed` 且不调用上游。`api_types` 为空时不按接口能力额外收窄；非空时只允许列出的 APIType，未命中返回 `token_forbidden` 且不调用上游。`channel_groups` 为空时不按通道分组额外收窄；非空时只允许候选通道落在列表内，未命中返回 `route_forbidden`。`entry_protocols` 为空时不按入口协议额外收窄；非空时只允许 `openai`、`anthropic`、`gemini` 或 `*` 命中，未命中返回当前入口协议兼容的 `token_forbidden` 且不调用上游；`gemini` 覆盖 generateContent、streamGenerateContent、countTokens、embedContent 和 batchEmbedContents。`ip_cidrs` 为空时不限制来源 IP；非空时只允许命中的单 IP 或 CIDR，未命中返回 `token_forbidden`。`methods` 为空时不按路径额外收窄；非空时只允许 `METHOD path` 命中，未命中返回 `token_forbidden`。`daily_quota` 为空时不设日预算，`monthly_quota` 为空时不设月预算；非空时分别按当天或当月成功日志已消耗额度拦截，到达上限返回 `insufficient_quota`。`max_concurrency` 为空时不设单 Key 并发上限；非空时限制同一 Key 同时在途请求数，达到上限返回 `rate_limit_exceeded`。`rpm` 为空时不设单 Key 每分钟请求上限，`tpm` 为空时不设单 Key 每分钟模型 token 上限；非空时达到上限返回 `rate_limit_exceeded`。
 
 ### 用量和账单
 

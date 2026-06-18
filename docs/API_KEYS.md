@@ -205,7 +205,7 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 | `allow_models` 模型 allow-list | 只能调用 `gpt-4o-mini`、`claude-3-5-sonnet` | `model_not_allowed` |
 | `api_types` APIType allow-list | 只允许 `openai.chat` 或 `openai.embeddings` | `token_forbidden` |
 | `channel_groups` 通道分组 allow-list | 只能使用 `default` 或 `cheap` 分组 | `route_forbidden` |
-| `entry_protocols` 入口协议 allow-list | 只允许 `openai`、`anthropic` 或 `gemini` 入口 | `token_forbidden` |
+| `entry_protocols` 入口协议 allow-list | 只允许 `openai`、`anthropic` 或 `gemini` 入口；`gemini` 覆盖 generateContent、streamGenerateContent、countTokens、embedContent 和 batchEmbedContents | `token_forbidden` |
 | `ip_cidrs` IP/CIDR allow-list | 只允许固定出口 IP 或网段 | `token_forbidden` |
 | `methods` 方法路径 allow-list | 只允许 `POST /v1/chat/completions` | `token_forbidden` |
 | `daily_quota` 日预算 | 当日成功日志已消耗额度达到上限后拒绝 | `insufficient_quota` |
