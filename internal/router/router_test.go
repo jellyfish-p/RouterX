@@ -213,17 +213,28 @@ func TestP0BackendFlow(t *testing.T) {
 func TestApifoxOpenAPICoversRegisteredRoutes(t *testing.T) {
 	r := newTestRouter(t)
 	documented := loadApifoxOperationSet(t)
+	registered := registeredPublicOperationSet(r)
 	missing := make([]string, 0)
 
-	for _, operation := range registeredPublicOperations(r) {
+	for operation := range registered {
 		if _, ok := documented[operation]; !ok {
 			missing = append(missing, operation)
 		}
 	}
-
 	sort.Strings(missing)
 	if len(missing) > 0 {
 		t.Fatalf("docs/apifox/openapi.yaml is missing registered routes:\n%s", strings.Join(missing, "\n"))
+	}
+
+	stale := make([]string, 0)
+	for operation := range documented {
+		if _, ok := registered[operation]; !ok {
+			stale = append(stale, operation)
+		}
+	}
+	sort.Strings(stale)
+	if len(stale) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml documents unregistered routes:\n%s", strings.Join(stale, "\n"))
 	}
 }
 
@@ -15104,7 +15115,7 @@ func loadApifoxOperationSet(t *testing.T) map[string]struct{} {
 	return operations
 }
 
-func registeredPublicOperations(r *gin.Engine) []string {
+func registeredPublicOperationSet(r *gin.Engine) map[string]struct{} {
 	operations := map[string]struct{}{}
 	for _, route := range r.Routes() {
 		if route.Method == http.MethodPost && route.Path == "/v1/models/:model" {
@@ -15117,6 +15128,11 @@ func registeredPublicOperations(r *gin.Engine) []string {
 		}
 		operations[route.Method+" "+ginRoutePathToOpenAPI(route.Path)] = struct{}{}
 	}
+	return operations
+}
+
+func registeredPublicOperations(r *gin.Engine) []string {
+	operations := registeredPublicOperationSet(r)
 	result := make([]string, 0, len(operations))
 	for operation := range operations {
 		result = append(result, operation)
