@@ -87,6 +87,8 @@
 | `invalid_json` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | JSON 解析失败 | 否 | 否 | 否 | body 读取或解析摘要，不保存完整 body | 修正 JSON |
 | `invalid_multipart` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | multipart 表单解析失败 | 否 | 否 | 否 | content-type、boundary 和字段摘要，不保存完整文件内容 | 修正表单边界、字段或文件 |
 | `model_required` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 缺少模型 | 否 | 否 | 否 | 缺少字段 | 补充 model |
+| `invalid_embedding_input` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | Embeddings `input` 类型或内容非法 | 否 | 否 | 否 | input 类型、空值或混合类型摘要 | 使用非空 string、非空 string 数组、token id 数组或 token id 数组批量 |
+| `embedding_batch_too_large` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | Embeddings 字符串批量或 token 数组批量超过 2048 | 否 | 否 | 否 | batch_size、limit | 拆分批量请求 |
 | `unsupported_stream` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 当前入口或 APIType 尚未开启流式 | 否 | 否 | 否 | stream=true | 使用非流式或等待对应协议流式实现 |
 | `unsupported_stream_channel` | 502 | `upstream_error` / `UNAVAILABLE` | 流式请求命中非 OpenAI SSE 形态通道 | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用 OpenAI-compatible 流式通道或等待对应 provider chunk 转换 |
 | `unsupported_multipart_channel` | 502 | `upstream_error` / `UNAVAILABLE` | multipart 请求命中暂不支持文件表单透传的上游 adapter | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用 OpenAI-compatible 通道或等待对应 provider multipart 转换 |

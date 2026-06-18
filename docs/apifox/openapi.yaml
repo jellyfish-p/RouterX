@@ -2392,7 +2392,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: Embeddings 转发
-      description: OpenAI-compatible Embeddings 基础实现；JSON 请求体透传到 OpenAI-compatible 上游 /v1/embeddings，Azure OpenAI 通道会转发到 /openai/deployments/{deployment}/embeddings；发出前剥离 routerx 私有字段，并将 usage.prompt_tokens/total_tokens 映射到 RouterX 日志与扣费。输入 schema、批量边界和模型能力策略以 docs/PROTOCOLS.md 为准。
+      description: OpenAI-compatible Embeddings 基础实现；JSON 请求体透传到 OpenAI-compatible 上游 /v1/embeddings，Azure OpenAI 通道会转发到 /openai/deployments/{deployment}/embeddings；发出前剥离 routerx 私有字段，并将 usage.prompt_tokens/total_tokens 映射到 RouterX 日志与扣费。RouterX 会在上游前校验 input 为非空 string、非空 string 数组、token id 数组或 token id 数组批量；字符串批量和 token 数组批量上限为 2048，非法请求返回 invalid_embedding_input 或 embedding_batch_too_large 且不调用上游；模型能力策略以 docs/PROTOCOLS.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2400,7 +2400,7 @@ paths:
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
-        $ref: "#/components/requestBodies/GenericJSON"
+        $ref: "#/components/requestBodies/EmbeddingsJSON"
       responses:
         "200":
           $ref: "#/components/responses/GenericJSON"
@@ -2955,6 +2955,64 @@ components:
       in: query
       schema: { type: string, format: date-time }
   requestBodies:
+    EmbeddingsJSON:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [model, input]
+            properties:
+              model:
+                type: string
+                description: OpenAI-compatible embedding 模型名；Azure OpenAI 通道会把该值作为 deployment 名。
+                example: text-embedding-3-small
+              input:
+                oneOf:
+                  - type: string
+                    minLength: 1
+                    description: 单条非空文本。
+                    example: hello
+                  - type: array
+                    minItems: 1
+                    maxItems: 2048
+                    description: 非空文本批量。
+                    items:
+                      type: string
+                      minLength: 1
+                    example: ["hello", "world"]
+                  - type: array
+                    minItems: 1
+                    description: 单条 token id 数组。
+                    items:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                    example: [101, 2023, 2003, 102]
+                  - type: array
+                    minItems: 1
+                    maxItems: 2048
+                    description: token id 数组批量。
+                    items:
+                      type: array
+                      minItems: 1
+                      items:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                    example: [[101, 102], [201, 202]]
+              encoding_format:
+                type: string
+                enum: [float, base64]
+              dimensions:
+                type: integer
+                minimum: 1
+              user:
+                type: string
+              routerx:
+                type: object
+                additionalProperties: true
+                description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
     GenericJSON:
       required: true
       content:

@@ -11936,6 +11936,77 @@ func TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota(t *testing.T) {
 	}
 }
 
+func TestEmbeddingsRejectsInvalidInputBeforeUpstream(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[],"model":"embed-test","usage":{"prompt_tokens":1,"total_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "embeddings-invalid",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "embeddings-invalid",
+		"models":   "embed-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	emptyResp := performJSON(r, http.MethodPost, "/v1/embeddings", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "embed-test",
+		"input": "",
+	})
+	if emptyResp.Code != http.StatusBadRequest || !strings.Contains(emptyResp.Body.String(), `"code":"invalid_embedding_input"`) {
+		t.Fatalf("empty embeddings input should be rejected locally, got %d %s", emptyResp.Code, emptyResp.Body.String())
+	}
+
+	tooLargeInput := make([]string, 2049)
+	for i := range tooLargeInput {
+		tooLargeInput[i] = "hello"
+	}
+	tooLargeResp := performJSON(r, http.MethodPost, "/v1/embeddings", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model": "embed-test",
+		"input": tooLargeInput,
+	})
+	if tooLargeResp.Code != http.StatusBadRequest || !strings.Contains(tooLargeResp.Body.String(), `"code":"embedding_batch_too_large"`) {
+		t.Fatalf("oversized embeddings batch should be rejected locally, got %d %s", tooLargeResp.Code, tooLargeResp.Body.String())
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("invalid embeddings inputs must not call upstream, calls=%d", upstreamCalls)
+	}
+}
+
 func TestModerationsPassthroughUsesMinimumChargeWithoutUsage(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

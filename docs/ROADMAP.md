@@ -109,7 +109,7 @@ P0 代码落点清单：
 |------|----------|----------|
 | `SetupService` | 初始化默认 settings、启动额度、重复初始化保护 | 空库初始化测试通过，管理员能获得首次验证所需额度或明确提示 |
 | setup/ready 路由和中间件 | 未初始化拦截、协议兼容错误、生产就绪状态 | `/v0/setup/status`、`/ready` 和未初始化 `/v1` 请求都有断言 |
-| `RelayHandler` / `RelayService` | 非流式 Chat 主链路、Responses/Embeddings/Moderations/Image Generations 基础透传、请求校验、错误映射、usage 提取 | 本地上游桩成功、400、401/403、429、5xx、超时路径都有测试；Responses/Embeddings usage 映射和 Moderations/Image Generations 最低计费已有测试 |
+| `RelayHandler` / `RelayService` | 非流式 Chat 主链路、Responses/Embeddings/Moderations/Image Generations 基础透传、请求校验、错误映射、usage 提取 | 本地上游桩成功、400、401/403、429、5xx、超时路径都有测试；Responses/Embeddings usage 映射、Embeddings 本地 input 边界和 Moderations/Image Generations 最低计费已有测试 |
 | Provider adapter | OpenAI-compatible 请求/响应转换和错误透传边界 | 下游收到正确模型名、Authorization 和 body；响应不泄露内部错误 |
 | `ChannelService` | 优先级、权重、多 key、多 base URL、`upstreams` 和模型重写 | 通道选择与上游解析测试稳定，不依赖人工观察随机结果 |
 | `TokenService` / `LogService` | 额度预检、条件扣费、日志账单一致性 | 成功调用扣费，失败调用不误扣，日志聚合与账单接口一致 |
@@ -224,7 +224,7 @@ P2 验收标准：
 | 5 | 多 key、多 base URL、`upstreams` 优先级和模型重写 | 已覆盖：`TestChannelRoutingConfigResolution` | 证明通道高级配置不会产生不可解释的随机行为。 |
 | 6 | 日志、usage、扣费和用户账单聚合一致 | 已覆盖：`TestUserBillingMatchesLogs` | 证明账单不是从多个互相矛盾的事实源拼出来。 |
 | 7 | Responses 基础 JSON 透传和 usage 映射 | 已覆盖：`TestResponsesPassthroughExtractsUsageAndDeductsQuota` | 先保证 OpenAI-compatible Responses 调用事实可计费。 |
-| 8 | Embeddings 基础 JSON 透传和 usage 映射 | 已覆盖：`TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota` | 证明 Embeddings 不是只注册路由，而是能上游转发、剥离私有字段并扣费。 |
+| 8 | Embeddings 基础 JSON 透传、usage 映射和本地 input 边界 | 已覆盖：`TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota`、`TestEmbeddingsRejectsInvalidInputBeforeUpstream` | 证明 Embeddings 不是只注册路由，而是能上游转发、剥离私有字段、扣费，并在无效 input 或超大批量时不调用上游。 |
 | 9 | Gemini Embeddings 基础转换和 usage 扣费 | 已覆盖：`TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage`、`TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage` | 证明 Gemini 单条和批量 Embedding 入口不是只注册路径，能转 OpenAI-compatible Embeddings 上游并返回 Gemini 外形。 |
 | 10 | Moderations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明内容审核不是只注册路由，且 P0 最低计费边界可解释。 |
 | 11 | Image Generations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明图像生成 JSON 入口不是只注册路由，且无 usage 响应有明确最低计费。 |

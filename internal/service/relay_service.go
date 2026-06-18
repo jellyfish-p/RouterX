@@ -244,13 +244,17 @@ type channelGroupAccessPolicy struct {
 }
 
 var (
-	errInvalidJSONBody       = errors.New("invalid json body")
-	errInvalidMultipartBody  = errors.New("invalid multipart body")
-	errModelRequired         = errors.New("model is required")
-	errUnsupportedMultipart  = errors.New("multipart relay is not supported for selected upstream channel")
-	errInvalidRouterXOptions = errors.New("invalid routerx options")
-	errInvalidRouterXRoute   = errors.New("invalid routerx route")
+	errInvalidJSONBody        = errors.New("invalid json body")
+	errInvalidMultipartBody   = errors.New("invalid multipart body")
+	errModelRequired          = errors.New("model is required")
+	errUnsupportedMultipart   = errors.New("multipart relay is not supported for selected upstream channel")
+	errInvalidRouterXOptions  = errors.New("invalid routerx options")
+	errInvalidRouterXRoute    = errors.New("invalid routerx route")
+	errInvalidEmbeddingInput  = errors.New("embeddings input must be a non-empty string, string array, token array, or token array batch")
+	errEmbeddingBatchTooLarge = errors.New("embeddings input batch exceeds maximum size")
 )
+
+const maxEmbeddingBatchSize = 2048
 
 func (e *HTTPError) Error() string {
 	return e.Message
@@ -947,6 +951,7 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 	var payload struct {
 		Model   string          `json:"model"`
 		Stream  bool            `json:"stream"`
+		Input   json.RawMessage `json:"input"`
 		RouterX json.RawMessage `json:"routerx"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -964,7 +969,118 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 	if payload.Model == "" {
 		return relayRequestInfo{}, errModelRequired
 	}
+	if apiType == relay.APIEmbeddings {
+		if err := validateEmbeddingInput(payload.Input); err != nil {
+			return relayRequestInfo{}, err
+		}
+	}
 	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream, Route: route, Upstream: upstream}, nil
+}
+
+// Embeddings 在本地验证 OpenAI 支持的 input 形态，避免无效批量请求进入会计费的上游链路。
+func validateEmbeddingInput(raw json.RawMessage) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || isJSONNull(raw) {
+		return errInvalidEmbeddingInput
+	}
+	switch raw[0] {
+	case '"':
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
+			return errInvalidEmbeddingInput
+		}
+		return nil
+	case '[':
+		return validateEmbeddingInputArray(raw)
+	default:
+		return errInvalidEmbeddingInput
+	}
+}
+
+func validateEmbeddingInputArray(raw json.RawMessage) error {
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil || len(items) == 0 {
+		return errInvalidEmbeddingInput
+	}
+	firstKind := embeddingInputItemKind(items[0])
+	if firstKind == "" {
+		return errInvalidEmbeddingInput
+	}
+	for _, item := range items {
+		if embeddingInputItemKind(item) != firstKind {
+			return errInvalidEmbeddingInput
+		}
+	}
+	switch firstKind {
+	case "string":
+		if len(items) > maxEmbeddingBatchSize {
+			return errEmbeddingBatchTooLarge
+		}
+		for _, item := range items {
+			var value string
+			if err := json.Unmarshal(item, &value); err != nil || strings.TrimSpace(value) == "" {
+				return errInvalidEmbeddingInput
+			}
+		}
+	case "token":
+		for _, item := range items {
+			if !validEmbeddingTokenID(item) {
+				return errInvalidEmbeddingInput
+			}
+		}
+	case "token_batch":
+		if len(items) > maxEmbeddingBatchSize {
+			return errEmbeddingBatchTooLarge
+		}
+		for _, item := range items {
+			if err := validateEmbeddingTokenArray(item); err != nil {
+				return err
+			}
+		}
+	default:
+		return errInvalidEmbeddingInput
+	}
+	return nil
+}
+
+func embeddingInputItemKind(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return ""
+	}
+	switch raw[0] {
+	case '"':
+		return "string"
+	case '[':
+		return "token_batch"
+	default:
+		if validEmbeddingTokenID(raw) {
+			return "token"
+		}
+		return ""
+	}
+}
+
+func validateEmbeddingTokenArray(raw json.RawMessage) error {
+	var tokens []json.RawMessage
+	if err := json.Unmarshal(raw, &tokens); err != nil || len(tokens) == 0 {
+		return errInvalidEmbeddingInput
+	}
+	for _, token := range tokens {
+		if !validEmbeddingTokenID(token) {
+			return errInvalidEmbeddingInput
+		}
+	}
+	return nil
+}
+
+func validEmbeddingTokenID(raw json.RawMessage) bool {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || strings.ContainsAny(value, ".eE") {
+		return false
+	}
+	tokenID, err := strconv.ParseInt(value, 10, 64)
+	return err == nil && tokenID >= 0
 }
 
 func parseMultipartRelayRequest(body []byte, contentType string, headerRouterX json.RawMessage) (relayRequestInfo, error) {
@@ -1032,6 +1148,10 @@ func relayRequestErrorCode(err error) string {
 		return "invalid_routerx_options"
 	case errors.Is(err, errInvalidRouterXRoute):
 		return "invalid_routerx_route"
+	case errors.Is(err, errInvalidEmbeddingInput):
+		return "invalid_embedding_input"
+	case errors.Is(err, errEmbeddingBatchTooLarge):
+		return "embedding_batch_too_large"
 	default:
 		return "invalid_request"
 	}
