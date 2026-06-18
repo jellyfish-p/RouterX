@@ -284,6 +284,18 @@ func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 		!strings.Contains(anthropicDetailResp.Body.String(), `"display_name":"gpt-protocol"`) {
 		t.Fatalf("X-RouterX-Protocol=anthropic model detail should return Anthropic model shape, got %d %s", anthropicDetailResp.Code, anthropicDetailResp.Body.String())
 	}
+	missingGeminiDetailResp := performJSON(r, http.MethodGet, "/v1/models/missing-protocol?routerx_protocol=gemini", "Bearer "+tokenPayload.Data.Key, nil)
+	if missingGeminiDetailResp.Code != http.StatusNotFound || !strings.Contains(missingGeminiDetailResp.Body.String(), `"status":"NOT_FOUND"`) {
+		t.Fatalf("routerx_protocol=gemini missing model detail should return Gemini error shape, got %d %s", missingGeminiDetailResp.Code, missingGeminiDetailResp.Body.String())
+	}
+	missingAnthropicDetailResp := performRawWithHeaders(r, http.MethodGet, "/v1/models/missing-protocol", "Bearer "+tokenPayload.Data.Key, "", map[string]string{
+		"X-RouterX-Protocol": "anthropic",
+	})
+	if missingAnthropicDetailResp.Code != http.StatusNotFound ||
+		!strings.Contains(missingAnthropicDetailResp.Body.String(), `"type":"error"`) ||
+		!strings.Contains(missingAnthropicDetailResp.Body.String(), `"type":"invalid_request_error"`) {
+		t.Fatalf("X-RouterX-Protocol=anthropic missing model detail should return Anthropic error shape, got %d %s", missingAnthropicDetailResp.Code, missingAnthropicDetailResp.Body.String())
+	}
 	invalidGeminiResp := performJSON(r, http.MethodGet, "/v1/models?routerx_protocol=gemini", "Bearer sk-invalid-models-protocol", nil)
 	if invalidGeminiResp.Code != http.StatusUnauthorized || !strings.Contains(invalidGeminiResp.Body.String(), `"status":"UNAUTHENTICATED"`) {
 		t.Fatalf("routerx_protocol=gemini should return Gemini auth error shape, got %d %s", invalidGeminiResp.Code, invalidGeminiResp.Body.String())

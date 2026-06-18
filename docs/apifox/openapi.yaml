@@ -2672,7 +2672,14 @@ paths:
                   - $ref: "#/components/schemas/GeminiModel"
                   - $ref: "#/components/schemas/AnthropicModel"
         "404":
-          $ref: "#/components/responses/OpenAIError"
+          description: 模型不存在；错误外形跟随所选入口协议。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/OpenAIErrorEnvelope"
+                  - $ref: "#/components/schemas/AnthropicErrorEnvelope"
+                  - $ref: "#/components/schemas/GeminiErrorEnvelope"
   /v1/messages:
     post:
       tags: [Anthropic Compatible]

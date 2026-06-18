@@ -139,32 +139,39 @@ func (h *RelayHandler) Moderations(c *gin.Context) {
 
 // GET /v1/models — 模型列表
 func (h *RelayHandler) ListModels(c *gin.Context) {
+	protocol := modelListProtocol(c)
 	token, ok := middleware.CurrentAPIToken(c)
 	if ok {
 		if err := h.svc.CheckTokenAPIScope(token, relay.APIModels, c.ClientIP()); err != nil {
-			writeRelayError(c, err)
+			writeProtocolRelayError(c, protocol, err)
 			return
 		}
 	}
 	body, err := h.listModelsForRequest(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, common.OpenAIError("failed to list models", "server_error", "model_list_failed"))
+		writeProtocolRelayError(c, protocol, &service.HTTPError{
+			Status:  http.StatusInternalServerError,
+			Message: "failed to list models",
+			Type:    "server_error",
+			Code:    "model_list_failed",
+		})
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", body)
 }
 
 func (h *RelayHandler) ModelDetail(c *gin.Context) {
+	protocol := modelListProtocol(c)
 	token, ok := middleware.CurrentAPIToken(c)
 	if ok {
 		if err := h.svc.CheckTokenAPIScope(token, relay.APIModels, c.ClientIP()); err != nil {
-			writeRelayError(c, err)
+			writeProtocolRelayError(c, protocol, err)
 			return
 		}
 	}
 	var body []byte
 	var err error
-	switch modelListProtocol(c) {
+	switch protocol {
 	case "gemini":
 		body, err = h.svc.GeminiModelDetail(c.Param("model"))
 	case "anthropic":
@@ -173,7 +180,7 @@ func (h *RelayHandler) ModelDetail(c *gin.Context) {
 		body, err = h.svc.ModelDetail(c.Param("model"))
 	}
 	if err != nil {
-		writeRelayError(c, err)
+		writeProtocolRelayError(c, protocol, err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", body)
@@ -353,6 +360,17 @@ func writeRelayError(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusInternalServerError, common.OpenAIError("internal server error", "server_error", "internal_error"))
+}
+
+func writeProtocolRelayError(c *gin.Context, protocol string, err error) {
+	switch protocol {
+	case "anthropic":
+		writeAnthropicRelayError(c, err)
+	case "gemini":
+		writeGeminiRelayError(c, err)
+	default:
+		writeRelayError(c, err)
+	}
 }
 
 func writeAnthropicRelayError(c *gin.Context, err error) {
