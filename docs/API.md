@@ -159,7 +159,7 @@ Gemini-compatible 错误示例：
 | 404 | `model_not_found`、`unsupported_api`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名、接口路径或资源 ID |
 | 413 | `request_body_too_large`、`request_file_too_large` | `invalid_request_error` / `RESOURCE_EXHAUSTED` | 缩小请求体或上传文件后重试 |
 | 429 | `insufficient_quota`、`rate_limit_exceeded` | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 充值、降低并发或等待限流窗口 |
-| 502 | `no_available_channel`、`unsupported_channel`、`unsupported_multipart_channel`、`upstream_request_failed`、`upstream_secret_error`、`upstream_response_too_large`、`upstream_conversion_failed`、`usage_missing` | `upstream_error` / `UNAVAILABLE` | 管理员检查通道、密钥、响应大小、usage 或上游状态 |
+| 502 | `no_available_channel`、`unsupported_channel`、`unsupported_api_type`、`unsupported_multipart_channel`、`upstream_request_failed`、`upstream_secret_error`、`upstream_response_too_large`、`upstream_conversion_failed`、`usage_missing` | `upstream_error` / `UNAVAILABLE` | 管理员检查通道、APIType 支持、密钥、响应大小、usage 或上游状态 |
 | 504 | `upstream_timeout` | `upstream_error` / `DEADLINE_EXCEEDED` | 重试或检查下游耗时 |
 
 错误响应要求：
@@ -168,6 +168,7 @@ Gemini-compatible 错误示例：
 - 401/403 必须区分认证失败和权限不足；但登录场景可继续使用模糊提示防止账号枚举。
 - 余额不足、访问控制不通过、没有可用通道时必须在日志中记录可排障原因。
 - 下游原始错误可保存脱敏摘要；对客户端返回时必须转换为当前入口协议兼容格式。
+- 选中通道 adapter 不支持当前 APIType 时返回 502 `unsupported_api_type`，不调用上游且不扣费。
 - 下游非流式响应超过 `relay.max_response_body_bytes` 时返回 502 `upstream_response_too_large`，不反射完整下游响应体且不扣费。
 - OpenAI-compatible Images/Audio multipart 单个文件字段超过 `relay.max_multipart_file_bytes` 时返回 413 `request_file_too_large`，不调用上游且不扣费。
 - OpenAI-compatible Images/Audio multipart 文件名命中危险文件名基础扫描时返回 400 `unsafe_multipart_file`，不调用上游且不扣费。
@@ -898,7 +899,7 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/audio/speech` | 基础实现，OpenAI-compatible 文本转语音 JSON 透传，Azure OpenAI 通道转发到 `/openai/v1/audio/speech?api-version=preview`，二进制音频响应透传；无 usage 时按 P0 最低计费 |
 | GET | `/v1/models` | 基础实现，模型列表；Gemini 外形会在 `supportedGenerationMethods` 声明 `generateContent`、`streamGenerateContent`、`countTokens`、`embedContent` 和 `batchEmbedContents` |
 | GET | `/v1/models/:model` | 基础实现，模型详情；支持 `format`、`routerx_protocol` 或 `X-RouterX-Protocol` 选择 OpenAI、Gemini 或 Anthropic 外形 |
-| POST | `/v1/moderations` | 基础实现，OpenAI-compatible Moderations JSON 透传；无 usage 时按 P0 最低计费 |
+| POST | `/v1/moderations` | 基础实现，OpenAI-compatible Moderations JSON 透传；未支持该 APIType 的上游 adapter 返回 `unsupported_api_type`；无 usage 时按 P0 最低计费 |
 
 #### Chat Completions 契约
 
@@ -938,6 +939,7 @@ P0 明确失败：
 | API Key scope 达到并发上限 | 429 | `rate_limit_exceeded` |
 | API Key scope 达到 RPM/TPM 上限 | 429 | `rate_limit_exceeded` |
 | `stream=true` 但选中通道不是 OpenAI SSE 形态 | 502 | `unsupported_stream_channel` |
+| 选中通道 adapter 不支持该 APIType | 502 | `unsupported_api_type` |
 | `routerx` 结构非法 | 400 | `invalid_routerx_options` |
 | `routerx.route` 字段类型非法 | 400 | `invalid_routerx_route` |
 | 无可用通道 | 502 | `no_available_channel` |

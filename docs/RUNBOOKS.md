@@ -177,34 +177,39 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 - 预检余额不足时上游调用次数为 0。
 - 成功调用后 `quota_used`、用户账单和 Token 余额一致。
 
-### RB-005 返回 `unsupported_stream` / `unsupported_stream_channel`
+### RB-005 返回 `unsupported_stream` / `unsupported_stream_channel` / `unsupported_api_type`
 
 症状：
 
 - 请求体包含 `stream=true`。
 - 当前入口或 APIType 未开放流式时，返回 400，code 为 `unsupported_stream`。
 - OpenAI Chat 流式请求命中非 OpenAI SSE 通道时，返回 502，code 为 `unsupported_stream_channel`。
+- 选中通道 adapter 尚未支持该 APIType 时，返回 502，code 为 `unsupported_api_type`。
 
 用户含义：
 
 - OpenAI Chat 基础 SSE 只支持 OpenAI-compatible SSE 形态通道。
 - Anthropic/Gemini 原生流式转换、断开取消断言和 usage 兜底仍属于 P1 增强。
+- 某些 provider 端点需要逐项确认，不能把未确认 APIType 伪装成可用上游。
 
 检查顺序：
 
 1. 确认客户端 SDK 或业务代码是否默认打开 streaming。
 2. 如果需要 OpenAI Chat 流式，确认路由命中 OpenAI、OpenAI-compatible、xAI、Qwen、DeepSeek 或 RouterX-compatible 通道。
 3. 如果当前只能使用 Anthropic/Gemini 原生流式，临时改为非流式请求，直到对应 chunk 转换器落地。
+4. 如果 code 为 `unsupported_api_type`，检查 `docs/PROTOCOLS.md` 中该 provider 与 APIType 的能力等级，或把请求路由到支持该 APIType 的通道。
 
 安全动作：
 
 - 不应该把非 OpenAI SSE 的上游流伪装成 OpenAI SSE。
 - 非 OpenAI SSE 通道被拒绝时，不调用上游，避免误扣费和误导用户。
+- adapter 明确不支持的 APIType 被拒绝时，不调用上游，不扣费，日志应归因到通道能力。
 
 验收信号：
 
 - OpenAI Chat 基础流式测试通过，能透传 SSE 并按 usage 扣费。
 - 非 OpenAI SSE 通道拒绝测试通过，不写成功账单，不扣费。
+- `unsupported_api_type` 回归测试通过，不调用上游、不扣费，并写失败日志。
 
 ### RB-006 返回 `no_available_channel`
 

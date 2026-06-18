@@ -93,6 +93,7 @@
 | `unsupported_stream` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 当前入口或 APIType 尚未开启流式 | 否 | 否 | 否 | stream=true | 使用非流式或等待对应协议流式实现 |
 | `unsupported_stream_channel` | 502 | `upstream_error` / `UNAVAILABLE` | 流式请求命中非 OpenAI SSE 形态通道 | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用 OpenAI-compatible 流式通道或等待对应 provider chunk 转换 |
 | `unsupported_multipart_channel` | 502 | `upstream_error` / `UNAVAILABLE` | multipart 请求命中暂不支持文件表单透传的上游 adapter | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用 OpenAI-compatible 通道或等待对应 provider multipart 转换 |
+| `unsupported_api_type` | 502 | `upstream_error` / `UNAVAILABLE` | 选中上游 adapter 不支持该 APIType | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用支持该 APIType 的通道或等待对应 provider adapter |
 | `invalid_routerx_options` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | `routerx` 结构非法 | 否 | 否 | 否 | 私有字段解析摘要 | 修正 `routerx` |
 | `invalid_routerx_route` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 路由偏好格式非法 | 否 | 否 | 否 | route 摘要 | 修正路由偏好 |
 | `unsupported_api` | 404 | `invalid_request_error` / `NOT_FOUND` | 已知前缀下不支持的 API | 否 | 否 | 否 | api_type、path | 换用支持的接口 |

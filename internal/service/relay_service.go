@@ -389,6 +389,19 @@ func relayInvalidRequestHTTPError(err error) *HTTPError {
 	}
 }
 
+func relayUnsupportedAPITypeHTTPError() *HTTPError {
+	return &HTTPError{
+		Status:  http.StatusBadGateway,
+		Message: "selected upstream channel does not support this api type",
+		Type:    "upstream_error",
+		Code:    "unsupported_api_type",
+	}
+}
+
+func isUnsupportedAPITypeError(err error) bool {
+	return err != nil && strings.EqualFold(strings.TrimSpace(err.Error()), "unsupported api type")
+}
+
 func (s *RelayService) RelayAnthropicMessages(ctx context.Context, token *model.Token, body []byte, clientIP string) ([]byte, *relay.Usage, error) {
 	canonical, err := anthropicMessagesToOpenAI(body)
 	if err != nil {
@@ -770,6 +783,10 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		}
 		outBody, err = adapter.ConvertRequest(apiType, outInputBody)
 		if err != nil {
+			if isUnsupportedAPITypeError(err) {
+				_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "unsupported api type", clientIP)
+				return nil, nil, false, relayUnsupportedAPITypeHTTPError()
+			}
 			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 		}
 	}
@@ -972,6 +989,10 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	}
 	outBody, err := adapter.ConvertRequest(apiType, outInputBody)
 	if err != nil {
+		if isUnsupportedAPITypeError(err) {
+			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "unsupported api type", clientIP)
+			return nil, relayUnsupportedAPITypeHTTPError()
+		}
 		return nil, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 	}
 	routerXHop, forwardRouterXHop, err := s.nextRouterXHop(ctx, channel)

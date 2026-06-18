@@ -288,6 +288,8 @@ func normalizeLogErrorCode(log *model.Log) string {
 		return "token_forbidden"
 	case strings.Contains(msg, "no available channel"):
 		return "no_available_channel"
+	case strings.Contains(msg, "unsupported api type"):
+		return "unsupported_api_type"
 	case strings.Contains(msg, "routerx hop limit exceeded"):
 		return "routerx_hop_exceeded"
 	case strings.Contains(msg, "usage missing"):
@@ -314,6 +316,8 @@ func normalizeLogErrorSource(log *model.Log) string {
 		return common.LogErrorSourceQuota
 	case code == "no_available_channel" || code == "route_forbidden":
 		return common.LogErrorSourceRoute
+	case code == "unsupported_api_type":
+		return common.LogErrorSourceChannel
 	case code == "routerx_hop_exceeded":
 		return common.LogErrorSourceRequest
 	case code == "usage_missing":

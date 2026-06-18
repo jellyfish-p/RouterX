@@ -254,7 +254,7 @@ API Key 是调用 `/v1/*` 的唯一模型调用凭据。User JWT 只用于控制
 | 401 | `invalid_api_key` | 更换或重新创建 API Key，不重试 |
 | 403 | `user_disabled`、`route_forbidden` | 联系管理员或调整路由偏好 |
 | 429 | `insufficient_quota`、`rate_limit_exceeded` | 降低并发、等待窗口、充值或调整额度 |
-| 502 | `no_available_channel`、`upstream_secret_error`、`unsupported_stream_channel` | 管理员检查通道、模型、密钥、上游和流式能力 |
+| 502 | `no_available_channel`、`upstream_secret_error`、`unsupported_stream_channel`、`unsupported_api_type` | 管理员检查通道、模型、密钥、上游和 APIType 支持能力 |
 | 502/504 | `upstream_5xx`、`upstream_timeout` | 可按业务幂等性和阶段策略保守重试 |
 
 重试建议：
