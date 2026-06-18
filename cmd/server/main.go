@@ -43,6 +43,7 @@ func main() {
 		log.Printf("[WARN] channel candidate cache preload failed: %v", err)
 	}
 	logSvc.StartLogReplicationWorker(context.Background(), time.Minute, 100)
+	channelSvc.StartBreakerProbeWorker(context.Background())
 
 	// 4. 依赖注入: Handler 层
 	adminH := handler.NewAdminHandler(adminSvc)

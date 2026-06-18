@@ -231,7 +231,7 @@ access allowed
 
 当前已实现全局、IP、API Key、用户、模型和通道六个 Redis 固定窗口维度。本地命中限流时不调用上游，并按入口协议返回兼容 429：OpenAI 为 `rate_limit_exceeded`，Anthropic 为 `rate_limit_error`，Gemini 为 `RESOURCE_EXHAUSTED`。全局、IP、Token、用户、模型和通道维度限流拒绝会写失败日志、基础 `policy_snapshot` 和 `rate_limit_snapshot` 摘要。
 
-当前自动熔断通过通道候选过滤实现：`relay.error_auto_ban=true` 时排除 `error_count >= relay.error_ban_threshold` 且仍处于 `relay.error_ban_cooldown_seconds` 冷却窗口内的通道；关闭自动熔断时仍记录错误计数，但不因阈值排除候选。冷却后的半开候选探测已落地；当无可用候选由 `health_blocked` 造成时，失败日志会写基础 `policy_snapshot` 和 `breaker_snapshot`，记录阈值、冷却窗口和被挡通道摘要。后台定时探测任务仍属于后续增强。
+当前自动熔断通过通道候选过滤实现：`relay.error_auto_ban=true` 时排除 `error_count >= relay.error_ban_threshold` 且仍处于 `relay.error_ban_cooldown_seconds` 冷却窗口内的通道；关闭自动熔断时仍记录错误计数，但不因阈值排除候选。冷却后的半开候选探测已落地，后台 worker 也会按 `relay.error_probe_*` 定时复测已过冷却窗口的启用通道；当无可用候选由 `health_blocked` 造成时，失败日志会写基础 `policy_snapshot` 和 `breaker_snapshot`，记录阈值、冷却窗口和被挡通道摘要。后续继续补显式健康状态和更细探测指标。
 
 ## 11. 快照和审计
 

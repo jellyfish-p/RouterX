@@ -69,6 +69,9 @@
 | `relay.error_auto_ban` | `relay` | bool | `true` | 否 | hot | relay | bool |
 | `relay.error_ban_threshold` | `relay` | int | `10` | 否 | hot | relay | `>0` |
 | `relay.error_ban_cooldown_seconds` | `relay` | int | `300` | 否 | hot | relay | `>=0` |
+| `relay.error_probe_enabled` | `relay` | bool | `true` | 否 | hot | relay | bool |
+| `relay.error_probe_interval_seconds` | `relay` | int | `60` | 否 | hot | relay | `>=0` |
+| `relay.error_probe_batch_size` | `relay` | int | `20` | 否 | hot | relay | `>0` |
 | `relay.max_request_body_bytes` | `relay` | int | `10485760` | 否 | hot | relay | `>=0`，`0` 表示不限制 |
 | `relay.max_response_body_bytes` | `relay` | int | `10485760` | 否 | hot | relay | `>=0`，`0` 表示不限制 |
 | `relay.routerx_max_hops` | `relay` | int | `3` | 否 | hot | relay | `>0` |
@@ -88,7 +91,7 @@
 - `auth.register.enabled=false` 是商业级自部署安全默认；当前基础用户名注册还会检查 `auth.register.username.enabled`，并在 `auth.register.captcha.required=true` 时拒绝无验证码注册请求。完整验证码、邮箱和手机号注册仍按 `docs/ACCOUNTS.md` 分阶段补齐。
 - `rate_limit.global_per_min`、`rate_limit.per_token_per_min`、`rate_limit.per_ip_per_min`、`rate_limit.per_user_per_min`、`rate_limit.per_model_per_min` 和 `rate_limit.per_channel_per_min` 为 `0` 时表示关闭对应维度；Redis 可用时这些 hot setting 会影响后续请求。
 - `relay.retry_count` 默认是 `0`，表示不做自动重试；大于 0 时，非流式 Relay 只对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败进行有限候选通道重试。默认白名单为 429/500/502/503/504，生产环境不建议把 401/403 加入白名单。
-- `relay.error_auto_ban=false` 时仍会记录通道 `error_count`，但候选查询不会因为 `relay.error_ban_threshold` 排除通道；`relay.error_ban_cooldown_seconds>0` 时，达到阈值的通道在最近一次健康状态更新超过冷却窗口后可重新进入候选做半开探测，`0` 表示不自动探测。
+- `relay.error_auto_ban=false` 时仍会记录通道 `error_count`，但候选查询不会因为 `relay.error_ban_threshold` 排除通道；`relay.error_ban_cooldown_seconds>0` 时，达到阈值的通道在最近一次健康状态更新超过冷却窗口后可重新进入候选做半开探测，后台 worker 也会按 `relay.error_probe_*` 定期复测这些通道；`relay.error_ban_cooldown_seconds=0` 表示关闭自动半开和后台探测恢复，只能人工测试或后续成功调用清零。
 - `relay.max_request_body_bytes` 当前已在 `/v1` 模型入口生效，超过限制时按入口协议返回 413 且不调用上游。
 - `relay.max_response_body_bytes` 当前已在非流式上游响应读取路径生效，超过限制时返回 502 `upstream_response_too_large`，不反射下游响应体且不扣费。
 - `relay.routerx_max_hops` 当前已在 RouterX-Compatible 上游转发路径生效，达到或超过上限时返回 `routerx_hop_exceeded` 且不调用上游。
@@ -159,6 +162,9 @@ P0 补齐这些配置时，应同时补测试：
 | `relay.routerx_max_hops` | `3` | P1 | 当前已落地；多层 RouterX 最大跳数，必须为正整数 |
 | `relay.retry_on_status` | `[429,500,502,503,504]` | P1 | 当前已落地；可重试状态码白名单，必须是非空 JSON 整数数组，元素为 `400..599` 且不重复 |
 | `relay.error_ban_cooldown_seconds` | `300` | P1 | 当前已落地；自动熔断冷却秒数，达到阈值的通道冷却后可作为半开探测候选，`0` 表示关闭自动半开探测 |
+| `relay.error_probe_enabled` | `true` | P1 | 当前已落地；是否启用后台熔断通道探测 worker |
+| `relay.error_probe_interval_seconds` | `60` | P1 | 当前已落地；后台探测间隔秒数，必须为非负整数，`0` 表示关闭后台探测 |
+| `relay.error_probe_batch_size` | `20` | P1 | 当前已落地；每轮最多探测的熔断通道数量，必须为正整数 |
 
 ### Routing Cache
 
@@ -262,6 +268,9 @@ validate key exists
 - `relay.routerx_max_hops <= 0`。
 - `relay.retry_on_status` 不是非空 JSON 整数数组，或包含 `400..599` 之外/重复状态码。
 - `relay.error_ban_cooldown_seconds < 0`。
+- `relay.error_probe_enabled` 不是 boolean。
+- `relay.error_probe_interval_seconds < 0`。
+- `relay.error_probe_batch_size <= 0`。
 - `rate_limit.*` 类型非法。
 - `billing.default_ratio <= 0`。
 - `billing.usage_missing_strategy` 不是 `minimum` 或 `reject`。

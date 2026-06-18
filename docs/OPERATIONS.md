@@ -96,6 +96,9 @@ rediss://:password@redis.example.com:6379/0
 | `relay.error_auto_ban` | `true` | 是否按 `error_count` 自动排除故障通道 |
 | `relay.error_ban_threshold` | `10` | 自动排除通道的连续错误阈值 |
 | `relay.error_ban_cooldown_seconds` | `300` | 熔断通道半开探测冷却秒数，`0` 表示不自动探测 |
+| `relay.error_probe_enabled` | `true` | 是否启用后台熔断通道探测 worker |
+| `relay.error_probe_interval_seconds` | `60` | 后台探测间隔秒数，`0` 表示关闭后台探测 |
+| `relay.error_probe_batch_size` | `20` | 每轮最多探测的已过冷却窗口熔断通道数量 |
 | `relay.log_body_max_bytes` | `0` | Relay 请求/响应 body 日志上限，`0` 表示不记录 |
 | `billing.default_ratio` | `1.0` | 默认计费倍率 |
 | `log.body_max_bytes` | `0` | 通用日志 body 上限，`0` 表示不记录 |

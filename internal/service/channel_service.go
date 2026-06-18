@@ -42,6 +42,18 @@ type circuitBreakerConfig struct {
 	cooldown  time.Duration
 }
 
+type breakerProbeConfig struct {
+	enabled   bool
+	interval  time.Duration
+	batchSize int
+}
+
+type ChannelProbeSummary struct {
+	Checked   int
+	Succeeded int
+	Failed    int
+}
+
 type RouteSelectionFacts struct {
 	FilteredReasons map[string]int
 	BreakerSnapshot map[string]interface{}
@@ -227,6 +239,102 @@ func channelHealthBlocked(channel model.Channel, breaker circuitBreakerConfig, n
 		return true
 	}
 	return now.Sub(channel.UpdatedAt) < breaker.cooldown
+}
+
+func (s *ChannelService) breakerProbeConfig() breakerProbeConfig {
+	cfg := breakerProbeConfig{
+		enabled:   true,
+		interval:  time.Minute,
+		batchSize: 20,
+	}
+	if internal.DB == nil {
+		return cfg
+	}
+	settingSvc := NewSettingService()
+	if enabled, err := settingSvc.GetBool("relay.error_probe_enabled"); err == nil {
+		cfg.enabled = enabled
+	}
+	if intervalSeconds, err := settingSvc.GetInt("relay.error_probe_interval_seconds"); err == nil {
+		cfg.interval = time.Duration(intervalSeconds) * time.Second
+	}
+	if batchSize, err := settingSvc.GetInt("relay.error_probe_batch_size"); err == nil && batchSize > 0 {
+		cfg.batchSize = batchSize
+	}
+	return cfg
+}
+
+// ProbeTrippedChannelsOnce tests channels whose breaker cooldown has elapsed.
+// It deliberately reuses Test so manual and background probes share accounting.
+func (s *ChannelService) ProbeTrippedChannelsOnce(ctx context.Context, limit int) (ChannelProbeSummary, error) {
+	summary := ChannelProbeSummary{}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if internal.DB == nil {
+		return summary, nil
+	}
+	breaker := s.circuitBreakerConfig()
+	probeCfg := s.breakerProbeConfig()
+	if !probeCfg.enabled || !breaker.autoBan || breaker.threshold <= 0 || breaker.cooldown <= 0 {
+		return summary, nil
+	}
+	if limit <= 0 {
+		limit = probeCfg.batchSize
+	}
+	cutoff := time.Now().Add(-breaker.cooldown)
+	var channels []model.Channel
+	if err := internal.DB.
+		Where("status = ? AND error_count >= ? AND updated_at <= ?", common.ChannelStatusEnabled, breaker.threshold, cutoff).
+		Order("updated_at ASC, error_count DESC, id ASC").
+		Limit(limit).
+		Find(&channels).Error; err != nil {
+		return summary, err
+	}
+	for _, channel := range channels {
+		select {
+		case <-ctx.Done():
+			return summary, ctx.Err()
+		default:
+		}
+		summary.Checked++
+		ok, _, _, err := s.Test(channel.ID)
+		if ok && err == nil {
+			summary.Succeeded++
+			continue
+		}
+		summary.Failed++
+	}
+	return summary, nil
+}
+
+func (s *ChannelService) StartBreakerProbeWorker(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		for {
+			cfg := s.breakerProbeConfig()
+			interval := cfg.interval
+			if interval <= 0 {
+				interval = time.Minute
+			}
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			cfg = s.breakerProbeConfig()
+			if !cfg.enabled || cfg.interval <= 0 {
+				continue
+			}
+			_, _ = s.ProbeTrippedChannelsOnce(ctx, cfg.batchSize)
+		}
+	}()
 }
 
 func (s *ChannelService) channelsForCandidateSelection() ([]model.Channel, error) {

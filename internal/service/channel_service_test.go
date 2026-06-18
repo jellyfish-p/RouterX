@@ -1,6 +1,9 @@
 package service
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -367,5 +370,106 @@ func TestChannelBreakerCooldownAllowsProbeAfterWindow(t *testing.T) {
 	}
 	if reasons[routeFilterReasonHealthBlocked] != 1 {
 		t.Fatalf("fresh tripped channel should still be counted as health_blocked, got %+v", reasons)
+	}
+}
+
+func TestChannelBreakerProbeRecoversCooledTrippedChannel(t *testing.T) {
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		if req.URL.Path != "/v1/models" {
+			t.Fatalf("probe should call model list endpoint, got %s", req.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-probe"}]}`))
+	}))
+	defer upstream.Close()
+
+	db, err := gorm.Open(sqlite.Open("file:channel_service_breaker_probe_"+time.Now().Format("150405.000000000")+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Channel{}, &model.Setting{}); err != nil {
+		t.Fatal(err)
+	}
+	oldDB, oldRDB := internal.DB, internal.RDB
+	internal.DB = db
+	internal.RDB = nil
+	t.Cleanup(func() {
+		internal.DB = oldDB
+		internal.RDB = oldRDB
+	})
+
+	if err := db.Create([]model.Setting{
+		{Key: "routing.channel_cache.enabled", Value: "false", Category: "routing"},
+		{Key: "relay.error_auto_ban", Value: "true", Category: "relay"},
+		{Key: "relay.error_ban_threshold", Value: "2", Category: "relay"},
+		{Key: "relay.error_ban_cooldown_seconds", Value: "60", Category: "relay"},
+		{Key: "relay.error_probe_enabled", Value: "true", Category: "relay"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cooledFailure := time.Now().Add(-2 * time.Minute)
+	freshFailure := time.Now().Add(-30 * time.Second)
+	if err := db.Create([]model.Channel{
+		{
+			Type:       common.ChannelTypeOpenAICompat,
+			Name:       "cooled-tripped",
+			Models:     "gpt-probe",
+			BaseURL:    upstream.URL,
+			APIKey:     "probe-key",
+			Status:     common.ChannelStatusEnabled,
+			ErrorCount: 2,
+			UpdatedAt:  cooledFailure,
+		},
+		{
+			Type:       common.ChannelTypeOpenAICompat,
+			Name:       "fresh-tripped",
+			Models:     "gpt-probe",
+			BaseURL:    upstream.URL,
+			APIKey:     "probe-key",
+			Status:     common.ChannelStatusEnabled,
+			ErrorCount: 2,
+			UpdatedAt:  freshFailure,
+		},
+		{
+			Type:       common.ChannelTypeOpenAICompat,
+			Name:       "healthy",
+			Models:     "gpt-probe",
+			BaseURL:    upstream.URL,
+			APIKey:     "probe-key",
+			Status:     common.ChannelStatusEnabled,
+			ErrorCount: 0,
+		},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewChannelService()
+	summary, err := svc.ProbeTrippedChannelsOnce(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("breaker probe should not fail: %v", err)
+	}
+	if summary.Checked != 1 || summary.Succeeded != 1 || summary.Failed != 0 {
+		t.Fatalf("probe should only test cooled tripped channel, got %+v", summary)
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("probe should call upstream once, got %d", upstreamCalls)
+	}
+
+	var cooled model.Channel
+	if err := db.Where("name = ?", "cooled-tripped").First(&cooled).Error; err != nil {
+		t.Fatal(err)
+	}
+	if cooled.ErrorCount != 0 {
+		t.Fatalf("successful probe should reset cooled channel error_count, got %+v", cooled)
+	}
+	var fresh model.Channel
+	if err := db.Where("name = ?", "fresh-tripped").First(&fresh).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fresh.ErrorCount != 2 {
+		t.Fatalf("fresh tripped channel should stay blocked until cooldown elapses, got %+v", fresh)
 	}
 }

@@ -233,19 +233,19 @@ func validateSettingValue(key, value string) error {
 	case "server.mode":
 		return validateServerModeSetting(key, value)
 	case "jwt.admin_expire_hours", "jwt.user_expire_hours",
-		"relay.timeout", "relay.error_ban_threshold", "relay.routerx_max_hops", "routing.channel_cache.version", "payment.order_expire_minutes":
+		"relay.timeout", "relay.error_ban_threshold", "relay.error_probe_batch_size", "relay.routerx_max_hops", "routing.channel_cache.version", "payment.order_expire_minutes":
 		return validatePositiveIntSetting(key, value)
 	case "rate_limit.global_per_min", "rate_limit.per_token_per_min", "rate_limit.per_ip_per_min", "rate_limit.per_user_per_min", "rate_limit.per_model_per_min", "rate_limit.per_channel_per_min":
 		return validateNonNegativeIntSetting(key, value)
 	case "relay.retry_count", "relay.max_request_body_bytes", "relay.max_response_body_bytes", "relay.log_body_max_bytes", "log.body_max_bytes", "billing.bootstrap_admin_quota",
-		"relay.error_ban_cooldown_seconds",
+		"relay.error_ban_cooldown_seconds", "relay.error_probe_interval_seconds",
 		"auth.register.default_quota",
 		"routing.channel_cache.ttl_seconds",
 		"payment.manual_adjust.large_amount_threshold":
 		return validateNonNegativeIntSetting(key, value)
 	case "relay.retry_on_status":
 		return validateHTTPErrorStatusArraySetting(key, value)
-	case "rate_limit.enabled", "relay.error_auto_ban", "log.request_body_enabled", "log.response_body_enabled",
+	case "rate_limit.enabled", "relay.error_auto_ban", "relay.error_probe_enabled", "log.request_body_enabled", "log.response_body_enabled",
 		"auth.login.username_password.enabled", "auth.login.email_password.enabled", "auth.login.phone_password.enabled", "auth.login.email_code.enabled", "auth.login.phone_code.enabled", "auth.login.oauth.enabled", "auth.login.oidc.enabled",
 		"auth.register.enabled", "auth.register.username.enabled", "auth.register.email.enabled", "auth.register.phone.enabled", "auth.register.captcha.required",
 		"routing.channel_cache.enabled", "routing.channel_cache.preload",
