@@ -30,7 +30,9 @@ tags:
     description: 支付 provider 异步通知。
   - name: Admin Users
     description: 管理员用户管理。
-  - name: Admin Redem
+  - name: Admin API Key
+    description: 管理员 API Key 查询、风险视图和批量处置。
+  - name: Admin Redemption
     description: 管理员充值码管理。
   - name: Admin Audit
     description: 超级管理员管理审计查询。
@@ -1329,7 +1331,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/redem:
     get:
-      tags: [Admin Redem]
+      tags: [Admin Redemption]
       summary: 充值码列表
       description: 管理员查看充值码，可按状态、code/batch/note 关键字和 batch_no 过滤。状态：0 未使用，1 已使用，2 已作废。
       security:
@@ -1357,7 +1359,7 @@ paths:
                       data:
                         $ref: "#/components/schemas/RedemCodePage"
     post:
-      tags: [Admin Redem]
+      tags: [Admin Redemption]
       summary: 生成或导入充值码
       description: codes 为空时按 count 生成随机充值码；codes 非空时导入指定充值码。count 默认 1，单次最多 100。可写入 batch_no、note 和未来 expired_at；成功后按每个充值码写入 redem_code.create 管理审计。
       security:
@@ -1386,7 +1388,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/redem/{id}/disable:
     patch:
-      tags: [Admin Redem]
+      tags: [Admin Redemption]
       summary: 作废充值码
       description: 仅未使用充值码可以作废；作废后用户兑换会失败。成功后写入 redem_code.disable 管理审计。
       security:

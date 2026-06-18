@@ -316,6 +316,43 @@ func TestApifoxOpenAPISecurityMatchesRouteGroups(t *testing.T) {
 	}
 }
 
+func TestApifoxOpenAPIOperationTagsAreDeclared(t *testing.T) {
+	operations := loadApifoxOperations(t)
+	declaredTags := loadApifoxTags(t)
+	issues := make([]string, 0)
+	seenMissingDescriptions := map[string]struct{}{}
+
+	for _, operation := range operations {
+		if len(operation.Tags) == 0 {
+			issues = append(issues, operation.Key+" missing tags")
+			continue
+		}
+		for _, rawTag := range operation.Tags {
+			tag := strings.TrimSpace(rawTag)
+			if tag == "" {
+				issues = append(issues, operation.Key+" contains blank tag")
+				continue
+			}
+			description, ok := declaredTags[tag]
+			if !ok {
+				issues = append(issues, operation.Key+" uses undeclared tag "+tag)
+				continue
+			}
+			if strings.TrimSpace(description) == "" {
+				if _, seen := seenMissingDescriptions[tag]; !seen {
+					issues = append(issues, "tag "+tag+" missing description")
+					seenMissingDescriptions[tag] = struct{}{}
+				}
+			}
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml operation tags need top-level declarations:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -15181,11 +15218,17 @@ func loadApifoxOperationSet(t *testing.T) map[string]struct{} {
 type apifoxOperationDoc struct {
 	Key          string
 	Path         string
+	Tags         []string
 	Summary      string
 	Description  string
 	HasResponses bool
 	Parameters   []apifoxParameterDoc
 	Security     []map[string][]string
+}
+
+type apifoxTagDoc struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
 }
 
 type apifoxParameterDoc struct {
@@ -15218,6 +15261,7 @@ func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
 	raw := loadApifoxOpenAPIBytes(t)
 	var doc struct {
 		Paths map[string]map[string]struct {
+			Tags        []string               `yaml:"tags"`
 			Summary     string                 `yaml:"summary"`
 			Description string                 `yaml:"description"`
 			Parameters  []apifoxParameterDoc   `yaml:"parameters"`
@@ -15240,6 +15284,7 @@ func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
 			operations = append(operations, apifoxOperationDoc{
 				Key:          strings.ToUpper(method) + " " + path,
 				Path:         path,
+				Tags:         operation.Tags,
 				Summary:      operation.Summary,
 				Description:  operation.Description,
 				HasResponses: len(operation.Responses) > 0,
@@ -15252,6 +15297,26 @@ func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
 		return operations[i].Key < operations[j].Key
 	})
 	return operations
+}
+
+func loadApifoxTags(t *testing.T) map[string]string {
+	t.Helper()
+	raw := loadApifoxOpenAPIBytes(t)
+	var doc struct {
+		Tags []apifoxTagDoc `yaml:"tags"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("docs/apifox/openapi.yaml should parse as YAML: %v", err)
+	}
+	tags := make(map[string]string, len(doc.Tags))
+	for _, tag := range doc.Tags {
+		name := strings.TrimSpace(tag.Name)
+		if name == "" {
+			continue
+		}
+		tags[name] = tag.Description
+	}
+	return tags
 }
 
 func loadApifoxRawDocument(t *testing.T) interface{} {
