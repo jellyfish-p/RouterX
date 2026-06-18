@@ -92,6 +92,7 @@ rediss://:password@redis.example.com:6379/0
 | `relay.retry_on_status` | `[429,500,502,503,504]` | 非流式可重试 HTTP 状态码白名单 |
 | `relay.error_auto_ban` | `true` | 是否按 `error_count` 自动排除故障通道 |
 | `relay.error_ban_threshold` | `10` | 自动排除通道的连续错误阈值 |
+| `relay.error_ban_cooldown_seconds` | `300` | 熔断通道半开探测冷却秒数，`0` 表示不自动探测 |
 | `relay.log_body_max_bytes` | `0` | Relay 请求/响应 body 日志上限，`0` 表示不记录 |
 | `billing.default_ratio` | `1.0` | 默认计费倍率 |
 | `log.body_max_bytes` | `0` | 通用日志 body 上限，`0` 表示不记录 |

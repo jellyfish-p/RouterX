@@ -150,6 +150,7 @@
 | `TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus` | 默认白名单不含 400 时，下游 400 不触发候选通道重试 |
 | `TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold` | `relay.error_ban_threshold` 生效后跳过达到阈值的故障通道 |
 | `TestChatCompletionHonorsDisabledAutoBanSetting` | `relay.error_auto_ban=false` 时高 `error_count` 通道仍可参与候选并在成功后恢复计数 |
+| `TestChannelBreakerCooldownAllowsProbeAfterWindow` | 达到 `relay.error_ban_threshold` 的通道在 `relay.error_ban_cooldown_seconds` 冷却窗口内继续被过滤，冷却后可重新进入候选作为半开探测 |
 | `TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol` | Anthropic/Gemini 入口下游错误按各自协议外形返回且不泄密、不扣费 |
 | `TestRelayPrecheckRejectsBeforeUpstream` | 无效 Key、禁用 Key、额度不足、禁用通道不调用下游 |
 | `TestRouterXRoutePreferenceFiltersChannels` | `routerx.route` 被接受、未知字段忽略、非法结构拒绝和筛选后无候选；无候选返回 `no_available_channel` 且写拒绝分支 `policy_snapshot` |
@@ -473,7 +474,7 @@ Gemini-compatible 最小断言：
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
 | P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝、Redis Token 限流拒绝、usage 缺失拒绝和扣费失败分支 policy/billing 事实，基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/规则版本/倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |
-| P1 | 可靠性 | 已覆盖非流式安全重试、Redis 全局/IP/Token 基础限流和 `error_count` 自动熔断候选过滤；继续补半开恢复、探测任务、更多限流维度和生产 fail-open/fail-closed 策略 |
+| P1 | 可靠性 | 已覆盖非流式安全重试、Redis 全局/IP/Token 基础限流、`error_count` 自动熔断候选过滤和冷却窗口后的半开候选探测；继续补后台探测任务、更多限流维度和生产 fail-open/fail-closed 策略 |
 | P1 | 运行模式 | 已覆盖 `REDIS_CONN` 为空不隐式连接本机 Redis、SQLite 单镜像无 Redis 可运行、外部数据库无 Redis 时 `/ready` 不就绪 |
 | P1 | 通道候选缓存 | 已覆盖进程内缓存命中、`routing.channel_cache.preload` 启动预热/关闭 no-op/通道变更后预热、`routing.channel_cache.version` 变化后回源、默认 settings 和非法配置校验；继续补 Redis 共享快照和集群实例广播失效 |
 | P1 | 独立日志数据库 | 已覆盖 `LOG_SQL_DSN` 初始化、日志库副本写入、运行期写入失败时主库事实可恢复、主库 outbox 异步补写、管理日志列表读取日志库、查询失败回退主库和日志库健康指标；继续补冷热归档策略 |

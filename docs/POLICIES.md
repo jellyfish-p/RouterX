@@ -231,7 +231,7 @@ access allowed
 
 当前 P0 已实现全局、IP、API Key 三个 Redis 固定窗口维度。本地命中限流时不调用上游，并按入口协议返回兼容 429：OpenAI 为 `rate_limit_exceeded`，Anthropic 为 `rate_limit_error`，Gemini 为 `RESOURCE_EXHAUSTED`。Token 维度限流拒绝会写失败日志和基础 `policy_snapshot`；全局/IP 日志摘要、用户/模型/通道维度以及完整 `rate_limit_snapshot` 仍属于后续增强。
 
-当前 P0 的自动熔断通过通道候选过滤实现：`relay.error_auto_ban=true` 时排除 `error_count >= relay.error_ban_threshold` 的通道；关闭自动熔断时仍记录错误计数，但不因阈值排除候选。半开恢复、探测任务和熔断快照仍属于后续增强。
+当前自动熔断通过通道候选过滤实现：`relay.error_auto_ban=true` 时排除 `error_count >= relay.error_ban_threshold` 且仍处于 `relay.error_ban_cooldown_seconds` 冷却窗口内的通道；关闭自动熔断时仍记录错误计数，但不因阈值排除候选。冷却后的半开候选探测已落地，后台探测任务和完整熔断快照仍属于后续增强。
 
 ## 11. 快照和审计
 

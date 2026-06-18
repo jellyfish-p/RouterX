@@ -290,3 +290,82 @@ func TestChannelCandidateCachePreloadSkipsWhenDisabled(t *testing.T) {
 		t.Fatalf("disabled preload should leave first selection to load fresh DB state, got %+v", candidates)
 	}
 }
+
+func TestChannelBreakerCooldownAllowsProbeAfterWindow(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:channel_service_breaker_cooldown_"+time.Now().Format("150405.000000000")+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Channel{}, &model.Setting{}); err != nil {
+		t.Fatal(err)
+	}
+	oldDB, oldRDB := internal.DB, internal.RDB
+	internal.DB = db
+	internal.RDB = nil
+	t.Cleanup(func() {
+		internal.DB = oldDB
+		internal.RDB = oldRDB
+	})
+
+	if err := db.Create([]model.Setting{
+		{Key: "routing.channel_cache.enabled", Value: "false", Category: "routing"},
+		{Key: "relay.error_auto_ban", Value: "true", Category: "relay"},
+		{Key: "relay.error_ban_threshold", Value: "2", Category: "relay"},
+		{Key: "relay.error_ban_cooldown_seconds", Value: "60", Category: "relay"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	freshFailure := time.Now().Add(-30 * time.Second)
+	cooledFailure := time.Now().Add(-2 * time.Minute)
+	if err := db.Create([]model.Channel{
+		{
+			Type:       common.ChannelTypeOpenAICompat,
+			Name:       "freshly-tripped",
+			Models:     "gpt-cooldown",
+			BaseURL:    "http://fresh.example",
+			APIKey:     "fresh-key",
+			Priority:   30,
+			Weight:     1,
+			Status:     common.ChannelStatusEnabled,
+			ErrorCount: 2,
+			UpdatedAt:  freshFailure,
+		},
+		{
+			Type:       common.ChannelTypeOpenAICompat,
+			Name:       "cooled-probe",
+			Models:     "gpt-cooldown",
+			BaseURL:    "http://cooled.example",
+			APIKey:     "cooled-key",
+			Priority:   20,
+			Weight:     1,
+			Status:     common.ChannelStatusEnabled,
+			ErrorCount: 2,
+			UpdatedAt:  cooledFailure,
+		},
+		{
+			Type:       common.ChannelTypeOpenAICompat,
+			Name:       "healthy-backup",
+			Models:     "gpt-cooldown",
+			BaseURL:    "http://healthy.example",
+			APIKey:     "healthy-key",
+			Priority:   10,
+			Weight:     1,
+			Status:     common.ChannelStatusEnabled,
+			ErrorCount: 0,
+		},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewChannelService()
+	candidates, reasons, err := svc.SelectChannelCandidatesWithRouteFacts("gpt-cooldown", RoutePreference{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 || candidates[0].Name != "cooled-probe" || candidates[1].Name != "healthy-backup" {
+		t.Fatalf("cooled tripped channel should be allowed as a probe while fresh trip remains blocked, candidates=%+v reasons=%+v", candidates, reasons)
+	}
+	if reasons[routeFilterReasonHealthBlocked] != 1 {
+		t.Fatalf("fresh tripped channel should still be counted as health_blocked, got %+v", reasons)
+	}
+}

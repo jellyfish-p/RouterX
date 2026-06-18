@@ -39,6 +39,7 @@ type ChannelService struct {
 type circuitBreakerConfig struct {
 	autoBan   bool
 	threshold int
+	cooldown  time.Duration
 }
 
 type channelCandidateCache struct {
@@ -114,6 +115,7 @@ func (s *ChannelService) SelectChannelCandidatesWithRouteFacts(modelName string,
 	if err != nil {
 		return nil, nil, err
 	}
+	now := time.Now()
 	filteredReasons := map[string]int{}
 	candidates := make([]model.Channel, 0, len(channels))
 	for _, channel := range channels {
@@ -121,7 +123,7 @@ func (s *ChannelService) SelectChannelCandidatesWithRouteFacts(modelName string,
 			addRouteFilterReason(filteredReasons, routeFilterReasonDisabled, 1)
 			continue
 		}
-		if breaker.autoBan && channel.ErrorCount >= breaker.threshold {
+		if channelHealthBlocked(channel, breaker, now) {
 			addRouteFilterReason(filteredReasons, routeFilterReasonHealthBlocked, 1)
 			continue
 		}
@@ -156,7 +158,20 @@ func (s *ChannelService) circuitBreakerConfig() circuitBreakerConfig {
 	if threshold, err := settingSvc.GetInt("relay.error_ban_threshold"); err == nil && threshold > 0 {
 		cfg.threshold = threshold
 	}
+	if cooldownSeconds, err := settingSvc.GetInt("relay.error_ban_cooldown_seconds"); err == nil && cooldownSeconds > 0 {
+		cfg.cooldown = time.Duration(cooldownSeconds) * time.Second
+	}
 	return cfg
+}
+
+func channelHealthBlocked(channel model.Channel, breaker circuitBreakerConfig, now time.Time) bool {
+	if !breaker.autoBan || channel.ErrorCount < breaker.threshold {
+		return false
+	}
+	if breaker.cooldown <= 0 || channel.UpdatedAt.IsZero() {
+		return true
+	}
+	return now.Sub(channel.UpdatedAt) < breaker.cooldown
 }
 
 func (s *ChannelService) channelsForCandidateSelection() ([]model.Channel, error) {
