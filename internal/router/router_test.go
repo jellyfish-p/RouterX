@@ -6085,6 +6085,150 @@ func TestRateLimitUsesSettingsAndEntryProtocolErrorShape(t *testing.T) {
 	}
 }
 
+func TestRateLimitGlobalAndIPWriteSnapshotDetails(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-global-ip-limit","object":"chat.completion","model":"gpt-global-ip-limit","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = nil
+	})
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"rate_limit.per_ip_per_min":      "0",
+		"rate_limit.per_token_per_min":   "0",
+		"rate_limit.per_user_per_min":    "0",
+		"rate_limit.per_model_per_min":   "0",
+		"rate_limit.per_channel_per_min": "0",
+		"rate_limit.global_per_min":      "1",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "global-ip-limited",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "global-ip-limit",
+		"models":   "gpt-global-ip-limit",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+	body := map[string]interface{}{
+		"model": "gpt-global-ip-limit",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	firstGlobal := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	if firstGlobal.Code != http.StatusOK {
+		t.Fatalf("first request should pass global limit, got %d %s", firstGlobal.Code, firstGlobal.Body.String())
+	}
+	secondGlobal := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	if secondGlobal.Code != http.StatusTooManyRequests || !strings.Contains(secondGlobal.Body.String(), `"code":"rate_limit_exceeded"`) {
+		t.Fatalf("second request should hit global limit, got %d %s", secondGlobal.Code, secondGlobal.Body.String())
+	}
+	assertRateLimitSnapshot := func(errorLike, dimension string) {
+		t.Helper()
+		var failedLog model.Log
+		if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, errorLike).Order("id DESC").First(&failedLog).Error; err != nil {
+			t.Fatal(err)
+		}
+		var policySnapshot map[string]interface{}
+		if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+			t.Fatalf("%s rate limit rejection should store policy snapshot JSON, got %q: %v", dimension, failedLog.PolicySnapshot, err)
+		}
+		scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
+		if !ok || scopeResult["rate_limit"] != "deny" || scopeResult["rate_limit_dimension"] != dimension {
+			t.Fatalf("unexpected %s rate limit scope result: %+v", dimension, policySnapshot)
+		}
+		rateLimitSnapshot, ok := policySnapshot["rate_limit_snapshot"].(map[string]interface{})
+		if !ok ||
+			rateLimitSnapshot["dimension"] != dimension ||
+			rateLimitSnapshot["window"] != "minute" ||
+			rateLimitSnapshot["threshold"] != float64(1) ||
+			rateLimitSnapshot["current"] != float64(2) ||
+			rateLimitSnapshot["remaining"] != float64(0) ||
+			rateLimitSnapshot["decision"] != "deny" {
+			t.Fatalf("unexpected %s rate limit snapshot: %+v", dimension, policySnapshot)
+		}
+	}
+	assertRateLimitSnapshot("%global rate limit%", "global")
+
+	if err := rdb.FlushDB(context.Background()).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("rate_limit.global_per_min", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("rate_limit.per_ip_per_min", "1"); err != nil {
+		t.Fatal(err)
+	}
+	firstIP := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	if firstIP.Code != http.StatusOK {
+		t.Fatalf("first request should pass IP limit, got %d %s", firstIP.Code, firstIP.Body.String())
+	}
+	secondIP := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	if secondIP.Code != http.StatusTooManyRequests || !strings.Contains(secondIP.Body.String(), `"code":"rate_limit_exceeded"`) {
+		t.Fatalf("second request should hit IP limit, got %d %s", secondIP.Code, secondIP.Body.String())
+	}
+	assertRateLimitSnapshot("%ip rate limit%", "ip")
+	if upstreamCalls != 2 {
+		t.Fatalf("only the two allowed requests should reach upstream, got %d", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 46 {
+		t.Fatalf("only allowed requests should be charged, got %d", storedToken.RemainQuota)
+	}
+}
+
 func TestRateLimitPerUserAppliesAcrossAPIKeys(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

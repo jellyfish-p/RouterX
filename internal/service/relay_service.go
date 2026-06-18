@@ -2477,10 +2477,11 @@ func (s *RelayService) enforceModelRateLimit(ctx context.Context, token *model.T
 		return nil
 	}
 	now := time.Now().Unix() / 60
-	if !relayRateLimitExceeded(fmt.Sprintf("rl:model:%s:%d", modelName, now), int64(limit)) {
+	exceeded, current := relayRateLimitExceeded(fmt.Sprintf("rl:model:%s:%d", modelName, now), int64(limit))
+	if !exceeded {
 		return nil
 	}
-	logCtx := ContextWithRelayPolicySnapshot(ctx, buildRelayPolicyDenySnapshot(ctx, token, "rate_limit_exceeded", "rate_limit_exceeded", map[string]interface{}{
+	logCtx := ContextWithRelayPolicySnapshot(ctx, buildRelayRateLimitDenySnapshot(ctx, token, "model", int64(limit), current, map[string]interface{}{
 		"api_type":             "allow",
 		"model":                "allow",
 		"channel_group":        "not_evaluated",
@@ -2507,10 +2508,11 @@ func (s *RelayService) enforceChannelRateLimit(ctx context.Context, token *model
 		return nil
 	}
 	now := time.Now().Unix() / 60
-	if !relayRateLimitExceeded(fmt.Sprintf("rl:channel:%d:%d", channel.ID, now), int64(limit)) {
+	exceeded, current := relayRateLimitExceeded(fmt.Sprintf("rl:channel:%d:%d", channel.ID, now), int64(limit))
+	if !exceeded {
 		return nil
 	}
-	logCtx := ContextWithRelayPolicySnapshot(ctx, buildRelayPolicyDenySnapshot(ctx, token, "rate_limit_exceeded", "rate_limit_exceeded", map[string]interface{}{
+	logCtx := ContextWithRelayPolicySnapshot(ctx, buildRelayRateLimitDenySnapshot(ctx, token, "channel", int64(limit), current, map[string]interface{}{
 		"api_type":             "allow",
 		"model":                "allow",
 		"channel_group":        "allow",
@@ -2521,20 +2523,20 @@ func (s *RelayService) enforceChannelRateLimit(ctx context.Context, token *model
 	return &HTTPError{Status: 429, Message: "rate limit exceeded", Type: "rate_limit_error", Code: "rate_limit_exceeded"}
 }
 
-func relayRateLimitExceeded(key string, limit int64) bool {
+func relayRateLimitExceeded(key string, limit int64) (bool, int64) {
 	if internal.RDB == nil || limit <= 0 {
-		return false
+		return false, 0
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	count, err := internal.RDB.Incr(ctx, key).Result()
 	if err != nil {
-		return false
+		return false, 0
 	}
 	if count == 1 {
 		_ = internal.RDB.Expire(ctx, key, 2*time.Minute).Err()
 	}
-	return count > limit
+	return count > limit, count
 }
 
 // relayAPITypeScopeName keeps API Key scope names stable across internal enum values.
@@ -2761,6 +2763,34 @@ func buildRelayPolicyDenySnapshot(ctx context.Context, token *model.Token, rejec
 		return ""
 	}
 	return string(raw)
+}
+
+func buildRelayRateLimitDenySnapshot(ctx context.Context, token *model.Token, dimension string, limit, current int64, scopeResult map[string]interface{}) string {
+	raw := buildRelayPolicyDenySnapshot(ctx, token, "rate_limit_exceeded", "rate_limit_exceeded", scopeResult)
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return raw
+	}
+	remaining := limit - current
+	if remaining < 0 {
+		remaining = 0
+	}
+	snapshot["rate_limit_snapshot"] = map[string]interface{}{
+		"dimension": strings.ToLower(strings.TrimSpace(dimension)),
+		"window":    "minute",
+		"threshold": limit,
+		"current":   current,
+		"remaining": remaining,
+		"decision":  "deny",
+	}
+	withRateLimit, err := json.Marshal(snapshot)
+	if err != nil {
+		return raw
+	}
+	return string(withRateLimit)
 }
 
 func buildRelayUserGroupAccessDenyPolicySnapshot(ctx context.Context, token *model.Token) string {

@@ -173,7 +173,7 @@ P0 的交付目标是：
 P0 通过后再进入 P1：
 
 1. 客户端断开取消、Anthropic/Gemini 流式转换和更完整的流式 usage 兜底策略。
-2. 后台探测恢复、通道限流维度、限流/熔断快照和更细路由决策快照。
+2. 后台探测恢复、完整熔断快照和更细路由决策快照。
 3. Anthropic/Gemini 入口协议的成功和错误格式精确映射。
 4. 多上游转换矩阵按 `docs/PROTOCOLS.md` 分级推进：OpenAI-Compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek、RouterX-Compatible。
 5. `model_prices`、`channel_model_prices`、倍率、访问控制和计费快照。
