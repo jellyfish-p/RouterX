@@ -627,6 +627,7 @@ Provider 退款请求：
 | `channel_id` | uint | 通道过滤 |
 | `model` | string | 模型过滤 |
 | `status` | int | 状态过滤 |
+| `error_code` | string | 稳定错误 code 过滤，例如 `upstream_400`、`rate_limit_exceeded` |
 | `start_time` | string | 开始时间 |
 | `end_time` | string | 结束时间 |
 

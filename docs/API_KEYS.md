@@ -365,7 +365,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 
 - API Key 用量摘要支持调用量、成功/失败数、额度消耗、最近模型和最近错误；Key 列表/详情持久化展示最近时间、模型、错误 code、IP 摘要和 User-Agent 摘要。
 - 已支持轮换动作：创建新 Key、保留旧 Key 关联、禁用旧 Key、审计完整。
-- 支持按 Key 查看用量摘要、过滤日志和账单聚合；错误和限流事件的统一视图仍待补。
+- 支持按 Key 查看用量摘要、过滤日志和账单聚合，并可按稳定 `error_code` 收窄调用日志和导出；错误和限流事件的统一视图仍待补。
 - 已支持基础作用域：模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list、日预算、月预算、并发上限和 RPM/TPM。
 - 基础 Redis 鉴权 lookup cache 已覆盖预热、命中回源校验、更新、禁用、删除、轮换、scope 变化、批量禁用、批量过期和扣费后失效；用户状态变化由缓存命中后的数据库权威校验生效。
 

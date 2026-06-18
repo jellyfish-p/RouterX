@@ -235,7 +235,7 @@ func TestLogServiceListsFromExternalLogDBWhenConfigured(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	logs, total, err := NewLogServiceWithLogDB(logDB).List(nil, nil, nil, "gpt-log-list", nil, "", "", 1, 20)
+	logs, total, err := NewLogServiceWithLogDB(logDB).List(nil, nil, nil, "gpt-log-list", nil, "", "", "", 1, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestLogServiceListFallsBackToMainDBWhenExternalLogDBFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	logs, total, err := NewLogServiceWithLogDB(logDB).List(nil, nil, nil, "gpt-log-list-fallback", nil, "", "", 1, 20)
+	logs, total, err := NewLogServiceWithLogDB(logDB).List(nil, nil, nil, "gpt-log-list-fallback", nil, "", "", "", 1, 20)
 	if err != nil {
 		t.Fatal(err)
 	}

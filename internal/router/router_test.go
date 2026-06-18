@@ -15359,6 +15359,37 @@ func TestRelayFailureLogPersistsRequestIDAndErrorCode(t *testing.T) {
 		!strings.Contains(logBody, `"upstream_status":400`) {
 		t.Fatalf("user log API should expose request_id, error_code and upstream failure facts, got %d %s", logResp.Code, logBody)
 	}
+
+	if err := internal.DB.Create(&model.Log{
+		UserID:         callLog.UserID,
+		TokenID:        callLog.TokenID,
+		ChannelID:      callLog.ChannelID,
+		Model:          "gpt-request-id-log",
+		Status:         common.LogStatusFailed,
+		ErrorCode:      "upstream_500",
+		ErrorSource:    common.LogErrorSourceUpstream,
+		UpstreamStatus: http.StatusInternalServerError,
+		RequestID:      "req-other-error-code",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	filteredLogResp := performJSON(r, http.MethodGet, "/v0/user/log?error_code=upstream_400", rootJWT, nil)
+	filteredLogBody := filteredLogResp.Body.String()
+	if filteredLogResp.Code != http.StatusOK ||
+		!strings.Contains(filteredLogBody, `"total":1`) ||
+		!strings.Contains(filteredLogBody, `"error_code":"upstream_400"`) ||
+		strings.Contains(filteredLogBody, `"error_code":"upstream_500"`) {
+		t.Fatalf("user log API should filter by error_code, got %d %s", filteredLogResp.Code, filteredLogBody)
+	}
+
+	exportResp := performRaw(r, http.MethodGet, "/v0/admin/log/export?error_code=upstream_400", rootJWT, "")
+	exportBody := exportResp.Body.String()
+	if exportResp.Code != http.StatusOK ||
+		!strings.Contains(exportBody, "upstream_400") ||
+		strings.Contains(exportBody, "upstream_500") {
+		t.Fatalf("admin log export should filter by error_code, got %d %s", exportResp.Code, exportBody)
+	}
 }
 
 func TestRelayMaxResponseBodyBytesRejectsOversizedUpstream(t *testing.T) {

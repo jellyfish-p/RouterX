@@ -30,7 +30,7 @@ func (h *LogHandler) AdminList(c *gin.Context) {
 	status := queryIntPtr(c, "status")
 	page := queryInt(c, "page", 1)
 	pageSize := queryInt(c, "page_size", 20)
-	logs, total, err := h.svc.List(userID, tokenID, channelID, c.Query("model"), status, c.Query("start_time"), c.Query("end_time"), page, pageSize)
+	logs, total, err := h.svc.List(userID, tokenID, channelID, c.Query("model"), status, c.Query("error_code"), c.Query("start_time"), c.Query("end_time"), page, pageSize)
 	if err != nil {
 		common.FailWithStatus(c, 500, "查询日志失败")
 		return
@@ -101,7 +101,7 @@ func (h *LogHandler) UserList(c *gin.Context) {
 	status := queryIntPtr(c, "status")
 	page := queryInt(c, "page", 1)
 	pageSize := queryInt(c, "page_size", 20)
-	logs, total, err := h.svc.List(&userID, tokenID, channelID, c.Query("model"), status, c.Query("start_time"), c.Query("end_time"), page, pageSize)
+	logs, total, err := h.svc.List(&userID, tokenID, channelID, c.Query("model"), status, c.Query("error_code"), c.Query("start_time"), c.Query("end_time"), page, pageSize)
 	if err != nil {
 		common.FailWithStatus(c, 500, "查询日志失败")
 		return
@@ -153,6 +153,7 @@ func adminLogFilterFromQuery(c *gin.Context) service.LogFilters {
 		ChannelID: queryUintPtr(c, "channel_id"),
 		ModelName: c.Query("model"),
 		Status:    queryIntPtr(c, "status"),
+		ErrorCode: c.Query("error_code"),
 		StartTime: c.Query("start_time"),
 		EndTime:   c.Query("end_time"),
 	}
@@ -304,6 +305,9 @@ func logExportAuditSummary(filter service.LogFilters, limit, exportedCount int) 
 	}
 	if filter.Status != nil {
 		filters["status"] = *filter.Status
+	}
+	if filter.ErrorCode != "" {
+		filters["error_code"] = filter.ErrorCode
 	}
 	if filter.StartTime != "" {
 		filters["start_time"] = filter.StartTime
