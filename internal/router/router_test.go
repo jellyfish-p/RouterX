@@ -8731,6 +8731,9 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if callLog.TokenID == nil || *callLog.TokenID != tokenPayload.Data.ID || callLog.ChannelID == nil {
 		t.Fatalf("success log should reference token and channel: %+v", callLog)
 	}
+	if callLog.Content != "" || callLog.Response != "" {
+		t.Fatalf("body logging should stay disabled by default, got content=%q response=%q", callLog.Content, callLog.Response)
+	}
 	var requestSnapshotRaw string
 	if err := internal.DB.Model(&model.Log{}).Select("request_snapshot").Where("id = ?", callLog.ID).Scan(&requestSnapshotRaw).Error; err != nil {
 		t.Fatal(err)
@@ -8809,6 +8812,97 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 		!strings.Contains(logResp.Body.String(), `"route_snapshot":`) ||
 		!strings.Contains(logResp.Body.String(), `"billing_snapshot":`) {
 		t.Fatalf("user log should expose upstream usage source, route snapshot and billing snapshot, got %d %s", logResp.Code, logResp.Body.String())
+	}
+}
+
+func TestRelayBodyLoggingRedactsAndTruncatesWhenEnabled(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-body-log","object":"chat.completion","model":"gpt-body-log","choices":[{"index":0,"message":{"role":"assistant","content":"ok sk-response-secret with a response tail that is intentionally long enough to exercise truncation"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settings := service.NewSettingService()
+	for key, value := range map[string]string{
+		"log.request_body_enabled":  "true",
+		"log.response_body_enabled": "true",
+		"relay.log_body_max_bytes":  "160",
+	} {
+		if err := settings.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "body-log-key",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "body-log-channel",
+		"models":   "gpt-body-log",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	chatResp := performRawWithHeaders(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, `{"model":"gpt-body-log","messages":[{"role":"user","content":"hello sk-request-secret Authorization: Bearer request-secret-value with a request tail that is intentionally long enough to exercise truncation"}],"api_key":"sk-body-field-secret"}`, nil)
+	if chatResp.Code != http.StatusOK {
+		t.Fatalf("chat completion failed: %d %s", chatResp.Code, chatResp.Body.String())
+	}
+
+	var callLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ?", common.LogStatusSuccess, tokenPayload.Data.ID).First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Content == "" || callLog.Response == "" {
+		t.Fatalf("body logging should store request and response snippets when enabled, got content=%q response=%q", callLog.Content, callLog.Response)
+	}
+	if len(callLog.Content) > 160 || len(callLog.Response) > 160 {
+		t.Fatalf("body log snippets should be truncated to configured limit, got content=%d response=%d", len(callLog.Content), len(callLog.Response))
+	}
+	for _, forbidden := range []string{
+		"sk-request-secret",
+		"sk-body-field-secret",
+		"request-secret-value",
+		"sk-response-secret",
+		"upstream-secret",
+		tokenPayload.Data.Key,
+	} {
+		if strings.Contains(callLog.Content, forbidden) || strings.Contains(callLog.Response, forbidden) {
+			t.Fatalf("body log snippets should redact sensitive values %q, got content=%q response=%q", forbidden, callLog.Content, callLog.Response)
+		}
+	}
+	if !strings.Contains(callLog.Content, `"model":"gpt-body-log"`) || !strings.Contains(callLog.Response, `"chatcmpl-body-log"`) {
+		t.Fatalf("body log snippets should retain useful diagnostic context, got content=%q response=%q", callLog.Content, callLog.Response)
 	}
 }
 

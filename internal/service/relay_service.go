@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +52,8 @@ type relayRequestSnapshotContextKey struct{}
 type relayPolicySnapshotContextKey struct{}
 type relayRouteSnapshotContextKey struct{}
 type relayBillingSnapshotContextKey struct{}
+type relayLogRequestBodyContextKey struct{}
+type relayLogResponseBodyContextKey struct{}
 
 type contentTypeRelayAdapter interface {
 	DoRequestWithContentType(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, contentType string) (*http.Response, error)
@@ -67,6 +70,24 @@ const (
 )
 
 var errRelayResponseBodyTooLarge = errors.New("relay upstream response body too large")
+
+var relayBodyLogRedactors = []struct {
+	pattern     *regexp.Regexp
+	replacement string
+}{
+	{
+		pattern:     regexp.MustCompile(`(?i)("?(?:api[_-]?key|authorization|cookie|set-cookie|token|secret|upstream_key)"?\s*:\s*")[^"]*(")`),
+		replacement: `$1[REDACTED]$2`,
+	},
+	{
+		pattern:     regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+`),
+		replacement: `Bearer [REDACTED]`,
+	},
+	{
+		pattern:     regexp.MustCompile(`sk-[A-Za-z0-9._-]+`),
+		replacement: `[REDACTED]`,
+	},
+}
 
 func (r *RelayStreamResult) Forward(write func([]byte) error, flush func()) (*relay.Usage, error) {
 	if r == nil || r.forward == nil {
@@ -149,6 +170,20 @@ func ContextWithRelayBillingSnapshot(ctx context.Context, snapshot string) conte
 	return context.WithValue(ctx, relayBillingSnapshotContextKey{}, strings.TrimSpace(snapshot))
 }
 
+func ContextWithRelayLogRequestBody(ctx context.Context, body string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, relayLogRequestBodyContextKey{}, strings.TrimSpace(body))
+}
+
+func ContextWithRelayLogResponseBody(ctx context.Context, body string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, relayLogResponseBodyContextKey{}, strings.TrimSpace(body))
+}
+
 func relayUserAgentFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
@@ -222,6 +257,22 @@ func relayBillingSnapshotFromContext(ctx context.Context) string {
 		return ""
 	}
 	value, _ := ctx.Value(relayBillingSnapshotContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
+func relayLogRequestBodyFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(relayLogRequestBodyContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
+func relayLogResponseBodyFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(relayLogResponseBodyContextKey{}).(string)
 	return strings.TrimSpace(value)
 }
 
@@ -447,6 +498,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	if reqInfo.Stream {
 		return nil, nil, &HTTPError{Status: 400, Message: "stream is not supported in P0 relay", Type: "invalid_request_error", Code: "unsupported_stream"}
 	}
+	ctx = s.contextWithRelayLogRequestBody(ctx, body)
 	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshot(ctx, apiType, reqInfo))
 	if err := s.enforceTokenScope(ctx, token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, nil, err
@@ -616,7 +668,8 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		s.recordUpstreamDuration(channel, "failed", time.Since(start))
 		_ = s.markChannelFailure(channel, latencyMs)
 		message := fmt.Sprintf("upstream returned status %d", resp.StatusCode)
-		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, message, clientIP)
+		logCtx := s.contextWithRelayLogResponseBody(ctx, respBody, resp.Header.Get("Content-Type"))
+		_ = s.recordLog(logCtx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, message, clientIP)
 		return nil, nil, s.retryableUpstreamStatus(resp.StatusCode), &HTTPError{
 			Status:  clientStatusFromUpstream(resp.StatusCode),
 			Message: message,
@@ -644,6 +697,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		}
 		_ = s.markChannelSuccess(channel, latencyMs)
 		logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(nil, billing, deduction))
+		logCtx = s.contextWithRelayLogResponseBody(logCtx, respBody, contentType)
 		_ = s.recordLog(logCtx, token, channel, reqInfo.Model, nil, common.LogStatusSuccess, billing.QuotaUsed, "", clientIP)
 		return &RelayRawResult{Body: respBody, ContentType: contentType}, nil, false, nil
 	}
@@ -651,9 +705,11 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	converted, usage, err := adapter.ConvertResponse(apiType, respBody)
 	if err != nil {
 		_ = s.markChannelFailure(channel, latencyMs)
-		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response conversion failed", clientIP)
+		logCtx := s.contextWithRelayLogResponseBody(ctx, respBody, resp.Header.Get("Content-Type"))
+		_ = s.recordLog(logCtx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream response conversion failed", clientIP)
 		return nil, nil, false, &HTTPError{Status: 502, Message: "upstream response conversion failed", Type: "upstream_error", Code: "upstream_conversion_failed"}
 	}
+	ctx = s.contextWithRelayLogResponseBody(ctx, converted, "application/json")
 	if httpErr := s.rejectMissingUsage(ctx, token, channel, reqInfo.Model, usage, clientIP); httpErr != nil {
 		_ = s.markChannelSuccess(channel, latencyMs)
 		return nil, usage, false, httpErr
@@ -682,6 +738,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if !reqInfo.Stream {
 		return nil, &HTTPError{Status: 400, Message: "stream is required", Type: "invalid_request_error", Code: "stream_required"}
 	}
+	ctx = s.contextWithRelayLogRequestBody(ctx, body)
 	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshot(ctx, apiType, reqInfo))
 	if err := s.enforceTokenScope(ctx, token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, err
@@ -2231,6 +2288,86 @@ func (s *RelayService) MaxResponseBodyBytes() int64 {
 	return int64(value)
 }
 
+func (s *RelayService) relayLogBodyMaxBytes() int {
+	if s == nil || s.settingService == nil {
+		return 0
+	}
+	for _, key := range []string{"relay.log_body_max_bytes", "log.body_max_bytes"} {
+		value, err := s.settingService.GetInt(key)
+		if err == nil && value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func (s *RelayService) relayRequestBodyLoggingEnabled() bool {
+	if s == nil || s.settingService == nil {
+		return false
+	}
+	enabled, err := s.settingService.GetBool("log.request_body_enabled")
+	return err == nil && enabled && s.relayLogBodyMaxBytes() > 0
+}
+
+func (s *RelayService) relayResponseBodyLoggingEnabled() bool {
+	if s == nil || s.settingService == nil {
+		return false
+	}
+	enabled, err := s.settingService.GetBool("log.response_body_enabled")
+	return err == nil && enabled && s.relayLogBodyMaxBytes() > 0
+}
+
+func (s *RelayService) contextWithRelayLogRequestBody(ctx context.Context, body []byte) context.Context {
+	if !s.relayRequestBodyLoggingEnabled() {
+		return ctx
+	}
+	if snippet := sanitizeRelayLogBody(body, s.relayLogBodyMaxBytes()); snippet != "" {
+		return ContextWithRelayLogRequestBody(ctx, snippet)
+	}
+	return ctx
+}
+
+func (s *RelayService) contextWithRelayLogResponseBody(ctx context.Context, body []byte, contentType string) context.Context {
+	if !s.relayResponseBodyLoggingEnabled() || !relayLoggableContentType(contentType) {
+		return ctx
+	}
+	if snippet := sanitizeRelayLogBody(body, s.relayLogBodyMaxBytes()); snippet != "" {
+		return ContextWithRelayLogResponseBody(ctx, snippet)
+	}
+	return ctx
+}
+
+func sanitizeRelayLogBody(body []byte, limit int) string {
+	if len(body) == 0 || limit <= 0 {
+		return ""
+	}
+	value := strings.ToValidUTF8(string(body), "")
+	for _, redactor := range relayBodyLogRedactors {
+		value = redactor.pattern.ReplaceAllString(value, redactor.replacement)
+	}
+	if len(value) > limit {
+		value = string([]byte(value)[:limit])
+		value = strings.ToValidUTF8(value, "")
+	}
+	return strings.TrimSpace(value)
+}
+
+func relayLoggableContentType(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil {
+		mediaType = strings.TrimSpace(contentType)
+	}
+	mediaType = strings.ToLower(mediaType)
+	if mediaType == "" {
+		return true
+	}
+	return strings.HasPrefix(mediaType, "text/") ||
+		strings.Contains(mediaType, "json") ||
+		strings.Contains(mediaType, "xml") ||
+		strings.Contains(mediaType, "javascript") ||
+		strings.Contains(mediaType, "event-stream")
+}
+
 func (s *RelayService) RouterXMaxHops() int {
 	if s == nil || s.settingService == nil {
 		return defaultRouterXMaxHops
@@ -3498,6 +3635,8 @@ func (s *RelayService) recordLog(ctx context.Context, token *model.Token, channe
 		Status:          status,
 		QuotaUsed:       quotaUsed,
 		UsageSource:     logUsageSource(usage, status, quotaUsed),
+		Content:         relayLogRequestBodyFromContext(ctx),
+		Response:        relayLogResponseBodyFromContext(ctx),
 		ErrorMsg:        errMsg,
 		IP:              ip,
 		UserAgent:       relayUserAgentFromContext(ctx),

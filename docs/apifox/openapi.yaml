@@ -4745,6 +4745,12 @@ components:
           enum: ["", upstream, minimum, adapter, tokenizer, estimate]
         quota_used: { type: integer, format: int64 }
         status: { type: integer, description: "1=success, 2=failed" }
+        content:
+          type: string
+          description: 默认为空；开启 log.request_body_enabled 且 body 日志上限为正数时，保存截断和脱敏后的请求体片段。
+        response:
+          type: string
+          description: 默认为空；开启 log.response_body_enabled 且 body 日志上限为正数时，保存截断和脱敏后的非流式响应体片段。
         request_id:
           type: string
           nullable: true

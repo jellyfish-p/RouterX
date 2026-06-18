@@ -106,6 +106,7 @@
 | `error_code` | `docs/ERRORS.md` 中的稳定 code；成功调用为空 |
 | `error_source` | 失败来源，例如 request、auth、quota、route、channel、upstream、billing、system |
 | `upstream_status` | 上游 HTTP 状态；未调用上游或非上游错误时为空/0 |
+| `content` / `response` | 默认为空；显式开启 body 日志并配置正数上限后，保存截断和脱敏后的非流式请求/响应片段 |
 | `request_snapshot` | 脱敏请求快照；当前包含入口协议、API 类型、请求模型、stream 标记和安全路由摘要 |
 | `policy_snapshot` | 脱敏策略快照；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝、`breaker_snapshot`，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝摘要和 `rate_limit_snapshot` |
 | `route_snapshot` | 脱敏路由快照；当前包含基础选择事实、候选过滤原因、模型重写摘要和非流式重试摘要 |
