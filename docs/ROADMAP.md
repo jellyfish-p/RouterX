@@ -228,7 +228,7 @@ P2 验收标准：
 | 9 | Gemini Embeddings 基础转换、usage 扣费和批量响应边界 | 已覆盖：`TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage`、`TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage`、`TestGeminiBatchEmbedContentsRejectsMismatchedEmbeddingCount` | 证明 Gemini 单条和批量 Embedding 入口不是只注册路径，能转 OpenAI-compatible Embeddings 上游、返回 Gemini 外形，并拒绝上游 embedding 数量与请求数不一致的批量响应。 |
 | 10 | Moderations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明内容审核不是只注册路由，且 P0 最低计费边界可解释。 |
 | 11 | Image Generations 基础 JSON 透传和 usage 缺失最低计费 | 已覆盖：`TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage` | 证明图像生成 JSON 入口不是只注册路由，且无 usage 响应有明确最低计费。 |
-| 12 | Image Edits/Variations multipart 表单透传、路由偏好和最低计费 | 已覆盖：`TestImageMultipartPassthroughUsesRouteAndMinimumCharge` | 证明图像文件类接口不是只注册路由，multipart 表单能保留图像/遮罩字段、剥离 `routerx` 并按路由偏好选择通道。 |
+| 12 | Image Edits/Variations multipart 表单透传、路由偏好和最低计费 | 已覆盖：`TestImageMultipartPassthroughUsesRouteAndMinimumCharge`、`TestAzureImageEditsMultipartUsesV1EndpointAndMinimumCharge`、`TestAzureImageVariationsMultipartUsesV1EndpointAndMinimumCharge` | 证明图像文件类接口不是只注册路由，multipart 表单能保留图像/遮罩字段、剥离 `routerx` 并按路由偏好选择通道。 |
 | 13 | Audio Speech 基础二进制响应透传和 usage 缺失最低计费 | 已覆盖：`TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge` | 证明高级 API 不只支持 JSON 响应，文本转语音能保留音频 Content-Type 和字节流。 |
 | 14 | Audio Transcriptions multipart 表单透传、路由偏好和最低计费 | 已覆盖：`TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge` | 证明音频文件类接口不是只注册路由，multipart 表单能保留文件字段、剥离 `routerx` 并按路由偏好选择通道。 |
 | 15 | `routerx.route` 合法、忽略、拒绝和无候选路径 | 已覆盖：`TestRouterXRoutePreferenceFiltersChannels` | 证明用户偏好不能绕过管理员策略。 |

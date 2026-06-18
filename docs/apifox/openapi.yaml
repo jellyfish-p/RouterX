@@ -2467,7 +2467,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 图像变体转发
-      description: OpenAI-compatible Image Variations 基础实现；multipart/form-data 请求体透传到 OpenAI-compatible 上游 /v1/images/variations，发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态或危险扩展名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；Azure OpenAI variations 端点尚未验证，完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Image Variations 基础实现；multipart/form-data 请求体透传到 OpenAI-compatible 上游 /v1/images/variations，Azure OpenAI 通道可转发到 /openai/v1/images/variations?api-version=preview。发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态或危险扩展名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:

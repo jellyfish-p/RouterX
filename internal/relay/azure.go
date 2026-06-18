@@ -65,6 +65,8 @@ func (a *AzureAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 		return "/openai/v1/images/generations?api-version=" + azureV1PreviewAPIVersion
 	case APIImagesEdits:
 		return "/openai/v1/images/edits?api-version=" + azureV1PreviewAPIVersion
+	case APIImagesVariations:
+		return "/openai/v1/images/variations?api-version=" + azureV1PreviewAPIVersion
 	case APIAudioSpeech:
 		return "/openai/v1/audio/speech?api-version=" + azureV1PreviewAPIVersion
 	case APIAudioTranscriptions:
@@ -114,7 +116,7 @@ func (a *AzureAdapter) doRequest(ctx context.Context, baseURL, endpoint, apiKey 
 }
 
 func (a *AzureAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
-	if apiType != APIResponses && apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings && apiType != APIImagesGenerations && apiType != APIImagesEdits && apiType != APIAudioTranscriptions && apiType != APIAudioTranslations {
+	if apiType != APIResponses && apiType != APIChatCompletions && apiType != APICompletions && apiType != APIEmbeddings && apiType != APIImagesGenerations && apiType != APIImagesEdits && apiType != APIImagesVariations && apiType != APIAudioTranscriptions && apiType != APIAudioTranslations {
 		return nil, nil, errors.New("unsupported api type")
 	}
 	if !json.Valid(body) {

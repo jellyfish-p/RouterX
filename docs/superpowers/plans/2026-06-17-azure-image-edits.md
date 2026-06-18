@@ -44,7 +44,7 @@ Allow `APIImagesEdits` in `ConvertResponse`, and update the adapter comment so A
 
 - [ ] **Step 4: Update docs and Apifox**
 
-Update protocol and relay docs to say Azure Image Edits is supported through `/openai/v1/images/edits?api-version=preview`; keep Azure Image Variations documented as not yet supported because no Azure endpoint has been verified. Add the Azure Image Edits test to `docs/TESTING.md` and adjust Apifox descriptions for `/v1/images/edits`.
+Update protocol and relay docs to say Azure Image Edits is supported through `/openai/v1/images/edits?api-version=preview`. Azure Image Variations was verified later through `/openai/v1/images/variations?api-version=preview` and is tracked by `TestAzureImageVariationsMultipartUsesV1EndpointAndMinimumCharge`. Add the Azure Image Edits test to `docs/TESTING.md` and adjust Apifox descriptions for `/v1/images/edits`.
 
 - [ ] **Step 5: Run verification**
 
