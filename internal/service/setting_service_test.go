@@ -121,6 +121,7 @@ type fakeRedisServer struct {
 	listener  net.Listener
 	mu        sync.Mutex
 	hashes    map[string]map[string]string
+	strings   map[string]string
 	published []fakeRedisPublish
 }
 
@@ -138,6 +139,7 @@ func newFakeRedisServer(t *testing.T) *fakeRedisServer {
 	server := &fakeRedisServer{
 		listener: listener,
 		hashes:   make(map[string]map[string]string),
+		strings:  make(map[string]string),
 	}
 	go server.accept()
 	t.Cleanup(func() {
@@ -159,6 +161,19 @@ func (s *fakeRedisServer) HashValue(hash, field string) (string, bool) {
 	}
 	value, ok := values[field]
 	return value, ok
+}
+
+func (s *fakeRedisServer) StringValue(key string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, ok := s.strings[key]
+	return value, ok
+}
+
+func (s *fakeRedisServer) SetString(key, value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.strings[key] = value
 }
 
 func (s *fakeRedisServer) Published(channel string) []string {
@@ -205,6 +220,43 @@ func (s *fakeRedisServer) writeResponse(writer *bufio.Writer, args []string) {
 		return
 	}
 	switch strings.ToLower(args[0]) {
+	case "get":
+		if len(args) != 2 {
+			writeRESPError(writer, "get requires key")
+			return
+		}
+		s.mu.Lock()
+		value, ok := s.strings[args[1]]
+		s.mu.Unlock()
+		if !ok {
+			_, _ = writer.WriteString("$-1\r\n")
+			return
+		}
+		writeRESPBulkString(writer, value)
+	case "set":
+		if len(args) < 3 {
+			writeRESPError(writer, "set requires key and value")
+			return
+		}
+		s.mu.Lock()
+		s.strings[args[1]] = args[2]
+		s.mu.Unlock()
+		_, _ = writer.WriteString("+OK\r\n")
+	case "del":
+		if len(args) < 2 {
+			writeRESPError(writer, "del requires at least one key")
+			return
+		}
+		deleted := 0
+		s.mu.Lock()
+		for _, key := range args[1:] {
+			if _, ok := s.strings[key]; ok {
+				delete(s.strings, key)
+				deleted++
+			}
+		}
+		s.mu.Unlock()
+		_, _ = writer.WriteString(":" + strconv.Itoa(deleted) + "\r\n")
 	case "hget":
 		if len(args) != 3 {
 			writeRESPError(writer, "hget requires hash and field")

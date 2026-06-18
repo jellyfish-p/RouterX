@@ -47,8 +47,9 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 - API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计，审计摘要不包含完整明文 Key 或哈希。
 - `tokens.scope_json` 已支持基础模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list、日预算、月预算、并发上限和 RPM/TPM：用户可通过 `PUT /v0/user/token/:id/scope` 写入 `allow_models`、`api_types`、`channel_groups`、`entry_protocols`、`ip_cidrs`、`methods`、`daily_quota`、`monthly_quota`、`max_concurrency`、`rpm` 与 `tpm`，系统在上游调用前返回 `model_not_allowed`、`token_forbidden`、`route_forbidden`、`insufficient_quota` 或 `rate_limit_exceeded` 并写失败日志。
 - API Key 鉴权成功后向请求上下文注入当前用户和当前 Token，供 Relay、限流、日志和计费使用。
+- API Key 鉴权热路径已使用 Redis 缓存 `SHA256(api_key) -> token_id` 的 lookup 映射；缓存命中后仍回源数据库加载 Token、User 和用户分组，状态、过期、额度、scope、用户状态和软删除仍以数据库为准。
 
-当前代码事实是后续目标能力的基础，额度语义以 `docs/DECISIONS.md` 的 RXD-009/RXD-010 为目标口径；后续仍需补 `quota_limit`/`quota_used` 目标字段、缓存失效和更完整策略。
+当前代码事实是后续目标能力的基础，额度语义以 `docs/DECISIONS.md` 的 RXD-009/RXD-010 为目标口径；后续仍需补 `quota_limit`/`quota_used` 目标字段、更完整策略和泄露窗口分析。
 
 ## 4. 身份边界
 
@@ -264,6 +265,10 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 
 API Key 是热路径资源，缓存设计必须服务安全和性能。
 
+当前实现采用保守的 Redis lookup cache：只保存 `api_key_auth:<SHA256(api_key)> -> token_id`，不保存完整明文 Key，也不缓存“已授权”结论。缓存命中后仍用 `token_id` 从主数据库加载 Token、User 和用户分组，并重新校验状态、过期时间、软删除、用户状态、额度和 scope。Redis 失败时回退数据库哈希查询；缓存 TTL 默认较短，且不会超过 API Key 剩余有效期。
+
+当前 lookup cache 会在轮换、禁用、删除、scope 更新、普通编辑、批量禁用、批量过期和成功扣费后清理相关映射。用户状态变化即使未显式清理 lookup cache，也会因为每次缓存命中都重新加载 User 而立即按数据库状态生效。
+
 | 场景 | 要求 |
 |------|------|
 | 鉴权缓存 | 缓存键使用 `SHA256(key)` 或内部 ID，不使用完整明文。 |
@@ -358,11 +363,11 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 - 已支持轮换动作：创建新 Key、保留旧 Key 关联、禁用旧 Key、审计完整。
 - 支持按 Key 查看用量摘要和过滤日志；账单、错误和限流事件的统一视图仍待补。
 - 已支持基础作用域：模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list、日预算、月预算、并发上限和 RPM/TPM。
-- 缓存失效覆盖更新、禁用、删除、用户状态变化和作用域变化。
+- 基础 Redis 鉴权 lookup cache 已覆盖预热、命中回源校验、更新、禁用、删除、轮换、scope 变化、批量禁用、批量过期和扣费后失效；用户状态变化由缓存命中后的数据库权威校验生效。
 
 ### P2 验收
 
-- 管理员已支持跨用户查询、批量禁用、批量过期和基础异常 Key 风险视图；缓存失效和更完整泄露窗口分析仍待补。
+- 管理员已支持跨用户查询、批量禁用、批量过期和基础异常 Key 风险视图；基础鉴权映射缓存失效已覆盖，更完整泄露窗口分析仍待补。
 - 支持企业团队、服务账号、标签、环境和导出脱敏摘要。
 - 已支持入口协议 allow-list、IP/CIDR allow-list、日预算、月预算、并发上限和 RPM/TPM；更完整策略快照仍待补。
 - 已支持泄露上报和替换建议；泄露窗口分析、自动轮换建议和告警仍待补。

@@ -21,7 +21,7 @@ tags:
   - name: User Auth
     description: 注册、登录和个人资料。
   - name: User API Key
-    description: 用户 API Key 生命周期。
+    description: 用户 API Key 生命周期；Redis 鉴权 lookup cache 仅缓存 SHA256(api_key) 到 token_id 的映射，命中后仍回源数据库校验 Token、User、额度、过期和 scope。
   - name: User Usage
     description: 用户调用日志、账单统计、充值码和模型可见性。
   - name: User Payment
@@ -364,7 +364,7 @@ paths:
     put:
       tags: [User API Key]
       summary: 编辑 API Key
-      description: 普通用户只能编辑名称、状态和过期时间，不能通过本接口修改额度或无限标记。普通编辑成功后写 api_key.updated；将状态改为禁用写 api_key.disabled；尝试修改 remain_quota 或 unlimited 会返回 403 并写 api_key.quota_limit_denied。
+      description: 普通用户只能编辑名称、状态和过期时间，不能通过本接口修改额度或无限标记。普通编辑成功后写 api_key.updated 并清理 Redis 鉴权 lookup cache；将状态改为禁用写 api_key.disabled；尝试修改 remain_quota 或 unlimited 会返回 403 并写 api_key.quota_limit_denied。
       security:
         - UserJWT: []
       parameters:
@@ -385,7 +385,7 @@ paths:
     delete:
       tags: [User API Key]
       summary: 删除 API Key
-      description: 软删除当前用户自己的 API Key；成功后写 api_key.deleted 管理审计，历史调用日志保留 token_id 引用。
+      description: 软删除当前用户自己的 API Key；成功后写 api_key.deleted 管理审计并清理 Redis 鉴权 lookup cache，历史调用日志保留 token_id 引用。
       security:
         - UserJWT: []
       parameters:
@@ -399,7 +399,7 @@ paths:
     post:
       tags: [User API Key]
       summary: 禁用 API Key
-      description: 显式禁用当前用户自己的 API Key，可选记录禁用原因；成功后写 api_key.disabled 管理审计。
+      description: 显式禁用当前用户自己的 API Key，可选记录禁用原因；成功后写 api_key.disabled 管理审计并清理 Redis 鉴权 lookup cache。
       security:
         - UserJWT: []
       parameters:
@@ -428,7 +428,7 @@ paths:
     post:
       tags: [User API Key]
       summary: 轮换 API Key
-      description: 创建替换 Key，复制名称、过期时间、预算语义和 scope，写入 rotated_from_id，禁用旧 Key；新 key 明文只在本次响应展示，成功后写 api_key.rotated 管理审计。
+      description: 创建替换 Key，复制名称、过期时间、预算语义和 scope，写入 rotated_from_id，禁用旧 Key 并清理旧 Key 的 Redis 鉴权 lookup cache；新 key 明文只在本次响应展示，成功后写 api_key.rotated 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -453,7 +453,7 @@ paths:
     post:
       tags: [User API Key]
       summary: 上报 API Key 泄露
-      description: 立即禁用当前用户自己的 API Key，记录 revoked_reason，返回替换建议；成功后写 api_key.leak_reported 管理审计，审计不包含明文 Key。
+      description: 立即禁用当前用户自己的 API Key，记录 revoked_reason，清理 Redis 鉴权 lookup cache，并返回替换建议；成功后写 api_key.leak_reported 管理审计，审计不包含明文 Key。
       security:
         - UserJWT: []
       parameters:
@@ -482,7 +482,7 @@ paths:
     put:
       tags: [User API Key]
       summary: 更新 API Key scope
-      description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list、api_types APIType allow-list、channel_groups 通道分组 allow-list、entry_protocols 入口协议 allow-list、ip_cidrs IP/CIDR allow-list、methods 方法路径 allow-list、daily_quota 日预算、monthly_quota 月预算、max_concurrency 并发上限、rpm 和 tpm。列表为空表示继承用户和系统策略；模型未命中返回 model_not_allowed，APIType、入口协议、IP 或方法路径未命中返回 token_forbidden，通道分组未命中返回 route_forbidden，日/月预算达到上限返回 insufficient_quota，并发上限或 RPM/TPM 命中返回 rate_limit_exceeded，且都不会调用上游。成功后写 api_key.scope_updated 管理审计，审计摘要不包含明文 Key 或哈希。
+      description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list、api_types APIType allow-list、channel_groups 通道分组 allow-list、entry_protocols 入口协议 allow-list、ip_cidrs IP/CIDR allow-list、methods 方法路径 allow-list、daily_quota 日预算、monthly_quota 月预算、max_concurrency 并发上限、rpm 和 tpm。列表为空表示继承用户和系统策略；模型未命中返回 model_not_allowed，APIType、入口协议、IP 或方法路径未命中返回 token_forbidden，通道分组未命中返回 route_forbidden，日/月预算达到上限返回 insufficient_quota，并发上限或 RPM/TPM 命中返回 rate_limit_exceeded，且都不会调用上游。成功后写 api_key.scope_updated 管理审计并清理 Redis 鉴权 lookup cache，审计摘要不包含明文 Key 或哈希。
       security:
         - UserJWT: []
       parameters:
@@ -1204,7 +1204,7 @@ paths:
     post:
       tags: [Admin API Key]
       summary: 批量禁用 API Key
-      description: 管理员按 token_ids 或 user_id 批量禁用 API Key；必须至少提供一个筛选条件，成功后写 api_key.batch_disabled 管理审计。
+      description: 管理员按 token_ids 或 user_id 批量禁用 API Key；必须至少提供一个筛选条件，成功后写 api_key.batch_disabled 管理审计并清理命中 Key 的 Redis 鉴权 lookup cache。
       security:
         - UserJWT: []
       requestBody:
@@ -1231,7 +1231,7 @@ paths:
     post:
       tags: [Admin API Key]
       summary: 批量过期 API Key
-      description: 管理员按 token_ids 或 user_id 立即过期 API Key；必须至少提供一个筛选条件，成功后写 api_key.batch_expired 管理审计。该操作只设置 expired_at，不改 status。
+      description: 管理员按 token_ids 或 user_id 立即过期 API Key；必须至少提供一个筛选条件，成功后写 api_key.batch_expired 管理审计并清理命中 Key 的 Redis 鉴权 lookup cache。该操作只设置 expired_at，不改 status。
       security:
         - UserJWT: []
       requestBody:

@@ -10,6 +10,7 @@ import (
 	"routerx/internal/common"
 	"routerx/internal/model"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,9 @@ var (
 var tokenNow = time.Now
 
 const (
+	apiKeyAuthCachePrefix = "api_key_auth:"
+	apiKeyAuthCacheTTL    = time.Minute
+
 	maxTokenScopeModels         = 200
 	maxTokenScopeAPITypes       = 64
 	maxTokenScopeChannelGroups  = 64
@@ -159,6 +163,9 @@ func (s *TokenService) ValidateAndGetToken(key string) (*model.Token, error) {
 	}
 
 	hash := common.SHA256Hex(key)
+	if token, err, ok := s.loadAPIKeyAuthCache(hash); ok {
+		return token, err
+	}
 	var token model.Token
 	err := internal.DB.Preload("User").Preload("User.Group").Where("key = ?", hash).First(&token).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -172,16 +179,147 @@ func (s *TokenService) ValidateAndGetToken(key string) (*model.Token, error) {
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
+	if err := validateAPIKeyAuthToken(&token); err != nil {
+		return nil, err
+	}
+	s.storeAPIKeyAuthCache(hash, &token)
+	return &token, nil
+}
+
+func apiKeyAuthCacheKey(hash string) string {
+	return apiKeyAuthCachePrefix + strings.TrimSpace(hash)
+}
+
+func validateAPIKeyAuthToken(token *model.Token) error {
+	if token == nil || token.ID == 0 {
+		return ErrInvalidAPIKey
+	}
 	if token.Status != common.TokenStatusEnabled {
-		return nil, ErrAPIKeyDisabled
+		return ErrAPIKeyDisabled
 	}
 	if token.ExpiredAt != nil && !token.ExpiredAt.After(tokenNow()) {
-		return nil, ErrAPIKeyExpired
+		return ErrAPIKeyExpired
 	}
 	if token.User == nil || token.User.Status != common.UserStatusEnabled {
-		return nil, ErrAPIUserDisabled
+		return ErrAPIUserDisabled
 	}
-	return &token, nil
+	return nil
+}
+
+func (s *TokenService) loadAPIKeyAuthCache(hash string) (*model.Token, error, bool) {
+	if internal.RDB == nil || internal.DB == nil {
+		return nil, nil, false
+	}
+	hash = strings.TrimSpace(hash)
+	if hash == "" {
+		return nil, nil, false
+	}
+	cacheKey := apiKeyAuthCacheKey(hash)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	raw, err := internal.RDB.Get(ctx, cacheKey).Result()
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil, nil, false
+	}
+	tokenID, parseErr := strconv.ParseUint(strings.TrimSpace(raw), 10, 64)
+	if parseErr != nil || tokenID == 0 {
+		_ = internal.RDB.Del(ctx, cacheKey).Err()
+		return nil, nil, false
+	}
+	var token model.Token
+	err = internal.DB.Preload("User").Preload("User.Group").First(&token, uint(tokenID)).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		_ = internal.RDB.Del(ctx, cacheKey).Err()
+		return nil, nil, false
+	}
+	if err != nil {
+		return nil, nil, false
+	}
+	if err := validateAPIKeyAuthToken(&token); err != nil {
+		_ = internal.RDB.Del(ctx, cacheKey).Err()
+		return nil, err, true
+	}
+	return &token, nil, true
+}
+
+func (s *TokenService) storeAPIKeyAuthCache(hash string, token *model.Token) {
+	if internal.RDB == nil || token == nil || token.ID == 0 {
+		return
+	}
+	hash = strings.TrimSpace(hash)
+	if hash == "" {
+		return
+	}
+	ttl := apiKeyAuthCacheTTL
+	if token.ExpiredAt != nil {
+		remaining := token.ExpiredAt.Sub(tokenNow())
+		if remaining <= 0 {
+			return
+		}
+		if remaining < ttl {
+			ttl = remaining
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = internal.RDB.Set(ctx, apiKeyAuthCacheKey(hash), strconv.FormatUint(uint64(token.ID), 10), ttl).Err()
+}
+
+func (s *TokenService) invalidateAPIKeyAuthCacheByHashes(hashes ...string) {
+	if internal.RDB == nil || len(hashes) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(hashes))
+	for _, hash := range hashes {
+		hash = strings.TrimSpace(hash)
+		if hash == "" {
+			continue
+		}
+		if strings.HasPrefix(hash, "sk-") {
+			hash = common.SHA256Hex(hash)
+		}
+		keys = append(keys, apiKeyAuthCacheKey(hash))
+	}
+	if len(keys) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = internal.RDB.Del(ctx, keys...).Err()
+}
+
+func (s *TokenService) invalidateAPIKeyAuthCacheByIDs(ids ...uint) {
+	if internal.RDB == nil || internal.DB == nil || len(ids) == 0 {
+		return
+	}
+	ids = uniquePositiveUint(ids)
+	if len(ids) == 0 {
+		return
+	}
+	var tokens []model.Token
+	if err := internal.DB.Unscoped().Select("id", "key").Where("id IN ?", ids).Find(&tokens).Error; err != nil {
+		return
+	}
+	hashes := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		hashes = append(hashes, token.Key)
+	}
+	s.invalidateAPIKeyAuthCacheByHashes(hashes...)
+}
+
+func (s *TokenService) InvalidateUserAPIKeyAuthCache(userID uint) {
+	if internal.RDB == nil || internal.DB == nil || userID == 0 {
+		return
+	}
+	var tokens []model.Token
+	if err := internal.DB.Unscoped().Select("id", "key").Where("user_id = ?", userID).Find(&tokens).Error; err != nil {
+		return
+	}
+	hashes := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		hashes = append(hashes, token.Key)
+	}
+	s.invalidateAPIKeyAuthCacheByHashes(hashes...)
 }
 
 // List 令牌列表 (管理员看全量, 用户看自己的)。
@@ -291,11 +429,13 @@ func (s *TokenService) RotateForUser(id, userID uint) (*model.Token, *model.Toke
 	var oldAfter *model.Token
 	var created *model.Token
 	var plainKey string
+	var oldKey string
 	err := internal.DB.Transaction(func(tx *gorm.DB) error {
 		var old model.Token
 		if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&old).Error; err != nil {
 			return err
 		}
+		oldKey = old.Key
 		if old.Status != common.TokenStatusEnabled {
 			return ErrAPIKeyDisabled
 		}
@@ -337,6 +477,7 @@ func (s *TokenService) RotateForUser(id, userID uint) (*model.Token, *model.Toke
 	if err != nil {
 		return nil, nil, err
 	}
+	s.invalidateAPIKeyAuthCacheByHashes(oldKey)
 	created.Key = plainKey
 	return oldAfter, created, nil
 }
@@ -363,6 +504,7 @@ func (s *TokenService) DisableForUser(id, userID uint, reason string) (*model.To
 	if err != nil {
 		return nil, err
 	}
+	s.invalidateAPIKeyAuthCacheByHashes(token.Key)
 	return &token, nil
 }
 
@@ -436,6 +578,7 @@ func (s *TokenService) UpdateScopeForUser(id, userID uint, scope TokenScope) (*m
 	if err != nil {
 		return nil, err
 	}
+	s.invalidateAPIKeyAuthCacheByHashes(token.Key)
 	return &token, nil
 }
 
@@ -1172,6 +1315,7 @@ func (s *TokenService) BatchDisable(input BatchDisableTokensInput) (BatchDisable
 	if err != nil {
 		return BatchDisableTokensResult{}, nil, err
 	}
+	s.invalidateAPIKeyAuthCacheByIDs(disabledIDs...)
 	return BatchDisableTokensResult{
 		MatchedCount:  int64(len(matched)),
 		DisabledCount: disabledCount,
@@ -1224,6 +1368,7 @@ func (s *TokenService) BatchExpire(input BatchExpireTokensInput) (BatchExpireTok
 	if err != nil {
 		return BatchExpireTokensResult{}, nil, err
 	}
+	s.invalidateAPIKeyAuthCacheByIDs(expiredIDs...)
 	return BatchExpireTokensResult{
 		MatchedCount: int64(len(matched)),
 		ExpiredCount: expiredCount,
@@ -1249,12 +1394,20 @@ func (s *TokenService) Update(id uint, updates map[string]interface{}) error {
 	if len(allowed) == 0 {
 		return nil
 	}
-	return internal.DB.Model(&model.Token{}).Where("id = ?", id).Updates(allowed).Error
+	err := internal.DB.Model(&model.Token{}).Where("id = ?", id).Updates(allowed).Error
+	if err == nil {
+		s.invalidateAPIKeyAuthCacheByIDs(id)
+	}
+	return err
 }
 
 // Delete 软删除 Token。
 func (s *TokenService) Delete(id uint) error {
-	return internal.DB.Delete(&model.Token{}, id).Error
+	err := internal.DB.Delete(&model.Token{}, id).Error
+	if err == nil {
+		s.invalidateAPIKeyAuthCacheByIDs(id)
+	}
+	return err
 }
 
 // DeductQuota 扣减 Token / User 额度。
@@ -1321,6 +1474,7 @@ func (s *TokenService) DeductQuotaWithSnapshot(tokenID uint, quota int64) (Quota
 	if err != nil {
 		return result, err
 	}
+	s.invalidateAPIKeyAuthCacheByIDs(tokenID)
 	return result, nil
 }
 

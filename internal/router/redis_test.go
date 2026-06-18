@@ -12,11 +12,12 @@ import (
 )
 
 // routerFakeRedisServer implements the small Redis command subset used by
-// router integration tests: settings cache reads/writes and rate-limit counters.
+// router integration tests: settings cache reads/writes, auth lookups and rate-limit counters.
 type routerFakeRedisServer struct {
 	listener net.Listener
 	mu       sync.Mutex
 	hashes   map[string]map[string]string
+	strings  map[string]string
 	counters map[string]int64
 }
 
@@ -29,6 +30,7 @@ func newRouterFakeRedisServer(t *testing.T) *routerFakeRedisServer {
 	server := &routerFakeRedisServer{
 		listener: listener,
 		hashes:   make(map[string]map[string]string),
+		strings:  make(map[string]string),
 		counters: make(map[string]int64),
 	}
 	go server.accept()
@@ -74,6 +76,43 @@ func (s *routerFakeRedisServer) writeResponse(writer *bufio.Writer, args []strin
 		return
 	}
 	switch strings.ToLower(args[0]) {
+	case "get":
+		if len(args) != 2 {
+			writeRouterRESPError(writer, "get requires key")
+			return
+		}
+		s.mu.Lock()
+		value, ok := s.strings[args[1]]
+		s.mu.Unlock()
+		if !ok {
+			_, _ = writer.WriteString("$-1\r\n")
+			return
+		}
+		writeRouterRESPBulkString(writer, value)
+	case "set":
+		if len(args) < 3 {
+			writeRouterRESPError(writer, "set requires key and value")
+			return
+		}
+		s.mu.Lock()
+		s.strings[args[1]] = args[2]
+		s.mu.Unlock()
+		_, _ = writer.WriteString("+OK\r\n")
+	case "del":
+		if len(args) < 2 {
+			writeRouterRESPError(writer, "del requires at least one key")
+			return
+		}
+		deleted := 0
+		s.mu.Lock()
+		for _, key := range args[1:] {
+			if _, ok := s.strings[key]; ok {
+				delete(s.strings, key)
+				deleted++
+			}
+		}
+		s.mu.Unlock()
+		_, _ = writer.WriteString(":" + strconv.Itoa(deleted) + "\r\n")
 	case "hget":
 		if len(args) != 3 {
 			writeRouterRESPError(writer, "hget requires hash and field")
