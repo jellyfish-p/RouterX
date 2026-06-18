@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	yaml "github.com/goccy/go-yaml"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -204,6 +207,23 @@ func TestP0BackendFlow(t *testing.T) {
 	disabledUserModels := performJSON(r, http.MethodGet, "/v1/models", "Bearer "+tokenPayload.Data.Key, nil)
 	if disabledUserModels.Code != http.StatusForbidden || strings.Contains(disabledUserModels.Body.String(), `"success"`) {
 		t.Fatalf("expected disabled user api key 403 with OpenAI error, got %d %s", disabledUserModels.Code, disabledUserModels.Body.String())
+	}
+}
+
+func TestApifoxOpenAPICoversRegisteredRoutes(t *testing.T) {
+	r := newTestRouter(t)
+	documented := loadApifoxOperationSet(t)
+	missing := make([]string, 0)
+
+	for _, operation := range registeredPublicOperations(r) {
+		if _, ok := documented[operation]; !ok {
+			missing = append(missing, operation)
+		}
+	}
+
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml is missing registered routes:\n%s", strings.Join(missing, "\n"))
 	}
 }
 
@@ -15058,6 +15078,73 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		handler.NewSettingHandler(settingSvc),
 		handler.NewSetupHandler(setupSvc),
 	)
+}
+
+func loadApifoxOperationSet(t *testing.T) map[string]struct{} {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "apifox", "openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Paths map[string]map[string]interface{} `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("docs/apifox/openapi.yaml should parse as YAML: %v", err)
+	}
+	operations := map[string]struct{}{}
+	for path, methods := range doc.Paths {
+		for method := range methods {
+			if !isOpenAPIHTTPMethod(method) {
+				continue
+			}
+			operations[strings.ToUpper(method)+" "+path] = struct{}{}
+		}
+	}
+	return operations
+}
+
+func registeredPublicOperations(r *gin.Engine) []string {
+	operations := map[string]struct{}{}
+	for _, route := range r.Routes() {
+		if route.Method == http.MethodPost && route.Path == "/v1/models/:model" {
+			// Gin registers Gemini model actions as one wildcard route; Apifox
+			// documents the public action URLs users actually call.
+			for _, action := range []string{"generateContent", "streamGenerateContent", "embedContent", "batchEmbedContents", "countTokens"} {
+				operations[http.MethodPost+" /v1/models/{model}:"+action] = struct{}{}
+			}
+			continue
+		}
+		operations[route.Method+" "+ginRoutePathToOpenAPI(route.Path)] = struct{}{}
+	}
+	result := make([]string, 0, len(operations))
+	for operation := range operations {
+		result = append(result, operation)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func ginRoutePathToOpenAPI(path string) string {
+	if !strings.Contains(path, ":") {
+		return path
+	}
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		if strings.HasPrefix(part, ":") {
+			parts[i] = "{" + strings.TrimPrefix(part, ":") + "}"
+		}
+	}
+	return strings.Join(parts, "/")
+}
+
+func isOpenAPIHTTPMethod(method string) bool {
+	switch strings.ToLower(method) {
+	case "get", "post", "put", "patch", "delete", "head", "options", "trace":
+		return true
+	default:
+		return false
+	}
 }
 
 func newRouterLogDB(t *testing.T, name string) *gorm.DB {
