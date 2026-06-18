@@ -56,7 +56,7 @@ P0 可以宣称完成时，必须同时满足以下门禁。
 
 | 门禁 | 必须证明 | 主要证据 |
 |------|----------|----------|
-| G0 文档一致 | 主设计稿、路线图、API、数据模型、Relay、计费、测试不互相冲突；已注册公开 API 必须出现在 Apifox 可导入文档中，且每个公开 operation 都有人类可读说明和可用路径参数。 | `TestApifoxOpenAPICoversRegisteredRoutes`、`TestApifoxOpenAPIOperationsHaveHumanReadableDocs`、`TestApifoxOpenAPIPathParametersAreDeclared`、旧术语扫描、`git diff --check`、文档链接检查。 |
+| G0 文档一致 | 主设计稿、路线图、API、数据模型、Relay、计费、测试不互相冲突；已注册公开 API 必须出现在 Apifox 可导入文档中，且每个公开 operation 都有人类可读说明、可用路径参数、可解析组件引用和明确鉴权要求。 | `TestApifoxOpenAPICoversRegisteredRoutes`、`TestApifoxOpenAPIOperationsHaveHumanReadableDocs`、`TestApifoxOpenAPIPathParametersAreDeclared`、`TestApifoxOpenAPIInternalRefsResolve`、`TestApifoxOpenAPISecurityMatchesRouteGroups`、旧术语扫描、`git diff --check`、文档链接检查。 |
 | G1 空库初始化 | 空库能创建超级管理员、默认 settings 和本地身份。 | `TestSetupBootstrapAdminQuota`、`TestP0BackendFlow`。 |
 | G2 就绪状态 | `/ready` 能反映数据库、初始化、JWT、密钥和关键配置状态。 | `TestSettingsValidationAndReadiness`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、ready 接口断言。 |
 | G3 账号和权限 | 普通用户、管理员、超级管理员边界正确。 | `TestAdminPrivilegeBoundaries`。 |

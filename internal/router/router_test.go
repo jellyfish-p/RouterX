@@ -278,6 +278,44 @@ func TestApifoxOpenAPIPathParametersAreDeclared(t *testing.T) {
 	}
 }
 
+func TestApifoxOpenAPIInternalRefsResolve(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := make([]string, 0)
+	collectApifoxRefIssues(doc, "$", doc, &issues)
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml contains unresolved internal refs:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
+func TestApifoxOpenAPISecurityMatchesRouteGroups(t *testing.T) {
+	operations := loadApifoxOperations(t)
+	missing := make([]string, 0)
+
+	for _, operation := range operations {
+		switch {
+		case strings.HasPrefix(operation.Path, "/v1/"):
+			if !operation.hasSecurityScheme("ApiKeyBearer") {
+				missing = append(missing, operation.Key+" missing ApiKeyBearer security")
+			}
+		case strings.HasPrefix(operation.Path, "/v0/admin/"):
+			if !operation.hasSecurityScheme("UserJWT") {
+				missing = append(missing, operation.Key+" missing UserJWT security")
+			}
+		case strings.HasPrefix(operation.Path, "/v0/user/") && operation.Path != "/v0/user/register" && operation.Path != "/v0/user/login":
+			if !operation.hasSecurityScheme("UserJWT") {
+				missing = append(missing, operation.Key+" missing UserJWT security")
+			}
+		}
+	}
+
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml authenticated routes need matching security schemes:\n%s", strings.Join(missing, "\n"))
+	}
+}
+
 func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -15147,6 +15185,7 @@ type apifoxOperationDoc struct {
 	Description  string
 	HasResponses bool
 	Parameters   []apifoxParameterDoc
+	Security     []map[string][]string
 }
 
 type apifoxParameterDoc struct {
@@ -15165,17 +15204,24 @@ func (o apifoxOperationDoc) hasRequiredPathParameter(name string) bool {
 	return false
 }
 
+func (o apifoxOperationDoc) hasSecurityScheme(name string) bool {
+	for _, requirement := range o.Security {
+		if _, ok := requirement[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "apifox", "openapi.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := loadApifoxOpenAPIBytes(t)
 	var doc struct {
 		Paths map[string]map[string]struct {
 			Summary     string                 `yaml:"summary"`
 			Description string                 `yaml:"description"`
 			Parameters  []apifoxParameterDoc   `yaml:"parameters"`
+			Security    []map[string][]string  `yaml:"security"`
 			Responses   map[string]interface{} `yaml:"responses"`
 		} `yaml:"paths"`
 		Components struct {
@@ -15198,6 +15244,7 @@ func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
 				Description:  operation.Description,
 				HasResponses: len(operation.Responses) > 0,
 				Parameters:   resolveApifoxParameters(operation.Parameters, doc.Components.Parameters),
+				Security:     operation.Security,
 			})
 		}
 	}
@@ -15205,6 +15252,58 @@ func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
 		return operations[i].Key < operations[j].Key
 	})
 	return operations
+}
+
+func loadApifoxRawDocument(t *testing.T) interface{} {
+	t.Helper()
+	raw := loadApifoxOpenAPIBytes(t)
+	var doc interface{}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("docs/apifox/openapi.yaml should parse as YAML: %v", err)
+	}
+	return doc
+}
+
+func loadApifoxOpenAPIBytes(t *testing.T) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "apifox", "openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func collectApifoxRefIssues(value interface{}, path string, root interface{}, issues *[]string) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		if ref, ok := typed["$ref"].(string); ok && strings.HasPrefix(ref, "#/") && !apifoxRefExists(root, ref) {
+			*issues = append(*issues, path+" unresolved "+ref)
+		}
+		for key, child := range typed {
+			collectApifoxRefIssues(child, path+"."+key, root, issues)
+		}
+	case []interface{}:
+		for i, child := range typed {
+			collectApifoxRefIssues(child, fmt.Sprintf("%s[%d]", path, i), root, issues)
+		}
+	}
+}
+
+func apifoxRefExists(root interface{}, ref string) bool {
+	current := root
+	for _, part := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
+		part = strings.ReplaceAll(strings.ReplaceAll(part, "~1", "/"), "~0", "~")
+		object, ok := current.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		var exists bool
+		current, exists = object[part]
+		if !exists {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveApifoxParameters(parameters []apifoxParameterDoc, components map[string]apifoxParameterDoc) []apifoxParameterDoc {
