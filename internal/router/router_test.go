@@ -5935,6 +5935,7 @@ func TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage(t *testing.T)
 				{"text": "world"},
 			},
 		},
+		"outputDimensionality": 128,
 	})
 	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"embedding":{"values":[0.25,0.5]}`) {
 		t.Fatalf("gemini embedContent should return Gemini embedding response, got %d %s", resp.Code, resp.Body.String())
@@ -5942,8 +5943,8 @@ func TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage(t *testing.T)
 	if upstreamCalls != 1 || upstreamPath != "/v1/embeddings" {
 		t.Fatalf("gemini embedContent should call OpenAI embeddings upstream once, calls=%d path=%q", upstreamCalls, upstreamPath)
 	}
-	if upstreamBody["model"] != "text-embedding-test" || upstreamBody["input"] != "hello\nworld" {
-		t.Fatalf("gemini embedContent should map path model and text parts to embeddings request, got %#v", upstreamBody)
+	if upstreamBody["model"] != "text-embedding-test" || upstreamBody["input"] != "hello\nworld" || upstreamBody["dimensions"] != float64(128) {
+		t.Fatalf("gemini embedContent should map model, text parts and output dimensionality to embeddings request, got %#v", upstreamBody)
 	}
 	var storedToken model.Token
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
@@ -6033,11 +6034,13 @@ func TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage(t *test
 				"content": map[string]interface{}{
 					"parts": []map[string]interface{}{{"text": "hello"}},
 				},
+				"outputDimensionality": 256,
 			},
 			{
 				"content": map[string]interface{}{
 					"parts": []map[string]interface{}{{"text": "world"}},
 				},
+				"outputDimensionality": 256,
 			},
 		},
 	})
@@ -6048,8 +6051,8 @@ func TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage(t *test
 		t.Fatalf("gemini batchEmbedContents should call OpenAI embeddings upstream once, calls=%d path=%q", upstreamCalls, upstreamPath)
 	}
 	input, ok := upstreamBody["input"].([]interface{})
-	if !ok || len(input) != 2 || input[0] != "hello" || input[1] != "world" || upstreamBody["model"] != "text-embedding-test" {
-		t.Fatalf("gemini batchEmbedContents should map requests to embeddings input array, got %#v", upstreamBody)
+	if !ok || len(input) != 2 || input[0] != "hello" || input[1] != "world" || upstreamBody["model"] != "text-embedding-test" || upstreamBody["dimensions"] != float64(256) {
+		t.Fatalf("gemini batchEmbedContents should map requests and output dimensionality to embeddings input array, got %#v", upstreamBody)
 	}
 	var storedToken model.Token
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {

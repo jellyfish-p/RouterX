@@ -1868,6 +1868,7 @@ func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {
 		Content struct {
 			Parts []json.RawMessage `json:"parts"`
 		} `json:"content"`
+		OutputDimensionality *int `json:"outputDimensionality"`
 	}
 	if err := json.Unmarshal(body, &input); err != nil {
 		return nil, errInvalidJSONBody
@@ -1880,10 +1881,17 @@ func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {
 	if text == "" {
 		return nil, errors.New("content is required")
 	}
-	return json.Marshal(map[string]interface{}{
+	output := map[string]interface{}{
 		"model": modelName,
 		"input": text,
-	})
+	}
+	if input.OutputDimensionality != nil {
+		if *input.OutputDimensionality <= 0 {
+			return nil, errors.New("outputDimensionality must be positive")
+		}
+		output["dimensions"] = *input.OutputDimensionality
+	}
+	return json.Marshal(output)
 }
 
 func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, int, error) {
@@ -1892,6 +1900,7 @@ func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, in
 			Content struct {
 				Parts []json.RawMessage `json:"parts"`
 			} `json:"content"`
+			OutputDimensionality *int `json:"outputDimensionality"`
 		} `json:"requests"`
 	}
 	if err := json.Unmarshal(body, &input); err != nil {
@@ -1905,17 +1914,34 @@ func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, in
 		return nil, 0, errors.New("requests are required")
 	}
 	values := make([]string, 0, len(input.Requests))
+	// OpenAI-compatible embeddings accept one dimensions value for the whole batch.
+	dimensions := 0
+	hasDimensions := false
 	for _, request := range input.Requests {
 		text := geminiTextFromParts(request.Content.Parts)
 		if text == "" {
 			return nil, 0, errors.New("content is required")
 		}
 		values = append(values, text)
+		if request.OutputDimensionality != nil {
+			if *request.OutputDimensionality <= 0 {
+				return nil, 0, errors.New("outputDimensionality must be positive")
+			}
+			if hasDimensions && dimensions != *request.OutputDimensionality {
+				return nil, 0, errors.New("outputDimensionality must match for batch requests")
+			}
+			dimensions = *request.OutputDimensionality
+			hasDimensions = true
+		}
 	}
-	canonical, err := json.Marshal(map[string]interface{}{
+	output := map[string]interface{}{
 		"model": modelName,
 		"input": values,
-	})
+	}
+	if hasDimensions {
+		output["dimensions"] = dimensions
+	}
+	canonical, err := json.Marshal(output)
 	if err != nil {
 		return nil, 0, err
 	}

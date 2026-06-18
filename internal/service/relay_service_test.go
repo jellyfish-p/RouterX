@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +74,51 @@ func TestProtocolWrapperRequestErrorsUseStableCodes(t *testing.T) {
 			}
 			if httpErr.Code != tt.code {
 				t.Fatalf("expected code %q, got %q (%v)", tt.code, httpErr.Code, httpErr)
+			}
+		})
+	}
+}
+
+func TestGeminiEmbeddingOutputDimensionalityValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		call func() error
+		want string
+	}{
+		{
+			name: "embed content rejects non-positive dimensions",
+			call: func() error {
+				_, err := geminiEmbedContentToOpenAI("text-embedding-test", []byte(`{"content":{"parts":[{"text":"hello"}]},"outputDimensionality":0}`))
+				return err
+			},
+			want: "outputDimensionality must be positive",
+		},
+		{
+			name: "batch embed rejects non-positive dimensions",
+			call: func() error {
+				_, _, err := geminiBatchEmbedContentsToOpenAI("text-embedding-test", []byte(`{"requests":[{"content":{"parts":[{"text":"hello"}]},"outputDimensionality":0}]}`))
+				return err
+			},
+			want: "outputDimensionality must be positive",
+		},
+		{
+			name: "batch embed rejects mismatched dimensions",
+			call: func() error {
+				_, _, err := geminiBatchEmbedContentsToOpenAI("text-embedding-test", []byte(`{"requests":[{"content":{"parts":[{"text":"hello"}]},"outputDimensionality":128},{"content":{"parts":[{"text":"world"}]},"outputDimensionality":256}]}`))
+				return err
+			},
+			want: "outputDimensionality must match for batch requests",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			if err == nil {
+				t.Fatalf("expected error containing %q", tt.want)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
 			}
 		})
 	}
