@@ -1871,6 +1871,9 @@ func rewriteMultipartRelayBody(body []byte, contentType string, modelName string
 }
 
 func validateMultipartFileName(part *multipart.Part) error {
+	if unsafeMultipartFilePathName(rawMultipartFileName(part)) {
+		return errUnsafeMultipartFile
+	}
 	filename := strings.TrimSpace(part.FileName())
 	if filename == "" {
 		return nil
@@ -1879,6 +1882,25 @@ func validateMultipartFileName(part *multipart.Part) error {
 		return errUnsafeMultipartFile
 	}
 	return nil
+}
+
+func rawMultipartFileName(part *multipart.Part) string {
+	if part == nil {
+		return ""
+	}
+	_, params, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(params["filename"])
+}
+
+func unsafeMultipartFilePathName(filename string) bool {
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		return false
+	}
+	return filename == "." || filename == ".." || strings.ContainsAny(filename, `/\:`)
 }
 
 func unsafeMultipartFileExtension(ext string) bool {

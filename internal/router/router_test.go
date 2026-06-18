@@ -8979,30 +8979,37 @@ func TestRelayMultipartRejectsUnsafeFileNameBeforeUpstream(t *testing.T) {
 		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
 	}
 
-	var reqBody bytes.Buffer
-	writer := multipart.NewWriter(&reqBody)
-	if err := writer.WriteField("model", "whisper-unsafe"); err != nil {
-		t.Fatal(err)
-	}
-	fileWriter, err := writer.CreateFormFile("file", "payload.exe")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fileWriter.Write([]byte("RIFF-not-really-audio")); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
+	sendUpload := func(filename string) *httptest.ResponseRecorder {
+		t.Helper()
+		var reqBody bytes.Buffer
+		writer := multipart.NewWriter(&reqBody)
+		if err := writer.WriteField("model", "whisper-unsafe"); err != nil {
+			t.Fatal(err)
+		}
+		fileWriter, err := writer.CreateFormFile("file", filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fileWriter.Write([]byte("RIFF-not-really-audio")); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &reqBody)
+		req.Header.Set("Authorization", "Bearer "+tokenPayload.Data.Key)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		resp := httptest.NewRecorder()
+		r.ServeHTTP(resp, req)
+		return resp
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &reqBody)
-	req.Header.Set("Authorization", "Bearer "+tokenPayload.Data.Key)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	resp := httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), `"code":"unsafe_multipart_file"`) {
-		t.Fatalf("unsafe multipart filename should return unsafe_multipart_file, got %d %s", resp.Code, resp.Body.String())
+	for _, filename := range []string{"payload.exe", "../payload.wav"} {
+		resp := sendUpload(filename)
+		if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), `"code":"unsafe_multipart_file"`) {
+			t.Fatalf("unsafe multipart filename %q should return unsafe_multipart_file, got %d %s", filename, resp.Code, resp.Body.String())
+		}
 	}
 	if upstreamCalls != 0 {
 		t.Fatalf("unsafe multipart files must not call upstream, got %d calls", upstreamCalls)
