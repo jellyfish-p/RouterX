@@ -1895,6 +1895,7 @@ paths:
     get:
       tags: [Admin Channels]
       summary: 通道列表
+      description: 返回脱敏通道分页列表；每条通道包含计算型 health_status、health_reason 和 cooldown_remaining_seconds，用于区分正常、手工禁用、熔断中和冷却后待探测状态。
       security:
         - UserJWT: []
       parameters:
@@ -1920,7 +1921,7 @@ paths:
     post:
       tags: [Admin Channels]
       summary: 创建通道
-      description: 创建成功后写入 channel.create 管理审计；审计摘要只记录脱敏通道信息和密钥数量。
+      description: 创建成功后写入 channel.create 管理审计；审计摘要只记录脱敏通道信息和密钥数量。响应包含计算型 health_status、health_reason 和 cooldown_remaining_seconds。
       security:
         - UserJWT: []
       requestBody:
@@ -4365,6 +4366,21 @@ components:
         priority: { type: integer }
         weight: { type: integer }
         status: { type: integer }
+        health_status:
+          type: string
+          enum: [healthy, disabled, tripped, probing]
+          description: 计算型通道健康状态；healthy 表示可正常候选，disabled 表示手工禁用或维护，tripped 表示达到熔断阈值且仍在冷却窗口内，probing 表示达到阈值但冷却已过可半开探测。
+          example: healthy
+        health_reason:
+          type: string
+          enum: [ok, manual_status, error_count_threshold, cooldown_elapsed]
+          description: 健康状态原因。
+          example: ok
+        cooldown_remaining_seconds:
+          type: integer
+          format: int64
+          description: health_status=tripped 时剩余冷却秒数；其他状态通常为 0 或省略。
+          example: 42
         response_ms: { type: integer }
         balance: { type: integer, format: int64 }
         error_count: { type: integer }

@@ -4283,6 +4283,84 @@ func TestChannelExtendedManagement(t *testing.T) {
 	}
 }
 
+func TestAdminChannelListIncludesHealthStatus(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := service.NewSettingService().Set("relay.error_auto_ban", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("relay.error_ban_threshold", "2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("relay.error_ban_cooldown_seconds", "60"); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	channels := []model.Channel{
+		{Type: common.ChannelTypeOpenAICompat, Name: "health-ok", Models: "gpt-health", BaseURL: "http://127.0.0.1:9101", ChannelGroup: "default", Status: common.ChannelStatusEnabled, ErrorCount: 0},
+		{Type: common.ChannelTypeOpenAICompat, Name: "health-tripped", Models: "gpt-health", BaseURL: "http://127.0.0.1:9102", ChannelGroup: "default", Status: common.ChannelStatusEnabled, ErrorCount: 2, UpdatedAt: now.Add(-10 * time.Second)},
+		{Type: common.ChannelTypeOpenAICompat, Name: "health-probing", Models: "gpt-health", BaseURL: "http://127.0.0.1:9103", ChannelGroup: "default", Status: common.ChannelStatusEnabled, ErrorCount: 2, UpdatedAt: now.Add(-2 * time.Minute)},
+		{Type: common.ChannelTypeOpenAICompat, Name: "health-disabled", Models: "gpt-health", BaseURL: "http://127.0.0.1:9104", ChannelGroup: "default", Status: common.ChannelStatusManualOff, ErrorCount: 0},
+	}
+	if err := internal.DB.Create(&channels).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	resp := performJSON(r, http.MethodGet, "/v0/admin/channel?page_size=20", rootJWT, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("list channels failed: %d %s", resp.Code, resp.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			Data []struct {
+				Name                     string `json:"name"`
+				HealthStatus             string `json:"health_status"`
+				HealthReason             string `json:"health_reason"`
+				CooldownRemainingSeconds int64  `json:"cooldown_remaining_seconds"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	type healthPayload struct {
+		HealthStatus             string
+		HealthReason             string
+		CooldownRemainingSeconds int64
+	}
+	byName := map[string]healthPayload{}
+	for _, item := range payload.Data.Data {
+		byName[item.Name] = healthPayload{
+			HealthStatus:             item.HealthStatus,
+			HealthReason:             item.HealthReason,
+			CooldownRemainingSeconds: item.CooldownRemainingSeconds,
+		}
+	}
+	if got := byName["health-ok"]; got.HealthStatus != "healthy" || got.HealthReason != "ok" {
+		t.Fatalf("healthy channel should expose healthy/ok, got %+v", got)
+	}
+	if got := byName["health-tripped"]; got.HealthStatus != "tripped" || got.HealthReason != "error_count_threshold" || got.CooldownRemainingSeconds <= 0 {
+		t.Fatalf("fresh tripped channel should expose tripped with remaining cooldown, got %+v", got)
+	}
+	if got := byName["health-probing"]; got.HealthStatus != "probing" || got.HealthReason != "cooldown_elapsed" || got.CooldownRemainingSeconds != 0 {
+		t.Fatalf("cooled tripped channel should expose probing, got %+v", got)
+	}
+	if got := byName["health-disabled"]; got.HealthStatus != "disabled" || got.HealthReason != "manual_status" {
+		t.Fatalf("manual-off channel should expose disabled/manual_status, got %+v", got)
+	}
+}
+
 func TestAdminChannelManagementAuditLogs(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

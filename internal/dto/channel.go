@@ -24,27 +24,30 @@ type ChannelUpstreamPublic struct {
 }
 
 type ChannelInfo struct {
-	ID               uint                    `json:"id"`
-	Idx              int                     `json:"idx"`
-	Type             int                     `json:"type"`
-	Name             string                  `json:"name"`
-	Models           string                  `json:"models"`
-	BaseURL          string                  `json:"base_url"`
-	BaseURLs         []string                `json:"base_urls,omitempty"`
-	KeySelectionMode string                  `json:"key_selection_mode"`
-	APIKeyCount      int                     `json:"api_key_count"`
-	Upstreams        []ChannelUpstreamPublic `json:"upstreams,omitempty"`
-	ModelRewrites    json.RawMessage         `json:"model_rewrites,omitempty"`
-	Group            string                  `json:"group"`
-	UpstreamOptions  json.RawMessage         `json:"upstream_options,omitempty"`
-	Priority         int                     `json:"priority"`
-	Weight           int                     `json:"weight"`
-	Status           int                     `json:"status"`
-	ResponseMs       int                     `json:"response_ms"`
-	Balance          int64                   `json:"balance"`
-	ErrorCount       int                     `json:"error_count"`
-	CreatedAt        time.Time               `json:"created_at"`
-	UpdatedAt        time.Time               `json:"updated_at"`
+	ID                       uint                    `json:"id"`
+	Idx                      int                     `json:"idx"`
+	Type                     int                     `json:"type"`
+	Name                     string                  `json:"name"`
+	Models                   string                  `json:"models"`
+	BaseURL                  string                  `json:"base_url"`
+	BaseURLs                 []string                `json:"base_urls,omitempty"`
+	KeySelectionMode         string                  `json:"key_selection_mode"`
+	APIKeyCount              int                     `json:"api_key_count"`
+	Upstreams                []ChannelUpstreamPublic `json:"upstreams,omitempty"`
+	ModelRewrites            json.RawMessage         `json:"model_rewrites,omitempty"`
+	Group                    string                  `json:"group"`
+	UpstreamOptions          json.RawMessage         `json:"upstream_options,omitempty"`
+	Priority                 int                     `json:"priority"`
+	Weight                   int                     `json:"weight"`
+	Status                   int                     `json:"status"`
+	HealthStatus             string                  `json:"health_status"`
+	HealthReason             string                  `json:"health_reason"`
+	CooldownRemainingSeconds int64                   `json:"cooldown_remaining_seconds,omitempty"`
+	ResponseMs               int                     `json:"response_ms"`
+	Balance                  int64                   `json:"balance"`
+	ErrorCount               int                     `json:"error_count"`
+	CreatedAt                time.Time               `json:"created_at"`
+	UpdatedAt                time.Time               `json:"updated_at"`
 }
 
 // CreateChannelRequest 创建通道

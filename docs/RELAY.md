@@ -711,7 +711,7 @@ usage -> price rule -> group ratio -> quota_used
 - 定时探测：后台任务按 `relay.error_probe_interval_seconds` 定期测试达到阈值且已超过 `relay.error_ban_cooldown_seconds` 冷却窗口的启用通道，每轮最多处理 `relay.error_probe_batch_size` 个。
 - 半开状态：当前已支持冷却窗口后的候选探测和后台探测恢复，成功调用会清零 `error_count`，失败会继续递增并刷新 `updated_at`。
 
-当前 `channels.status` 只有 `disabled/enabled/manual_off`，自动熔断通过 `error_count` 排除通道实现，不会自动改写 status；因 `health_blocked` 造成无可用候选时，失败日志会在 `policy_snapshot.breaker_snapshot` 中记录阈值、冷却窗口、被挡通道、错误计数和冷却剩余时间。后续再增加显式健康状态字段和更细的探测指标。
+当前 `channels.status` 只有 `disabled/enabled/manual_off`，自动熔断通过 `error_count` 排除通道实现，不会自动改写 status；管理端通道列表和创建响应会返回计算型 `health_status=healthy|disabled|tripped|probing`、`health_reason` 和 `cooldown_remaining_seconds`，用于区分手工禁用、阈值熔断和冷却后可探测状态。因 `health_blocked` 造成无可用候选时，失败日志会在 `policy_snapshot.breaker_snapshot` 中记录阈值、冷却窗口、被挡通道、错误计数和冷却剩余时间。
 
 ## 限流
 

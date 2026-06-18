@@ -30,7 +30,7 @@ func (h *ChannelHandler) List(c *gin.Context) {
 		return
 	}
 	page, pageSize := pageValues(req.Page, req.PageSize)
-	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: dto.ChannelInfosFromModels(channels)})
+	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: h.channelInfos(channels)})
 }
 
 // POST /v0/admin/channel — 创建通道
@@ -71,7 +71,7 @@ func (h *ChannelHandler) Create(c *gin.Context) {
 		common.FailWithStatus(c, 500, "写入审计日志失败")
 		return
 	}
-	common.Success(c, dto.ChannelInfoFromModel(channel))
+	common.Success(c, h.channelInfo(channel))
 }
 
 // PUT /v0/admin/channel/:id — 编辑通道
@@ -331,6 +331,26 @@ func (h *ChannelHandler) FetchModels(c *gin.Context) {
 
 func (h *ChannelHandler) recordChannelAudit(c *gin.Context, operator *model.User, action string, id uint, before, after interface{}) error {
 	return h.recordChannelAuditResult(c, operator, action, id, before, after, "success", "")
+}
+
+func (h *ChannelHandler) channelInfo(channel *model.Channel) dto.ChannelInfo {
+	info := dto.ChannelInfoFromModel(channel)
+	if channel == nil || h == nil || h.svc == nil {
+		return info
+	}
+	health := h.svc.ChannelHealthSummary(*channel)
+	info.HealthStatus = health.Status
+	info.HealthReason = health.Reason
+	info.CooldownRemainingSeconds = health.CooldownRemainingSeconds
+	return info
+}
+
+func (h *ChannelHandler) channelInfos(channels []model.Channel) []dto.ChannelInfo {
+	items := make([]dto.ChannelInfo, 0, len(channels))
+	for i := range channels {
+		items = append(items, h.channelInfo(&channels[i]))
+	}
+	return items
 }
 
 func (h *ChannelHandler) recordChannelAuditResult(c *gin.Context, operator *model.User, action string, id uint, before, after interface{}, result, errorCode string) error {

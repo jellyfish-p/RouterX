@@ -21,6 +21,7 @@
 - `GET /v0/admin/log/export` 按过滤条件导出脱敏 CSV 调用日志。
 - `DELETE /v0/admin/log` 要求 `before` 时间范围后清理日志。
 - `GET /v0/admin/dashboard` 返回用户数、通道数、API Key 数、当日调用、当日额度和可用通道数。
+- `GET /v0/admin/channel` 返回计算型通道健康摘要，包含 `health_status`、`health_reason` 和 `cooldown_remaining_seconds`，便于把手工状态、熔断阈值和冷却窗口区分开。
 - `admin_audit_logs` 表保存基础管理审计日志，字段包含 actor、action、resource、before/after 摘要、request_id、IP 和 User-Agent。
 - `GET /v0/admin/audit` 已注册为超级管理员查询接口，支持按 `action`、`resource_type`、`resource_id`、`actor_user_id`、`result`、`error_code` 和时间范围过滤。
 - `GET /metrics` 已注册为 Prometheus 文本指标接口，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、HTTP 请求量和耗时、调用日志状态、Relay 请求数、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标。

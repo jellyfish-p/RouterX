@@ -403,7 +403,7 @@ Redis 失败处理：
 
 1. 看 `/ready`：确认 DB、初始化状态、JWT 和关键 settings 可用。
 2. 看用户和 API Key：确认用户启用、Token 未禁用或过期、额度足够。
-3. 看通道和协议矩阵：确认通道启用、模型匹配、provider adapter 存在、能力等级支持该 APIType、密钥可解密。
+3. 看通道和协议矩阵：确认通道启用、模型匹配、provider adapter 存在、能力等级支持该 APIType、密钥可解密；管理端 `/v0/admin/channel` 的 `health_status`、`health_reason` 和 `cooldown_remaining_seconds` 可直接判断通道是正常、手工禁用、熔断中还是冷却后待探测。
 4. 看下游桩或真实上游：区分通道配置错误、上游 401/403、`relay.retry_on_status` 覆盖的状态码、上游 429/5xx 和超时。
 5. 看日志账单：确认失败是否应扣费、成功是否写入 usage 和 `quota_used`。
 6. 看脱敏：确认错误响应、调用日志和应用日志不包含 API Key、下游密钥或 DSN。

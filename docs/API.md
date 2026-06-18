@@ -558,6 +558,8 @@ Provider 退款请求：
 | POST | `/v0/admin/channel/:id/test` | 基础实现 | 测试通道连通性，并写 `channel.test` 管理审计 |
 | GET | `/v0/admin/channel/:id/models` | 基础实现 | 从单上游 URL 拉取模型列表；Azure OpenAI 返回 deployment id；成功或失败写 `channel.fetch_models` 管理审计 |
 
+通道列表和创建响应会返回脱敏通道信息，并额外包含显式健康摘要：`health_status=healthy|disabled|tripped|probing`、`health_reason=ok|manual_status|error_count_threshold|cooldown_elapsed` 和 `cooldown_remaining_seconds`。`status` 仍表示管理员手工启停状态；`health_status` 由 `status`、`error_count`、`relay.error_auto_ban`、`relay.error_ban_threshold` 和 `relay.error_ban_cooldown_seconds` 计算得出，不额外持久化。
+
 创建通道目标请求：
 
 ```json

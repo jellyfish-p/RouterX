@@ -54,6 +54,13 @@ type ChannelProbeSummary struct {
 	Failed    int
 }
 
+// ChannelHealthSummary is the operator-facing view of status plus breaker state.
+type ChannelHealthSummary struct {
+	Status                   string
+	Reason                   string
+	CooldownRemainingSeconds int64
+}
+
 type RouteSelectionFacts struct {
 	FilteredReasons map[string]int
 	BreakerSnapshot map[string]interface{}
@@ -239,6 +246,40 @@ func channelHealthBlocked(channel model.Channel, breaker circuitBreakerConfig, n
 		return true
 	}
 	return now.Sub(channel.UpdatedAt) < breaker.cooldown
+}
+
+func (s *ChannelService) ChannelHealthSummary(channel model.Channel) ChannelHealthSummary {
+	breaker := s.circuitBreakerConfig()
+	now := time.Now()
+	if channel.Status != common.ChannelStatusEnabled {
+		return ChannelHealthSummary{Status: "disabled", Reason: "manual_status"}
+	}
+	if !breaker.autoBan || channel.ErrorCount < breaker.threshold {
+		return ChannelHealthSummary{Status: "healthy", Reason: "ok"}
+	}
+	if channelHealthBlocked(channel, breaker, now) {
+		return ChannelHealthSummary{
+			Status:                   "tripped",
+			Reason:                   "error_count_threshold",
+			CooldownRemainingSeconds: channelCooldownRemainingSeconds(channel, breaker, now),
+		}
+	}
+	return ChannelHealthSummary{Status: "probing", Reason: "cooldown_elapsed"}
+}
+
+func channelCooldownRemainingSeconds(channel model.Channel, breaker circuitBreakerConfig, now time.Time) int64 {
+	if breaker.cooldown <= 0 || channel.UpdatedAt.IsZero() {
+		return 0
+	}
+	remaining := breaker.cooldown - now.Sub(channel.UpdatedAt)
+	if remaining <= 0 {
+		return 0
+	}
+	seconds := int64(remaining.Seconds())
+	if seconds == 0 {
+		return 1
+	}
+	return seconds
 }
 
 func (s *ChannelService) breakerProbeConfig() breakerProbeConfig {
