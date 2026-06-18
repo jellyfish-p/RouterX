@@ -3401,10 +3401,47 @@ func usageFromOpenAIStreamLine(line []byte) *relay.Usage {
 		return nil
 	}
 	var envelope struct {
-		Usage *relay.Usage `json:"usage"`
+		Usage    json.RawMessage `json:"usage"`
+		Response struct {
+			Usage json.RawMessage `json:"usage"`
+		} `json:"response"`
 	}
 	_ = json.Unmarshal(payload, &envelope)
-	return envelope.Usage
+	if usage := usageFromOpenAIUsageRaw(envelope.Usage); usage != nil {
+		return usage
+	}
+	// Responses API streams carry final usage inside the response.completed event.
+	return usageFromOpenAIUsageRaw(envelope.Response.Usage)
+}
+
+func usageFromOpenAIUsageRaw(raw json.RawMessage) *relay.Usage {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil
+	}
+	var usage relay.Usage
+	_ = json.Unmarshal(raw, &usage)
+	var responsesUsage struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+		TotalTokens  int `json:"total_tokens"`
+	}
+	_ = json.Unmarshal(raw, &responsesUsage)
+	if usage.PromptTokens == 0 {
+		usage.PromptTokens = responsesUsage.InputTokens
+	}
+	if usage.CompletionTokens == 0 {
+		usage.CompletionTokens = responsesUsage.OutputTokens
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = responsesUsage.TotalTokens
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.TotalTokens == 0 {
+		return nil
+	}
+	return &usage
 }
 
 func supportsOpenAICompatibleStream(channelType int) bool {

@@ -451,7 +451,9 @@ func requestWantsStream(body []byte) bool {
 }
 
 func openAIAPIAllowsStream(apiType relay.APIType) bool {
-	return apiType == relay.APIChatCompletions || apiType == relay.APICompletions
+	return apiType == relay.APIChatCompletions ||
+		apiType == relay.APICompletions ||
+		apiType == relay.APIResponses
 }
 
 func openAIAPIAllowsMultipart(apiType relay.APIType) bool {

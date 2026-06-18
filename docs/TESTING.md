@@ -130,6 +130,7 @@
 | `TestAzureAudioSpeechUsesV1EndpointAndMinimumCharge` | Azure OpenAI Audio Speech 基础转发，`/openai/v1/audio/speech?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 剥离、音频 Content-Type 透传、无 usage 最低计费日志和扣费 |
 | `TestAzureAudioMultipartUsesV1EndpointAndMinimumCharge` | Azure OpenAI Audio Transcriptions/Translations multipart 基础转发，`/openai/v1/audio/transcriptions|translations?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 表单字段剥离、文件字段保留、无 usage 最低计费日志和扣费 |
 | `TestResponsesPassthroughExtractsUsageAndDeductsQuota` | Responses 基础 JSON 透传、`routerx` 剥离、`input_tokens/output_tokens` usage 映射、日志和扣费 |
+| `TestResponsesStreamForwardsSSEAndDeductsUsage` | Responses `stream=true` 命中 OpenAI SSE 形态通道时透传 SSE 事件，从 `response.completed.response.usage` 提取用量，写日志并扣费 |
 | `TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota` | Embeddings 基础 JSON 透传、`routerx` 剥离、`prompt_tokens/total_tokens` usage 映射、日志和扣费 |
 | `TestEmbeddingsRejectsInvalidInputBeforeUpstream` | Embeddings 在上游前拒绝空 `input` 和超过 2048 的批量输入，返回稳定错误码且不调用上游 |
 | `TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | Moderations 基础 JSON 透传、`routerx` 剥离、上游无 usage 时按 P0 最低计费写日志、记录 minimum usage_source、minimum 表达式快照并扣费 |

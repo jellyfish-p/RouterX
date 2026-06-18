@@ -2267,7 +2267,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: OpenAI Responses API 转发
-      description: OpenAI-compatible Responses 基础实现；JSON 请求体可透传到 OpenAI-compatible 上游 /v1/responses，Azure OpenAI 通道可转发到 /openai/v1/responses?api-version=preview。发出前剥离 routerx 私有字段，并将 usage.input_tokens/output_tokens/total_tokens 映射到 RouterX 日志与扣费。完整 Responses 原生字段矩阵和流式 Responses 以 docs/PROTOCOLS.md 为准。
+      description: OpenAI-compatible Responses 基础实现；JSON 请求体可透传到 OpenAI-compatible 上游 /v1/responses，stream=true 且命中 OpenAI SSE 形态通道时透传 text/event-stream，Azure OpenAI 通道可转发 JSON 请求到 /openai/v1/responses?api-version=preview。发出前剥离 routerx 私有字段，并将非流式 usage.input_tokens/output_tokens/total_tokens 或流式 response.completed.response.usage 映射到 RouterX 日志与扣费。完整 Responses 原生事件矩阵以 docs/PROTOCOLS.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2283,12 +2283,16 @@ paths:
               additionalProperties: true
       responses:
         "200":
-          description: OpenAI-compatible 响应。
+          description: OpenAI-compatible Responses 响应；stream=true 时为 SSE。
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: true
+            text/event-stream:
+              schema:
+                type: string
+                description: "OpenAI-compatible Responses SSE events ending with data: [DONE]."
         "4XX":
           $ref: "#/components/responses/OpenAIError"
         "5XX":
