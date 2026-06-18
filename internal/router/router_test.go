@@ -5391,13 +5391,34 @@ func TestMetricsEndpointReportsIndependentLogDBHealth(t *testing.T) {
 		}
 		internal.LogDB = oldLogDB
 	})
+	now := time.Now().UTC()
+	if err := internal.DB.Create(&model.LogReplicationOutbox{
+		LogID:         101,
+		Status:        model.LogReplicationStatusPending,
+		Attempts:      2,
+		LastError:     "external log DB unavailable",
+		NextAttemptAt: now.Add(-time.Minute),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.LogReplicationOutbox{
+		LogID:         102,
+		Status:        model.LogReplicationStatusFailed,
+		Attempts:      3,
+		LastError:     "main log fact missing",
+		NextAttemptAt: now.Add(time.Hour),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	healthyResp := performJSON(r, http.MethodGet, "/metrics", "", nil)
 	healthyBody := healthyResp.Body.String()
 	if healthyResp.Code != http.StatusOK ||
 		!strings.Contains(healthyBody, "routerx_log_db_configured 1") ||
-		!strings.Contains(healthyBody, "routerx_log_db_up 1") {
-		t.Fatalf("metrics should report configured healthy independent log DB, got %d %s", healthyResp.Code, healthyBody)
+		!strings.Contains(healthyBody, "routerx_log_db_up 1") ||
+		!strings.Contains(healthyBody, `routerx_log_replication_outbox_items{status="pending"} 1`) ||
+		!strings.Contains(healthyBody, `routerx_log_replication_outbox_items{status="failed"} 1`) {
+		t.Fatalf("metrics should report configured log DB and replication outbox health, got %d %s", healthyResp.Code, healthyBody)
 	}
 
 	sqlDB, err := logDB.DB()

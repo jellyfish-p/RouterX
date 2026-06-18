@@ -155,6 +155,7 @@ func metricsHandler(c *gin.Context) {
 	writeGauge(&b, "routerx_redis_up", "Redis ping status.", extended.RedisUp)
 	writeGauge(&b, "routerx_log_db_configured", "Independent log database configuration status.", extended.LogDBConfigured)
 	writeGauge(&b, "routerx_log_db_up", "Log storage ping status.", extended.LogDBUp)
+	writeLabeledGauge(&b, "routerx_log_replication_outbox_items", "Current log replication outbox items by status.", extended.LogReplicationOutbox)
 	writeLabeledCounter(&b, "routerx_http_requests_total", "HTTP requests by method, path group and status.", extended.HTTPRequests)
 	writeLabeledHistogram(&b, "routerx_http_request_duration_seconds", "HTTP request duration in seconds by method and path group.", extended.HTTPRequestDurations)
 	writeLabeledHistogram(&b, "routerx_relay_duration_seconds", "Relay duration in seconds by protocol, API type and provider.", extended.RelayDurations)
@@ -202,6 +203,7 @@ type extendedMetrics struct {
 	RedisUp              int64
 	LogDBConfigured      int64
 	LogDBUp              int64
+	LogReplicationOutbox []metricSample
 	HTTPRequests         []metricSample
 	HTTPRequestDurations []metricHistogramSample
 	RelayDurations       []metricHistogramSample
@@ -231,6 +233,11 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 	httpRequests, httpRequestDurations := collectHTTPMetrics()
 	metrics.HTTPRequests = httpRequests
 	metrics.HTTPRequestDurations = httpRequestDurations
+	logReplicationOutbox, err := collectLogReplicationOutboxMetrics()
+	if err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.LogReplicationOutbox = logReplicationOutbox
 	relayDurations, upstreamDurations := collectRelayDurationMetrics()
 	metrics.RelayDurations = relayDurations
 	metrics.UpstreamDurations = upstreamDurations
@@ -388,6 +395,41 @@ func collectHTTPMetrics() ([]metricSample, []metricHistogramSample) {
 		})
 	}
 	return requests, durations
+}
+
+func collectLogReplicationOutboxMetrics() ([]metricSample, error) {
+	var rows []struct {
+		Status string
+		Count  int64
+	}
+	if err := internal.DB.Model(&model.LogReplicationOutbox{}).
+		Select("status, COUNT(*) AS count").
+		Group("status").
+		Order("status ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	samples := make([]metricSample, 0, len(rows))
+	for _, row := range rows {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{{Name: "status", Value: logReplicationOutboxStatusLabel(row.Status)}},
+			Value:  row.Count,
+		})
+	}
+	return samples, nil
+}
+
+func logReplicationOutboxStatusLabel(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case model.LogReplicationStatusPending:
+		return model.LogReplicationStatusPending
+	case model.LogReplicationStatusCompleted:
+		return model.LogReplicationStatusCompleted
+	case model.LogReplicationStatusFailed:
+		return model.LogReplicationStatusFailed
+	default:
+		return "unknown"
+	}
 }
 
 func collectRelayDurationMetrics() ([]metricHistogramSample, []metricHistogramSample) {

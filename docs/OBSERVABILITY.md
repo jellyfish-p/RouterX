@@ -24,7 +24,7 @@
 - `GET /v0/admin/channel` 返回计算型通道健康摘要，包含 `health_status`、`health_reason` 和 `cooldown_remaining_seconds`，便于把手工状态、熔断阈值和冷却窗口区分开。
 - `admin_audit_logs` 表保存基础管理审计日志，字段包含 actor、action、resource、before/after 摘要、request_id、IP 和 User-Agent。
 - `GET /v0/admin/audit` 已注册为超级管理员查询接口，支持按 `action`、`resource_type`、`resource_id`、`actor_user_id`、`result`、`error_code` 和时间范围过滤。
-- `GET /metrics` 已注册为 Prometheus 文本指标接口，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、HTTP 请求量和耗时、调用日志状态、Relay 请求数、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标。
+- `GET /metrics` 已注册为 Prometheus 文本指标接口，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、日志补写 outbox 状态、HTTP 请求量和耗时、调用日志状态、Relay 请求数、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标。
 - API Key 创建、编辑、禁用、删除、scope 更新、批量禁用、批量过期、批量操作缺少筛选条件拒绝和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计摘要，完整 Key 明文和哈希不会写入审计摘要。
 - 普通用户创建、编辑、禁用、删除和拒绝角色变更会写入 `user.*` 管理审计摘要，密码不会写入审计摘要。
 - 支付商品创建、更新、启用和禁用会写入 `payment_product.*` 管理审计摘要。
@@ -87,7 +87,7 @@
 - 配置 `LOG_SQL_DSN` 后，启动时初始化独立日志数据库的 `logs` schema；模型调用日志、调用事实快照和历史诊断数据会经由主库 `log_replication_outboxes` 补写到独立日志数据库，管理端日志列表、日志清理和看板今日调用/额度优先读取日志库，列表与看板查询失败时回退读取主库事实。
 - 扣费所需的最小结算事实必须保留在主库或主库 outbox，不能只存在独立日志库。
 - 当前实现会先在主库事务内保存调用事实、更新 API Key 最近使用摘要并创建日志补写 outbox，再写独立日志库副本；运行期日志库写入失败会保留 pending outbox、主库事实并写应用告警，后台 worker 会在恢复后重放。
-- `/metrics` 暴露 `routerx_log_db_configured` 和 `routerx_log_db_up`；未配置独立日志库时 `routerx_log_db_configured=0`，日志存储健康随主库状态判断。
+- `/metrics` 暴露 `routerx_log_db_configured`、`routerx_log_db_up` 和 `routerx_log_replication_outbox_items{status}`；未配置独立日志库时 `routerx_log_db_configured=0`，日志存储健康随主库状态判断。
 - 独立日志库主要服务查询、归档、清理和备份，不替代用户余额与 Key 预算的事务事实。
 
 当前 `logs` 字段：
@@ -203,6 +203,7 @@
 | `routerx_redis_up` | gauge | 无 | 当前已落地的 Redis ping 状态；未配置 Redis 时为 0 |
 | `routerx_log_db_configured` | gauge | 无 | 独立日志库配置状态；配置 `LOG_SQL_DSN` 且与主库不同为 1 |
 | `routerx_log_db_up` | gauge | 无 | 日志存储 ping 状态；未配置独立日志库时跟随主库状态 |
+| `routerx_log_replication_outbox_items` | gauge | status | 主库日志补写 outbox 当前条数；status 归一为 `pending`、`completed`、`failed` 或 `unknown` |
 | `routerx_redis_errors_total` | counter | operation | Redis 错误数 |
 | `routerx_db_errors_total` | counter | operation | DB 错误数 |
 | `routerx_ready` | gauge | reason | 就绪状态，1 为 ready，0 为 not ready |
@@ -225,6 +226,7 @@
 | 计费失败 | `routerx_billing_failures_total` 增长 | 停止相关调用，核对日志和余额事务 |
 | API Key 轮换建议 | `/v0/admin/token/risk` 返回 `rotation_recommended=true` | 轮换对应 Key，排查泄露来源并保留工单证据 |
 | 日志写入失败 | 调用成功但日志写入失败 | 保护账单事实，检查 DB 和事务 |
+| 日志补写积压 | `routerx_log_replication_outbox_items{status="pending"}` 持续增长，或 `status="failed"` 大于 0 | 检查 `LOG_SQL_DSN`、日志库连接、迁移状态和后台 worker |
 | 支付回调失败 | 支付签名、金额或状态校验失败增长 | 检查 provider 配置和恶意回调 |
 | 审计写入失败 | 管理操作成功但审计失败 | 暂停高风险管理操作或进入降级 |
 
@@ -279,7 +281,7 @@
 | 账单一致 | 用户账单聚合等于成功日志事实；启用独立日志库时主库结算最小事实可恢复。 |
 | 脱敏 | 日志和导出不包含 API Key、上游密钥、DSN、支付密钥。 |
 | 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖 API Key 管理和 scope 更新、用户管理、支付商品管理、settings 更新与校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理和日志导出操作。 |
-| 指标 | `/metrics` 暴露基础实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付、审计和 DB/Redis/日志库指标，不包含高基数或敏感 label；后续继续补更细错误维度和告警。 |
+| 指标 | `/metrics` 暴露基础实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、日志补写 outbox、支付、审计和 DB/Redis/日志库指标，不包含高基数或敏感 label；后续继续补更细错误维度和告警。 |
 
 ## 文档同步
 
