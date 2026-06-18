@@ -137,6 +137,7 @@
 | `TestRelayMultipartRejectsUnsafeFileNameBeforeUpstream` | OpenAI-compatible multipart 文件名命中路径形态或危险扩展名基础扫描时本地返回 400 `unsafe_multipart_file`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
 | `TestUserBillingMatchesLogs` | 多次成功/失败混合后，用户账单、日志、余额和 Key 预算一致 |
+| `TestUserBillingFiltersByAPIKey` | `/v0/user/billing?token_id=` 只聚合当前用户指定 API Key 的成功日志，其他 Key 和失败日志不混入 |
 | `TestChatCompletionSuccessLogsAndDeductsQuota` | Chat 非流式成功调用、request id 上游透传、body 日志默认关闭、基础 request_snapshot、基础 policy_snapshot、上游 usage_source、基础 route_snapshot、含 P0 回退表达式/倍率/预算前后摘要的基础 billing_snapshot、日志、用户额度、Key 预算和账单聚合 |
 | `TestRelayBodyLoggingRedactsAndTruncatesWhenEnabled` | 显式开启 body 日志并配置正数上限后，非流式 Relay 调用日志保存截断和脱敏后的请求/响应片段，不保留 API Key、Bearer token、上游密钥或响应中的 `sk-` 片段 |
 | `TestChatCompletionDeductionFailureWritesBillingSnapshot` | 上游成功但最终扣费失败时返回 `insufficient_quota`，不扣用户余额或 Key 预算，写零扣费失败日志，并在 `billing_snapshot` 记录试算额度、失败状态和扣减失败原因 |
@@ -494,6 +495,7 @@ Gemini-compatible 最小断言：
 
 - `GET /v0/user/log` 只返回当前用户日志。
 - `GET /v0/user/billing` 的调用数、token 数和消耗额度与 `logs` 聚合一致。
+- `GET /v0/user/billing?token_id=` 只聚合当前用户指定 API Key 的成功调用日志。
 - 失败调用默认不增加 `quota_used`。
 - 有限额度 API Key 调用同时扣 `users.quota` 和 Key 预算。
 - 无限 Token 调用扣 `users.quota`，`tokens.remain_quota` 保持 `-1`。

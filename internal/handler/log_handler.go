@@ -117,7 +117,7 @@ func (h *LogHandler) UserBilling(c *gin.Context) {
 		common.FailWithStatus(c, 401, "未登录或登录已过期")
 		return
 	}
-	callCount, totalQuota, totalTokens, err := h.svc.GetUserStats(user.ID, c.Query("start_time"), c.Query("end_time"))
+	callCount, totalQuota, totalTokens, err := h.svc.GetUserStats(user.ID, queryUintPtr(c, "token_id"), c.Query("start_time"), c.Query("end_time"))
 	if err != nil {
 		common.FailWithStatus(c, 500, "查询账单失败")
 		return

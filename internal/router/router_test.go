@@ -8748,6 +8748,66 @@ func TestUserBillingMatchesLogs(t *testing.T) {
 	}
 }
 
+func TestUserBillingFiltersByAPIKey(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	firstTokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "billing-filter-first",
+		"remain_quota": 50,
+	})
+	secondTokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "billing-filter-second",
+		"remain_quota": 50,
+	})
+	var firstToken, secondToken struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(firstTokenResp.Body.Bytes(), &firstToken); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(secondTokenResp.Body.Bytes(), &secondToken); err != nil {
+		t.Fatal(err)
+	}
+	if firstTokenResp.Code != http.StatusOK || secondTokenResp.Code != http.StatusOK || firstToken.Data.ID == 0 || secondToken.Data.ID == 0 {
+		t.Fatalf("create tokens failed: first=%d %s second=%d %s", firstTokenResp.Code, firstTokenResp.Body.String(), secondTokenResp.Code, secondTokenResp.Body.String())
+	}
+
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	firstTokenID := firstToken.Data.ID
+	secondTokenID := secondToken.Data.ID
+	if err := internal.DB.Create(&[]model.Log{
+		{UserID: root.ID, TokenID: &firstTokenID, Model: "gpt-billing-filter", TotalTokens: 7, QuotaUsed: 7, Status: common.LogStatusSuccess},
+		{UserID: root.ID, TokenID: &secondTokenID, Model: "gpt-billing-filter", TotalTokens: 11, QuotaUsed: 11, Status: common.LogStatusSuccess},
+		{UserID: root.ID, TokenID: &firstTokenID, Model: "gpt-billing-filter", TotalTokens: 99, QuotaUsed: 99, Status: common.LogStatusFailed},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	billingResp := performJSON(r, http.MethodGet, "/v0/user/billing?token_id="+uintString(firstTokenID), rootJWT, nil)
+	if billingResp.Code != http.StatusOK ||
+		!strings.Contains(billingResp.Body.String(), `"call_count":1`) ||
+		!strings.Contains(billingResp.Body.String(), `"total_quota":7`) ||
+		!strings.Contains(billingResp.Body.String(), `"total_tokens":7`) {
+		t.Fatalf("billing should aggregate only the selected api key's successful logs, got %d %s", billingResp.Code, billingResp.Body.String())
+	}
+}
+
 func TestRelayMaxRequestBodyBytesRejectsBeforeUpstream(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

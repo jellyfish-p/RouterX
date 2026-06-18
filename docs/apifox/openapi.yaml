@@ -603,10 +603,11 @@ paths:
     get:
       tags: [User Usage]
       summary: 当前用户账单统计
-      description: 聚合成功调用日志中的 call_count、total_quota 和 total_tokens。
+      description: 聚合当前用户成功调用日志中的 call_count、total_quota 和 total_tokens；可通过 token_id 只查看指定 API Key 的账单聚合，不会跨用户读取其他 Key。
       security:
         - UserJWT: []
       parameters:
+        - $ref: "#/components/parameters/TokenID"
         - $ref: "#/components/parameters/StartTime"
         - $ref: "#/components/parameters/EndTime"
       responses:

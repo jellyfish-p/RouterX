@@ -545,9 +545,12 @@ func (s *LogService) ClearBefore(before time.Time) error {
 	return s.logReadDB().Where("created_at < ?", before).Delete(&model.Log{}).Error
 }
 
-// GetUserStats 用户用量统计 (指定时间段内的调用次数 + 总消耗)。
-func (s *LogService) GetUserStats(userID uint, startTime, endTime string) (callCount int64, totalQuota int64, totalTokens int64, err error) {
+// GetUserStats 用户用量统计，可按 API Key 和时间范围收窄。
+func (s *LogService) GetUserStats(userID uint, tokenID *uint, startTime, endTime string) (callCount int64, totalQuota int64, totalTokens int64, err error) {
 	query := internal.DB.Model(&model.Log{}).Where("user_id = ? AND status = ?", userID, common.LogStatusSuccess)
+	if tokenID != nil {
+		query = query.Where("token_id = ?", *tokenID)
+	}
 	if t, ok := parseTime(startTime); ok {
 		query = query.Where("created_at >= ?", t)
 	}

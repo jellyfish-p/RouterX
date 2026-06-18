@@ -41,7 +41,7 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 - 普通用户编辑 API Key 时不能修改 `remain_quota` 或 `unlimited`，避免绕过预算上限。
 - 有限 API Key 创建不扣用户余额，`remain_quota` 或目标字段只表示 Key 剩余预算上限；成功调用同时扣用户余额和 Key 预算。
 - `unlimited=true` 或 `remain_quota=-1` 表示 API Key 自身不限额；成功调用仍扣用户额度。
-- API Key 支持用户轮换、泄露上报、单 Key 用量摘要、显式禁用、管理员跨用户脱敏查询，以及按 `token_ids`/`user_id` 批量禁用和批量过期。
+- API Key 支持用户轮换、泄露上报、单 Key 用量摘要、按 Key 过滤用户日志和账单聚合、显式禁用、管理员跨用户脱敏查询，以及按 `token_ids`/`user_id` 批量禁用和批量过期。
 - 管理员 API Key 风险视图已支持按时间窗口聚合失败数、成功数、额度消耗、低剩余额度、泄露上报、禁用、过期和最近错误风险；泄露风险会返回基础轮换建议，响应只返回脱敏 Key 摘要。
 - `tokens.rotated_from_id` 保存轮换来源，`tokens.revoked_reason` 保存禁用原因；轮换会创建替换 Key、返回新明文一次并禁用旧 Key。
 - API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计，审计摘要不包含完整明文 Key 或哈希。
@@ -365,7 +365,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 
 - API Key 用量摘要支持调用量、成功/失败数、额度消耗、最近模型和最近错误；Key 列表/详情持久化展示最近时间、模型、错误 code、IP 摘要和 User-Agent 摘要。
 - 已支持轮换动作：创建新 Key、保留旧 Key 关联、禁用旧 Key、审计完整。
-- 支持按 Key 查看用量摘要和过滤日志；账单、错误和限流事件的统一视图仍待补。
+- 支持按 Key 查看用量摘要、过滤日志和账单聚合；错误和限流事件的统一视图仍待补。
 - 已支持基础作用域：模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list、日预算、月预算、并发上限和 RPM/TPM。
 - 基础 Redis 鉴权 lookup cache 已覆盖预热、命中回源校验、更新、禁用、删除、轮换、scope 变化、批量禁用、批量过期和扣费后失效；用户状态变化由缓存命中后的数据库权威校验生效。
 
