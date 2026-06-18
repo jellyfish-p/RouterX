@@ -182,6 +182,7 @@ func buildDefaultSettings() map[string]map[string]string {
 			"rate_limit.global_per_min":    "1000",
 			"rate_limit.per_token_per_min": "60",
 			"rate_limit.per_ip_per_min":    "30",
+			"rate_limit.per_user_per_min":  "0",
 		},
 		"relay": {
 			"relay.timeout":                    "120",

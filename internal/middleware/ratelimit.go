@@ -17,6 +17,7 @@ type rateLimitConfig struct {
 	globalPerMin   int64
 	perTokenPerMin int64
 	perIPPerMin    int64
+	perUserPerMin  int64
 }
 
 // RateLimit Gin 中间件：基于 Redis 的分钟级多维限流。
@@ -49,6 +50,11 @@ func RateLimit() gin.HandlerFunc {
 				c.Abort()
 				return
 			}
+			if cfg.perUserPerMin > 0 && token.UserID > 0 && exceeded(fmt.Sprintf("rl:user:%d:%d", token.UserID, now), cfg.perUserPerMin) {
+				writeRateLimitError(c, "user")
+				c.Abort()
+				return
+			}
 		}
 		c.Next()
 	}
@@ -60,6 +66,7 @@ func loadRateLimitConfig() rateLimitConfig {
 		globalPerMin:   1000,
 		perTokenPerMin: 60,
 		perIPPerMin:    30,
+		perUserPerMin:  0,
 	}
 	if internal.DB == nil {
 		return cfg
@@ -76,6 +83,9 @@ func loadRateLimitConfig() rateLimitConfig {
 	}
 	if limit, err := settingSvc.GetInt("rate_limit.per_ip_per_min"); err == nil && limit >= 0 {
 		cfg.perIPPerMin = int64(limit)
+	}
+	if limit, err := settingSvc.GetInt("rate_limit.per_user_per_min"); err == nil && limit >= 0 {
+		cfg.perUserPerMin = int64(limit)
 	}
 	return cfg
 }

@@ -2229,7 +2229,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: OpenAI Chat Completions 转发
-      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。本地限流读取 rate_limit.*，覆盖全局、IP 和 Token 分钟窗口；API Key max_concurrency 可限制同一 Key 同时在途请求，rpm/tpm 可限制同一 Key 每分钟请求和模型 token，命中时返回 rate_limit_exceeded 且不调用上游。通道候选读取 relay.error_auto_ban、relay.error_ban_threshold 和 relay.error_ban_cooldown_seconds，自动排除达到阈值且仍在冷却窗口内的故障通道，冷却后可重新进入候选作为半开探测。非流式在 relay.retry_count > 0 时会对 relay.retry_on_status 白名单状态码（默认 429/500/502/503/504）、网络错误、超时和响应读取失败换候选通道；400/401/403 默认不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
+      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。本地限流读取 rate_limit.*，覆盖全局、IP、Token 和用户分钟窗口；API Key max_concurrency 可限制同一 Key 同时在途请求，rpm/tpm 可限制同一 Key 每分钟请求和模型 token，命中时返回 rate_limit_exceeded 且不调用上游。通道候选读取 relay.error_auto_ban、relay.error_ban_threshold 和 relay.error_ban_cooldown_seconds，自动排除达到阈值且仍在冷却窗口内的故障通道，冷却后可重新进入候选作为半开探测。非流式在 relay.retry_count > 0 时会对 relay.retry_on_status 白名单状态码（默认 429/500/502/503/504）、网络错误、超时和响应读取失败换候选通道；400/401/403 默认不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -4425,7 +4425,7 @@ components:
           description: 脱敏请求快照 JSON 字符串；当前包含 request_id、入口协议、API 类型、请求模型、stream 标记和安全路由摘要。
         policy_snapshot:
           type: string
-          description: 脱敏策略快照 JSON 字符串；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 no_available_channel 拒绝和 Redis Token 限流拒绝摘要。
+          description: 脱敏策略快照 JSON 字符串；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 no_available_channel 拒绝和 Redis Token/User 限流拒绝摘要。
         route_snapshot:
           type: string
           description: 脱敏路由快照 JSON 字符串；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要。
@@ -4472,7 +4472,7 @@ components:
         updated_at: { type: string, format: date-time }
     BatchSetSettingsRequest:
       type: object
-      description: 顶层对象为 key/value 字符串映射；登录相关 key 包括 auth.login.username_password.enabled=true、auth.login.email_password.enabled=false 和 auth.login.phone_password.enabled=false，其中用户名密码登录不得关闭；注册相关 key 包括 auth.register.enabled=false、auth.register.username.enabled=true、auth.register.captcha.required=true、auth.register.default_quota=0 和 auth.register.default_group_id=default；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；倍率相关 key 包括 billing.user_group_ratios='{"vip":0.8}'、billing.channel_group_ratios='{"premium":1.2}' 和 billing.user_group_channel_ratios='{"vip":{"premium":0.9}}'，组合倍率命中时覆盖用户分组倍率和通道分组倍率的乘积；usage 缺失策略可设置 billing.usage_missing_strategy=minimum 或 reject；Relay 重试和熔断可设置 relay.retry_count=1、relay.retry_on_status='[429,500,502,503,504]'、relay.error_auto_ban=true、relay.error_ban_threshold=10 和 relay.error_ban_cooldown_seconds=300；通道候选缓存可设置 routing.channel_cache.enabled=true、routing.channel_cache.preload=true、routing.channel_cache.ttl_seconds=60 和 routing.channel_cache.version=1；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，易支付退款请求地址可设置 payment.epay.refund_url。
+      description: 顶层对象为 key/value 字符串映射；登录相关 key 包括 auth.login.username_password.enabled=true、auth.login.email_password.enabled=false 和 auth.login.phone_password.enabled=false，其中用户名密码登录不得关闭；注册相关 key 包括 auth.register.enabled=false、auth.register.username.enabled=true、auth.register.captcha.required=true、auth.register.default_quota=0 和 auth.register.default_group_id=default；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；倍率相关 key 包括 billing.user_group_ratios='{"vip":0.8}'、billing.channel_group_ratios='{"premium":1.2}' 和 billing.user_group_channel_ratios='{"vip":{"premium":0.9}}'，组合倍率命中时覆盖用户分组倍率和通道分组倍率的乘积；限流相关 key 包括 rate_limit.enabled=true、rate_limit.global_per_min=1000、rate_limit.per_ip_per_min=30、rate_limit.per_token_per_min=60 和 rate_limit.per_user_per_min=0，0 表示关闭对应维度；usage 缺失策略可设置 billing.usage_missing_strategy=minimum 或 reject；Relay 重试和熔断可设置 relay.retry_count=1、relay.retry_on_status='[429,500,502,503,504]'、relay.error_auto_ban=true、relay.error_ban_threshold=10 和 relay.error_ban_cooldown_seconds=300；通道候选缓存可设置 routing.channel_cache.enabled=true、routing.channel_cache.preload=true、routing.channel_cache.ttl_seconds=60 和 routing.channel_cache.version=1；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，易支付退款请求地址可设置 payment.epay.refund_url。
       additionalProperties:
         type: string
       example:
@@ -4484,6 +4484,11 @@ components:
         auth.register.captcha.required: "true"
         auth.register.default_quota: "0"
         auth.register.default_group_id: "default"
+        rate_limit.enabled: "true"
+        rate_limit.global_per_min: "1000"
+        rate_limit.per_ip_per_min: "30"
+        rate_limit.per_token_per_min: "60"
+        rate_limit.per_user_per_min: "0"
         billing.default_user_channel_group_access: '["default"]'
         billing.user_group_channel_group_access: '{"vip":{"allow":["premium"],"deny":["experimental"]}}'
         billing.user_group_ratios: '{"vip":0.8}'

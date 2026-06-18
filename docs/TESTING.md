@@ -105,6 +105,7 @@
 | `TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini embedContent 转 OpenAI-compatible Embeddings 上游，返回 Gemini `embedding.values` 外形，usage 写日志和扣费 |
 | `TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini batchEmbedContents 转 OpenAI-compatible Embeddings 批量 input，上游 embedding list 返回 Gemini `embeddings[].values` 外形，usage 写日志和扣费 |
 | `TestRateLimitUsesSettingsAndEntryProtocolErrorShape` | Redis Token 限流读取 `rate_limit.*`，本地 429 不调用上游，返回入口协议兼容错误，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestRateLimitPerUserAppliesAcrossAPIKeys` | Redis 用户限流读取 `rate_limit.per_user_per_min`，同一用户跨多个 API Key 达到分钟阈值后本地 429，不调用上游、不扣第二个 Key，并写用户维度拒绝 `policy_snapshot` |
 | `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model 在本地失败且不污染通道和账单 |
 | `TestRelayMaxRequestBodyBytesRejectsBeforeUpstream` | `relay.max_request_body_bytes` 超限时本地返回 OpenAI-compatible 413 `request_body_too_large`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
@@ -472,9 +473,9 @@ Gemini-compatible 最小断言：
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
 | P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Anthropic/Gemini 基础流式、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为、原生字段保真和 Anthropic/Gemini 原生流式路径 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
-| P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝、Redis Token 限流拒绝、usage 缺失拒绝和扣费失败分支 policy/billing 事实，基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/规则版本/倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
+| P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝、Redis Token/User 限流拒绝、usage 缺失拒绝和扣费失败分支 policy/billing 事实，基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/规则版本/倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |
-| P1 | 可靠性 | 已覆盖非流式安全重试、Redis 全局/IP/Token 基础限流、`error_count` 自动熔断候选过滤和冷却窗口后的半开候选探测；继续补后台探测任务、更多限流维度和生产 fail-open/fail-closed 策略 |
+| P1 | 可靠性 | 已覆盖非流式安全重试、Redis 全局/IP/Token/User 基础限流、`error_count` 自动熔断候选过滤和冷却窗口后的半开候选探测；继续补后台探测任务、模型/通道限流维度和生产 fail-open/fail-closed 策略 |
 | P1 | 运行模式 | 已覆盖 `REDIS_CONN` 为空不隐式连接本机 Redis、SQLite 单镜像无 Redis 可运行、外部数据库无 Redis 时 `/ready` 不就绪 |
 | P1 | 通道候选缓存 | 已覆盖进程内缓存命中、`routing.channel_cache.preload` 启动预热/关闭 no-op/通道变更后预热、`routing.channel_cache.version` 变化后回源、默认 settings 和非法配置校验；继续补 Redis 共享快照和集群实例广播失效 |
 | P1 | 独立日志数据库 | 已覆盖 `LOG_SQL_DSN` 初始化、日志库副本写入、运行期写入失败时主库事实可恢复、主库 outbox 异步补写、管理日志列表读取日志库、查询失败回退主库和日志库健康指标；继续补冷热归档策略 |
