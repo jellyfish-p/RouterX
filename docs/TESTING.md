@@ -21,7 +21,7 @@
 | 测试 | 已覆盖 |
 |------|--------|
 | `TestP0BackendFlow` | 初始化、登录、API Key 创建、用户禁止编辑 Key 额度、通道创建、模型列表、密钥脱敏、无效 Key、空额度 Key 的基础余额预检拒绝日志和 `policy_snapshot`、禁用用户 |
-| `TestModelListSupportsRouterXProtocolSelector` | `/v1/models` 支持 `routerx_protocol` query 和 `X-RouterX-Protocol` header 选择 OpenAI、Anthropic 或 Gemini 模型列表外形；`format` 保持最高优先级，无效 API Key 错误也按所选入口协议返回 |
+| `TestModelListSupportsRouterXProtocolSelector` | `/v1/models` 支持 `routerx_protocol` query 和 `X-RouterX-Protocol` header 选择 OpenAI、Anthropic 或 Gemini 模型列表外形；Gemini 外形声明生成、计数和 Embeddings 方法；`format` 保持最高优先级，无效 API Key 错误也按所选入口协议返回 |
 | `TestUserAPIKeyManagementAuditLogs` | API Key 创建、编辑、用户端额度/无限标记编辑拒绝、禁用和删除写入 `api_key.*` 管理审计，审计摘要不泄露 `sk-` 明文，并覆盖审计 `result`/`error_code`/时间范围过滤 |
 | `TestUserAPIKeyAdvancedManagement` | 用户查看单 Key 用量摘要、轮换 Key、泄露上报禁用、轮换链路和禁用原因落库，相关审计不泄露明文 Key |
 | `TestAdminAPIKeyQueryAndBatchDisable` | 管理员跨用户脱敏查询 API Key；批量禁用必须带筛选条件，缺少筛选条件会写 `api_key.batch_disable_denied` 审计；批量禁用只影响命中 Key 并写 `api_key.batch_disabled` 审计 |

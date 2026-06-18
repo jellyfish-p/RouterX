@@ -5014,7 +5014,15 @@ components:
               displayName: { type: string }
               supportedGenerationMethods:
                 type: array
-                items: { type: string }
+                items:
+                  type: string
+                  enum:
+                    - generateContent
+                    - streamGenerateContent
+                    - countTokens
+                    - embedContent
+                    - batchEmbedContents
+                example: [generateContent, streamGenerateContent, countTokens, embedContent, batchEmbedContents]
     AnthropicModelList:
       type: object
       properties:

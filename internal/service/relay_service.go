@@ -898,11 +898,12 @@ func (s *RelayService) ListGeminiModels() ([]byte, error) {
 	}
 	data := make([]map[string]interface{}, 0, len(models))
 	for _, modelName := range models {
+		// RouterX 的 Gemini 外形会把生成、计数和 Embeddings 都落到同一模型名上。
 		data = append(data, map[string]interface{}{
 			"name":                       "models/" + modelName,
 			"version":                    "",
 			"displayName":                modelName,
-			"supportedGenerationMethods": []string{"generateContent", "streamGenerateContent", "countTokens"},
+			"supportedGenerationMethods": []string{"generateContent", "streamGenerateContent", "countTokens", "embedContent", "batchEmbedContents"},
 		})
 	}
 	return json.Marshal(map[string]interface{}{"models": data})

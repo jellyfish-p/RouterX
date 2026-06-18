@@ -891,7 +891,7 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/audio/transcriptions` | 基础实现，OpenAI-compatible multipart 音频表单透传；Azure OpenAI 通道转发到 `/openai/v1/audio/transcriptions?api-version=preview`；`routerx` 表单字段剥离和路由偏好；无 usage 时按 P0 最低计费 |
 | POST | `/v1/audio/translations` | 基础实现，OpenAI-compatible multipart 音频表单透传；Azure OpenAI 通道转发到 `/openai/v1/audio/translations?api-version=preview`；`routerx` 表单字段剥离和路由偏好；无 usage 时按 P0 最低计费 |
 | POST | `/v1/audio/speech` | 基础实现，OpenAI-compatible 文本转语音 JSON 透传，Azure OpenAI 通道转发到 `/openai/v1/audio/speech?api-version=preview`，二进制音频响应透传；无 usage 时按 P0 最低计费 |
-| GET | `/v1/models` | 基础实现，模型列表 |
+| GET | `/v1/models` | 基础实现，模型列表；Gemini 外形会在 `supportedGenerationMethods` 声明 `generateContent`、`streamGenerateContent`、`countTokens`、`embedContent` 和 `batchEmbedContents` |
 | GET | `/v1/models/:model` | 基础实现，模型详情 |
 | POST | `/v1/moderations` | 基础实现，OpenAI-compatible Moderations JSON 透传；无 usage 时按 P0 最低计费 |
 

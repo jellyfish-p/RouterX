@@ -250,6 +250,9 @@ func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	if geminiResp.Code != http.StatusOK || !strings.Contains(geminiResp.Body.String(), `"models"`) || !strings.Contains(geminiResp.Body.String(), `"name":"models/gpt-protocol"`) {
 		t.Fatalf("routerx_protocol=gemini should return Gemini model shape, got %d %s", geminiResp.Code, geminiResp.Body.String())
 	}
+	if !strings.Contains(geminiResp.Body.String(), `"embedContent"`) || !strings.Contains(geminiResp.Body.String(), `"batchEmbedContents"`) {
+		t.Fatalf("Gemini model list should advertise embedding methods, got %d %s", geminiResp.Code, geminiResp.Body.String())
+	}
 	anthropicResp := performRawWithHeaders(r, http.MethodGet, "/v1/models", "Bearer "+tokenPayload.Data.Key, "", map[string]string{
 		"X-RouterX-Protocol": "anthropic",
 	})
