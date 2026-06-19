@@ -3081,9 +3081,12 @@ func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
 
 // CancelSelf 注销当前普通用户账号。
 // 注销只禁用登录和 API Key，保留身份、日志、额度等历史事实用于追溯和恢复。
-func (s *UserService) CancelSelf(userID uint) (*model.User, error) {
+func (s *UserService) CancelSelf(userID uint, password string) (*model.User, error) {
 	if userID == 0 {
 		return nil, errors.New("user is required")
+	}
+	if password == "" {
+		return nil, errors.New("password confirmation is required")
 	}
 	var cancelled model.User
 	err := internal.DB.Transaction(func(tx *gorm.DB) error {
@@ -3093,6 +3096,17 @@ func (s *UserService) CancelSelf(userID uint) (*model.User, error) {
 		}
 		if user.Role != common.RoleUser {
 			return errors.New("only normal users can cancel account")
+		}
+		var identity model.UserIdentity
+		if err := tx.Where("user_id = ? AND method = ? AND provider = ?", userID, model.UserIdentityMethodUsername, model.UserIdentityProviderLocal).
+			First(&identity).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			return errors.New("password identity is required")
+		}
+		if identity.PasswordHash == "" || !common.CheckPassword(password, identity.PasswordHash) {
+			return errors.New("password confirmation is invalid")
 		}
 		if user.Status != common.UserStatusDisabled {
 			if err := tx.Model(&model.User{}).

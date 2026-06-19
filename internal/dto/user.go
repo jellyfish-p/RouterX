@@ -108,6 +108,10 @@ type UpdateSelfRequest struct {
 	Email       string `json:"email"`
 }
 
+type CancelSelfRequest struct {
+	Password string `json:"password" binding:"required"`
+}
+
 type RedeemCodeRequest struct {
 	Code string `json:"code" binding:"required"`
 }

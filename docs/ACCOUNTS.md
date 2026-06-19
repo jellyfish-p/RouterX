@@ -21,7 +21,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号和基础用户名恢复账号所需的账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名账号时会恢复原账号。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC、注销二次验证、隐私字段擦除和非用户名恢复属于目标设计，需要按阶段继续实现。
+当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认和基础用户名恢复账号所需的账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名账号时会恢复原账号。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC、隐私字段擦除和非用户名恢复属于目标设计，需要按阶段继续实现。
 
 阶段边界：
 
@@ -256,7 +256,7 @@ POST /v0/user/register
     -> 清理当前登录会话
 ```
 
-当前已落地基础接口 `DELETE /v0/user/self`：要求当前 User JWT，限制普通用户只能注销自己；服务端将 `users.status` 置为禁用、禁用该用户已启用 API Key 并写入 `user.self_cancel` 审计。该接口不删除 `users`、`user_identities`、`tokens`、`logs`、余额或额度流水。当前基础用户名注册会在相同 `username/local` identity 命中已注销普通用户时恢复原账号，写入 `user.recover` 审计，并要求用户用本次提交的新密码重新登录；旧 API Key 不会自动恢复启用。当前版本尚未实现密码二次确认、隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复入口。
+当前已落地基础接口 `DELETE /v0/user/self`：要求当前 User JWT 和本地密码二次确认，限制普通用户只能注销自己；服务端将 `users.status` 置为禁用、禁用该用户已启用 API Key 并写入 `user.self_cancel` 审计。缺少密码或密码错误时拒绝注销，用户和 API Key 状态保持不变。该接口不删除 `users`、`user_identities`、`tokens`、`logs`、余额或额度流水。当前基础用户名注册会在相同 `username/local` identity 命中已注销普通用户时恢复原账号，写入 `user.recover` 审计，并要求用户用本次提交的新密码重新登录；旧 API Key 不会自动恢复启用。当前版本尚未实现隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复入口。
 
 注销后保留的数据：
 

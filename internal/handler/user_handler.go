@@ -1324,12 +1324,17 @@ func (h *UserHandler) CancelSelf(c *gin.Context) {
 		common.FailWithStatus(c, 401, "未登录或登录已过期")
 		return
 	}
+	var req dto.CancelSelfRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "注销账号需要确认密码")
+		return
+	}
 	before, err := h.svc.GetByID(user.ID)
 	if err != nil {
 		common.FailWithStatus(c, 404, "用户不存在")
 		return
 	}
-	cancelled, err := h.svc.CancelSelf(user.ID)
+	cancelled, err := h.svc.CancelSelf(user.ID, req.Password)
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return

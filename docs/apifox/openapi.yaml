@@ -327,9 +327,15 @@ paths:
     delete:
       tags: [User Auth]
       summary: 注销当前账号
-      description: 当前普通用户注销自己的账号；服务端将 users.status 置为 disabled、禁用该用户已启用 API Key 并写 user.self_cancel 审计。该操作保留 users、user_identities、tokens、logs、quota 和历史流水；注销后不能再次登录，同名 username/local 注册会恢复原账号并写 user.recover 审计，旧 API Key 不会自动恢复。密码二次确认、隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复属于后续增强。
+      description: 当前普通用户注销自己的账号；请求体必须提供当前本地密码做二次确认，缺少或错误密码不会修改账号和 API Key 状态。确认通过后服务端将 users.status 置为 disabled、禁用该用户已启用 API Key 并写 user.self_cancel 审计。该操作保留 users、user_identities、tokens、logs、quota 和历史流水；注销后不能再次登录，同名 username/local 注册会恢复原账号并写 user.recover 审计，旧 API Key 不会自动恢复。隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复属于后续增强。
       security:
         - UserJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelSelfRequest"
       responses:
         "200":
           $ref: "#/components/responses/StandardOK"
@@ -3912,6 +3918,13 @@ components:
       properties:
         display_name: { type: string }
         email: { type: string }
+    CancelSelfRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          description: 当前本地登录密码，用于注销二次确认。
     RedeemCodeRequest:
       type: object
       required: [code]

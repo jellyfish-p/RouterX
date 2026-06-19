@@ -2029,7 +2029,34 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
 	}
 
-	cancelResp := performJSON(r, http.MethodDelete, "/v0/user/self", userJWT, nil)
+	missingPasswordCancelResp := performJSON(r, http.MethodDelete, "/v0/user/self", userJWT, nil)
+	if missingPasswordCancelResp.Code != http.StatusBadRequest {
+		t.Fatalf("self cancel should require password confirmation, got %d %s", missingPasswordCancelResp.Code, missingPasswordCancelResp.Body.String())
+	}
+	wrongPasswordCancelResp := performJSON(r, http.MethodDelete, "/v0/user/self", userJWT, map[string]interface{}{
+		"password": "wrong-password",
+	})
+	if wrongPasswordCancelResp.Code != http.StatusBadRequest {
+		t.Fatalf("self cancel should reject invalid password confirmation, got %d %s", wrongPasswordCancelResp.Code, wrongPasswordCancelResp.Body.String())
+	}
+	var activeUser model.User
+	if err := internal.DB.Where("username = ?", "cancel-user").First(&activeUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	if activeUser.Status != common.UserStatusEnabled {
+		t.Fatalf("rejected self-cancel should keep user enabled, got status=%d", activeUser.Status)
+	}
+	var activeToken model.Token
+	if err := internal.DB.First(&activeToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if activeToken.Status != common.TokenStatusEnabled {
+		t.Fatalf("rejected self-cancel should keep API keys enabled, got status=%d", activeToken.Status)
+	}
+
+	cancelResp := performJSON(r, http.MethodDelete, "/v0/user/self", userJWT, map[string]interface{}{
+		"password": "password123",
+	})
 	if cancelResp.Code != http.StatusOK {
 		t.Fatalf("self cancel should succeed, got %d %s", cancelResp.Code, cancelResp.Body.String())
 	}
