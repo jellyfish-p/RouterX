@@ -103,6 +103,7 @@ erDiagram
         string usage_source
         text usage_snapshot
         text error_snapshot
+        text access_rule_snapshot
         int64 quota_used
         int status
     }
@@ -383,6 +384,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `error_snapshot` | text/json string | 脱敏错误快照；失败日志包含稳定 code、失败来源、上游状态、可重试判断、扣费标记和安全摘要 |
 | `request_snapshot` | text/json string | 脱敏请求快照；当前包含 request_id、入口协议、API 类型、请求模型、stream 标记和安全路由摘要 |
 | `policy_snapshot` | text/json string | 脱敏策略快照；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝、熔断拒绝 `breaker_snapshot`，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝摘要和 `rate_limit_snapshot` |
+| `access_rule_snapshot` | text/json string | 脱敏访问控制快照；当前从策略快照派生 access_decision、scope_result、token/user 状态、拒绝原因和选中通道分组 |
 | `route_snapshot` | text/json string | 脱敏路由快照；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要 |
 | `billing_snapshot` | text/json string | 脱敏计费快照；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式摘要、规则 ID/版本、倍率摘要、Key 预算前后、用户余额前后和最终扣费 |
 | `content` | text | 请求体快照，需截断和脱敏 |
@@ -885,6 +887,7 @@ QuotaUnlimited = -1
 | `022_token_metadata` | 新增 API Key 非安全元数据 JSON 字段，用于环境、团队、应用、标签、服务账号主体和脱敏导出 |
 | `023_log_usage_snapshot` | 新增调用日志 usage_snapshot 脱敏 JSON 字符串 |
 | `024_log_error_snapshot` | 新增调用日志 error_snapshot 脱敏 JSON 字符串 |
+| `025_log_access_rule_snapshot` | 新增调用日志 access_rule_snapshot 脱敏 JSON 字符串 |
 
 重要说明：
 

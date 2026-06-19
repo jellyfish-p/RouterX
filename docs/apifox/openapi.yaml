@@ -6789,6 +6789,9 @@ components:
         policy_snapshot:
           type: string
           description: 脱敏策略快照 JSON 字符串；当前包含用户/Key 状态摘要、成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 no_available_channel 拒绝、breaker_snapshot，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝或依赖故障摘要和 rate_limit_snapshot。
+        access_rule_snapshot:
+          type: string
+          description: 脱敏访问控制快照 JSON 字符串；当前从 policy_snapshot 派生 access_decision、scope_result、token_status、user_status、reject_code 和 selected_channel_group。
         route_snapshot:
           type: string
           description: 脱敏路由快照 JSON 字符串；当前包含请求模型、归一化模型、候选数量、候选过滤原因、已接受 routerx.route 偏好的 decision 摘要、选中通道、provider、分组、优先级、权重、上游 base URL 安全索引、模型重写摘要和非流式重试摘要。

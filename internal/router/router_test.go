@@ -15769,6 +15769,27 @@ func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
 		scopeResult["user_group_channel_group"] != "deny" {
 		t.Fatalf("unexpected user group access policy snapshot: %+v", policySnapshot)
 	}
+	var accessRuleSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.AccessRuleSnapshot), &accessRuleSnapshot); err != nil {
+		t.Fatalf("user group access denial should store access rule snapshot JSON, got %q: %v", failedLog.AccessRuleSnapshot, err)
+	}
+	accessScopeResult, ok := accessRuleSnapshot["scope_result"].(map[string]interface{})
+	if !ok ||
+		accessRuleSnapshot["schema"] != "routerx.snapshot.v1" ||
+		accessRuleSnapshot["kind"] != "access_rule" ||
+		accessRuleSnapshot["source"] != "policy" ||
+		accessRuleSnapshot["redacted"] != true ||
+		accessRuleSnapshot["access_decision"] != "deny" ||
+		accessRuleSnapshot["reject_code"] != "route_forbidden" ||
+		accessScopeResult["api_type"] != "allow" ||
+		accessScopeResult["model"] != "allow" ||
+		accessScopeResult["user_group_channel_group"] != "deny" {
+		t.Fatalf("unexpected user group access rule snapshot: %+v", accessRuleSnapshot)
+	}
+	logResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
+	if logResp.Code != http.StatusOK || !strings.Contains(logResp.Body.String(), `"access_rule_snapshot":`) {
+		t.Fatalf("user log should expose access rule snapshot, got %d %s", logResp.Code, logResp.Body.String())
+	}
 }
 
 func TestChannelModelUserEnabledFiltersRelayCandidates(t *testing.T) {

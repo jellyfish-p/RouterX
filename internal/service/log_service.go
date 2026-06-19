@@ -94,6 +94,7 @@ func (s *LogService) Record(log *model.Log) error {
 	log.UpstreamStatus = normalizeLogUpstreamStatus(log)
 	log.ErrorSnapshot = normalizeLogErrorSnapshot(log)
 	log.UsageSnapshot = normalizeLogUsageSnapshot(log)
+	log.AccessRuleSnapshot = normalizeLogAccessRuleSnapshot(log)
 	log.BillingSnapshot = normalizeLogBillingSnapshot(log)
 	needsExternalReplication := s.usesExternalLogDB()
 	if err := internal.DB.Transaction(func(tx *gorm.DB) error {
@@ -451,6 +452,114 @@ func logErrorSafeMessage(message string) string {
 		return string(runes[:256])
 	}
 	return message
+}
+
+func normalizeLogAccessRuleSnapshot(log *model.Log) string {
+	if log == nil {
+		return ""
+	}
+	if snapshot := strings.TrimSpace(log.AccessRuleSnapshot); snapshot != "" {
+		return snapshot
+	}
+	policyRaw := strings.TrimSpace(log.PolicySnapshot)
+	if policyRaw == "" {
+		return ""
+	}
+	var policy map[string]interface{}
+	if err := json.Unmarshal([]byte(policyRaw), &policy); err != nil {
+		return ""
+	}
+	accessDecision := logSnapshotString(policy["access_decision"])
+	scopeResult, hasScopeResult := logSnapshotMap(policy["scope_result"])
+	if accessDecision == "" && !hasScopeResult {
+		return ""
+	}
+	snapshot := map[string]interface{}{
+		"schema":   "routerx.snapshot.v1",
+		"kind":     "access_rule",
+		"stage":    "p1",
+		"source":   "policy",
+		"redacted": true,
+	}
+	if requestID := firstNonEmptyLogSnapshotValue(logSnapshotString(policy["request_id"]), strings.TrimSpace(log.RequestID)); requestID != "" {
+		snapshot["request_id"] = requestID
+	}
+	if accessDecision != "" {
+		snapshot["access_decision"] = accessDecision
+	}
+	if quotaPrecheck := logSnapshotString(policy["quota_precheck"]); quotaPrecheck != "" {
+		snapshot["quota_precheck"] = quotaPrecheck
+	}
+	if rejectCode := logSnapshotString(policy["reject_code"]); rejectCode != "" {
+		snapshot["reject_code"] = rejectCode
+	}
+	if policyVersion := logSnapshotString(policy["policy_version"]); policyVersion != "" {
+		snapshot["policy_version"] = policyVersion
+	}
+	if hasScopeResult {
+		snapshot["scope_result"] = scopeResult
+	}
+	if tokenStatus, ok := logSnapshotMap(policy["token_status"]); ok {
+		snapshot["token_status"] = tokenStatus
+	}
+	if userStatus, ok := logSnapshotMap(policy["user_status"]); ok {
+		snapshot["user_status"] = userStatus
+	}
+	if routePreference, ok := logSnapshotMap(policy["route_preference"]); ok {
+		snapshot["route_preference"] = routePreference
+	}
+	if selectedGroup := selectedChannelGroupFromRouteSnapshot(log.RouteSnapshot); selectedGroup != "" {
+		snapshot["selected_channel_group"] = selectedGroup
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func selectedChannelGroupFromRouteSnapshot(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var route map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &route); err != nil {
+		return ""
+	}
+	return logSnapshotString(route["selected_channel_group"])
+}
+
+func logSnapshotMap(value interface{}) (map[string]interface{}, bool) {
+	source, ok := value.(map[string]interface{})
+	if !ok || len(source) == 0 {
+		return nil, false
+	}
+	copied := make(map[string]interface{}, len(source))
+	for key, nested := range source {
+		copied[key] = nested
+	}
+	return copied, true
+}
+
+func logSnapshotString(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(text)
+}
+
+func firstNonEmptyLogSnapshotValue(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func normalizeLogUsageSnapshot(log *model.Log) string {
