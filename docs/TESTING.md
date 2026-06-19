@@ -124,6 +124,8 @@
 | `TestValidateAndGetTokenResolvesFromRedisAuthCache` | API Key 鉴权 lookup cache 命中后通过 Redis 中的 `SHA256(api_key) -> token_id` 映射回源加载 Token/User，仍不缓存授权结论 |
 | `TestAPIKeyAuthCacheWarmsAndClearsOnDisable` | API Key DB 鉴权成功后预热 Redis lookup cache，禁用 Key 后立即清理对应映射 |
 | `TestUserRegisterRespectsRegistrationSettings` | 自助注册默认关闭；开启后仍受用户名注册和验证码开关约束，并应用默认额度/分组；附带 email identity 不保存重复密码哈希且可复用主密码登录 |
+| `TestUserRegisterSupportsEmailAndPhoneMethods` | 统一注册入口支持 `register_method=email/phone`；分别受邮箱/手机号注册开关控制，仍创建有密码用户名账号，并写入无重复密码哈希的 email/phone 本地身份 |
+| `TestUserRegisterRestoresCancelledEmailAndPhoneIdentities` | 已注销普通用户通过同邮箱或同手机号重新注册时恢复原账号、更新本地密码和展示名，并写 `user.recover` 审计 |
 | `TestUserLoginRespectsLoginMethodSettings` | 用户名密码登录保持可用；email/phone 密码登录默认关闭，开启对应 setting 后已有本地身份可登录，且 email 身份可复用 `username/local` 主密码 |
 | `TestUserLoginWritesAuditLogWithoutSecrets` | 成功登录写入 `user.login` 管理审计，超级管理员可按动作和用户资源查询，审计摘要不包含密码或 JWT |
 | `TestOAuthCallbackLogsInBoundIdentityWithState` | OAuth 登录生成 state Cookie 并跳转 provider；回调校验 state、换取 token/userinfo 后只登录已绑定的 provider subject，并写 `user.login` 审计 |

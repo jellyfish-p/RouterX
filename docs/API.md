@@ -694,7 +694,7 @@ Provider 退款请求：
 
 - 注册和登录不需要 User JWT，但需要系统已初始化。
 - 用户名密码登录是当前本地登录基线；email/phone 密码登录只对已有本地身份生效，并分别受 `auth.login.email_password.enabled` 与 `auth.login.phone_password.enabled` 控制，默认关闭；本地 email/phone 身份复用同一用户的 `username/local` 主密码，不要求各自保存独立密码哈希。
-- 自部署商业级默认关闭公开自助注册；`POST /v0/user/register` 当前基础用户名密码路径需要 `auth.register.enabled=true`、`auth.register.username.enabled=true` 且 `auth.register.captcha.required=false` 才可用。完整验证码注册属于后续增强。
+- 自部署商业级默认关闭公开自助注册；`POST /v0/user/register` 当前支持 `register_method=username/email/phone`，分别需要 `auth.register.enabled=true`、对应注册方法开关为 true 且 `auth.register.captcha.required=false` 才可用。完整验证码注册属于后续增强。
 - 管理员创建用户不受自助注册开关影响。
 - 个人信息、日志和账单需要 User JWT。
 
@@ -702,7 +702,7 @@ Provider 退款请求：
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
-| POST | `/v0/user/register` | 已实现 | 基础用户名密码注册，受自助注册 settings 控制；可附带或恢复补齐 email 本地登录标识但不保存重复密码哈希；命中已注销同名账号时恢复原账号 |
+| POST | `/v0/user/register` | 已实现 | 统一自助注册入口，支持 `register_method=username/email/phone`；所有方法仍要求用户名和密码，可创建或恢复补齐 email/phone 本地登录标识但不保存重复密码哈希；命中已注销同名、同邮箱或同手机号账号时恢复原账号 |
 | POST | `/v0/user/login` | 已实现 | 用户统一登录；用户名密码始终可用，email/phone 密码登录受 settings 控制并复用 `username/local` 主密码；成功登录写 `user.login` 管理审计，摘要不包含密码或 JWT |
 | GET | `/v0/user/oauth/:provider/login` | 基础实现 | OAuth 授权跳转；检查 `auth.login.oauth.enabled` 和 `oauth.{provider}.enabled`，生成一次性 state Cookie 后跳转 provider 授权地址 |
 | GET | `/v0/user/oauth/:provider/callback` | 基础实现 | OAuth 回调；校验 state Cookie，使用 provider token/userinfo 接口解析稳定 id/sub，只允许已绑定 `oauth/provider/identifier` 身份登录并写 `user.login` 审计；相同 email 不自动绑定 |
@@ -726,15 +726,19 @@ Provider 退款请求：
   "username": "alice",
   "password": "password",
   "display_name": "Alice",
-  "email": "alice@example.com"
+  "email": "alice@example.com",
+  "phone": "+8613800000000",
+  "register_method": "email",
+  "captcha_id": "captcha-id",
+  "captcha_code": "123456"
 }
 ```
 
-注册策略拒绝返回 403，例如公开注册关闭、用户名注册关闭，或当前无验证码请求但 `auth.register.captcha.required=true`。新账号注册成功时会应用 `auth.register.default_quota` 和可解析的 `auth.register.default_group_id`。如果请求提供 `email`，服务端会规范化并创建 `email/local` identity 作为可选登录标识，但密码哈希只保存到 `username/local` 主身份。若同名 `username/local` identity 命中已注销的普通用户账号，当前接口会恢复原 `users.id`，把账号状态改回启用，更新本地密码身份和展示名；恢复请求附带未被其他账号占用的 `email` 时，会补齐同用户的 `email/local` 登录标识。恢复保留原额度、分组、日志和历史流水，不会自动启用旧 API Key，并写入 `user.recover` 审计。
+`register_method` 省略时按 `username` 处理；`email` 方法必须填写 email 并开启 `auth.register.email.enabled`，`phone` 方法必须填写 phone 并开启 `auth.register.phone.enabled`。注册策略拒绝返回 403，例如公开注册关闭、对应注册方法关闭，或当前无验证码请求但 `auth.register.captcha.required=true`。新账号注册成功时会应用 `auth.register.default_quota` 和可解析的 `auth.register.default_group_id`。如果请求提供 `email` 或 `phone`，服务端会规范化并创建对应 `email/local` 或 `phone/local` identity 作为可选登录标识，但密码哈希只保存到 `username/local` 主身份。若同名 `username/local`、同邮箱 `email/local` 或同手机号 `phone/local` identity 命中已注销的普通用户账号，当前接口会恢复原 `users.id`，把账号状态改回启用，更新本地密码身份和展示名；恢复请求附带未被其他账号占用的 `email` 或 `phone` 时，会补齐同用户的本地登录标识。恢复保留原额度、分组、日志和历史流水，不会自动启用旧 API Key，并写入 `user.recover` 审计。
 
 自助修改个人信息使用 `PUT /v0/user/self`。当前实现允许更新展示名和 email；email 会先规范化为小写去空格，再和同用户 `email/local` identity 在同一事务中保持一致。该 identity 不保存重复密码哈希，邮箱密码登录开启后仍复用同用户 `username/local` 主密码。目标 email 如果已绑定其他用户身份，接口返回 400，用户资料和 identity 都不会部分落库。
 
-自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号，请求体必须提交当前本地密码进行二次确认。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key；不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史。缺少密码或密码错误时不会修改账号和 API Key 状态，并写入 `user.self_cancel_denied` 拒绝审计，`error_code` 分别为 `self_cancel_password_required` 或 `self_cancel_password_invalid`，审计摘要不保存密码。注销后用户名密码登录返回统一认证失败，同名注册、同一 OAuth identity 补齐注册或同一 OIDC subject 补齐注册会走上述恢复流程；隐私字段擦除和邮箱/手机号独立恢复会在 `docs/ACCOUNTS.md` 的规则基础上继续扩展。
+自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号，请求体必须提交当前本地密码进行二次确认。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key；不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史。缺少密码或密码错误时不会修改账号和 API Key 状态，并写入 `user.self_cancel_denied` 拒绝审计，`error_code` 分别为 `self_cancel_password_required` 或 `self_cancel_password_invalid`，审计摘要不保存密码。注销后用户名密码登录返回统一认证失败，同名、同邮箱、同手机号注册、同一 OAuth identity 补齐注册或同一 OIDC subject 补齐注册会走上述恢复流程；隐私字段擦除会在 `docs/ACCOUNTS.md` 的规则基础上继续扩展。
 
 登录目标响应：
 

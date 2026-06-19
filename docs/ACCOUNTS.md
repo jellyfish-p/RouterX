@@ -136,8 +136,8 @@ password_hash = bcrypt hash
 |-----|------|------|
 | `auth.register.enabled` | `false` | 当前已落地；是否开放用户自助注册；自部署商业级默认关闭，由管理员按运营需要开启 |
 | `auth.register.username.enabled` | `true` | 当前已落地；开启自助注册后，是否允许用户名自助注册 |
-| `auth.register.email.enabled` | `false` | 当前已校验；邮箱自助注册入口仍属后续增强 |
-| `auth.register.phone.enabled` | `false` | 当前已校验；手机号自助注册入口仍属后续增强 |
+| `auth.register.email.enabled` | `false` | 当前已落地；开启后允许 `register_method=email` 的自助注册入口 |
+| `auth.register.phone.enabled` | `false` | 当前已落地；开启后允许 `register_method=phone` 的自助注册入口 |
 | `auth.register.oauth.enabled` | `false` | 是否允许 OAuth 首次登录自动进入注册流程 |
 | `auth.register.oidc.enabled` | `false` | 是否允许 OIDC 首次登录自动进入注册流程 |
 | `auth.register.captcha.required` | `true` | 当前已 fail-closed；无验证码请求会被拒绝，完整验证码校验仍属后续增强 |
@@ -163,7 +163,7 @@ password_hash = bcrypt hash
 - 关闭某种登录方式不删除已绑定身份，只禁止继续使用该方式登录。
 - 管理员创建账户不受自助注册开关限制，但仍必须设置用户名和密码。
 - 默认关闭自助注册不影响用户名密码登录，也不影响管理员创建用户或后续邀请用户。
-- 当前基础用户名密码注册只有在 `auth.register.enabled=true`、`auth.register.username.enabled=true` 且 `auth.register.captcha.required=false` 时接受无验证码请求；生产启用公开注册前应先落地验证码。
+- 当前基础注册入口支持 `register_method=username/email/phone`，分别检查 `auth.register.username.enabled`、`auth.register.email.enabled` 和 `auth.register.phone.enabled`；只有 `auth.register.captcha.required=false` 时才接受当前无验证码请求，生产启用公开注册前应先落地验证码。
 
 ## 注册设计
 
@@ -226,7 +226,7 @@ POST /v0/user/register
 注册规则：
 
 - 所有注册方式都必须提交用户名、密码和验证码。
-- 当前基础实现只支持用户名密码注册；目标 `register_method=username` 时必须开启 `auth.register.username.enabled`。
+- 当前基础实现已支持 `register_method=username/email/phone`；`register_method=username` 时必须开启 `auth.register.username.enabled`。
 - `register_method=email` 时必须开启 `auth.register.email.enabled`，并且必须填写邮箱。
 - `register_method=phone` 时必须开启 `auth.register.phone.enabled`，并且必须填写手机号。
 - 即使用邮箱或手机号注册，也必须同时创建用户名和密码。
@@ -256,7 +256,7 @@ POST /v0/user/register
     -> 清理当前登录会话
 ```
 
-当前已落地基础接口 `DELETE /v0/user/self`：要求当前 User JWT 和本地密码二次确认，限制普通用户只能注销自己；服务端将 `users.status` 置为禁用、禁用该用户已启用 API Key 并写入 `user.self_cancel` 审计。缺少密码或密码错误时拒绝注销，用户和 API Key 状态保持不变，并写入 `user.self_cancel_denied` 拒绝审计，错误码区分 `self_cancel_password_required` 和 `self_cancel_password_invalid`，审计摘要不保存密码。该接口不删除 `users`、`user_identities`、`tokens`、`logs`、余额或额度流水。当前基础用户名注册会在相同 `username/local` identity 命中已注销普通用户时恢复原账号；OAuth/OIDC 首次注册补齐会在相同 `oauth/provider/identifier` 或 `oidc/provider/sub` 命中已注销普通用户时恢复原账号。恢复会写入 `user.recover` 审计，要求用户用本次提交的新密码重新登录；恢复请求附带未被占用的 email 时会补齐同用户 `email/local` 登录标识且不写重复密码哈希，旧 API Key 不会自动恢复启用。当前版本尚未实现隐私字段擦除、手机号恢复入口和独立邮箱恢复入口。
+当前已落地基础接口 `DELETE /v0/user/self`：要求当前 User JWT 和本地密码二次确认，限制普通用户只能注销自己；服务端将 `users.status` 置为禁用、禁用该用户已启用 API Key 并写入 `user.self_cancel` 审计。缺少密码或密码错误时拒绝注销，用户和 API Key 状态保持不变，并写入 `user.self_cancel_denied` 拒绝审计，错误码区分 `self_cancel_password_required` 和 `self_cancel_password_invalid`，审计摘要不保存密码。该接口不删除 `users`、`user_identities`、`tokens`、`logs`、余额或额度流水。当前 `register_method=username/email/phone` 会分别在相同 `username/local`、`email/local` 或 `phone/local` identity 命中已注销普通用户时恢复原账号；OAuth/OIDC 首次注册补齐会在相同 `oauth/provider/identifier` 或 `oidc/provider/sub` 命中已注销普通用户时恢复原账号。恢复会写入 `user.recover` 审计，要求用户用本次提交的新密码重新登录；恢复请求附带未被占用的 email/phone 时会补齐同用户 `email/local` 或 `phone/local` 登录标识且不写重复密码哈希，旧 API Key 不会自动恢复启用。当前版本尚未实现隐私字段擦除。
 
 当前已落地基础接口 `PUT /v0/user/self` 会在用户修改 email 时同步维护同用户 `email/local` 登录标识：新邮箱会规范化，已有同用户邮箱身份会更新为新邮箱，没有则创建；该身份不保存重复密码哈希，邮箱密码登录开启后复用 `username/local` 主密码。如果目标邮箱已被其他账号的本地邮箱身份占用，接口拒绝并回滚本次资料更新。
 

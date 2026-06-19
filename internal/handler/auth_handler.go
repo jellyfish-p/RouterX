@@ -33,10 +33,21 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		common.FailWithStatus(c, 400, "注册参数无效")
 		return
 	}
-	result, err := h.svc.Register(req.Username, req.Password, req.DisplayName, req.Email)
+	result, err := h.svc.Register(service.RegisterInput{
+		Username:       req.Username,
+		Password:       req.Password,
+		DisplayName:    req.DisplayName,
+		Email:          req.Email,
+		Phone:          req.Phone,
+		RegisterMethod: req.RegisterMethod,
+		CaptchaID:      req.CaptchaID,
+		CaptchaCode:    req.CaptchaCode,
+	})
 	if err != nil {
 		if errors.Is(err, service.ErrSelfRegistrationDisabled) ||
 			errors.Is(err, service.ErrUsernameRegistrationDisabled) ||
+			errors.Is(err, service.ErrEmailRegistrationDisabled) ||
+			errors.Is(err, service.ErrPhoneRegistrationDisabled) ||
 			errors.Is(err, service.ErrRegistrationCaptchaRequired) {
 			common.FailWithStatus(c, 403, err.Error())
 			return

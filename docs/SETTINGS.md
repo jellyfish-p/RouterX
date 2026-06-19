@@ -103,7 +103,7 @@
 
 - `jwt.secret` 可以由 `JWT_SECRET` 注入；生产和多实例部署必须显式固定，不能让各实例随机生成不同值。
 - `auth.login.username_password.enabled=true` 是商业级基础登录硬约束，配置层会拒绝关闭；email/phone 密码登录默认关闭，只有已有本地 email/phone identity 且对应开关开启时才会命中。
-- `auth.register.enabled=false` 是商业级自部署安全默认；当前基础用户名注册还会检查 `auth.register.username.enabled`，并在 `auth.register.captcha.required=true` 时拒绝无验证码注册请求。完整验证码、邮箱和手机号注册仍按 `docs/ACCOUNTS.md` 分阶段补齐。
+- `auth.register.enabled=false` 是商业级自部署安全默认；当前统一注册入口会按 `register_method` 检查 `auth.register.username.enabled`、`auth.register.email.enabled` 或 `auth.register.phone.enabled`，并在 `auth.register.captcha.required=true` 时拒绝无验证码注册请求。完整验证码仍按 `docs/ACCOUNTS.md` 分阶段补齐。
 - `rate_limit.global_per_min`、`rate_limit.per_token_per_min`、`rate_limit.per_ip_per_min`、`rate_limit.per_user_per_min`、`rate_limit.per_model_per_min` 和 `rate_limit.per_channel_per_min` 为 `0` 时表示关闭对应维度；Redis 可用时这些 hot setting 会影响后续请求。
 - `relay.retry_count` 默认是 `0`，表示不做自动重试；大于 0 时，非流式 Relay 只对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败进行有限候选通道重试。默认白名单为 429/500/502/503/504，生产环境不建议把 401/403 加入白名单。
 - `relay.error_auto_ban=false` 时仍会记录通道 `error_count`，但候选查询不会因为 `relay.error_ban_threshold` 排除通道；`relay.error_ban_cooldown_seconds>0` 时，达到阈值的通道在最近一次健康状态更新超过冷却窗口后可重新进入候选做半开探测，后台 worker 也会按 `relay.error_probe_*` 定期复测这些通道；`relay.error_ban_cooldown_seconds=0` 表示关闭自动半开和后台探测恢复，只能人工测试或后续成功调用清零。
@@ -148,8 +148,8 @@ P0 补齐这些配置时，应同时补测试：
 | `auth.login.oidc.enabled` | `false` | P1 | 当前已落地；控制 OIDC Discovery、nonce/ID Token 校验、已绑定 subject 登录和登录用户绑定 OIDC identity |
 | `auth.register.enabled` | `false` | P1 | 当前已落地；是否开放公开自助注册，默认关闭 |
 | `auth.register.username.enabled` | `true` | P1 | 当前已落地；开启注册后是否允许用户名注册 |
-| `auth.register.email.enabled` | `false` | P1 | 当前已校验；邮箱注册入口仍属后续增强 |
-| `auth.register.phone.enabled` | `false` | P1 | 当前已校验；手机号注册入口仍属后续增强 |
+| `auth.register.email.enabled` | `false` | P1 | 当前已落地；开启后允许 `register_method=email`，仍要求用户名和密码 |
+| `auth.register.phone.enabled` | `false` | P1 | 当前已落地；开启后允许 `register_method=phone`，仍要求用户名和密码 |
 | `auth.register.oauth.enabled` | `false` | P2 | 当前已落地；配合 `oauth.{provider}.register_enabled=true` 允许 OAuth 回调返回注册票据 |
 | `auth.register.oidc.enabled` | `false` | P2 | 当前已落地；配合 `oidc.{provider}.register_enabled=true` 允许 OIDC 回调返回注册票据 |
 | `auth.register.captcha.required` | `true` | P1 | 当前已落地 fail-closed；基础无验证码注册需显式设为 `false`，完整验证码校验仍属后续增强 |

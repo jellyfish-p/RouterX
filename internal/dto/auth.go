@@ -15,10 +15,14 @@ type LoginResponse struct {
 
 // RegisterRequest 用户注册请求
 type RegisterRequest struct {
-	Username    string `json:"username" binding:"required,min=3,max=64"`
-	Password    string `json:"password" binding:"required,min=6,max=128"`
-	DisplayName string `json:"display_name"`
-	Email       string `json:"email"`
+	Username       string `json:"username" binding:"required,min=3,max=64"`
+	Password       string `json:"password" binding:"required,min=6,max=128"`
+	DisplayName    string `json:"display_name"`
+	Email          string `json:"email"`
+	Phone          string `json:"phone"`
+	RegisterMethod string `json:"register_method"`
+	CaptchaID      string `json:"captcha_id"`
+	CaptchaCode    string `json:"captcha_code"`
 }
 
 type OAuthRegistrationRequiredResponse struct {

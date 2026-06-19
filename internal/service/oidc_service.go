@@ -254,7 +254,7 @@ func (s *AuthService) OIDCRegister(provider, ticket, username, password, display
 			return nil
 		}
 
-		registered, err := registerPasswordUserTx(tx, username, password, displayName, email)
+		registered, err := registerPasswordUserTx(tx, "username", username, password, displayName, email, "")
 		if err != nil {
 			return err
 		}

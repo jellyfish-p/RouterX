@@ -2792,6 +2792,310 @@ func TestUserRegisterRespectsRegistrationSettings(t *testing.T) {
 	}
 }
 
+func TestUserRegisterSupportsEmailAndPhoneMethods(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":          "true",
+		"auth.register.username.enabled": "false",
+		"auth.register.email.enabled":    "false",
+		"auth.register.phone.enabled":    "false",
+		"auth.register.captcha.required": "false",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	emailDisabledResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"register_method": "email",
+		"username":        "email-method-disabled",
+		"password":        "password123",
+		"email":           "email-method-disabled@example.com",
+	})
+	if emailDisabledResp.Code != http.StatusForbidden {
+		t.Fatalf("email registration should respect email method switch, got %d %s", emailDisabledResp.Code, emailDisabledResp.Body.String())
+	}
+
+	if err := settingSvc.Set("auth.register.email.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	emailResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"register_method": "email",
+		"username":        "email-method-user",
+		"password":        "password123",
+		"display_name":    "Email Method User",
+		"email":           "Email-Method@Example.COM",
+	})
+	if emailResp.Code != http.StatusOK {
+		t.Fatalf("email registration should create password account, got %d %s", emailResp.Code, emailResp.Body.String())
+	}
+	var emailUser model.User
+	if err := internal.DB.Where("username = ?", "email-method-user").First(&emailUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	if emailUser.Email == nil || *emailUser.Email != "email-method@example.com" {
+		t.Fatalf("email registration should normalize users.email, got %#v", emailUser.Email)
+	}
+	var emailIdentity model.UserIdentity
+	if err := internal.DB.Where(
+		"user_id = ? AND method = ? AND provider = ? AND identifier = ?",
+		emailUser.ID,
+		model.UserIdentityMethodEmail,
+		model.UserIdentityProviderLocal,
+		"email-method@example.com",
+	).First(&emailIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
+	if emailIdentity.PasswordHash != "" {
+		t.Fatalf("email registration identity should not store duplicated password hash")
+	}
+
+	phoneDisabledResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"register_method": "phone",
+		"username":        "phone-method-disabled",
+		"password":        "password123",
+		"phone":           "+15550002000",
+	})
+	if phoneDisabledResp.Code != http.StatusForbidden {
+		t.Fatalf("phone registration should respect phone method switch, got %d %s", phoneDisabledResp.Code, phoneDisabledResp.Body.String())
+	}
+	if err := settingSvc.Set("auth.register.phone.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	phoneResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"register_method": "phone",
+		"username":        "phone-method-user",
+		"password":        "password123",
+		"display_name":    "Phone Method User",
+		"phone":           " +15550002001 ",
+	})
+	if phoneResp.Code != http.StatusOK {
+		t.Fatalf("phone registration should create password account, got %d %s", phoneResp.Code, phoneResp.Body.String())
+	}
+	var phoneUser model.User
+	if err := internal.DB.Where("username = ?", "phone-method-user").First(&phoneUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	if phoneUser.Phone == nil || *phoneUser.Phone != "+15550002001" {
+		t.Fatalf("phone registration should normalize users.phone, got %#v", phoneUser.Phone)
+	}
+	var phoneIdentity model.UserIdentity
+	if err := internal.DB.Where(
+		"user_id = ? AND method = ? AND provider = ? AND identifier = ?",
+		phoneUser.ID,
+		model.UserIdentityMethodPhone,
+		model.UserIdentityProviderLocal,
+		"+15550002001",
+	).First(&phoneIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
+	if phoneIdentity.PasswordHash != "" {
+		t.Fatalf("phone registration identity should not store duplicated password hash")
+	}
+
+	if err := settingSvc.Set("auth.login.email_password.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.login.phone_password.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	emailLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "email-method@example.com",
+		"password": "password123",
+	})
+	if emailLogin.Code != http.StatusOK {
+		t.Fatalf("email registered identity should reuse username password, got %d %s", emailLogin.Code, emailLogin.Body.String())
+	}
+	phoneLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "+15550002001",
+		"password": "password123",
+	})
+	if phoneLogin.Code != http.StatusOK {
+		t.Fatalf("phone registered identity should reuse username password, got %d %s", phoneLogin.Code, phoneLogin.Body.String())
+	}
+}
+
+func TestUserRegisterRestoresCancelledEmailAndPhoneIdentities(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":             "true",
+		"auth.register.username.enabled":    "false",
+		"auth.register.email.enabled":       "true",
+		"auth.register.phone.enabled":       "true",
+		"auth.register.captcha.required":    "false",
+		"auth.login.email_password.enabled": "true",
+		"auth.login.phone_password.enabled": "true",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	emailUser := createCancelledUserWithIdentity(t, r, rootJWT, "recover-by-email", "recover-by-email@example.com", "")
+	emailRecoverResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"register_method": "email",
+		"username":        "recover-by-email",
+		"password":        "newpassword123",
+		"display_name":    "Recovered By Email",
+		"email":           "RECOVER-BY-EMAIL@example.com",
+	})
+	var emailPayload struct {
+		Data dto.UserBrief `json:"data"`
+	}
+	if err := json.Unmarshal(emailRecoverResp.Body.Bytes(), &emailPayload); err != nil {
+		t.Fatal(err)
+	}
+	if emailRecoverResp.Code != http.StatusOK || emailPayload.Data.ID != emailUser.ID {
+		t.Fatalf("email registration should recover original account, got %d %s", emailRecoverResp.Code, emailRecoverResp.Body.String())
+	}
+	var recoveredEmailUser model.User
+	if err := internal.DB.First(&recoveredEmailUser, emailUser.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if recoveredEmailUser.Status != common.UserStatusEnabled || recoveredEmailUser.DisplayName != "Recovered By Email" {
+		t.Fatalf("email recovery should enable original user with updated profile, got %+v", recoveredEmailUser)
+	}
+	if loginBearer(t, r, "recover-by-email@example.com", "newpassword123") == "" {
+		t.Fatalf("email recovered account should login through email with new password")
+	}
+
+	phoneUser := createCancelledUserWithIdentity(t, r, rootJWT, "recover-by-phone", "", "+15550003001")
+	phoneRecoverResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"register_method": "phone",
+		"username":        "recover-by-phone",
+		"password":        "newpassword123",
+		"display_name":    "Recovered By Phone",
+		"phone":           " +15550003001 ",
+	})
+	var phonePayload struct {
+		Data dto.UserBrief `json:"data"`
+	}
+	if err := json.Unmarshal(phoneRecoverResp.Body.Bytes(), &phonePayload); err != nil {
+		t.Fatal(err)
+	}
+	if phoneRecoverResp.Code != http.StatusOK || phonePayload.Data.ID != phoneUser.ID {
+		t.Fatalf("phone registration should recover original account, got %d %s", phoneRecoverResp.Code, phoneRecoverResp.Body.String())
+	}
+	var recoveredPhoneUser model.User
+	if err := internal.DB.First(&recoveredPhoneUser, phoneUser.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if recoveredPhoneUser.Status != common.UserStatusEnabled || recoveredPhoneUser.DisplayName != "Recovered By Phone" {
+		t.Fatalf("phone recovery should enable original user with updated profile, got %+v", recoveredPhoneUser)
+	}
+	if loginBearer(t, r, "+15550003001", "newpassword123") == "" {
+		t.Fatalf("phone recovered account should login through phone with new password")
+	}
+
+	for _, user := range []model.User{recoveredEmailUser, recoveredPhoneUser} {
+		var recoverAuditCount int64
+		if err := internal.DB.Model(&model.AdminAuditLog{}).
+			Where("action = ? AND resource_type = ? AND resource_id = ?", "user.recover", "user", uintString(user.ID)).
+			Count(&recoverAuditCount).Error; err != nil {
+			t.Fatal(err)
+		}
+		if recoverAuditCount != 1 {
+			t.Fatalf("identity recovery should write one user.recover audit for user %d, got %d", user.ID, recoverAuditCount)
+		}
+	}
+}
+
+func createCancelledUserWithIdentity(t *testing.T, r http.Handler, rootJWT, username, email, phone string) model.User {
+	t.Helper()
+	createBody := map[string]interface{}{
+		"username":     username,
+		"password":     "oldpassword123",
+		"display_name": username,
+		"role":         common.RoleUser,
+		"quota":        10,
+	}
+	if strings.TrimSpace(email) != "" {
+		createBody["email"] = email
+	}
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, createBody)
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create %s failed: %d %s", username, createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", username).First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if email = strings.ToLower(strings.TrimSpace(email)); email != "" {
+		emailPtr := email
+		if err := internal.DB.Model(&model.User{}).Where("id = ?", user.ID).Update("email", &emailPtr).Error; err != nil {
+			t.Fatal(err)
+		}
+		var count int64
+		if err := internal.DB.Model(&model.UserIdentity{}).
+			Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodEmail, model.UserIdentityProviderLocal, email).
+			Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count == 0 {
+			if err := internal.DB.Create(&model.UserIdentity{
+				UserID:     user.ID,
+				Method:     model.UserIdentityMethodEmail,
+				Provider:   model.UserIdentityProviderLocal,
+				Identifier: email,
+				VerifiedAt: &now,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if phone = strings.TrimSpace(phone); phone != "" {
+		phonePtr := phone
+		if err := internal.DB.Model(&model.User{}).Where("id = ?", user.ID).Update("phone", &phonePtr).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := internal.DB.Create(&model.UserIdentity{
+			UserID:     user.ID,
+			Method:     model.UserIdentityMethodPhone,
+			Provider:   model.UserIdentityProviderLocal,
+			Identifier: phone,
+			VerifiedAt: &now,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	userJWT := loginBearer(t, r, username, "oldpassword123")
+	cancelResp := performJSON(r, http.MethodDelete, "/v0/user/self", userJWT, map[string]interface{}{"password": "oldpassword123"})
+	if cancelResp.Code != http.StatusOK {
+		t.Fatalf("self cancel %s failed: %d %s", username, cancelResp.Code, cancelResp.Body.String())
+	}
+	if err := internal.DB.First(&user, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Status != common.UserStatusDisabled {
+		t.Fatalf("%s should be disabled after self cancel, got status=%d", username, user.Status)
+	}
+	return user
+}
+
 func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

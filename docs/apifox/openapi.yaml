@@ -232,7 +232,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 用户注册
-      description: 当前基础实现为用户名密码注册；默认关闭公开注册。需要 auth.register.enabled=true、auth.register.username.enabled=true 且 auth.register.captcha.required=false 才接受当前无验证码请求。新账号注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id；请求提供 email 时会创建 email/local 登录标识，但密码哈希只保存到 username/local 主身份；同名 username/local identity 命中已注销普通用户时会恢复原 users.id、启用账号、更新本地密码身份和展示名，若恢复请求附带未被占用的 email 会补齐同用户 email/local 登录标识，保留额度/分组/日志/历史流水，不自动启用旧 API Key，并写 user.recover 审计。
+      description: 统一自助注册入口；默认关闭公开注册。register_method 省略时按 username 处理，也支持 email 和 phone；三种方法都必须提交 username/password，并分别要求 auth.register.username.enabled、auth.register.email.enabled 或 auth.register.phone.enabled 为 true。当前验证码服务未落地，auth.register.captcha.required=true 时 fail-closed 拒绝无验证码注册。新账号注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id；请求提供 email/phone 时会创建 email/local 或 phone/local 登录标识，但密码哈希只保存到 username/local 主身份；同名、同邮箱或同手机号 identity 命中已注销普通用户时会恢复原 users.id、启用账号、更新本地密码身份和展示名，补齐同用户本地登录标识，保留额度/分组/日志/历史流水，不自动启用旧 API Key，并写 user.recover 审计。
       requestBody:
         required: true
         content:
@@ -311,7 +311,7 @@ paths:
     get:
       tags: [User Auth]
       summary: OAuth 回调登录或返回注册票据
-      description: 公开回调；校验 state Cookie 后使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。userinfo 的稳定 id/sub 已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定时不会按 email 自动绑定或接管已有账号。只有全局注册、用户名注册、OAuth 注册和 oauth.{provider}.register_enabled 均启用且验证码策略允许时，才返回 registration_required=true 和短期 registration_ticket，用于后续补齐用户名密码账号。
+      description: 公开回调；校验 state Cookie 后使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。userinfo 的稳定 id/sub 已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定或已绑定到注销保留普通用户时不会按 email 自动绑定或接管其他已有账号。只有全局注册、用户名注册、OAuth 注册和 oauth.{provider}.register_enabled 均启用且验证码策略允许时，才返回 registration_required=true 和短期 registration_ticket，用于后续补齐用户名密码账号或恢复原账号。
       parameters:
         - $ref: "#/components/parameters/OAuthProvider"
         - name: state
@@ -4673,8 +4673,39 @@ components:
           type: string
           format: email
     RegisterRequest:
-      allOf:
-        - $ref: "#/components/schemas/SetupInitRequest"
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+          description: 本地用户名；email/phone 注册方法也必须设置。
+        password:
+          type: string
+          minLength: 6
+          maxLength: 128
+          description: 本地账号密码；密码哈希只保存到 username/local 主身份。
+        display_name:
+          type: string
+        email:
+          type: string
+          format: email
+          description: email 注册方法必填；提供时会创建或恢复 email/local 身份。
+        phone:
+          type: string
+          description: phone 注册方法必填；提供时会创建或恢复 phone/local 身份。
+        register_method:
+          type: string
+          enum: [username, email, phone]
+          default: username
+          description: 本次自助注册入口；省略时按 username 处理。
+        captcha_id:
+          type: string
+          description: 预留验证码 ID；当前 auth.register.captcha.required=true 时仍 fail-closed。
+        captcha_code:
+          type: string
+          description: 预留验证码答案；当前 auth.register.captcha.required=true 时仍 fail-closed。
     OAuthRegistrationRequiredResponse:
       type: object
       properties:

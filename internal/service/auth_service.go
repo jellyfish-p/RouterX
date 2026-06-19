@@ -22,6 +22,8 @@ import (
 var (
 	ErrSelfRegistrationDisabled       = errors.New("self registration is disabled")
 	ErrUsernameRegistrationDisabled   = errors.New("username registration is disabled")
+	ErrEmailRegistrationDisabled      = errors.New("email registration is disabled")
+	ErrPhoneRegistrationDisabled      = errors.New("phone registration is disabled")
 	ErrRegistrationCaptchaRequired    = errors.New("registration captcha is required")
 	ErrOAuthProviderDisabled          = errors.New("oauth provider is disabled")
 	ErrOAuthInvalidCallback           = errors.New("oauth callback is invalid")
@@ -42,6 +44,20 @@ func NewAuthService() *AuthService {
 type RegisterResult struct {
 	User      *model.User
 	Recovered bool
+}
+
+// RegisterInput carries the unified self-registration payload. The captcha
+// fields are accepted for API compatibility but remain fail-closed until the
+// captcha verifier is implemented.
+type RegisterInput struct {
+	Username       string
+	Password       string
+	DisplayName    string
+	Email          string
+	Phone          string
+	RegisterMethod string
+	CaptchaID      string
+	CaptchaCode    string
 }
 
 type OAuthCallbackResult struct {
@@ -90,12 +106,19 @@ type oauthRegistrationTicketClaims struct {
 // 2. bcrypt 哈希密码
 // 3. 创建用户记录和本地 UserIdentity，或恢复已注销的普通用户；密码只保存到 username/local 主身份
 // 4. 返回用户信息
-func (s *AuthService) Register(username, password, displayName, email string) (*RegisterResult, error) {
-	if err := registrationPolicyError(); err != nil {
+func (s *AuthService) Register(input RegisterInput) (*RegisterResult, error) {
+	method := normalizeRegisterMethod(input.RegisterMethod)
+	if method == "" {
+		return nil, errors.New("register_method is invalid")
+	}
+	if err := registrationPolicyErrorForMethod(method); err != nil {
 		return nil, err
 	}
-	username = strings.TrimSpace(username)
-	email = normalizeEmail(email)
+	username := strings.TrimSpace(input.Username)
+	password := input.Password
+	displayName := strings.TrimSpace(input.DisplayName)
+	email := normalizeEmail(input.Email)
+	phone := normalizePhone(input.Phone)
 	if username == "" || password == "" {
 		return nil, errors.New("username and password are required")
 	}
@@ -105,10 +128,16 @@ func (s *AuthService) Register(username, password, displayName, email string) (*
 	if displayName == "" {
 		displayName = username
 	}
+	if method == "email" && email == "" {
+		return nil, errors.New("email is required")
+	}
+	if method == "phone" && phone == "" {
+		return nil, errors.New("phone is required")
+	}
 
 	var result *RegisterResult
 	err := internal.DB.Transaction(func(tx *gorm.DB) error {
-		created, err := registerPasswordUserTx(tx, username, password, displayName, email)
+		created, err := registerPasswordUserTx(tx, method, username, password, displayName, email, phone)
 		if err != nil {
 			return err
 		}
@@ -118,26 +147,38 @@ func (s *AuthService) Register(username, password, displayName, email string) (*
 	return result, err
 }
 
-func registerPasswordUserTx(tx *gorm.DB, username, password, displayName, email string) (*RegisterResult, error) {
-	usernameIdentity, err := findIdentityForRecovery(tx, model.UserIdentityMethodUsername, username)
+func registerPasswordUserTx(tx *gorm.DB, registerMethod, username, password, displayName, email, phone string) (*RegisterResult, error) {
+	recoveryIdentity, err := findRegistrationRecoveryIdentity(tx, registerMethod, username, email, phone)
 	if err != nil {
 		return nil, err
 	}
-	if usernameIdentity != nil {
-		if usernameIdentity.User == nil || usernameIdentity.User.Role != common.RoleUser || usernameIdentity.User.Status != common.UserStatusDisabled {
-			return nil, errors.New("username already exists")
+	if recoveryIdentity != nil {
+		if !isRecoverableRegistrationIdentity(recoveryIdentity) {
+			return nil, registrationIdentityConflictError(recoveryIdentity.Method)
 		}
-		recovered, err := recoverRegisteredUser(tx, usernameIdentity, password, displayName, email)
+		recovered, err := recoverRegisteredUser(tx, recoveryIdentity, password, displayName, email, phone)
 		if err != nil {
 			return nil, err
 		}
 		return &RegisterResult{User: recovered, Recovered: true}, nil
+	}
+	if exists, err := identityExists(tx, model.UserIdentityMethodUsername, username); err != nil {
+		return nil, err
+	} else if exists {
+		return nil, errors.New("username already exists")
 	}
 	if email != "" {
 		if exists, err := identityExists(tx, model.UserIdentityMethodEmail, email); err != nil {
 			return nil, err
 		} else if exists {
 			return nil, errors.New("email already exists")
+		}
+	}
+	if phone != "" {
+		if exists, err := identityExists(tx, model.UserIdentityMethodPhone, phone); err != nil {
+			return nil, err
+		} else if exists {
+			return nil, errors.New("phone already exists")
 		}
 	}
 	quota := registrationDefaultQuota()
@@ -155,10 +196,15 @@ func registerPasswordUserTx(tx *gorm.DB, username, password, displayName, email 
 	if email != "" {
 		emailPtr = &email
 	}
+	var phonePtr *string
+	if phone != "" {
+		phonePtr = &phone
+	}
 	u := &model.User{
 		Username:    &usernamePtr,
 		DisplayName: displayName,
 		Email:       emailPtr,
+		Phone:       phonePtr,
 		Role:        common.RoleUser,
 		Quota:       quota,
 		Status:      common.UserStatusEnabled,
@@ -185,10 +231,75 @@ func registerPasswordUserTx(tx *gorm.DB, username, password, displayName, email 
 			VerifiedAt: &now,
 		})
 	}
+	if phone != "" {
+		identities = append(identities, model.UserIdentity{
+			UserID:     u.ID,
+			Method:     model.UserIdentityMethodPhone,
+			Provider:   model.UserIdentityProviderLocal,
+			Identifier: phone,
+			VerifiedAt: &now,
+		})
+	}
 	if err := tx.Create(&identities).Error; err != nil {
 		return nil, err
 	}
 	return &RegisterResult{User: u}, nil
+}
+
+func findRegistrationRecoveryIdentity(tx *gorm.DB, registerMethod, username, email, phone string) (*model.UserIdentity, error) {
+	candidates := []struct {
+		method     string
+		identifier string
+	}{}
+	switch registerMethod {
+	case "email":
+		candidates = append(candidates, struct {
+			method     string
+			identifier string
+		}{model.UserIdentityMethodEmail, email})
+	case "phone":
+		candidates = append(candidates, struct {
+			method     string
+			identifier string
+		}{model.UserIdentityMethodPhone, phone})
+	}
+	candidates = append(candidates, struct {
+		method     string
+		identifier string
+	}{model.UserIdentityMethodUsername, username})
+	if registerMethod != "email" && email != "" {
+		candidates = append(candidates, struct {
+			method     string
+			identifier string
+		}{model.UserIdentityMethodEmail, email})
+	}
+	if registerMethod != "phone" && phone != "" {
+		candidates = append(candidates, struct {
+			method     string
+			identifier string
+		}{model.UserIdentityMethodPhone, phone})
+	}
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.identifier) == "" {
+			continue
+		}
+		identity, err := findIdentityForRecovery(tx, candidate.method, candidate.identifier)
+		if err != nil || identity != nil {
+			return identity, err
+		}
+	}
+	return nil, nil
+}
+
+func registrationIdentityConflictError(method string) error {
+	switch method {
+	case model.UserIdentityMethodEmail:
+		return errors.New("email already exists")
+	case model.UserIdentityMethodPhone:
+		return errors.New("phone already exists")
+	default:
+		return errors.New("username already exists")
+	}
 }
 
 func findIdentityForRecovery(tx *gorm.DB, method, identifier string) (*model.UserIdentity, error) {
@@ -216,11 +327,12 @@ func isRecoverableRegistrationIdentity(identity *model.UserIdentity) bool {
 		identity.User.Status == common.UserStatusDisabled
 }
 
-func recoverRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, displayName, email string) (*model.User, error) {
+func recoverRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, displayName, email, phone string) (*model.User, error) {
 	if identity == nil || identity.User == nil {
 		return nil, errors.New("account identity is invalid")
 	}
 	var emailIdentity *model.UserIdentity
+	var phoneIdentity *model.UserIdentity
 	if email != "" {
 		var err error
 		emailIdentity, err = findIdentityForRecovery(tx, model.UserIdentityMethodEmail, email)
@@ -229,6 +341,16 @@ func recoverRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, 
 		}
 		if emailIdentity != nil && emailIdentity.UserID != identity.UserID {
 			return nil, errors.New("email already exists")
+		}
+	}
+	if phone != "" {
+		var err error
+		phoneIdentity, err = findIdentityForRecovery(tx, model.UserIdentityMethodPhone, phone)
+		if err != nil {
+			return nil, err
+		}
+		if phoneIdentity != nil && phoneIdentity.UserID != identity.UserID {
+			return nil, errors.New("phone already exists")
 		}
 	}
 	hash, err := common.HashPassword(password)
@@ -244,6 +366,10 @@ func recoverRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, 
 	if email != "" {
 		emailPtr := email
 		updates["email"] = &emailPtr
+	}
+	if phone != "" {
+		phonePtr := phone
+		updates["phone"] = &phonePtr
 	}
 	if err := tx.Model(&model.User{}).Where("id = ? AND role = ?", identity.UserID, common.RoleUser).Updates(updates).Error; err != nil {
 		return nil, err
@@ -279,6 +405,23 @@ func recoverRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, 
 			}
 		}
 	}
+	if phone != "" {
+		if phoneIdentity == nil {
+			if err := tx.Create(&model.UserIdentity{
+				UserID:     identity.UserID,
+				Method:     model.UserIdentityMethodPhone,
+				Provider:   model.UserIdentityProviderLocal,
+				Identifier: phone,
+				VerifiedAt: &now,
+			}).Error; err != nil {
+				return nil, err
+			}
+		} else if strings.TrimSpace(phoneIdentity.PasswordHash) != "" {
+			if err := tx.Model(&model.UserIdentity{}).Where("id = ?", phoneIdentity.ID).Update("password_hash", "").Error; err != nil {
+				return nil, err
+			}
+		}
+	}
 	var recovered model.User
 	if err := tx.First(&recovered, identity.UserID).Error; err != nil {
 		return nil, err
@@ -292,7 +435,7 @@ func recoverExternalRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, pa
 	if !isRecoverableRegistrationIdentity(identity) {
 		return nil, errors.New("external identity is not recoverable")
 	}
-	recovered, err := recoverRegisteredUser(tx, identity, password, displayName, email)
+	recovered, err := recoverRegisteredUser(tx, identity, password, displayName, email, "")
 	if err != nil {
 		return nil, err
 	}
@@ -311,18 +454,48 @@ func recoverExternalRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, pa
 }
 
 func registrationPolicyError() error {
+	return registrationPolicyErrorForMethod("username")
+}
+
+func registrationPolicyErrorForMethod(method string) error {
 	settingSvc := NewSettingService()
 	if enabled, err := settingSvc.GetBool("auth.register.enabled"); err != nil || !enabled {
 		return ErrSelfRegistrationDisabled
 	}
-	if enabled, err := settingSvc.GetBool("auth.register.username.enabled"); err != nil || !enabled {
-		return ErrUsernameRegistrationDisabled
+	switch method {
+	case "username":
+		if enabled, err := settingSvc.GetBool("auth.register.username.enabled"); err != nil || !enabled {
+			return ErrUsernameRegistrationDisabled
+		}
+	case "email":
+		if enabled, err := settingSvc.GetBool("auth.register.email.enabled"); err != nil || !enabled {
+			return ErrEmailRegistrationDisabled
+		}
+	case "phone":
+		if enabled, err := settingSvc.GetBool("auth.register.phone.enabled"); err != nil || !enabled {
+			return ErrPhoneRegistrationDisabled
+		}
+	default:
+		return errors.New("register_method is invalid")
 	}
 	// Captcha-backed self-registration is intentionally fail-closed until the captcha service lands.
 	if required, err := settingSvc.GetBool("auth.register.captcha.required"); err == nil && required {
 		return ErrRegistrationCaptchaRequired
 	}
 	return nil
+}
+
+func normalizeRegisterMethod(method string) string {
+	method = strings.ToLower(strings.TrimSpace(method))
+	if method == "" {
+		return "username"
+	}
+	switch method {
+	case "username", "email", "phone":
+		return method
+	default:
+		return ""
+	}
 }
 
 func registrationDefaultQuota() int64 {
@@ -575,7 +748,7 @@ func (s *AuthService) OAuthRegister(provider, ticket, username, password, displa
 			return nil
 		}
 
-		registered, err := registerPasswordUserTx(tx, username, password, displayName, email)
+		registered, err := registerPasswordUserTx(tx, "username", username, password, displayName, email, "")
 		if err != nil {
 			return err
 		}
@@ -1144,4 +1317,8 @@ func loginBoolSettingDefault(key string, fallback bool) bool {
 
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func normalizePhone(phone string) string {
+	return strings.TrimSpace(phone)
 }
