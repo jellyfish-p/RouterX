@@ -725,6 +725,55 @@ func TestTraceabilityP1RouterXExtensionEvidenceIncludesProviderSpecificTests(t *
 	}
 }
 
+func TestTraceabilityP1AccessControlEvidenceIncludesErrorSnapshotTests(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TRACEABILITY.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var evidence string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "| P1-C6 ") {
+			continue
+		}
+		cells := strings.Split(line, "|")
+		if len(cells) < 7 {
+			t.Fatalf("malformed P1-C6 traceability row: %s", line)
+		}
+		evidence = strings.TrimSpace(cells[len(cells)-2])
+		break
+	}
+	if evidence == "" {
+		t.Fatal("missing P1-C6 traceability row")
+	}
+
+	requiredTests := []string{
+		"TestAPIKeyModelScopeRestrictsRelayBeforeUpstream",
+		"TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream",
+		"TestNoAvailableChannelWritesBreakerSnapshot",
+	}
+	issues := make([]string, 0)
+	for _, testName := range requiredTests {
+		if !strings.Contains(evidence, testName) {
+			issues = append(issues, "missing "+testName)
+		}
+	}
+	for _, staleMarker := range []string{
+		"其他失败层的完整 error 快照仍需补齐",
+		"error 快照仍需补齐",
+	} {
+		if strings.Contains(evidence, staleMarker) {
+			issues = append(issues, "stale unresolved access-control error snapshot marker: "+staleMarker)
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("P1-C6 access-control traceability evidence needs concrete error snapshot tests:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestTraceabilityP1UpstreamConversionEvidenceIncludesConcreteMatrixTests(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TRACEABILITY.md"))
 	if err != nil {
@@ -17740,6 +17789,18 @@ func TestAPIKeyModelScopeRestrictsRelayBeforeUpstream(t *testing.T) {
 	}
 	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "scope") {
 		t.Fatalf("scope denial should write a zero-quota failed log, got %+v", failedLog)
+	}
+	var errorSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.ErrorSnapshot), &errorSnapshot); err != nil {
+		t.Fatalf("scope denial should store error snapshot JSON, got %q: %v", failedLog.ErrorSnapshot, err)
+	}
+	if errorSnapshot["error_code"] != "model_not_allowed" ||
+		errorSnapshot["error_source"] != common.LogErrorSourceAuth ||
+		errorSnapshot["called_upstream"] != false ||
+		errorSnapshot["http_status"] != float64(http.StatusForbidden) ||
+		errorSnapshot["charged"] != false ||
+		errorSnapshot["safe_message"] != "model not allowed by api key scope" {
+		t.Fatalf("unexpected scope denial error snapshot: %+v", errorSnapshot)
 	}
 	var policySnapshot map[string]interface{}
 	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {

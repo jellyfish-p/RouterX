@@ -34,6 +34,7 @@
 | `TestTraceabilityP1StreamEvidenceIncludesNativeUpstreamTests` | 检查 `P1-C1` 流式转发证据必须包含 Anthropic/Gemini 原生上游流式测试，并防止追踪表继续保留已过期的原生流式待补说明 |
 | `TestTraceabilityP1EntryProtocolEvidenceIncludesConcreteMatrixTests` | 检查 `P1-C2` 多入口协议证据必须列出模型协议选择、Anthropic/Gemini 成功与降级、countTokens、Gemini Embeddings 和入口协议错误外形测试 |
 | `TestTraceabilityP1RouterXExtensionEvidenceIncludesProviderSpecificTests` | 检查 `P1-C4` 的 `routerx` 扩展参数证据必须列出 provider-specific body 补充、Gemini safetySettings 和 Anthropic/Gemini 原生字段保真测试 |
+| `TestTraceabilityP1AccessControlEvidenceIncludesErrorSnapshotTests` | 检查 `P1-C6` 访问控制证据必须列出 API Key scope 和无候选拒绝的具体错误快照测试，避免追踪表继续保留泛化待补说明 |
 | `TestTraceabilityP1UpstreamConversionEvidenceIncludesConcreteMatrixTests` | 检查 `P1-C3` 多上游转换证据必须列出 Azure deployment 路径和 Responses 到 Claude/Gemini 的具体转换测试 |
 | `TestTraceabilityP2EnterpriseIdentityEvidenceIncludesConcreteOAuthTests` | 检查 `P2-C1` 企业身份证据必须列出本地登录审计、OAuth 已绑定身份登录、OAuth 绑定和防 email 自动接管测试 |
 | `TestTraceabilityP2AdminAuditEvidenceIncludesConcreteAuditTests` | 检查 `P2-C2` 管理审计证据必须列出登录、API Key、用户/分组、通道、日志导出、settings 拒绝和超级管理员边界测试 |
