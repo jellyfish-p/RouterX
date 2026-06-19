@@ -618,12 +618,15 @@ func tokenMetadataFromRequest(req *dto.TokenMetadataRequest) service.TokenMetada
 		return service.TokenMetadata{}
 	}
 	return service.TokenMetadata{
-		Environment: req.Environment,
-		Team:        req.Team,
-		App:         req.App,
-		Tags:        req.Tags,
-		ExternalID:  req.ExternalID,
-		Note:        req.Note,
+		Environment:   req.Environment,
+		Team:          req.Team,
+		App:           req.App,
+		Tags:          req.Tags,
+		ExternalID:    req.ExternalID,
+		Note:          req.Note,
+		PrincipalType: req.PrincipalType,
+		PrincipalID:   req.PrincipalID,
+		PrincipalName: req.PrincipalName,
 	}
 }
 
@@ -632,7 +635,9 @@ func tokenMetadataJSONFromRequest(req *dto.TokenMetadataRequest) (model.JSONValu
 	if err != nil {
 		return nil, err
 	}
-	if metadata.Environment == "" && metadata.Team == "" && metadata.App == "" && metadata.ExternalID == "" && metadata.Note == "" && len(metadata.Tags) == 0 {
+	if metadata.Environment == "" && metadata.Team == "" && metadata.App == "" && metadata.ExternalID == "" &&
+		metadata.Note == "" && metadata.PrincipalType == "" && metadata.PrincipalID == "" &&
+		metadata.PrincipalName == "" && len(metadata.Tags) == 0 {
 		return nil, nil
 	}
 	return model.NewJSONValue(metadata), nil
@@ -640,14 +645,16 @@ func tokenMetadataJSONFromRequest(req *dto.TokenMetadataRequest) (model.JSONValu
 
 func adminTokenFilterFromQuery(c *gin.Context, page, pageSize int) service.TokenListFilter {
 	return service.TokenListFilter{
-		UserID:      queryUintPtr(c, "user_id"),
-		Status:      queryIntPtr(c, "status"),
-		Environment: c.Query("environment"),
-		Team:        c.Query("team"),
-		App:         c.Query("app"),
-		Tag:         c.Query("tag"),
-		Page:        page,
-		PageSize:    pageSize,
+		UserID:        queryUintPtr(c, "user_id"),
+		Status:        queryIntPtr(c, "status"),
+		Environment:   c.Query("environment"),
+		Team:          c.Query("team"),
+		App:           c.Query("app"),
+		Tag:           c.Query("tag"),
+		PrincipalType: c.Query("principal_type"),
+		PrincipalID:   c.Query("principal_id"),
+		Page:          page,
+		PageSize:      pageSize,
 	}
 }
 
@@ -664,7 +671,7 @@ func normalizeTokenExportLimit(limit int) int {
 func buildTokenExportCSV(tokens []model.Token) ([]byte, error) {
 	var buf bytes.Buffer
 	writer := csv.NewWriter(&buf)
-	header := []string{"id", "user_id", "name", "status", "environment", "team", "app", "tags", "external_id", "note", "expired_at", "last_used_at", "last_model", "last_error_code", "created_at"}
+	header := []string{"id", "user_id", "name", "status", "environment", "team", "app", "principal_type", "principal_id", "principal_name", "tags", "external_id", "note", "expired_at", "last_used_at", "last_model", "last_error_code", "created_at"}
 	if err := writer.Write(header); err != nil {
 		return nil, err
 	}
@@ -678,6 +685,9 @@ func buildTokenExportCSV(tokens []model.Token) ([]byte, error) {
 			metadata.Environment,
 			metadata.Team,
 			metadata.App,
+			metadata.PrincipalType,
+			metadata.PrincipalID,
+			metadata.PrincipalName,
 			strings.Join(metadata.Tags, "|"),
 			metadata.ExternalID,
 			metadata.Note,
@@ -697,12 +707,14 @@ func buildTokenExportCSV(tokens []model.Token) ([]byte, error) {
 func tokenExportAuditSummary(filter service.TokenListFilter, limit, exportedCount int) map[string]interface{} {
 	return map[string]interface{}{
 		"filters": map[string]interface{}{
-			"user_id":     filter.UserID,
-			"status":      filter.Status,
-			"environment": strings.TrimSpace(filter.Environment),
-			"team":        strings.TrimSpace(filter.Team),
-			"app":         strings.TrimSpace(filter.App),
-			"tag":         strings.TrimSpace(filter.Tag),
+			"user_id":        filter.UserID,
+			"status":         filter.Status,
+			"environment":    strings.TrimSpace(filter.Environment),
+			"team":           strings.TrimSpace(filter.Team),
+			"app":            strings.TrimSpace(filter.App),
+			"tag":            strings.TrimSpace(filter.Tag),
+			"principal_type": strings.TrimSpace(filter.PrincipalType),
+			"principal_id":   strings.TrimSpace(filter.PrincipalID),
 		},
 		"limit":          limit,
 		"exported_count": exportedCount,

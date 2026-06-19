@@ -86,12 +86,15 @@ type TokenScope struct {
 }
 
 type TokenMetadata struct {
-	Environment string   `json:"environment,omitempty"`
-	Team        string   `json:"team,omitempty"`
-	App         string   `json:"app,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	ExternalID  string   `json:"external_id,omitempty"`
-	Note        string   `json:"note,omitempty"`
+	Environment   string   `json:"environment,omitempty"`
+	Team          string   `json:"team,omitempty"`
+	App           string   `json:"app,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	ExternalID    string   `json:"external_id,omitempty"`
+	Note          string   `json:"note,omitempty"`
+	PrincipalType string   `json:"principal_type,omitempty"` // 非登录主体类型, 如 service_account
+	PrincipalID   string   `json:"principal_id,omitempty"`   // 机器身份或外部主体 ID
+	PrincipalName string   `json:"principal_name,omitempty"` // 人类可读主体名称
 }
 
 var tokenConcurrencyScopes = newTokenConcurrencyTracker()
@@ -119,14 +122,16 @@ type TokenRiskFilter struct {
 }
 
 type TokenListFilter struct {
-	UserID      *uint
-	Status      *int
-	Environment string
-	Team        string
-	App         string
-	Tag         string
-	Page        int
-	PageSize    int
+	UserID        *uint
+	Status        *int
+	Environment   string
+	Team          string
+	App           string
+	Tag           string
+	PrincipalType string
+	PrincipalID   string
+	Page          int
+	PageSize      int
 }
 
 type TokenRiskItem struct {
@@ -517,11 +522,14 @@ func optionalTokenMetadata(items ...TokenMetadata) (model.JSONValue, error) {
 
 func NormalizeTokenMetadata(input TokenMetadata) (TokenMetadata, error) {
 	metadata := TokenMetadata{
-		Environment: strings.ToLower(strings.TrimSpace(input.Environment)),
-		Team:        strings.ToLower(strings.TrimSpace(input.Team)),
-		App:         strings.ToLower(strings.TrimSpace(input.App)),
-		ExternalID:  strings.TrimSpace(input.ExternalID),
-		Note:        strings.TrimSpace(input.Note),
+		Environment:   strings.ToLower(strings.TrimSpace(input.Environment)),
+		Team:          strings.ToLower(strings.TrimSpace(input.Team)),
+		App:           strings.ToLower(strings.TrimSpace(input.App)),
+		ExternalID:    strings.TrimSpace(input.ExternalID),
+		Note:          strings.TrimSpace(input.Note),
+		PrincipalType: normalizeTokenPrincipalType(input.PrincipalType),
+		PrincipalID:   strings.ToLower(strings.TrimSpace(input.PrincipalID)),
+		PrincipalName: strings.TrimSpace(input.PrincipalName),
 	}
 	if err := validateTokenMetadataValue("environment", metadata.Environment, maxTokenMetadataValueLength); err != nil {
 		return TokenMetadata{}, err
@@ -536,6 +544,15 @@ func NormalizeTokenMetadata(input TokenMetadata) (TokenMetadata, error) {
 		return TokenMetadata{}, err
 	}
 	if err := validateTokenMetadataValue("note", metadata.Note, maxTokenMetadataNoteLength); err != nil {
+		return TokenMetadata{}, err
+	}
+	if err := validateTokenPrincipalType(metadata.PrincipalType); err != nil {
+		return TokenMetadata{}, err
+	}
+	if err := validateTokenMetadataValue("principal_id", metadata.PrincipalID, maxTokenMetadataValueLength); err != nil {
+		return TokenMetadata{}, err
+	}
+	if err := validateTokenMetadataValue("principal_name", metadata.PrincipalName, maxTokenMetadataValueLength); err != nil {
 		return TokenMetadata{}, err
 	}
 
@@ -587,14 +604,17 @@ func validateTokenMetadataValue(field, value string, maxLen int) error {
 
 func tokenMetadataEmpty(metadata TokenMetadata) bool {
 	return metadata.Environment == "" && metadata.Team == "" && metadata.App == "" &&
-		metadata.ExternalID == "" && metadata.Note == "" && len(metadata.Tags) == 0
+		metadata.ExternalID == "" && metadata.Note == "" && metadata.PrincipalType == "" &&
+		metadata.PrincipalID == "" && metadata.PrincipalName == "" && len(metadata.Tags) == 0
 }
 
 func (filter TokenListFilter) hasMetadataFilter() bool {
 	return strings.TrimSpace(filter.Environment) != "" ||
 		strings.TrimSpace(filter.Team) != "" ||
 		strings.TrimSpace(filter.App) != "" ||
-		strings.TrimSpace(filter.Tag) != ""
+		strings.TrimSpace(filter.Tag) != "" ||
+		strings.TrimSpace(filter.PrincipalType) != "" ||
+		strings.TrimSpace(filter.PrincipalID) != ""
 }
 
 func filterTokensByMetadata(tokens []model.Token, filter TokenListFilter) []model.Token {
@@ -602,6 +622,8 @@ func filterTokensByMetadata(tokens []model.Token, filter TokenListFilter) []mode
 	wantTeam := strings.ToLower(strings.TrimSpace(filter.Team))
 	wantApp := strings.ToLower(strings.TrimSpace(filter.App))
 	wantTag := strings.ToLower(strings.TrimSpace(filter.Tag))
+	wantPrincipalType := normalizeTokenPrincipalType(filter.PrincipalType)
+	wantPrincipalID := strings.ToLower(strings.TrimSpace(filter.PrincipalID))
 	filtered := make([]model.Token, 0, len(tokens))
 	for _, token := range tokens {
 		metadata := ParseTokenMetadata(token.MetadataJSON)
@@ -617,9 +639,28 @@ func filterTokensByMetadata(tokens []model.Token, filter TokenListFilter) []mode
 		if wantTag != "" && !metadataHasTag(metadata, wantTag) {
 			continue
 		}
+		if wantPrincipalType != "" && metadata.PrincipalType != wantPrincipalType {
+			continue
+		}
+		if wantPrincipalID != "" && metadata.PrincipalID != wantPrincipalID {
+			continue
+		}
 		filtered = append(filtered, token)
 	}
 	return filtered
+}
+
+func normalizeTokenPrincipalType(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func validateTokenPrincipalType(value string) error {
+	switch value {
+	case "", "user", "service_account":
+		return nil
+	default:
+		return errors.New("metadata principal_type must be user or service_account")
+	}
 }
 
 func metadataHasTag(metadata TokenMetadata, tag string) bool {

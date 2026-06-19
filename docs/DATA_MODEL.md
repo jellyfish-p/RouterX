@@ -242,7 +242,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `rotated_from_id` | nullable uint | 轮换来源 Token ID |
 | `revoked_reason` | string | 禁用原因，例如 `rotated`、`reported_leak`、`admin_batch_disable` |
 | `scope_json` | json | API Key 收窄策略；当前支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`entry_protocols` 入口协议 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list、`daily_quota` 日预算、`monthly_quota` 月预算、`max_concurrency` 并发上限、`rpm` 每分钟请求上限和 `tpm` 每分钟模型 token 上限 |
-| `metadata_json` | json | 环境、应用、团队、标签、外部系统关联 ID 和备注等非安全元数据；用于管理查询和脱敏导出，不保存 API Key 明文或密钥类配置 |
+| `metadata_json` | json | 环境、应用、团队、标签、外部系统关联 ID、服务账号主体和备注等非安全元数据；用于管理查询和脱敏导出，不保存 API Key 明文或密钥类配置 |
 | `last_used_at` | nullable time | 最近成功或失败调用时间 |
 | `last_used_ip_hash` | string | 最近来源 IP 的 SHA-256 摘要 |
 | `last_user_agent_hash` | string | 最近 User-Agent 的 SHA-256 摘要 |
@@ -875,7 +875,7 @@ QuotaUnlimited = -1
 | `019_log_replication_outbox` | 新增主库调用日志补写 outbox 和状态/重试时间索引 |
 | `020_alert_events` | 新增管理员告警收件箱表和类型、状态、资源、用户、API Key 索引 |
 | `021_alert_delivery_outbox` | 新增管理员告警外部投递 outbox、目标/告警唯一索引和状态/重试时间索引 |
-| `022_token_metadata` | 新增 API Key 非安全元数据 JSON 字段，用于环境、团队、应用、标签和脱敏导出 |
+| `022_token_metadata` | 新增 API Key 非安全元数据 JSON 字段，用于环境、团队、应用、标签、服务账号主体和脱敏导出 |
 
 重要说明：
 

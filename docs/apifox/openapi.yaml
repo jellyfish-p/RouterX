@@ -382,7 +382,7 @@ paths:
     post:
       tags: [User API Key]
       summary: 创建 API Key
-      description: 返回一次性 sk- 明文；可写入 environment/team/app/tags/external_id/note 非安全元数据；有限额度 Key 创建时只设置预算上限，不扣用户余额，调用成功时再扣费。成功后写入 api_key.created 管理审计，审计摘要不包含完整明文 Key 或哈希。
+      description: 返回一次性 sk- 明文；可写入 environment/team/app/tags/external_id/note 和 principal_type/principal_id/principal_name 非安全元数据；有限额度 Key 创建时只设置预算上限，不扣用户余额，调用成功时再扣费。成功后写入 api_key.created 管理审计，审计摘要不包含完整明文 Key 或哈希。
       security:
         - UserJWT: []
       requestBody:
@@ -1201,7 +1201,7 @@ paths:
     get:
       tags: [Admin API Key]
       summary: 管理员 API Key 列表
-      description: 管理员跨用户查询脱敏 API Key 摘要；不会返回完整明文 Key 或哈希。支持按 user_id、status、environment、team、app 和 tag 过滤。
+      description: 管理员跨用户查询脱敏 API Key 摘要；不会返回完整明文 Key 或哈希。支持按 user_id、status、environment、team、app、tag、principal_type 和 principal_id 过滤。
       security:
         - UserJWT: []
       parameters:
@@ -1243,6 +1243,20 @@ paths:
           schema: { type: string }
           description: 按 API Key 非安全元数据 tags 单个标签过滤。
           example: rotated
+        - name: principal_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [user, service_account]
+          description: 按 API Key 非登录主体类型过滤；服务账号使用 service_account。
+          example: service_account
+        - name: principal_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按 API Key 非登录主体 ID 过滤。
+          example: svc-checkout-prod
       responses:
         "200":
           description: API Key 分页列表。
@@ -1259,7 +1273,7 @@ paths:
     get:
       tags: [Admin API Key]
       summary: 导出 API Key 脱敏摘要
-      description: 管理员按 user_id、status、environment、team、app 和 tag 过滤导出 CSV；导出内容不包含完整明文 Key、key_hash 或来源 IP/User-Agent 明文，并写入 api_key.export 管理审计。
+      description: 管理员按 user_id、status、environment、team、app、tag、principal_type 和 principal_id 过滤导出 CSV；导出内容不包含完整明文 Key、key_hash 或来源 IP/User-Agent 明文，并写入 api_key.export 管理审计。
       security:
         - UserJWT: []
       parameters:
@@ -1299,6 +1313,20 @@ paths:
           schema: { type: string }
           description: 按 API Key 非安全元数据 tags 单个标签过滤。
           example: rotated
+        - name: principal_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [user, service_account]
+          description: 按 API Key 非登录主体类型过滤；服务账号使用 service_account。
+          example: service_account
+        - name: principal_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按 API Key 非登录主体 ID 过滤。
+          example: svc-checkout-prod
         - name: limit
           in: query
           required: false
@@ -1316,8 +1344,8 @@ paths:
               schema:
                 type: string
               example: |
-                id,user_id,name,status,environment,team,app,tags,external_id,note,expired_at,last_used_at,last_model,last_error_code,created_at
-                12,1,prod-router,1,prod,platform,router,gateway|rotated,svc-router-prod,owned by platform,,,gpt-4o-mini,,2026-06-19T10:00:00Z
+                id,user_id,name,status,environment,team,app,principal_type,principal_id,principal_name,tags,external_id,note,expired_at,last_used_at,last_model,last_error_code,created_at
+                12,1,prod-router,1,prod,platform,router,service_account,svc-checkout-prod,Checkout Worker,gateway|rotated,svc-router-prod,owned by platform,,,gpt-4o-mini,,2026-06-19T10:00:00Z
   /v0/admin/token/risk:
     get:
       tags: [Admin API Key]
@@ -4710,7 +4738,7 @@ components:
           $ref: "#/components/schemas/TokenMetadata"
     TokenMetadata:
       type: object
-      description: API Key 非安全元数据，用于环境、团队、应用和标签筛选；不得包含 API Key 明文、上游密钥、支付密钥或其他敏感凭据。
+      description: API Key 非安全元数据，用于环境、团队、应用、标签和服务账号主体筛选；不得包含 API Key 明文、上游密钥、支付密钥或其他敏感凭据。
       properties:
         environment:
           type: string
@@ -4738,6 +4766,19 @@ components:
           type: string
           description: 简短备注，不应填写任何密钥或敏感凭据。
           example: owned by platform
+        principal_type:
+          type: string
+          enum: [user, service_account]
+          description: 非登录主体类型；服务账号或机器身份使用 service_account，普通人工主体可使用 user 或省略。
+          example: service_account
+        principal_id:
+          type: string
+          description: 非登录主体 ID，例如服务账号、工作负载或外部 IAM subject；服务端会去空格并归一为小写。
+          example: svc-checkout-prod
+        principal_name:
+          type: string
+          description: 人类可读主体名称，用于列表、审计和导出识别，不参与鉴权。
+          example: Checkout Worker
     ReportTokenLeakRequest:
       type: object
       properties:

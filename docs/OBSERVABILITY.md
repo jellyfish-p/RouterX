@@ -25,7 +25,7 @@
 - `admin_audit_logs` 表保存基础管理审计日志，字段包含 actor、action、resource、before/after 摘要、request_id、IP 和 User-Agent。
 - `GET /v0/admin/audit` 已注册为超级管理员查询接口，支持按 `action`、`resource_type`、`resource_id`、`actor_user_id`、`result`、`error_code` 和时间范围过滤。
 - `GET /metrics` 已注册为 Prometheus 文本指标接口，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、DB/Redis 错误计数、日志补写 outbox 状态、HTTP 请求量和耗时、调用日志状态、Relay 请求数、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、API Key 鉴权、生命周期、最近使用年龄、可用有限额度、轮换和泄露事件、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标。
-- API Key 创建、编辑、禁用、删除、scope 更新、元数据更新、脱敏导出、批量禁用、批量过期、批量操作缺少筛选条件拒绝和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计摘要，完整 Key 明文和哈希不会写入审计摘要。
+- API Key 创建、编辑、禁用、删除、scope 更新、元数据和服务账号主体更新、脱敏导出、批量禁用、批量过期、批量操作缺少筛选条件拒绝和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计摘要，完整 Key 明文和哈希不会写入审计摘要。
 - 普通用户成功登录、创建、编辑、禁用、删除和拒绝角色变更会写入 `user.*` 管理审计摘要，密码和 JWT 不会写入审计摘要。
 - 支付商品创建、更新、启用和禁用会写入 `payment_product.*` 管理审计摘要。
 - 系统模型价格创建、更新、启用和禁用会写入 `model_price.*` 管理审计摘要，`resource_id` 使用模型名便于直接过滤。

@@ -74,21 +74,27 @@ type TokenScopeResponse struct {
 }
 
 type TokenMetadataRequest struct {
-	Environment string   `json:"environment"`
-	Team        string   `json:"team"`
-	App         string   `json:"app"`
-	Tags        []string `json:"tags"`
-	ExternalID  string   `json:"external_id"`
-	Note        string   `json:"note"`
+	Environment   string   `json:"environment"`
+	Team          string   `json:"team"`
+	App           string   `json:"app"`
+	Tags          []string `json:"tags"`
+	ExternalID    string   `json:"external_id"`
+	Note          string   `json:"note"`
+	PrincipalType string   `json:"principal_type"`
+	PrincipalID   string   `json:"principal_id"`
+	PrincipalName string   `json:"principal_name"`
 }
 
 type TokenMetadataResponse struct {
-	Environment string   `json:"environment,omitempty"`
-	Team        string   `json:"team,omitempty"`
-	App         string   `json:"app,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	ExternalID  string   `json:"external_id,omitempty"`
-	Note        string   `json:"note,omitempty"`
+	Environment   string   `json:"environment,omitempty"`
+	Team          string   `json:"team,omitempty"`
+	App           string   `json:"app,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	ExternalID    string   `json:"external_id,omitempty"`
+	Note          string   `json:"note,omitempty"`
+	PrincipalType string   `json:"principal_type,omitempty"`
+	PrincipalID   string   `json:"principal_id,omitempty"`
+	PrincipalName string   `json:"principal_name,omitempty"`
 }
 
 type TokenResponse struct {
@@ -228,7 +234,9 @@ func TokenMetadataFromJSON(raw model.JSONValue) *TokenMetadataResponse {
 	if err := json.Unmarshal(raw, &metadata); err != nil {
 		return nil
 	}
-	if metadata.Environment == "" && metadata.Team == "" && metadata.App == "" && len(metadata.Tags) == 0 && metadata.ExternalID == "" && metadata.Note == "" {
+	if metadata.Environment == "" && metadata.Team == "" && metadata.App == "" && len(metadata.Tags) == 0 &&
+		metadata.ExternalID == "" && metadata.Note == "" && metadata.PrincipalType == "" &&
+		metadata.PrincipalID == "" && metadata.PrincipalName == "" {
 		return nil
 	}
 	return &metadata

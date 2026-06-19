@@ -1370,6 +1370,154 @@ func TestAPIKeyMetadataFiltersAndSanitizedExport(t *testing.T) {
 	}
 }
 
+func TestAPIKeyServiceAccountPrincipalFiltersAndExport(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createSvcResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "checkout-worker",
+		"remain_quota": int64(1000),
+		"metadata": map[string]interface{}{
+			"environment":    "prod",
+			"team":           "payments",
+			"app":            "checkout",
+			"principal_type": "service_account",
+			"principal_id":   "svc-checkout-prod",
+			"principal_name": "Checkout Worker",
+		},
+	})
+	var svcPayload struct {
+		Data struct {
+			ID       uint   `json:"id"`
+			Key      string `json:"key"`
+			Metadata struct {
+				Environment   string `json:"environment"`
+				Team          string `json:"team"`
+				App           string `json:"app"`
+				PrincipalType string `json:"principal_type"`
+				PrincipalID   string `json:"principal_id"`
+				PrincipalName string `json:"principal_name"`
+			} `json:"metadata"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createSvcResp.Body.Bytes(), &svcPayload); err != nil {
+		t.Fatalf("create service-account token response should be json: %v", err)
+	}
+	if createSvcResp.Code != http.StatusOK || svcPayload.Data.ID == 0 || svcPayload.Data.Key == "" {
+		t.Fatalf("create service-account token failed: %d %s", createSvcResp.Code, createSvcResp.Body.String())
+	}
+	if svcPayload.Data.Metadata.PrincipalType != "service_account" ||
+		svcPayload.Data.Metadata.PrincipalID != "svc-checkout-prod" ||
+		svcPayload.Data.Metadata.PrincipalName != "Checkout Worker" {
+		t.Fatalf("create response should include service-account principal, got %#v", svcPayload.Data.Metadata)
+	}
+
+	otherResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "docs-worker",
+		"remain_quota": int64(1000),
+		"metadata": map[string]interface{}{
+			"environment":    "prod",
+			"team":           "docs",
+			"app":            "docs",
+			"principal_type": "service_account",
+			"principal_id":   "svc-docs-prod",
+			"principal_name": "Docs Worker",
+		},
+	})
+	if otherResp.Code != http.StatusOK {
+		t.Fatalf("create second service-account token failed: %d %s", otherResp.Code, otherResp.Body.String())
+	}
+
+	listResp := performJSON(r, http.MethodGet, "/v0/admin/token?principal_type=service_account&principal_id=svc-checkout-prod", rootJWT, nil)
+	var listPayload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				ID       uint `json:"id"`
+				Metadata struct {
+					PrincipalType string `json:"principal_type"`
+					PrincipalID   string `json:"principal_id"`
+					PrincipalName string `json:"principal_name"`
+				} `json:"metadata"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(listResp.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("admin principal list should be json: %v", err)
+	}
+	if listResp.Code != http.StatusOK || listPayload.Data.Total != 1 || len(listPayload.Data.Data) != 1 {
+		t.Fatalf("admin principal filter should return one service-account token, got %d %s", listResp.Code, listResp.Body.String())
+	}
+	if listPayload.Data.Data[0].ID != svcPayload.Data.ID ||
+		listPayload.Data.Data[0].Metadata.PrincipalType != "service_account" ||
+		listPayload.Data.Data[0].Metadata.PrincipalID != "svc-checkout-prod" {
+		t.Fatalf("unexpected principal-filtered token: %+v", listPayload.Data.Data[0])
+	}
+	if strings.Contains(listResp.Body.String(), svcPayload.Data.Key) || strings.Contains(listResp.Body.String(), "sk-") {
+		t.Fatalf("admin principal list leaked API key: %s", listResp.Body.String())
+	}
+
+	exportResp := performRaw(r, http.MethodGet, "/v0/admin/token/export?principal_type=service_account&principal_id=svc-checkout-prod", rootJWT, "")
+	if exportResp.Code != http.StatusOK {
+		t.Fatalf("admin principal export failed: %d %s", exportResp.Code, exportResp.Body.String())
+	}
+	exportBody := exportResp.Body.String()
+	if strings.Contains(exportBody, svcPayload.Data.Key) || strings.Contains(exportBody, "sk-") {
+		t.Fatalf("service-account export leaked API key: %s", exportBody)
+	}
+	records, err := csv.NewReader(strings.NewReader(exportBody)).ReadAll()
+	if err != nil {
+		t.Fatalf("service-account export should be valid csv: %v\n%s", err, exportBody)
+	}
+	if len(records) != 2 {
+		t.Fatalf("service-account export should include header and one row, got %d records: %#v", len(records), records)
+	}
+	header := strings.Join(records[0], ",")
+	row := strings.Join(records[1], ",")
+	if !strings.Contains(header, "principal_type") || !strings.Contains(header, "principal_id") ||
+		!strings.Contains(header, "principal_name") || !strings.Contains(row, "service_account") ||
+		!strings.Contains(row, "svc-checkout-prod") || !strings.Contains(row, "Checkout Worker") {
+		t.Fatalf("service-account export should include principal columns and values, got header=%#v row=%#v", records[0], records[1])
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?action=api_key.export", rootJWT, nil)
+	var auditPayload struct {
+		Data struct {
+			Data []struct {
+				AfterSummary string `json:"after_summary"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(auditResp.Body.Bytes(), &auditPayload); err != nil {
+		t.Fatalf("principal export audit should be json: %v", err)
+	}
+	var auditSummary struct {
+		Filters struct {
+			PrincipalType string `json:"principal_type"`
+			PrincipalID   string `json:"principal_id"`
+		} `json:"filters"`
+	}
+	if len(auditPayload.Data.Data) > 0 {
+		_ = json.Unmarshal([]byte(auditPayload.Data.Data[0].AfterSummary), &auditSummary)
+	}
+	if auditResp.Code != http.StatusOK || auditSummary.Filters.PrincipalID != "svc-checkout-prod" ||
+		auditSummary.Filters.PrincipalType != "service_account" {
+		t.Fatalf("principal export should write audit filters, got %d %s", auditResp.Code, auditResp.Body.String())
+	}
+	if strings.Contains(auditResp.Body.String(), svcPayload.Data.Key) || strings.Contains(auditResp.Body.String(), "sk-") {
+		t.Fatalf("principal export audit leaked API key: %s", auditResp.Body.String())
+	}
+}
+
 func TestAPIKeyLeakWindowSummarizesRecentUse(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	r := newTestRouter(t)
