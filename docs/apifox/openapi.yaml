@@ -69,7 +69,7 @@ paths:
     get:
       tags: [Health]
       summary: 服务就绪检查
-      description: '检查数据库可用性；SQL_DSN 指向 PostgreSQL/MySQL 等外部数据库时还要求 Redis 可用；初始化后还会检查 JWT 配置、关键 auth/relay/rate-limit settings 注册表校验、已启用支付 provider 的必需环境密钥，以及存在 enc:v1: 通道密钥时的 ENCRYPTION_KEY。关键 settings 因直接改库或迁移漂移变成非法值时会返回 not_ready 并在 setting 字段指出问题 key。配置 LOG_SQL_DSN 时，独立日志库在启动期初始化，初始化失败会阻止服务启动；运行期日志库写入失败会保留主库调用事实并写应用告警。'
+      description: '检查数据库可用性、schema_migrations dirty 状态；SQL_DSN 指向 PostgreSQL/MySQL 等外部数据库时还要求 Redis 可用；初始化后还会检查 JWT 配置、关键 auth/relay/rate-limit settings 注册表校验、已启用支付 provider 的必需环境密钥，以及存在 enc:v1: 通道密钥时的 ENCRYPTION_KEY。迁移 dirty 时返回 not_ready 并在 migration 字段返回 dirty；关键 settings 因直接改库或迁移漂移变成非法值时会返回 not_ready 并在 setting 字段指出问题 key。配置 LOG_SQL_DSN 时，独立日志库在启动期初始化，初始化失败会阻止服务启动；运行期日志库写入失败会保留主库调用事实并写应用告警。'
       responses:
         "200":
           description: Ready
@@ -3496,6 +3496,11 @@ components:
           nullable: true
           enum: [required, unavailable]
           description: 外部数据库模式下 Redis 缺失或不可用时返回。
+        migration:
+          type: string
+          nullable: true
+          enum: [dirty, unavailable]
+          description: schema_migrations 存在脏迁移或查询迁移状态失败时返回。
         jwt:
           type: string
           nullable: true

@@ -317,16 +317,16 @@ volumes:
 | `/ready` | 就绪检查 | DB、迁移状态、必要配置 |
 | `/metrics` | 指标 | Prometheus metrics，受 `observability.metrics_enabled` 控制 |
 
-当前 `/ready` 已检查数据库连通性、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、关键 auth/relay/rate-limit settings 的注册表校验、已启用支付 provider 的必需密钥，以及已有加密通道密钥时的主密钥：
+当前 `/ready` 已检查数据库连通性、`schema_migrations.dirty` 迁移状态、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、关键 auth/relay/rate-limit settings 的注册表校验、已启用支付 provider 的必需密钥，以及已有加密通道密钥时的主密钥：
 
 - `payment.epay.enabled=true` 时必须存在 `PAYMENT_EPAY_KEY`。
 - `payment.stripe.enabled=true` 时必须存在 `PAYMENT_STRIPE_SECRET_KEY` 和 `PAYMENT_STRIPE_WEBHOOK_SECRET`。
 - 数据库中存在 `enc:v1:` 通道密钥时必须存在 `ENCRYPTION_KEY`。
+- 如果 golang-migrate 的 `schema_migrations` 表存在且最新记录 `dirty=true`，`/ready` 会返回 `not_ready` 并在 `migration` 字段返回 `dirty`。
 - 如果关键 settings 因直接改库、迁移漂移或人工修复变成非法值，`/ready` 会返回 `not_ready` 并在 `setting` 字段指出问题 key。
 
 目标生产就绪检查应继续补充：
 
-- 迁移状态不是 dirty。
 - 生产模式下 `JWT_SECRET` 或数据库 `jwt.secret` 可用且跨实例一致。
 - KMS 可用性和已有 `enc:v1:` 密文的逐条解密巡检。
 - Redis 策略符合当前模式：SQLite 单镜像可无 Redis；外部数据库和集群模式必须 Redis 可用。
@@ -409,7 +409,7 @@ Redis 失败处理：
 
 开箱故障定位顺序：
 
-1. 看 `/ready`：确认 DB、初始化状态、JWT 和关键 settings 可用。
+1. 看 `/ready`：确认 DB、迁移状态、初始化状态、JWT 和关键 settings 可用。
 2. 看用户和 API Key：确认用户启用、Token 未禁用或过期、额度足够。
 3. 看通道和协议矩阵：确认通道启用、模型匹配、provider adapter 存在、能力等级支持该 APIType、密钥可解密；管理端 `/v0/admin/channel` 的 `health_status`、`health_reason` 和 `cooldown_remaining_seconds` 可直接判断通道是正常、手工禁用、熔断中还是冷却后待探测。
 4. 看下游桩或真实上游：区分通道配置错误、上游 401/403、`relay.retry_on_status` 覆盖的状态码、上游 429/5xx 和超时。

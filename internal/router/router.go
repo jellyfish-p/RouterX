@@ -104,6 +104,10 @@ func readyHandler(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "database": "unavailable"})
 		return
 	}
+	if problem := readinessMigrationProblem(); problem != "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "migration": problem})
+		return
+	}
 	if problem := readinessRedisProblem(); problem != "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not_ready", "redis": problem})
 		return
@@ -138,6 +142,8 @@ func metricsHandler(c *gin.Context) {
 	}
 	ready := int64(1)
 	if sqlDB, err := internal.DB.DB(); err != nil || sqlDB.Ping() != nil {
+		ready = 0
+	} else if readinessMigrationProblem() != "" {
 		ready = 0
 	} else if readinessRedisProblem() != "" {
 		ready = 0
@@ -1338,6 +1344,28 @@ func redisRequiredForCurrentMode() bool {
 		return false
 	}
 	return true
+}
+
+func readinessMigrationProblem() string {
+	if internal.DB == nil || !internal.DB.Migrator().HasTable("schema_migrations") {
+		return ""
+	}
+	var row struct {
+		Version uint
+		Dirty   bool
+	}
+	if err := internal.DB.
+		Table("schema_migrations").
+		Select("version, dirty").
+		Order("version DESC").
+		Limit(1).
+		Scan(&row).Error; err != nil {
+		return "unavailable"
+	}
+	if row.Dirty {
+		return "dirty"
+	}
+	return ""
 }
 
 func metricsEnabled() bool {
