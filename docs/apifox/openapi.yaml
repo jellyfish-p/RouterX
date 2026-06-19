@@ -5505,8 +5505,12 @@ components:
     UserModelInfo:
       type: object
       properties:
-        id: { type: string }
-        name: { type: string }
+        id:
+          type: string
+          description: 对外暴露的模型 ID，通常等于模型名。
+        name:
+          type: string
+          description: 模型展示名称。
         price_rule:
           type: string
           description: 未配置启用价格时为 minimum_usage；命中启用 channel_model_prices 时为 channel_model_price:<price_mode>:v<rule_version>，否则命中启用 model_prices 时为 model_price:<price_mode>:v<rule_version>。
@@ -5519,6 +5523,7 @@ components:
       properties:
         models:
           type: array
+          description: 当前用户可见的模型列表。
           items:
             $ref: "#/components/schemas/UserModelInfo"
     UpsertModelPriceRequest:
@@ -5557,24 +5562,44 @@ components:
     ModelPriceAdminInfo:
       type: object
       properties:
-        id: { type: integer, format: int64 }
-        model: { type: string }
+        id:
+          type: integer
+          format: int64
+          description: 全局模型价格规则内部 ID。
+        model:
+          type: string
+          description: 该价格规则适用的模型名。
         price_mode:
           type: string
           enum: [request, token, second, tiered]
-        price_expression: { type: string }
+          description: 价格模板类型。
+        price_expression:
+          type: string
+          description: 价格表达式，用于按请求、token、秒或分层模板计算消耗。
         variables_json:
           type: object
           nullable: true
           additionalProperties: true
-        unit_tokens: { type: integer, format: int64 }
+          description: 价格表达式变量默认值。
+        unit_tokens:
+          type: integer
+          format: int64
+          description: token 计价单位；通常为 1000。
         rule_version:
           type: integer
           format: int64
           description: 规则版本；创建为 1，更新、启用、禁用都会递增。
-        enabled: { type: boolean }
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
+        enabled:
+          type: boolean
+          description: 该全局模型价格规则是否启用。
+        created_at:
+          type: string
+          format: date-time
+          description: 全局模型价格规则创建时间。
+        updated_at:
+          type: string
+          format: date-time
+          description: 全局模型价格规则最近更新时间。
     ModelPriceAdminPage:
       allOf:
         - $ref: "#/components/schemas/PaginatedResult"
@@ -5633,29 +5658,55 @@ components:
     ChannelModelPriceAdminInfo:
       type: object
       properties:
-        id: { type: integer, format: int64 }
-        channel_id: { type: integer, format: uint64 }
-        model: { type: string }
-        enabled: { type: boolean }
-        user_enabled: { type: boolean }
+        id:
+          type: integer
+          format: int64
+          description: 通道模型价格规则内部 ID。
+        channel_id:
+          type: integer
+          format: uint64
+          description: 该规则所属通道 ID。
+        model:
+          type: string
+          description: 通道内模型名。
+        enabled:
+          type: boolean
+          description: 该通道模型价格规则是否启用。
+        user_enabled:
+          type: boolean
+          description: 是否向普通用户展示并允许普通用户候选使用该通道模型。
         price_mode:
           type: string
           enum: [request, token, second, tiered]
+          description: 价格模板类型。
         override_mode:
           type: string
           enum: [override, merge_variables]
-        price_expression: { type: string }
+          description: 通道级规则覆盖全局规则的方式。
+        price_expression:
+          type: string
+          description: 通道级价格表达式。
         variables_json:
           type: object
           nullable: true
           additionalProperties: true
-        unit_tokens: { type: integer, format: int64 }
+          description: 通道级表达式变量。
+        unit_tokens:
+          type: integer
+          format: int64
+          description: token 计价单位；通常为 1000。
         rule_version:
           type: integer
           format: int64
           description: 规则版本；创建为 1，更新、启用、禁用都会递增。
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
+        created_at:
+          type: string
+          format: date-time
+          description: 通道模型价格规则创建时间。
+        updated_at:
+          type: string
+          format: date-time
+          description: 通道模型价格规则最近更新时间。
     ChannelModelPriceAdminPage:
       allOf:
         - $ref: "#/components/schemas/PaginatedResult"

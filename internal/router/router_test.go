@@ -691,6 +691,21 @@ func TestApifoxPaymentResponseSchemasHaveHumanReadablePropertyDescriptions(t *te
 	}
 }
 
+func TestApifoxModelPricingResponseSchemasHaveHumanReadablePropertyDescriptions(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := apifoxSchemaPropertyDescriptionIssues(doc, []string{
+		"UserModelInfo",
+		"UserModelListResult",
+		"ModelPriceAdminInfo",
+		"ChannelModelPriceAdminInfo",
+	})
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml model pricing response schemas need human-readable property descriptions:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
