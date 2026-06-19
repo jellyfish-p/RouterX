@@ -160,6 +160,7 @@ Gemini-compatible 错误示例：
 | 413 | `request_body_too_large`、`request_file_too_large` | `invalid_request_error` / `RESOURCE_EXHAUSTED` | 缩小请求体或上传文件后重试 |
 | 429 | `insufficient_quota`、`rate_limit_exceeded` | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 充值、降低并发或等待限流窗口 |
 | 502 | `no_available_channel`、`unsupported_channel`、`unsupported_api_type`、`unsupported_multipart_channel`、`upstream_request_failed`、`upstream_secret_error`、`upstream_response_too_large`、`upstream_conversion_failed`、`usage_missing` | `upstream_error` / `UNAVAILABLE` | 管理员检查通道、APIType 支持、密钥、响应大小、usage 或上游状态 |
+| 503 | `rate_limit_unavailable`、`service_not_initialized` | `server_error` / `UNAVAILABLE` | 等待服务或 Redis 限流依赖恢复 |
 | 504 | `upstream_timeout` | `upstream_error` / `DEADLINE_EXCEEDED` | 重试或检查下游耗时 |
 
 错误响应要求：

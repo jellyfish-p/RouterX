@@ -105,6 +105,7 @@
 | `token_forbidden` | 403 | `permission_error` / `PERMISSION_DENIED` | Token 禁用、软删除或策略禁止 | 否 | 否 | 否 | token_id、原因 | 启用或重建 API Key |
 | `route_forbidden` | 403 | `permission_error` / `PERMISSION_DENIED` | `routerx.route` 越权 | 否 | 否 | 否 | route 摘要、拒绝原因 | 移除偏好或调整权限 |
 | `rate_limit_exceeded` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 限流 | 否 | 客户端可稍后重试 | 否 | 限流维度和 key 摘要 | 降低并发或等待窗口 |
+| `rate_limit_unavailable` | 503 | `server_error` / `UNAVAILABLE` | 外部数据库或集群模式下 Redis 限流依赖不可用 | 否 | 可在 Redis 恢复后重试 | 否 | 限流维度、Redis 依赖状态、request_id | 检查 Redis 连接、实例就绪状态和 `routerx_redis_errors_total` |
 | `insufficient_quota` | 429 | `insufficient_quota` 或 `rate_limit_error` / `RESOURCE_EXHAUSTED` | 预检余额或 Key 预算不足，或扣费失败 | 预检失败时否 | 否 | 预检失败不扣；已调用后按事务结果 | user quota、key budget、quota_used | 充值、调整额度或提高 Key 预算 |
 | `no_available_channel` | 502 | `upstream_error` / `UNAVAILABLE` | 没有候选通道 | 否 | 否 | 否 | model、候选过滤摘要 | 检查通道启用、模型、熔断和访问控制 |
 | `unsupported_channel` | 502 | `upstream_error` / `UNAVAILABLE` | 通道类型无 Adapter | 否 | 否 | 否 | channel_id、type | 补 Adapter 或禁用通道 |

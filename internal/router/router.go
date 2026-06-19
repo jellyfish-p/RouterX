@@ -1482,11 +1482,7 @@ func readinessRedisProblem() string {
 }
 
 func redisRequiredForCurrentMode() bool {
-	dsn := strings.TrimSpace(os.Getenv("SQL_DSN"))
-	if dsn == "" || strings.HasPrefix(dsn, "sqlite://") || strings.HasPrefix(dsn, "file:") {
-		return false
-	}
-	return true
+	return service.RedisRequiredForCurrentMode()
 }
 
 func readinessMigrationProblem() string {

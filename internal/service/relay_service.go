@@ -3977,7 +3977,7 @@ func (s *RelayService) enforceTokenTPMScope(ctx context.Context, token *model.To
 
 func (s *RelayService) enforceModelRateLimit(ctx context.Context, token *model.Token, modelName, clientIP string) error {
 	modelName = strings.TrimSpace(modelName)
-	if modelName == "" || internal.RDB == nil {
+	if modelName == "" {
 		return nil
 	}
 	settingSvc := s.settingService
@@ -3992,7 +3992,10 @@ func (s *RelayService) enforceModelRateLimit(ctx context.Context, token *model.T
 		return nil
 	}
 	now := time.Now().Unix() / 60
-	exceeded, current := relayRateLimitExceeded(fmt.Sprintf("rl:model:%s:%d", modelName, now), int64(limit))
+	exceeded, current, unavailable := relayRateLimitExceeded(fmt.Sprintf("rl:model:%s:%d", modelName, now), int64(limit))
+	if unavailable {
+		return s.recordRateLimitUnavailable(ctx, token, nil, modelName, clientIP, "model", "incr_failed")
+	}
 	if !exceeded {
 		return nil
 	}
@@ -4008,7 +4011,7 @@ func (s *RelayService) enforceModelRateLimit(ctx context.Context, token *model.T
 }
 
 func (s *RelayService) enforceChannelRateLimit(ctx context.Context, token *model.Token, channel *model.Channel, modelName, clientIP string) error {
-	if channel == nil || channel.ID == 0 || internal.RDB == nil {
+	if channel == nil || channel.ID == 0 {
 		return nil
 	}
 	settingSvc := s.settingService
@@ -4023,7 +4026,10 @@ func (s *RelayService) enforceChannelRateLimit(ctx context.Context, token *model
 		return nil
 	}
 	now := time.Now().Unix() / 60
-	exceeded, current := relayRateLimitExceeded(fmt.Sprintf("rl:channel:%d:%d", channel.ID, now), int64(limit))
+	exceeded, current, unavailable := relayRateLimitExceeded(fmt.Sprintf("rl:channel:%d:%d", channel.ID, now), int64(limit))
+	if unavailable {
+		return s.recordRateLimitUnavailable(ctx, token, channel, modelName, clientIP, "channel", "incr_failed")
+	}
 	if !exceeded {
 		return nil
 	}
@@ -4038,20 +4044,49 @@ func (s *RelayService) enforceChannelRateLimit(ctx context.Context, token *model
 	return &HTTPError{Status: 429, Message: "rate limit exceeded", Type: "rate_limit_error", Code: "rate_limit_exceeded"}
 }
 
-func relayRateLimitExceeded(key string, limit int64) (bool, int64) {
-	if internal.RDB == nil || limit <= 0 {
-		return false, 0
+func (s *RelayService) recordRateLimitUnavailable(ctx context.Context, token *model.Token, channel *model.Channel, modelName, clientIP, dimension, reason string) error {
+	scopeResult := map[string]interface{}{
+		"api_type":                   "allow",
+		"model":                      "allow",
+		"channel_group":              "not_evaluated",
+		"rate_limit":                 "error",
+		"rate_limit_dimension":       strings.ToLower(strings.TrimSpace(dimension)),
+		"rate_limit_dependency":      "redis",
+		"rate_limit_dependency_mode": "required",
+	}
+	if channel != nil {
+		scopeResult["channel_group"] = "allow"
+	}
+	logCtx := ContextWithRelayPolicySnapshot(ctx, buildRelayRateLimitUnavailableSnapshot(ctx, token, dimension, reason, scopeResult))
+	_ = s.recordLog(logCtx, token, channel, modelName, nil, common.LogStatusFailed, 0, "rate limit unavailable: "+strings.TrimSpace(reason), clientIP)
+	return &HTTPError{Status: http.StatusServiceUnavailable, Message: "rate limit unavailable", Type: "server_error", Code: "rate_limit_unavailable"}
+}
+
+func relayRateLimitExceeded(key string, limit int64) (bool, int64, bool) {
+	if limit <= 0 {
+		return false, 0, false
+	}
+	if internal.RDB == nil {
+		if RedisRequiredForCurrentMode() {
+			RecordRedisError("rate_limit_required")
+			return false, 0, true
+		}
+		return false, 0, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	count, err := internal.RDB.Incr(ctx, key).Result()
 	if err != nil {
-		return false, 0
+		RecordRedisError("rate_limit_incr")
+		return false, 0, RedisRequiredForCurrentMode()
 	}
 	if count == 1 {
-		_ = internal.RDB.Expire(ctx, key, 2*time.Minute).Err()
+		if err := internal.RDB.Expire(ctx, key, 2*time.Minute).Err(); err != nil {
+			RecordRedisError("rate_limit_expire")
+			return false, count, RedisRequiredForCurrentMode()
+		}
 	}
-	return count > limit, count
+	return count > limit, count, false
 }
 
 // relayAPITypeScopeName keeps API Key scope names stable across internal enum values.
@@ -4342,6 +4377,34 @@ func buildRelayRateLimitDenySnapshot(ctx context.Context, token *model.Token, di
 		"current":   current,
 		"remaining": remaining,
 		"decision":  "deny",
+	}
+	withRateLimit, err := json.Marshal(snapshot)
+	if err != nil {
+		return raw
+	}
+	return string(withRateLimit)
+}
+
+func buildRelayRateLimitUnavailableSnapshot(ctx context.Context, token *model.Token, dimension, reason string, scopeResult map[string]interface{}) string {
+	raw := buildRelayPolicyDenySnapshot(ctx, token, "rate_limit_unavailable", "not_evaluated", scopeResult)
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return raw
+	}
+	dimension = strings.ToLower(strings.TrimSpace(dimension))
+	if dimension == "" {
+		dimension = "redis"
+	}
+	snapshot["rate_limit_snapshot"] = map[string]interface{}{
+		"dimension":   dimension,
+		"window":      "minute",
+		"decision":    "deny",
+		"unavailable": true,
+		"dependency":  "redis",
+		"reason":      strings.TrimSpace(reason),
 	}
 	withRateLimit, err := json.Marshal(snapshot)
 	if err != nil {

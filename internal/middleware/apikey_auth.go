@@ -251,6 +251,8 @@ func geminiStatusText(status int) string {
 		return "PERMISSION_DENIED"
 	case http.StatusTooManyRequests:
 		return "RESOURCE_EXHAUSTED"
+	case http.StatusServiceUnavailable:
+		return "UNAVAILABLE"
 	case http.StatusBadRequest:
 		return "INVALID_ARGUMENT"
 	default:

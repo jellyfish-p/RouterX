@@ -135,7 +135,7 @@ Recovery
 | `RequireSuperAdmin` | 已存在 | 校验超级管理员权限 |
 | `UserJwtAuthRequired` | 已存在 | 校验用户端 JWT，写入 user 上下文 |
 | `ApiKeyAuthRequired` | 已存在 | 校验 `Authorization: Bearer sk-*`、`X-Api-Key` 或 query key，写入 user/token 上下文 |
-| `RateLimit` | 基础实现 | 基于配置和 Redis 的基础限流，后续扩展更多维度和 fail-open/fail-closed 策略，语义见 `docs/POLICIES.md` |
+| `RateLimit` | 基础实现 | 基于配置和 Redis 的基础限流；外部数据库或集群模式下 Redis 限流依赖不可用会 fail-closed，语义见 `docs/POLICIES.md` |
 
 ## Handler 层设计
 
@@ -287,7 +287,7 @@ POST /v0/setup/init
 | Auth | User JWT、Admin、API Key 已接入真实校验；后续补验证码、OAuth/OIDC、多会话和登录审计 |
 | Relay | 已有 OpenAI-compatible 非流式基础链路；后续按 `docs/PROTOCOLS.md` 补流式、多协议转换矩阵、重试熔断和更完整 adapter |
 | Settings | 已有默认值写入、读写和缓存加载基础；后续补配置审计、分类校验和动态刷新策略 |
-| RateLimit | 已有基础中间件；后续补更多维度、Redis 不可用策略和指标 |
+| RateLimit | 已有基础中间件、全局/IP/Token/User/Model/Channel 维度和外部数据库模式 Redis 故障 fail-closed；后续补更多生产策略细节 |
 | Token 管理 | API Key CRUD 已注册；后续补 Redis 缓存失效、最近使用时间和更完整审计 |
 | RedemCode | 模型存在，充值码 API 尚未注册 |
 | Observability | 可配置 HTTP/Panic 结构化 JSON line 日志、基础指标和审计查询已落地；追踪、告警和更完整事件字段属于 P2 生产增强目标 |

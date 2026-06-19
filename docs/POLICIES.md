@@ -229,7 +229,7 @@ access allowed
 
 限流或预算拒绝必须返回稳定 code，并写入限流维度和 key 摘要。指标标签不得包含完整 API Key、prompt、响应正文或高基数长尾模型名。
 
-当前已实现全局、IP、API Key、用户、模型和通道六个 Redis 固定窗口维度。本地命中限流时不调用上游，并按入口协议返回兼容 429：OpenAI 为 `rate_limit_exceeded`，Anthropic 为 `rate_limit_error`，Gemini 为 `RESOURCE_EXHAUSTED`。全局、IP、Token、用户、模型和通道维度限流拒绝会写失败日志、基础 `policy_snapshot` 和 `rate_limit_snapshot` 摘要。
+当前已实现全局、IP、API Key、用户、模型和通道六个 Redis 固定窗口维度。本地命中限流时不调用上游，并按入口协议返回兼容 429：OpenAI 为 `rate_limit_exceeded`，Anthropic 为 `rate_limit_error`，Gemini 为 `RESOURCE_EXHAUSTED`。全局、IP、Token、用户、模型和通道维度限流拒绝会写失败日志、基础 `policy_snapshot` 和 `rate_limit_snapshot` 摘要；外部数据库或集群模式下 Redis 限流依赖不可用时，服务端在上游调用前返回 503 `rate_limit_unavailable`，记录 Redis 依赖不可用快照和低基数错误指标。SQLite 单镜像模式仍可在 Redis 不可用时按本地能力降级。
 
 当前自动熔断通过通道候选过滤实现：`relay.error_auto_ban=true` 时排除 `error_count >= relay.error_ban_threshold` 且仍处于 `relay.error_ban_cooldown_seconds` 冷却窗口内的通道；关闭自动熔断时仍记录错误计数，但不因阈值排除候选。冷却后的半开候选探测已落地，后台 worker 也会按 `relay.error_probe_*` 定时复测已过冷却窗口的启用通道；管理端通道响应已暴露计算型 `health_status`，后台探测结果已暴露低基数指标。当无可用候选由 `health_blocked` 造成时，失败日志会写基础 `policy_snapshot` 和 `breaker_snapshot`，记录阈值、冷却窗口和被挡通道摘要。
 

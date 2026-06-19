@@ -51,8 +51,8 @@
 | `auth.login.oidc.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 OIDC 已绑定身份登录和绑定入口 |
 | `auth.register.enabled` | `auth` | bool | `false` | 否 | hot | auth | bool |
 | `auth.register.username.enabled` | `auth` | bool | `true` | 否 | hot | auth | bool |
-| `auth.register.email.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前注册接口暂未使用 |
-| `auth.register.phone.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前注册接口暂未使用 |
+| `auth.register.email.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 `register_method=email` 自助注册入口 |
+| `auth.register.phone.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 `register_method=phone` 自助注册入口 |
 | `auth.register.oauth.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 OAuth 首次登录是否可进入补齐注册 |
 | `auth.register.oidc.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 OIDC 首次登录是否可进入补齐注册 |
 | `auth.register.captcha.required` | `auth` | bool | `true` | 否 | hot | auth | bool；当前无验证码请求时 fail-closed |

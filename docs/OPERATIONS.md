@@ -302,7 +302,7 @@ volumes:
 | `routerx_log_db_configured` | gauge | 独立日志库配置状态 |
 | `routerx_log_db_up` | gauge | 日志存储 ping 状态 |
 | `routerx_log_replication_outbox_items` | gauge | 日志补写 outbox 当前状态计数 |
-| `routerx_redis_errors_total` | counter | Redis 错误数，当前使用 `operation=ping` 标记健康探测失败 |
+| `routerx_redis_errors_total` | counter | Redis 错误数，当前使用 `operation=ping|rate_limit_required|rate_limit_incr|rate_limit_expire` 标记健康探测和限流依赖失败 |
 | `routerx_db_errors_total` | counter | DB 错误数，当前使用 `operation=ping|log_ping|migration_status` 标记主库、日志库和迁移状态读取失败 |
 
 ## 健康检查
@@ -402,7 +402,7 @@ Redis 失败处理：
 | 故障 | 处理 |
 |------|------|
 | DB 不可用 | 服务启动失败；运行中返回 500/503，触发告警 |
-| Redis 不可用 | SQLite 单镜像可降级；外部数据库或集群模式应不就绪，关键限流 fail-closed |
+| Redis 不可用 | SQLite 单镜像可降级；外部数据库或集群模式应不就绪；关键限流在请求期返回 `rate_limit_unavailable` 并 fail-closed |
 | 下游 401/403 | 标记通道配置错误，不重试，通知管理员 |
 | 下游 429 | 可切换其他通道；增加通道错误统计 |
 | 下游 5xx | 非流式可重试其他通道；流式已输出则结束并记录错误 |

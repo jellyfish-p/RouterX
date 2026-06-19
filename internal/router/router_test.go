@@ -12562,6 +12562,140 @@ func TestRateLimitUsesSettingsAndEntryProtocolErrorShape(t *testing.T) {
 	}
 }
 
+func TestRateLimitRedisUnavailableFailsClosedInExternalDatabaseMode(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("SQL_DSN", "postgres://routerx:secret@db.example/routerx?sslmode=disable")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-rate-limit-redis","object":"chat.completion","model":"gpt-rate-limit-redis","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"observability.metrics_enabled":  "true",
+		"rate_limit.global_per_min":      "0",
+		"rate_limit.per_ip_per_min":      "0",
+		"rate_limit.per_token_per_min":   "1",
+		"rate_limit.per_user_per_min":    "0",
+		"rate_limit.per_model_per_min":   "0",
+		"rate_limit.per_channel_per_min": "0",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "redis-unavailable-limited",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "redis-unavailable",
+		"models":   "gpt-rate-limit-redis",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	brokenRedis := redis.NewClient(&redis.Options{
+		Addr:            "127.0.0.1:1",
+		Protocol:        2,
+		DisableIdentity: true,
+		DialTimeout:     20 * time.Millisecond,
+		ReadTimeout:     20 * time.Millisecond,
+		WriteTimeout:    20 * time.Millisecond,
+		PoolSize:        1,
+	})
+	oldRDB := internal.RDB
+	internal.RDB = brokenRedis
+	t.Cleanup(func() {
+		_ = brokenRedis.Close()
+		internal.RDB = oldRDB
+	})
+
+	body := map[string]interface{}{
+		"model": "gpt-rate-limit-redis",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	resp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	respBody := resp.Body.String()
+	if resp.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(respBody, `"type":"server_error"`) ||
+		!strings.Contains(respBody, `"code":"rate_limit_unavailable"`) ||
+		strings.Contains(respBody, "127.0.0.1") {
+		t.Fatalf("Redis rate limit failure should fail closed with sanitized OpenAI error, got %d %s", resp.Code, respBody)
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("Redis rate limit failure should reject before upstream, got %d upstream calls", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 50 || storedToken.LastErrorCode != "rate_limit_unavailable" {
+		t.Fatalf("failed closed request should not deduct quota and should update last error code, got quota=%d last_error=%q", storedToken.RemainQuota, storedToken.LastErrorCode)
+	}
+	var failedLog model.Log
+	if err := internal.DB.Where("status = ? AND token_id = ? AND error_code = ?", common.LogStatusFailed, tokenPayload.Data.ID, "rate_limit_unavailable").First(&failedLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failedLog.ErrorSource != common.LogErrorSourceSystem || strings.Contains(failedLog.ErrorMsg, "127.0.0.1") {
+		t.Fatalf("Redis rate limit log should be system-sourced and sanitized, got %+v", failedLog)
+	}
+	var policySnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
+		t.Fatalf("Redis rate limit failure should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
+	}
+	rateLimitSnapshot, ok := policySnapshot["rate_limit_snapshot"].(map[string]interface{})
+	if !ok ||
+		policySnapshot["reject_code"] != "rate_limit_unavailable" ||
+		rateLimitSnapshot["dimension"] != "token" ||
+		rateLimitSnapshot["dependency"] != "redis" ||
+		rateLimitSnapshot["decision"] != "deny" ||
+		rateLimitSnapshot["unavailable"] != true {
+		t.Fatalf("unexpected Redis unavailable rate limit snapshot: %+v", policySnapshot)
+	}
+	metricsResp := performJSON(r, http.MethodGet, "/metrics", "", nil)
+	metricsBody := metricsResp.Body.String()
+	if metricsResp.Code != http.StatusOK || !strings.Contains(metricsBody, `routerx_redis_errors_total{operation="rate_limit_incr"} 1`) {
+		t.Fatalf("metrics should expose Redis rate limit increment failures, got %d %s", metricsResp.Code, metricsBody)
+	}
+}
+
 func TestRateLimitGlobalAndIPWriteSnapshotDetails(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

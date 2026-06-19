@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -41,6 +42,17 @@ func RecordDBError(operation string) {
 // RecordRedisError increments the Redis error counter for the given operation.
 func RecordRedisError(operation string) {
 	recordInfrastructureError("redis", operation)
+}
+
+// RedisRequiredForCurrentMode captures the production safety boundary shared by
+// readiness checks and request-time controls: external SQL backends need Redis
+// for cross-instance caches and critical fixed-window limits.
+func RedisRequiredForCurrentMode() bool {
+	dsn := strings.TrimSpace(os.Getenv("SQL_DSN"))
+	if dsn == "" || strings.HasPrefix(dsn, "sqlite://") || strings.HasPrefix(dsn, "file:") {
+		return false
+	}
+	return true
 }
 
 // InfrastructureErrorMetricsSnapshot returns sorted copies for Prometheus rendering.

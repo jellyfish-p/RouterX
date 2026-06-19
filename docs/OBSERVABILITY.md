@@ -211,7 +211,7 @@
 | `routerx_log_db_up` | gauge | 无 | 日志存储 ping 状态；未配置独立日志库时跟随主库状态 |
 | `routerx_log_replication_outbox_items` | gauge | status | 主库日志补写 outbox 当前条数；status 归一为 `pending`、`completed`、`failed` 或 `unknown` |
 | `routerx_alert_delivery_outbox_items` | gauge | status | 告警外部投递 outbox 当前条数；status 归一为 `pending`、`completed`、`failed` 或 `unknown` |
-| `routerx_redis_errors_total` | counter | operation | 当前已落地的 Redis 错误数；`operation=ping` 表示健康探测失败 |
+| `routerx_redis_errors_total` | counter | operation | 当前已落地的 Redis 错误数；`operation=ping` 表示健康探测失败，`rate_limit_required`/`rate_limit_incr`/`rate_limit_expire` 表示限流依赖失败 |
 | `routerx_db_errors_total` | counter | operation | 当前已落地的 DB 错误数；`operation=ping`、`log_ping`、`migration_status` 分别表示主库 ping、日志库 ping 和迁移状态读取失败 |
 | `routerx_ready` | gauge | reason | 就绪状态，1 为 ready，0 为 not ready |
 

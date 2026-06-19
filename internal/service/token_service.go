@@ -1233,6 +1233,24 @@ func (s *TokenService) RecordRateLimitDeniedPolicyLog(token *model.Token, dimens
 	s.recordScopeDeniedLog(token, dimension+" rate limit exceeded", clientIP, userAgent, requestID, buildRelayRateLimitDenySnapshot(ctx, token, dimension, limit, current, scopeResult))
 }
 
+func (s *TokenService) RecordRateLimitUnavailablePolicyLog(token *model.Token, dimension, reason, clientIP, userAgent, requestID string) {
+	dimension = strings.ToLower(strings.TrimSpace(dimension))
+	if dimension == "" {
+		dimension = "redis"
+	}
+	scopeResult := map[string]interface{}{
+		"api_type":                   "not_evaluated",
+		"model":                      "not_evaluated",
+		"channel_group":              "not_evaluated",
+		"rate_limit":                 "error",
+		"rate_limit_dimension":       dimension,
+		"rate_limit_dependency":      "redis",
+		"rate_limit_dependency_mode": "required",
+	}
+	ctx := ContextWithRelayRequestID(context.Background(), requestID)
+	s.recordScopeDeniedLog(token, "rate limit unavailable: "+strings.TrimSpace(reason), clientIP, userAgent, requestID, buildRelayRateLimitUnavailableSnapshot(ctx, token, dimension, reason, scopeResult))
+}
+
 func (s *TokenService) recordScopeDeniedLog(token *model.Token, errorMsg, clientIP, userAgent, requestID, policySnapshot string) {
 	if token == nil {
 		return

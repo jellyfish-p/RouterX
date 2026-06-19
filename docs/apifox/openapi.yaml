@@ -91,7 +91,7 @@ paths:
     get:
       tags: [Health]
       summary: Prometheus 指标
-      description: 默认由 observability.metrics_enabled=false 关闭；启用后返回 Prometheus text/plain，包含实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、日志补写 outbox 状态、支付、审计和 DB/Redis/日志库基础指标。routerx_db_errors_total/routerx_redis_errors_total 使用 operation 标签标记 ping、log_ping 或 migration_status 等低基数失败点。routerx_api_key_quota_remaining 只统计当前可用且未过期的有限额度 API Key，避免把无限额度 Key 的 -1 混入剩余额度告警。
+      description: 默认由 observability.metrics_enabled=false 关闭；启用后返回 Prometheus text/plain，包含实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、日志补写 outbox 状态、支付、审计和 DB/Redis/日志库基础指标。routerx_db_errors_total/routerx_redis_errors_total 使用 operation 标签标记 ping、log_ping、migration_status、rate_limit_required、rate_limit_incr 或 rate_limit_expire 等低基数失败点。routerx_api_key_quota_remaining 只统计当前可用且未过期的有限额度 API Key，避免把无限额度 Key 的 -1 混入剩余额度告警。
       responses:
         "200":
           description: Prometheus text format metrics.
@@ -173,6 +173,7 @@ paths:
                   # HELP routerx_redis_errors_total Redis errors by operation.
                   # TYPE routerx_redis_errors_total counter
                   routerx_redis_errors_total{operation="ping"} 1
+                  routerx_redis_errors_total{operation="rate_limit_incr"} 1
                   # HELP routerx_log_db_configured Independent log database configuration status.
                   # TYPE routerx_log_db_configured gauge
                   routerx_log_db_configured 1
@@ -3182,7 +3183,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: OpenAI Chat Completions 转发
-      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。请求体必须包含非空数组 messages，缺少、null、空数组或非数组时返回 invalid_chat_messages 且不调用上游。本地限流读取 rate_limit.*，覆盖全局、IP、Token、用户、模型和通道分钟窗口；API Key max_concurrency 可限制同一 Key 同时在途请求，rpm/tpm 可限制同一 Key 每分钟请求和模型 token，命中时返回 rate_limit_exceeded 且不调用上游。通道候选读取 relay.error_auto_ban、relay.error_ban_threshold 和 relay.error_ban_cooldown_seconds，自动排除达到阈值且仍在冷却窗口内的故障通道，冷却后可重新进入候选作为半开探测。非流式在 relay.retry_count > 0 时会对 relay.retry_on_status 白名单状态码（默认 429/500/502/503/504）、网络错误、超时和响应读取失败换候选通道；400/401/403 默认不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
+      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。请求体必须包含非空数组 messages，缺少、null、空数组或非数组时返回 invalid_chat_messages 且不调用上游。本地限流读取 rate_limit.*，覆盖全局、IP、Token、用户、模型和通道分钟窗口；API Key max_concurrency 可限制同一 Key 同时在途请求，rpm/tpm 可限制同一 Key 每分钟请求和模型 token，命中时返回 rate_limit_exceeded 且不调用上游；外部数据库或集群模式下 Redis 限流依赖不可用时返回 503 rate_limit_unavailable 且不调用上游。通道候选读取 relay.error_auto_ban、relay.error_ban_threshold 和 relay.error_ban_cooldown_seconds，自动排除达到阈值且仍在冷却窗口内的故障通道，冷却后可重新进入候选作为半开探测。非流式在 relay.retry_count > 0 时会对 relay.retry_on_status 白名单状态码（默认 429/500/502/503/504）、网络错误、超时和响应读取失败换候选通道；400/401/403 默认不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -3228,6 +3229,12 @@ paths:
                 $ref: "#/components/schemas/OpenAIErrorEnvelope"
         "429":
           description: 余额不足、API Key 日/月预算达到上限、API Key 并发或 RPM/TPM 上限、本地限流或上游限流。常见 code 包括 insufficient_quota、rate_limit_exceeded、upstream_429。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorEnvelope"
+        "503":
+          description: 外部数据库或集群模式下 Redis 限流依赖不可用，本地 fail-closed 且不调用上游；code 为 rate_limit_unavailable。
           content:
             application/json:
               schema:
@@ -4623,19 +4630,19 @@ components:
           schema:
             $ref: "#/components/schemas/StandardResponse"
     OpenAIError:
-      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；Chat messages 缺失或不是非空数组时返回 400 invalid_chat_messages；Images prompt 缺失或为空时返回 400 invalid_image_prompt，n 非正整数时返回 400 invalid_image_count，size 超出基础边界时返回 400 invalid_image_size；Audio Speech input/voice/response_format 超出基础契约时返回 400 invalid_audio_speech_input、invalid_audio_speech_voice 或 invalid_audio_response_format；Audio Transcriptions/Translations response_format 超出基础枚举时返回 400 invalid_audio_response_format；Moderations input 超出基础契约时返回 400 invalid_moderation_input；OpenAI-compatible multipart 缺少必填 image/file 文件字段时返回 400 multipart_file_required，单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
+      description: OpenAI-compatible /v1 错误。本地限流命中返回 rate_limit_error + rate_limit_exceeded；外部数据库或集群模式下 Redis 限流依赖不可用返回 503 server_error + rate_limit_unavailable；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；Chat messages 缺失或不是非空数组时返回 400 invalid_chat_messages；Images prompt 缺失或为空时返回 400 invalid_image_prompt，n 非正整数时返回 400 invalid_image_count，size 超出基础边界时返回 400 invalid_image_size；Audio Speech input/voice/response_format 超出基础契约时返回 400 invalid_audio_speech_input、invalid_audio_speech_voice 或 invalid_audio_response_format；Audio Transcriptions/Translations response_format 超出基础枚举时返回 400 invalid_audio_response_format；Moderations input 超出基础契约时返回 400 invalid_moderation_input；OpenAI-compatible multipart 缺少必填 image/file 文件字段时返回 400 multipart_file_required，单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/OpenAIErrorEnvelope"
     AnthropicError:
-      description: Anthropic-compatible 错误。本地 JSON 解析失败语义为 invalid_json，缺少 model 语义为 model_required；本地限流返回 type=rate_limit_error；请求体超过 relay.max_request_body_bytes 时返回 413 invalid_request_error；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_error。
+      description: Anthropic-compatible 错误。本地 JSON 解析失败语义为 invalid_json，缺少 model 语义为 model_required；本地限流命中返回 type=rate_limit_error，Redis 限流依赖不可用时返回 503 type=server_error；请求体超过 relay.max_request_body_bytes 时返回 413 invalid_request_error；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_error。
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/AnthropicErrorEnvelope"
     GeminiError:
-      description: Gemini-compatible 错误。本地 JSON 解析失败语义为 invalid_json，缺少 model 语义为 model_required，embedding 请求结构错误语义为 invalid_gemini_embedding_request；本地限流返回 status=RESOURCE_EXHAUSTED；请求体超过 relay.max_request_body_bytes 时返回 413 RESOURCE_EXHAUSTED；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 UNAVAILABLE。
+      description: Gemini-compatible 错误。本地 JSON 解析失败语义为 invalid_json，缺少 model 语义为 model_required，embedding 请求结构错误语义为 invalid_gemini_embedding_request；本地限流命中返回 status=RESOURCE_EXHAUSTED，Redis 限流依赖不可用时返回 503 status=UNAVAILABLE；请求体超过 relay.max_request_body_bytes 时返回 413 RESOURCE_EXHAUSTED；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 UNAVAILABLE。
       content:
         application/json:
           schema:
@@ -6598,7 +6605,7 @@ components:
           description: 脱敏请求快照 JSON 字符串；当前包含 request_id、入口协议、API 类型、请求模型、stream 标记和安全路由摘要。
         policy_snapshot:
           type: string
-          description: 脱敏策略快照 JSON 字符串；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 no_available_channel 拒绝、breaker_snapshot，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝摘要和 rate_limit_snapshot。
+          description: 脱敏策略快照 JSON 字符串；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 no_available_channel 拒绝、breaker_snapshot，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝或依赖故障摘要和 rate_limit_snapshot。
         route_snapshot:
           type: string
           description: 脱敏路由快照 JSON 字符串；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要。

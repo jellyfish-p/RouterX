@@ -325,6 +325,25 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 - 本地限流和上游限流 code 可区分。
 - 通道健康指标能体现限流增长。
 
+### RB-102A 本地返回 `rate_limit_unavailable`
+
+症状：
+
+- `/v1/*` 返回 503。
+- OpenAI-compatible code 为 `rate_limit_unavailable`，Anthropic/Gemini 为对应协议的服务不可用外形。
+
+检查顺序：
+
+1. 检查当前是否为外部数据库或集群模式；SQLite 单镜像通常可降级运行。
+2. 检查 `/ready` 是否因 Redis 返回 not ready。
+3. 检查 `routerx_redis_errors_total{operation="rate_limit_required|rate_limit_incr|rate_limit_expire"}`。
+4. 恢复 Redis 连接后重试同一请求。
+
+验收信号：
+
+- 故障期间请求未调用上游、未扣模型消费额度。
+- 调用日志写入 `error_code=rate_limit_unavailable`，且 `policy_snapshot.rate_limit_snapshot.dependency=redis`。
+
 ### RB-103 下游 5xx 或超时
 
 症状：

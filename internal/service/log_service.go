@@ -273,6 +273,8 @@ func normalizeLogErrorCode(log *model.Log) string {
 		return "unknown_error"
 	case strings.Contains(msg, "insufficient quota"):
 		return "insufficient_quota"
+	case strings.Contains(msg, "rate limit unavailable"):
+		return "rate_limit_unavailable"
 	case strings.Contains(msg, "rpm limit") || strings.Contains(msg, "tpm limit") || strings.Contains(msg, "concurrency limit"):
 		return "rate_limit_exceeded"
 	case strings.Contains(msg, "timeout"):
@@ -318,6 +320,8 @@ func normalizeLogErrorSource(log *model.Log) string {
 		return common.LogErrorSourceUpstream
 	case code == "insufficient_quota" || code == "rate_limit_exceeded":
 		return common.LogErrorSourceQuota
+	case code == "rate_limit_unavailable":
+		return common.LogErrorSourceSystem
 	case code == "no_available_channel" || code == "route_forbidden":
 		return common.LogErrorSourceRoute
 	case code == "unsupported_api_type":
