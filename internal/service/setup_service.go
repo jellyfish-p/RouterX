@@ -173,6 +173,8 @@ func buildDefaultSettings() map[string]map[string]string {
 			"auth.register.username.enabled":       "true",
 			"auth.register.email.enabled":          "false",
 			"auth.register.phone.enabled":          "false",
+			"auth.register.oauth.enabled":          "false",
+			"auth.register.oidc.enabled":           "false",
 			"auth.register.captcha.required":       "true",
 			"auth.register.default_quota":          "0",
 			"auth.register.default_group_id":       "default",

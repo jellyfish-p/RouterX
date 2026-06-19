@@ -1,6 +1,9 @@
 package service
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -17,15 +20,17 @@ import (
 )
 
 var (
-	ErrSelfRegistrationDisabled     = errors.New("self registration is disabled")
-	ErrUsernameRegistrationDisabled = errors.New("username registration is disabled")
-	ErrRegistrationCaptchaRequired  = errors.New("registration captcha is required")
-	ErrOAuthProviderDisabled        = errors.New("oauth provider is disabled")
-	ErrOAuthInvalidCallback         = errors.New("oauth callback is invalid")
-	ErrOAuthIdentityNotBound        = errors.New("oauth identity is not bound")
-	ErrOAuthIdentityAlreadyBound    = errors.New("oauth identity is already bound")
-	ErrUserIdentityNotFound         = errors.New("user identity is not found")
-	ErrUserIdentityPrimary          = errors.New("primary username identity cannot be unbound")
+	ErrSelfRegistrationDisabled       = errors.New("self registration is disabled")
+	ErrUsernameRegistrationDisabled   = errors.New("username registration is disabled")
+	ErrRegistrationCaptchaRequired    = errors.New("registration captcha is required")
+	ErrOAuthProviderDisabled          = errors.New("oauth provider is disabled")
+	ErrOAuthInvalidCallback           = errors.New("oauth callback is invalid")
+	ErrOAuthIdentityNotBound          = errors.New("oauth identity is not bound")
+	ErrOAuthIdentityAlreadyBound      = errors.New("oauth identity is already bound")
+	ErrOAuthRegistrationDisabled      = errors.New("oauth registration is disabled")
+	ErrOAuthRegistrationTicketInvalid = errors.New("oauth registration ticket is invalid")
+	ErrUserIdentityNotFound           = errors.New("user identity is not found")
+	ErrUserIdentityPrimary            = errors.New("primary username identity cannot be unbound")
 )
 
 type AuthService struct{}
@@ -39,6 +44,26 @@ type RegisterResult struct {
 	Recovered bool
 }
 
+type OAuthCallbackResult struct {
+	User                 *model.User
+	Token                string
+	RegistrationRequired *OAuthRegistrationChallenge
+}
+
+type OAuthRegistrationChallenge struct {
+	Provider          string
+	Ticket            string
+	SuggestedUsername string
+	Email             string
+}
+
+type OAuthRegistrationResult struct {
+	User      *model.User
+	Token     string
+	Identity  *model.UserIdentity
+	Recovered bool
+}
+
 type oauthProviderConfig struct {
 	Provider     string
 	ClientID     string
@@ -47,6 +72,17 @@ type oauthProviderConfig struct {
 	TokenURL     string
 	UserinfoURL  string
 	Scopes       string
+}
+
+type oauthRegistrationTicketClaims struct {
+	Type              string `json:"typ"`
+	Provider          string `json:"provider"`
+	Identifier        string `json:"identifier"`
+	Email             string `json:"email,omitempty"`
+	SuggestedUsername string `json:"suggested_username,omitempty"`
+	DisplayName       string `json:"display_name,omitempty"`
+	ExpiresAt         int64  `json:"exp"`
+	IssuedAt          int64  `json:"iat"`
 }
 
 // Register 用户注册。
@@ -72,80 +108,87 @@ func (s *AuthService) Register(username, password, displayName, email string) (*
 
 	var result *RegisterResult
 	err := internal.DB.Transaction(func(tx *gorm.DB) error {
-		usernameIdentity, err := findIdentityForRecovery(tx, model.UserIdentityMethodUsername, username)
+		created, err := registerPasswordUserTx(tx, username, password, displayName, email)
 		if err != nil {
 			return err
 		}
-		if usernameIdentity != nil {
-			if usernameIdentity.User == nil || usernameIdentity.User.Role != common.RoleUser || usernameIdentity.User.Status != common.UserStatusDisabled {
-				return errors.New("username already exists")
-			}
-			recovered, err := recoverRegisteredUser(tx, usernameIdentity, password, displayName, email)
-			if err != nil {
-				return err
-			}
-			result = &RegisterResult{User: recovered, Recovered: true}
-			return nil
-		}
-		if email != "" {
-			if exists, err := identityExists(tx, model.UserIdentityMethodEmail, email); err != nil {
-				return err
-			} else if exists {
-				return errors.New("email already exists")
-			}
-		}
-		quota := registrationDefaultQuota()
-		groupID, err := registrationDefaultGroupID(tx)
-		if err != nil {
-			return err
-		}
-
-		hash, err := common.HashPassword(password)
-		if err != nil {
-			return err
-		}
-		usernamePtr := username
-		var emailPtr *string
-		if email != "" {
-			emailPtr = &email
-		}
-		u := &model.User{
-			Username:    &usernamePtr,
-			DisplayName: displayName,
-			Email:       emailPtr,
-			Role:        common.RoleUser,
-			Quota:       quota,
-			Status:      common.UserStatusEnabled,
-			GroupID:     groupID,
-		}
-		if err := tx.Create(u).Error; err != nil {
-			return err
-		}
-		now := time.Now()
-		identities := []model.UserIdentity{{
-			UserID:       u.ID,
-			Method:       model.UserIdentityMethodUsername,
-			Provider:     model.UserIdentityProviderLocal,
-			Identifier:   username,
-			PasswordHash: hash,
-			VerifiedAt:   &now,
-		}}
-		if email != "" {
-			identities = append(identities, model.UserIdentity{
-				UserID:     u.ID,
-				Method:     model.UserIdentityMethodEmail,
-				Provider:   model.UserIdentityProviderLocal,
-				Identifier: email,
-				VerifiedAt: &now,
-			})
-		}
-		if err := tx.Create(&identities).Error; err != nil {
-			return err
-		}
-		result = &RegisterResult{User: u}
+		result = created
 		return nil
 	})
 	return result, err
+}
+
+func registerPasswordUserTx(tx *gorm.DB, username, password, displayName, email string) (*RegisterResult, error) {
+	usernameIdentity, err := findIdentityForRecovery(tx, model.UserIdentityMethodUsername, username)
+	if err != nil {
+		return nil, err
+	}
+	if usernameIdentity != nil {
+		if usernameIdentity.User == nil || usernameIdentity.User.Role != common.RoleUser || usernameIdentity.User.Status != common.UserStatusDisabled {
+			return nil, errors.New("username already exists")
+		}
+		recovered, err := recoverRegisteredUser(tx, usernameIdentity, password, displayName, email)
+		if err != nil {
+			return nil, err
+		}
+		return &RegisterResult{User: recovered, Recovered: true}, nil
+	}
+	if email != "" {
+		if exists, err := identityExists(tx, model.UserIdentityMethodEmail, email); err != nil {
+			return nil, err
+		} else if exists {
+			return nil, errors.New("email already exists")
+		}
+	}
+	quota := registrationDefaultQuota()
+	groupID, err := registrationDefaultGroupID(tx)
+	if err != nil {
+		return nil, err
+	}
+
+	hash, err := common.HashPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	usernamePtr := username
+	var emailPtr *string
+	if email != "" {
+		emailPtr = &email
+	}
+	u := &model.User{
+		Username:    &usernamePtr,
+		DisplayName: displayName,
+		Email:       emailPtr,
+		Role:        common.RoleUser,
+		Quota:       quota,
+		Status:      common.UserStatusEnabled,
+		GroupID:     groupID,
+	}
+	if err := tx.Create(u).Error; err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	identities := []model.UserIdentity{{
+		UserID:       u.ID,
+		Method:       model.UserIdentityMethodUsername,
+		Provider:     model.UserIdentityProviderLocal,
+		Identifier:   username,
+		PasswordHash: hash,
+		VerifiedAt:   &now,
+	}}
+	if email != "" {
+		identities = append(identities, model.UserIdentity{
+			UserID:     u.ID,
+			Method:     model.UserIdentityMethodEmail,
+			Provider:   model.UserIdentityProviderLocal,
+			Identifier: email,
+			VerifiedAt: &now,
+		})
+	}
+	if err := tx.Create(&identities).Error; err != nil {
+		return nil, err
+	}
+	return &RegisterResult{User: u}, nil
 }
 
 func findIdentityForRecovery(tx *gorm.DB, method, identifier string) (*model.UserIdentity, error) {
@@ -347,48 +390,171 @@ func (s *AuthService) OAuthLoginURL(provider, state, redirectURI string) (string
 	return parsed.String(), nil
 }
 
-// OAuthCallbackLogin exchanges an OAuth code for userinfo and logs in an
-// already-bound oauth identity. Matching email alone never creates a binding.
-func (s *AuthService) OAuthCallbackLogin(provider, code, redirectURI string) (*model.User, string, error) {
+// OAuthCallbackLogin exchanges an OAuth code for userinfo. It logs in an
+// already-bound oauth identity, or returns a signed registration challenge when
+// first-time OAuth registration is explicitly enabled. Matching email alone
+// never creates a binding.
+func (s *AuthService) OAuthCallbackLogin(provider, code, redirectURI string) (*OAuthCallbackResult, error) {
 	cfg, err := loadOAuthProviderConfig(provider)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if strings.TrimSpace(code) == "" {
-		return nil, "", ErrOAuthInvalidCallback
+		return nil, ErrOAuthInvalidCallback
 	}
 	accessToken, err := exchangeOAuthCode(cfg, code, redirectURI)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	userInfo, err := fetchOAuthUserinfo(cfg, accessToken)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	identifier := oauthStableIdentifier(userInfo)
 	if identifier == "" {
-		return nil, "", ErrOAuthInvalidCallback
+		return nil, ErrOAuthInvalidCallback
 	}
 	var identity model.UserIdentity
 	err = internal.DB.Preload("User").
 		Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOAuth, cfg.Provider, identifier).
 		First(&identity).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, "", ErrOAuthIdentityNotBound
+		challenge, challengeErr := s.oauthRegistrationChallenge(cfg, userInfo, identifier)
+		if challengeErr != nil {
+			return nil, challengeErr
+		}
+		return &OAuthCallbackResult{RegistrationRequired: challenge}, nil
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if identity.User == nil || identity.User.Status != common.UserStatusEnabled {
-		return nil, "", ErrOAuthIdentityNotBound
+		return nil, ErrOAuthIdentityNotBound
 	}
 	now := time.Now()
 	_ = internal.DB.Model(&identity).Update("last_used_at", &now).Error
 	token, err := signUserLoginToken(identity.User.ID, identity.User.Role)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return identity.User, token, nil
+	return &OAuthCallbackResult{User: identity.User, Token: token}, nil
+}
+
+func (s *AuthService) oauthRegistrationChallenge(cfg oauthProviderConfig, userInfo map[string]interface{}, identifier string) (*OAuthRegistrationChallenge, error) {
+	if err := oauthRegistrationPolicyError(cfg.Provider); err != nil {
+		if errors.Is(err, ErrSelfRegistrationDisabled) ||
+			errors.Is(err, ErrUsernameRegistrationDisabled) ||
+			errors.Is(err, ErrRegistrationCaptchaRequired) ||
+			errors.Is(err, ErrOAuthRegistrationDisabled) {
+			return nil, ErrOAuthIdentityNotBound
+		}
+		return nil, err
+	}
+	email := normalizeEmail(oauthUserInfoString(userInfo, "email"))
+	suggestedUsername := suggestedOAuthUsername(cfg.Provider, userInfo, email, identifier)
+	displayName := oauthUserInfoString(userInfo, "name", "display_name")
+	if displayName == "" {
+		displayName = suggestedUsername
+	}
+	claims := oauthRegistrationTicketClaims{
+		Type:              "oauth_register",
+		Provider:          cfg.Provider,
+		Identifier:        identifier,
+		Email:             email,
+		SuggestedUsername: suggestedUsername,
+		DisplayName:       displayName,
+		IssuedAt:          time.Now().Unix(),
+		ExpiresAt:         time.Now().Add(10 * time.Minute).Unix(),
+	}
+	ticket, err := signOAuthRegistrationTicket(claims)
+	if err != nil {
+		return nil, err
+	}
+	return &OAuthRegistrationChallenge{
+		Provider:          cfg.Provider,
+		Ticket:            ticket,
+		SuggestedUsername: suggestedUsername,
+		Email:             email,
+	}, nil
+}
+
+func (s *AuthService) OAuthRegister(provider, ticket, username, password, displayName, email string) (*OAuthRegistrationResult, error) {
+	claims, err := parseOAuthRegistrationTicket(ticket)
+	if err != nil {
+		return nil, err
+	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" || claims.Provider != provider {
+		return nil, ErrOAuthRegistrationTicketInvalid
+	}
+	if err := oauthRegistrationPolicyError(provider); err != nil {
+		return nil, err
+	}
+	username = strings.TrimSpace(username)
+	email = normalizeEmail(email)
+	if claims.Email != "" {
+		email = claims.Email
+	}
+	if displayName = strings.TrimSpace(displayName); displayName == "" {
+		displayName = strings.TrimSpace(claims.DisplayName)
+	}
+	if displayName == "" {
+		displayName = username
+	}
+	if username == "" || password == "" {
+		return nil, errors.New("username and password are required")
+	}
+	if len(password) < 6 {
+		return nil, errors.New("password length must be at least 6")
+	}
+
+	var result *OAuthRegistrationResult
+	err = internal.DB.Transaction(func(tx *gorm.DB) error {
+		var existing model.UserIdentity
+		err := tx.Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOAuth, claims.Provider, claims.Identifier).First(&existing).Error
+		switch {
+		case err == nil:
+			return ErrOAuthIdentityAlreadyBound
+		case errors.Is(err, gorm.ErrRecordNotFound):
+		default:
+			return err
+		}
+
+		registered, err := registerPasswordUserTx(tx, username, password, displayName, email)
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		identity := model.UserIdentity{
+			UserID:     registered.User.ID,
+			Method:     model.UserIdentityMethodOAuth,
+			Provider:   claims.Provider,
+			Identifier: claims.Identifier,
+			VerifiedAt: &now,
+			LastUsedAt: &now,
+		}
+		if err := tx.Create(&identity).Error; err != nil {
+			return err
+		}
+		result = &OAuthRegistrationResult{
+			User:      registered.User,
+			Identity:  &identity,
+			Recovered: registered.Recovered,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.User == nil {
+		return nil, ErrOAuthInvalidCallback
+	}
+	token, err := signUserLoginToken(result.User.ID, result.User.Role)
+	if err != nil {
+		return nil, err
+	}
+	result.Token = token
+	return result, nil
 }
 
 // OAuthBindCallback binds a provider subject to an existing logged-in user.
@@ -527,6 +693,75 @@ func signUserLoginToken(userID uint, role int) (string, error) {
 	return common.SignUserJWT(userID, role, sessionID, time.Duration(expireHours)*time.Hour, secret)
 }
 
+func signOAuthRegistrationTicket(claims oauthRegistrationTicketClaims) (string, error) {
+	secret, err := GetJWTSecret()
+	if err != nil {
+		return "", err
+	}
+	headerJSON, err := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
+	if err != nil {
+		return "", err
+	}
+	claimsJSON, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	encodedHeader := base64.RawURLEncoding.EncodeToString(headerJSON)
+	encodedClaims := base64.RawURLEncoding.EncodeToString(claimsJSON)
+	signingInput := encodedHeader + "." + encodedClaims
+	return signingInput + "." + signOAuthRegistrationInput(signingInput, secret), nil
+}
+
+func parseOAuthRegistrationTicket(ticket string) (*oauthRegistrationTicketClaims, error) {
+	secret, err := GetJWTSecret()
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(strings.TrimSpace(ticket), ".")
+	if len(parts) != 3 {
+		return nil, ErrOAuthRegistrationTicketInvalid
+	}
+	signingInput := parts[0] + "." + parts[1]
+	expected := signOAuthRegistrationInput(signingInput, secret)
+	if !hmac.Equal([]byte(expected), []byte(parts[2])) {
+		return nil, ErrOAuthRegistrationTicketInvalid
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, ErrOAuthRegistrationTicketInvalid
+	}
+	var claims oauthRegistrationTicketClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, ErrOAuthRegistrationTicketInvalid
+	}
+	if claims.Type != "oauth_register" ||
+		claims.Provider == "" ||
+		claims.Identifier == "" ||
+		claims.ExpiresAt <= time.Now().Unix() {
+		return nil, ErrOAuthRegistrationTicketInvalid
+	}
+	return &claims, nil
+}
+
+func signOAuthRegistrationInput(input, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(input))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func oauthRegistrationPolicyError(provider string) error {
+	if err := registrationPolicyError(); err != nil {
+		return err
+	}
+	if !loginBoolSettingDefault("auth.register.oauth.enabled", false) {
+		return ErrOAuthRegistrationDisabled
+	}
+	if !loginBoolSettingDefault("oauth."+provider+".register_enabled", false) {
+		return ErrOAuthRegistrationDisabled
+	}
+	return nil
+}
+
 func loadOAuthProviderConfig(provider string) (oauthProviderConfig, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if !validExternalProviderName(provider) {
@@ -642,6 +877,51 @@ func oauthStableIdentifier(payload map[string]interface{}) string {
 		}
 	}
 	return ""
+}
+
+func oauthUserInfoString(payload map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := payload[key].(string); ok {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+func suggestedOAuthUsername(provider string, payload map[string]interface{}, email, identifier string) string {
+	for _, candidate := range []string{
+		oauthUserInfoString(payload, "login", "preferred_username", "nickname", "username"),
+		strings.Split(email, "@")[0],
+		provider + "-" + common.SHA256Hex(identifier)[:8],
+	} {
+		if normalized := normalizeOAuthUsername(candidate); len(normalized) >= 3 {
+			return normalized
+		}
+	}
+	return "oauth-" + common.SHA256Hex(provider + ":" + identifier)[:8]
+}
+
+func normalizeOAuthUsername(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_':
+			b.WriteRune(r)
+		case r == '.' || r == ' ':
+			b.WriteRune('-')
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "-_")
 }
 
 func oauthHTTPClient() *http.Client {

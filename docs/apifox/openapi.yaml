@@ -310,8 +310,8 @@ paths:
   /v0/user/oauth/{provider}/callback:
     get:
       tags: [User Auth]
-      summary: OAuth 回调登录已绑定身份
-      description: 公开回调；校验 state Cookie 后使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。仅当 userinfo 的稳定 id/sub 已存在于 user_identities(method=oauth, provider, identifier) 且用户启用时才签发 User JWT 并写 user.login 审计；相同 email 不会自动绑定或接管已有账号。首次 OAuth 注册、注销账号恢复和 OIDC ID Token 校验仍属后续增强。
+      summary: OAuth 回调登录或返回注册票据
+      description: 公开回调；校验 state Cookie 后使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。userinfo 的稳定 id/sub 已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定时不会按 email 自动绑定或接管已有账号。只有全局注册、用户名注册、OAuth 注册和 oauth.{provider}.register_enabled 均启用且验证码策略允许时，才返回 registration_required=true 和短期 registration_ticket，用于后续补齐用户名密码账号。
       parameters:
         - $ref: "#/components/parameters/OAuthProvider"
         - name: state
@@ -326,7 +326,7 @@ paths:
           description: OAuth provider 返回的 authorization code。
       responses:
         "200":
-          description: 已绑定 OAuth 身份登录成功。
+          description: 已绑定 OAuth 身份登录成功，或未绑定身份可继续补齐注册。
           content:
             application/json:
               schema:
@@ -335,7 +335,9 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/LoginResponse"
+                        oneOf:
+                          - $ref: "#/components/schemas/LoginResponse"
+                          - $ref: "#/components/schemas/OAuthRegistrationRequiredResponse"
         "400":
           description: state 缺失、不匹配、已过期，或回调参数无效。
           content:
@@ -350,6 +352,49 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
         "502":
           description: provider token 或 userinfo 请求失败。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+  /v0/user/oauth/{provider}/register:
+    post:
+      tags: [User Auth]
+      summary: OAuth 首次登录补齐注册
+      description: 公开入口；使用 OAuth callback 返回的短期 registration_ticket 创建本地有密码账号，并绑定 user_identities(method=oauth, provider, identifier)。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重和密码要求；成功后写 user.identity_bound 与 user.login 审计并返回 User JWT。不会根据 provider email 自动绑定已有账号。
+      parameters:
+        - $ref: "#/components/parameters/OAuthProvider"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OAuthRegisterRequest"
+      responses:
+        "200":
+          description: OAuth 首次注册成功并已登录。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: 参数无效、registration_ticket 无效或已过期，或用户名/密码/邮箱不符合要求。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "403":
+          description: 自助注册、OAuth 注册或 provider 注册开关关闭，或验证码策略阻断当前无验证码注册。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "409":
+          description: OAuth provider subject 已绑定其他或已有账号。
           content:
             application/json:
               schema:
@@ -4585,6 +4630,49 @@ components:
     RegisterRequest:
       allOf:
         - $ref: "#/components/schemas/SetupInitRequest"
+    OAuthRegistrationRequiredResponse:
+      type: object
+      properties:
+        registration_required:
+          type: boolean
+          description: 固定为 true，表示需要补齐本地账号。
+        registration_ticket:
+          type: string
+          description: 短期签名票据，用于 POST /v0/user/oauth/{provider}/register。
+        provider:
+          type: string
+          description: OAuth provider 别名。
+        suggested_username:
+          type: string
+          description: 根据 provider userinfo 生成的建议用户名，客户端可让用户修改。
+        email:
+          type: string
+          format: email
+          description: provider 返回的邮箱；不会用于自动绑定已有账号。
+    OAuthRegisterRequest:
+      type: object
+      required: [registration_ticket, username, password]
+      properties:
+        registration_ticket:
+          type: string
+          description: OAuth callback 返回的短期注册票据。
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+          description: 新本地账号用户名。
+        password:
+          type: string
+          minLength: 6
+          maxLength: 128
+          description: 新本地账号密码；RouterX 不创建无密码 OAuth 账号。
+        display_name:
+          type: string
+          description: 可选展示名，空时使用 provider 名称建议或 username。
+        email:
+          type: string
+          format: email
+          description: 可选邮箱；若票据包含 provider 邮箱，服务端优先使用票据邮箱。
     LoginRequest:
       type: object
       required: [password]

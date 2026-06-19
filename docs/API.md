@@ -757,9 +757,11 @@ Provider 退款请求：
 }
 ```
 
-OAuth 基础登录当前用于已绑定第三方身份的登录闭环。`GET /v0/user/oauth/:provider/login` 会读取 `oauth.{provider}.auth_url`、`client_id`、`client_secret`、`token_url`、`userinfo_url` 和 `scopes` 等 settings，生成 state 并写入 HttpOnly Cookie 后返回 302。`GET /v0/user/oauth/:provider/callback` 要求回调 state 与 Cookie 匹配，再用 code 换 token、拉取 userinfo，并以 userinfo 的稳定 `id` 或 `sub` 查询 `user_identities(method=oauth, provider, identifier)`。未绑定的第三方身份返回 403，即使 email 与已有账号相同也不会自动绑定或接管。
+OAuth 基础登录当前用于第三方身份登录、首次补齐注册和绑定闭环。`GET /v0/user/oauth/:provider/login` 会读取 `oauth.{provider}.auth_url`、`client_id`、`client_secret`、`token_url`、`userinfo_url` 和 `scopes` 等 settings，生成 state 并写入 HttpOnly Cookie 后返回 302。`GET /v0/user/oauth/:provider/callback` 要求回调 state 与 Cookie 匹配，再用 code 换 token、拉取 userinfo，并以 userinfo 的稳定 `id` 或 `sub` 查询 `user_identities(method=oauth, provider, identifier)`。已绑定且用户启用时直接返回 User JWT；未绑定时不会按 email 自动绑定或接管已有账号。只有当 `auth.register.enabled=true`、`auth.register.username.enabled=true`、`auth.register.oauth.enabled=true`、`oauth.{provider}.register_enabled=true` 且当前验证码策略允许时，回调才返回 `registration_required=true` 和短期 `registration_ticket`。
 
-OAuth 绑定由已登录用户通过 `GET /v0/user/oauth/:provider/bind` 发起。该接口需要 User JWT，会同时写入 state Cookie 和签名 bind Cookie；bind Cookie 用 `jwt.secret` 对 provider、state 和 user_id 签名，只用于回调时确认本次绑定由哪个本地用户发起。`GET /v0/user/oauth/:provider/bind/callback` 校验 state 和签名后，仍只使用 userinfo 的稳定 `id` 或 `sub` 创建 `user_identities(method=oauth, provider, identifier)`，不会按 email 自动绑定；同一 provider subject 已属于其他用户时返回 409。首次补齐注册、注销账号恢复和完整 OIDC 流程仍按 `docs/ACCOUNTS.md` 后续扩展。
+`POST /v0/user/oauth/:provider/register` 使用 `registration_ticket`、`username`、`password` 和可选 `display_name` 完成 OAuth 首次注册。服务端会重新校验票据签名、过期时间、provider 注册开关、用户名/邮箱去重和密码要求，在一个事务里创建本地有密码账号、`username/local`、可选 `email/local` 和 `oauth/provider/identifier` identity；成功后返回 User JWT 并写 `user.identity_bound`、`user.login` 审计。票据无效或过期返回 400，注册开关关闭或验证码策略阻断返回 403，provider subject 已被绑定返回 409。
+
+OAuth 绑定由已登录用户通过 `GET /v0/user/oauth/:provider/bind` 发起。该接口需要 User JWT，会同时写入 state Cookie 和签名 bind Cookie；bind Cookie 用 `jwt.secret` 对 provider、state 和 user_id 签名，只用于回调时确认本次绑定由哪个本地用户发起。`GET /v0/user/oauth/:provider/bind/callback` 校验 state 和签名后，仍只使用 userinfo 的稳定 `id` 或 `sub` 创建 `user_identities(method=oauth, provider, identifier)`，不会按 email 自动绑定；同一 provider subject 已属于其他用户时返回 409。OAuth 注销账号恢复、OIDC 首次补齐注册和完整 OIDC 恢复流程仍按 `docs/ACCOUNTS.md` 后续扩展。
 
 用户身份管理通过 `GET /v0/user/identities` 和 `DELETE /v0/user/identities/:id` 暴露。列表接口只返回当前用户未解绑的身份元数据；解绑接口只允许删除当前用户名下的非 `username/local` 主身份，采用软删除保留历史事实，成功后写入 `user.identity_unbound` 审计。解绑后的 OAuth/OIDC identity 不再可用于登录。
 

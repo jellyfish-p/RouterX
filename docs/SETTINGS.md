@@ -53,6 +53,8 @@
 | `auth.register.username.enabled` | `auth` | bool | `true` | 否 | hot | auth | bool |
 | `auth.register.email.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前注册接口暂未使用 |
 | `auth.register.phone.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前注册接口暂未使用 |
+| `auth.register.oauth.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 OAuth 首次登录是否可进入补齐注册 |
+| `auth.register.oidc.enabled` | `auth` | bool | `false` | 否 | hot | auth | 预留给 OIDC 首次登录补齐注册 |
 | `auth.register.captcha.required` | `auth` | bool | `true` | 否 | hot | auth | bool；当前无验证码请求时 fail-closed |
 | `auth.register.default_quota` | `auth` | int | `0` | 否 | hot | auth | `>=0` |
 | `auth.register.default_group_id` | `auth` | string | `default` | 否 | hot | auth | 非空 group 名称或数字 ID |
@@ -148,6 +150,8 @@ P0 补齐这些配置时，应同时补测试：
 | `auth.register.username.enabled` | `true` | P1 | 当前已落地；开启注册后是否允许用户名注册 |
 | `auth.register.email.enabled` | `false` | P1 | 当前已校验；邮箱注册入口仍属后续增强 |
 | `auth.register.phone.enabled` | `false` | P1 | 当前已校验；手机号注册入口仍属后续增强 |
+| `auth.register.oauth.enabled` | `false` | P2 | 当前已落地；配合 `oauth.{provider}.register_enabled=true` 允许 OAuth 回调返回注册票据 |
+| `auth.register.oidc.enabled` | `false` | P2 | 当前已校验；OIDC 首次补齐注册仍属后续增强 |
 | `auth.register.captcha.required` | `true` | P1 | 当前已落地 fail-closed；基础无验证码注册需显式设为 `false`，完整验证码校验仍属后续增强 |
 | `auth.register.default_quota` | `0` | P1 | 当前已落地；自助注册默认额度，必须为非负整数 |
 | `auth.register.default_group_id` | `default` | P1 | 当前已落地；自助注册默认用户分组，支持 group 名称或数字 ID；`default` 不存在时按空分组归一 |

@@ -1682,6 +1682,8 @@ var readinessCriticalSettings = []string{
 	"auth.register.username.enabled",
 	"auth.register.email.enabled",
 	"auth.register.phone.enabled",
+	"auth.register.oauth.enabled",
+	"auth.register.oidc.enabled",
 	"auth.register.captcha.required",
 	"auth.register.default_quota",
 	"auth.register.default_group_id",

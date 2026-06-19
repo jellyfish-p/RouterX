@@ -24,6 +24,7 @@ func setupUserRoutes(
 		api.POST("/login", authH.UserLogin)
 		api.GET("/oauth/:provider/login", authH.OAuthLogin)
 		api.GET("/oauth/:provider/callback", authH.OAuthCallback)
+		api.POST("/oauth/:provider/register", authH.OAuthRegister)
 		api.GET("/oauth/:provider/bind/callback", authH.OAuthBindCallback)
 		api.GET("/oidc/:provider/login", authH.OIDCLogin)
 		api.GET("/oidc/:provider/callback", authH.OIDCCallback)

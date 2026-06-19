@@ -465,7 +465,7 @@ func TestApifoxOpenAPISecurityMatchesRouteGroups(t *testing.T) {
 func isPublicUserOperation(path string) bool {
 	switch path {
 	case "/v0/user/register", "/v0/user/login",
-		"/v0/user/oauth/{provider}/login", "/v0/user/oauth/{provider}/callback", "/v0/user/oauth/{provider}/bind/callback",
+		"/v0/user/oauth/{provider}/login", "/v0/user/oauth/{provider}/callback", "/v0/user/oauth/{provider}/register", "/v0/user/oauth/{provider}/bind/callback",
 		"/v0/user/oidc/{provider}/login", "/v0/user/oidc/{provider}/callback", "/v0/user/oidc/{provider}/bind/callback":
 		return true
 	default:
@@ -3547,6 +3547,159 @@ func TestOAuthCallbackDoesNotAutoBindExistingEmail(t *testing.T) {
 	}
 	if identityCount != 0 {
 		t.Fatalf("oauth callback must not create identity for matching email, got %d", identityCount)
+	}
+}
+
+func TestOAuthCallbackRegistrationTicketCreatesPasswordAccount(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":          "true",
+		"auth.register.username.enabled": "true",
+		"auth.register.oauth.enabled":    "true",
+		"auth.register.captcha.required": "false",
+		"auth.register.default_quota":    "321",
+		"oauth.github.register_enabled":  "true",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/token":
+			if err := req.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if req.Form.Get("code") != "fresh-code" {
+				t.Fatalf("unexpected oauth code: %s", req.Form.Get("code"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"fresh-token","token_type":"Bearer"}`))
+		case "/userinfo":
+			if req.Header.Get("Authorization") != "Bearer fresh-token" {
+				t.Fatalf("userinfo should receive bearer token, got %q", req.Header.Get("Authorization"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"gh-fresh","email":"fresh-oauth@example.com","login":"fresh-octo","name":"Fresh OAuth"}`))
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer provider.Close()
+	configureOAuthProvider(t, "github", provider.URL)
+
+	loginResp := performJSON(r, http.MethodGet, "/v0/user/oauth/github/login", "", nil)
+	if loginResp.Code != http.StatusFound {
+		t.Fatalf("oauth login should redirect to provider, got %d %s", loginResp.Code, loginResp.Body.String())
+	}
+	location, err := url.Parse(loginResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := location.Query().Get("state")
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oauth/github/callback?state="+url.QueryEscape(state)+"&code=fresh-code", nil)
+	for _, cookie := range loginResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+
+	var callbackPayload struct {
+		Data struct {
+			RegistrationRequired bool   `json:"registration_required"`
+			RegistrationTicket   string `json:"registration_ticket"`
+			Provider             string `json:"provider"`
+			SuggestedUsername    string `json:"suggested_username"`
+			Email                string `json:"email"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(callbackResp.Body.Bytes(), &callbackPayload); err != nil {
+		t.Fatal(err)
+	}
+	if callbackResp.Code != http.StatusOK ||
+		!callbackPayload.Data.RegistrationRequired ||
+		callbackPayload.Data.RegistrationTicket == "" ||
+		callbackPayload.Data.Provider != "github" ||
+		callbackPayload.Data.SuggestedUsername != "fresh-octo" ||
+		callbackPayload.Data.Email != "fresh-oauth@example.com" {
+		t.Fatalf("oauth callback should return registration ticket, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+	var earlyIdentityCount int64
+	if err := internal.DB.Model(&model.UserIdentity{}).
+		Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOAuth, "github", "gh-fresh").
+		Count(&earlyIdentityCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if earlyIdentityCount != 0 {
+		t.Fatalf("oauth identity should not be created before registration is completed, got %d", earlyIdentityCount)
+	}
+
+	registerResp := performJSON(r, http.MethodPost, "/v0/user/oauth/github/register", "", map[string]interface{}{
+		"registration_ticket": callbackPayload.Data.RegistrationTicket,
+		"username":            "fresh-oauth",
+		"password":            "password123",
+		"display_name":        "Fresh OAuth User",
+	})
+	var loginPayload struct {
+		Data struct {
+			Token string        `json:"token"`
+			User  dto.UserBrief `json:"user"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(registerResp.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatal(err)
+	}
+	if registerResp.Code != http.StatusOK || loginPayload.Data.Token == "" || loginPayload.Data.User.Username != "fresh-oauth" {
+		t.Fatalf("oauth registration should create password account and login, got %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	var registered model.User
+	if err := internal.DB.Where("username = ?", "fresh-oauth").First(&registered).Error; err != nil {
+		t.Fatal(err)
+	}
+	if registered.Quota != 321 || registered.Email == nil || *registered.Email != "fresh-oauth@example.com" {
+		t.Fatalf("registered oauth user should inherit defaults and provider email, got %+v", registered)
+	}
+	var identities []model.UserIdentity
+	if err := internal.DB.Where("user_id = ?", registered.ID).Find(&identities).Error; err != nil {
+		t.Fatal(err)
+	}
+	seenUsername, seenEmail, seenOAuth := false, false, false
+	for _, identity := range identities {
+		switch {
+		case identity.Method == model.UserIdentityMethodUsername && identity.Provider == model.UserIdentityProviderLocal && identity.Identifier == "fresh-oauth":
+			seenUsername = strings.TrimSpace(identity.PasswordHash) != ""
+		case identity.Method == model.UserIdentityMethodEmail && identity.Provider == model.UserIdentityProviderLocal && identity.Identifier == "fresh-oauth@example.com":
+			seenEmail = strings.TrimSpace(identity.PasswordHash) == ""
+		case identity.Method == model.UserIdentityMethodOAuth && identity.Provider == "github" && identity.Identifier == "gh-fresh":
+			seenOAuth = identity.VerifiedAt != nil && identity.LastUsedAt != nil && strings.TrimSpace(identity.PasswordHash) == ""
+		}
+	}
+	if !seenUsername || !seenEmail || !seenOAuth {
+		t.Fatalf("oauth registration should create username/email/oauth identities, got %+v", identities)
+	}
+	var loginAuditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "user.login", "user", uintString(registered.ID)).
+		Count(&loginAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if loginAuditCount == 0 {
+		t.Fatalf("oauth registration should write user.login audit log")
+	}
+	if loginBearer(t, r, "fresh-oauth", "password123") == "" {
+		t.Fatalf("oauth registered user should be able to login with password")
 	}
 }
 
@@ -8026,6 +8179,8 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"auth.register.username.enabled",
 		"auth.register.email.enabled",
 		"auth.register.phone.enabled",
+		"auth.register.oauth.enabled",
+		"auth.register.oidc.enabled",
 		"auth.register.captcha.required",
 		"auth.register.default_quota",
 		"auth.register.default_group_id",
