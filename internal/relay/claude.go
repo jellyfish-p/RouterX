@@ -17,6 +17,11 @@ import (
 // Claude Messages API 格式与 OpenAI Chat Completions 格式不同，需要双向转换。
 type ClaudeAdapter struct{}
 
+type claudeTextMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 func init() {
 	Register(common.ChannelTypeClaude, func() Adapter { return &ClaudeAdapter{} })
 }
@@ -29,6 +34,9 @@ func (a *ClaudeAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, er
 	if apiType == APIAnthropicMessages {
 		return claudeNativeMessagesRequest(body)
 	}
+	if apiType == APIResponses {
+		return claudeResponsesRequest(body)
+	}
 	if apiType != APIChatCompletions {
 		return nil, errors.New("unsupported api type")
 	}
@@ -36,19 +44,15 @@ func (a *ClaudeAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, er
 	if err := json.Unmarshal(body, &input); err != nil {
 		return nil, err
 	}
-	type claudeMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
 	output := struct {
-		Model       string          `json:"model"`
-		System      string          `json:"system,omitempty"`
-		Messages    []claudeMessage `json:"messages"`
-		MaxTokens   int             `json:"max_tokens"`
-		Temperature *float64        `json:"temperature,omitempty"`
-		TopP        *float64        `json:"top_p,omitempty"`
-		Stop        []string        `json:"stop_sequences,omitempty"`
-		Stream      bool            `json:"stream,omitempty"`
+		Model       string              `json:"model"`
+		System      string              `json:"system,omitempty"`
+		Messages    []claudeTextMessage `json:"messages"`
+		MaxTokens   int                 `json:"max_tokens"`
+		Temperature *float64            `json:"temperature,omitempty"`
+		TopP        *float64            `json:"top_p,omitempty"`
+		Stop        []string            `json:"stop_sequences,omitempty"`
+		Stream      bool                `json:"stream,omitempty"`
 	}{
 		Model:       input.Model,
 		MaxTokens:   1024,
@@ -71,13 +75,103 @@ func (a *ClaudeAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, er
 		case "system":
 			systemParts = append(systemParts, content)
 		case "assistant":
-			output.Messages = append(output.Messages, claudeMessage{Role: "assistant", Content: content})
+			output.Messages = append(output.Messages, claudeTextMessage{Role: "assistant", Content: content})
 		default:
-			output.Messages = append(output.Messages, claudeMessage{Role: "user", Content: content})
+			output.Messages = append(output.Messages, claudeTextMessage{Role: "user", Content: content})
 		}
 	}
 	output.System = strings.Join(systemParts, "\n")
 	return json.Marshal(output)
+}
+
+func claudeResponsesRequest(body []byte) ([]byte, error) {
+	var input struct {
+		Model           string          `json:"model"`
+		Input           json.RawMessage `json:"input"`
+		Instructions    json.RawMessage `json:"instructions"`
+		MaxOutputTokens *int            `json:"max_output_tokens,omitempty"`
+		Temperature     *float64        `json:"temperature,omitempty"`
+		TopP            *float64        `json:"top_p,omitempty"`
+		Stop            json.RawMessage `json:"stop,omitempty"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, err
+	}
+	output := struct {
+		Model       string              `json:"model"`
+		System      string              `json:"system,omitempty"`
+		Messages    []claudeTextMessage `json:"messages"`
+		MaxTokens   int                 `json:"max_tokens"`
+		Temperature *float64            `json:"temperature,omitempty"`
+		TopP        *float64            `json:"top_p,omitempty"`
+		Stop        []string            `json:"stop_sequences,omitempty"`
+	}{
+		Model:       input.Model,
+		MaxTokens:   1024,
+		Temperature: input.Temperature,
+		TopP:        input.TopP,
+		Stop:        parseStopStrings(input.Stop),
+	}
+	if input.MaxOutputTokens != nil && *input.MaxOutputTokens > 0 {
+		output.MaxTokens = *input.MaxOutputTokens
+	}
+	output.System = claudeResponsesInstructionsText(input.Instructions)
+	output.Messages = claudeResponsesMessages(input.Input)
+	if len(output.Messages) == 0 {
+		output.Messages = []claudeTextMessage{{Role: "user", Content: ""}}
+	}
+	return json.Marshal(output)
+}
+
+// Responses has a broad item schema; the Claude adapter keeps the P1 bridge text-first
+// and leaves tool/vision/reasoning items to the explicit protocol matrix.
+func claudeResponsesInstructionsText(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.EqualFold(raw, []byte("null")) {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	return messageContentText(raw)
+}
+
+func claudeResponsesMessages(raw json.RawMessage) []claudeTextMessage {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.EqualFold(raw, []byte("null")) {
+		return nil
+	}
+	if raw[0] == '"' {
+		var text string
+		if err := json.Unmarshal(raw, &text); err == nil {
+			return []claudeTextMessage{{Role: "user", Content: text}}
+		}
+	}
+	var items []struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &items); err != nil {
+		text := strings.TrimSpace(messageContentText(raw))
+		if text == "" {
+			return nil
+		}
+		return []claudeTextMessage{{Role: "user", Content: text}}
+	}
+	messages := make([]claudeTextMessage, 0, len(items))
+	for _, item := range items {
+		content := strings.TrimSpace(messageContentText(item.Content))
+		if content == "" {
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(item.Role))
+		if role != "assistant" {
+			role = "user"
+		}
+		messages = append(messages, claudeTextMessage{Role: role, Content: content})
+	}
+	return messages
 }
 
 func claudeNativeMessagesRequest(body []byte) ([]byte, error) {
@@ -125,7 +219,7 @@ func claudeRawFieldPresent(raw json.RawMessage) bool {
 
 func (a *ClaudeAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 	switch apiType {
-	case APIChatCompletions, APIAnthropicMessages:
+	case APIChatCompletions, APIResponses, APIAnthropicMessages:
 		return "/v1/messages"
 	case APIModels:
 		return "/v1/models"
@@ -161,6 +255,9 @@ func (a *ClaudeAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey
 }
 
 func (a *ClaudeAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
+	if apiType == APIResponses {
+		return claudeMessageToResponses(body)
+	}
 	if apiType != APIChatCompletions && apiType != APIAnthropicMessages {
 		return nil, nil, errors.New("unsupported api type")
 	}
@@ -208,6 +305,64 @@ func (a *ClaudeAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *
 			},
 		},
 		"usage": usage,
+	}
+	converted, err := json.Marshal(output)
+	return converted, usage, err
+}
+
+func claudeMessageToResponses(body []byte) ([]byte, *Usage, error) {
+	var input struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Role    string `json:"role"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		StopReason string `json:"stop_reason"`
+		Usage      struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, nil, err
+	}
+	content := make([]map[string]interface{}, 0, len(input.Content))
+	for _, part := range input.Content {
+		if part.Text == "" {
+			continue
+		}
+		content = append(content, map[string]interface{}{
+			"type": "output_text",
+			"text": part.Text,
+		})
+	}
+	usage := &Usage{
+		PromptTokens:     input.Usage.InputTokens,
+		CompletionTokens: input.Usage.OutputTokens,
+		TotalTokens:      input.Usage.InputTokens + input.Usage.OutputTokens,
+	}
+	output := map[string]interface{}{
+		"id":         input.ID,
+		"object":     "response",
+		"created_at": time.Now().Unix(),
+		"model":      input.Model,
+		"status":     "completed",
+		"output": []map[string]interface{}{
+			{
+				"id":      input.ID,
+				"type":    "message",
+				"status":  "completed",
+				"role":    "assistant",
+				"content": content,
+			},
+		},
+		"usage": map[string]interface{}{
+			"input_tokens":  usage.PromptTokens,
+			"output_tokens": usage.CompletionTokens,
+			"total_tokens":  usage.TotalTokens,
+		},
 	}
 	converted, err := json.Marshal(output)
 	return converted, usage, err
