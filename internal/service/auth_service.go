@@ -1,7 +1,10 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/url"
 	"os"
 	"routerx/internal"
 	"routerx/internal/common"
@@ -17,6 +20,9 @@ var (
 	ErrSelfRegistrationDisabled     = errors.New("self registration is disabled")
 	ErrUsernameRegistrationDisabled = errors.New("username registration is disabled")
 	ErrRegistrationCaptchaRequired  = errors.New("registration captcha is required")
+	ErrOAuthProviderDisabled        = errors.New("oauth provider is disabled")
+	ErrOAuthInvalidCallback         = errors.New("oauth callback is invalid")
+	ErrOAuthIdentityNotBound        = errors.New("oauth identity is not bound")
 )
 
 type AuthService struct{}
@@ -28,6 +34,16 @@ func NewAuthService() *AuthService {
 type RegisterResult struct {
 	User      *model.User
 	Recovered bool
+}
+
+type oauthProviderConfig struct {
+	Provider     string
+	ClientID     string
+	ClientSecret string
+	AuthURL      string
+	TokenURL     string
+	UserinfoURL  string
+	Scopes       string
 }
 
 // Register 用户注册。
@@ -293,20 +309,217 @@ func (s *AuthService) UserLogin(username, password string) (*model.User, string,
 	now := time.Now()
 	_ = internal.DB.Model(identity).Update("last_used_at", &now).Error
 
-	secret, err := GetJWTSecret()
-	if err != nil {
-		return nil, "", err
-	}
-	expireHours := GetUserJWTExpireHours()
-	sessionID, err := common.GenerateRandomString(16)
-	if err != nil {
-		return nil, "", err
-	}
-	token, err := common.SignUserJWT(identity.User.ID, identity.User.Role, sessionID, time.Duration(expireHours)*time.Hour, secret)
+	token, err := signUserLoginToken(identity.User.ID, identity.User.Role)
 	if err != nil {
 		return nil, "", err
 	}
 	return identity.User, token, nil
+}
+
+// OAuthLoginURL builds the provider authorization URL and keeps the generated
+// state outside the database. The handler stores state in an HttpOnly cookie.
+func (s *AuthService) OAuthLoginURL(provider, state, redirectURI string) (string, error) {
+	cfg, err := loadOAuthProviderConfig(provider)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(state) == "" {
+		return "", ErrOAuthInvalidCallback
+	}
+	parsed, err := url.Parse(cfg.AuthURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", errors.New("oauth auth url is invalid")
+	}
+	query := parsed.Query()
+	query.Set("response_type", "code")
+	query.Set("client_id", cfg.ClientID)
+	query.Set("state", state)
+	if strings.TrimSpace(redirectURI) != "" {
+		query.Set("redirect_uri", redirectURI)
+	}
+	if cfg.Scopes != "" {
+		query.Set("scope", cfg.Scopes)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
+// OAuthCallbackLogin exchanges an OAuth code for userinfo and logs in an
+// already-bound oauth identity. Matching email alone never creates a binding.
+func (s *AuthService) OAuthCallbackLogin(provider, code, redirectURI string) (*model.User, string, error) {
+	cfg, err := loadOAuthProviderConfig(provider)
+	if err != nil {
+		return nil, "", err
+	}
+	if strings.TrimSpace(code) == "" {
+		return nil, "", ErrOAuthInvalidCallback
+	}
+	accessToken, err := exchangeOAuthCode(cfg, code, redirectURI)
+	if err != nil {
+		return nil, "", err
+	}
+	userInfo, err := fetchOAuthUserinfo(cfg, accessToken)
+	if err != nil {
+		return nil, "", err
+	}
+	identifier := oauthStableIdentifier(userInfo)
+	if identifier == "" {
+		return nil, "", ErrOAuthInvalidCallback
+	}
+	var identity model.UserIdentity
+	err = internal.DB.Preload("User").
+		Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOAuth, cfg.Provider, identifier).
+		First(&identity).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, "", ErrOAuthIdentityNotBound
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	if identity.User == nil || identity.User.Status != common.UserStatusEnabled {
+		return nil, "", ErrOAuthIdentityNotBound
+	}
+	now := time.Now()
+	_ = internal.DB.Model(&identity).Update("last_used_at", &now).Error
+	token, err := signUserLoginToken(identity.User.ID, identity.User.Role)
+	if err != nil {
+		return nil, "", err
+	}
+	return identity.User, token, nil
+}
+
+func signUserLoginToken(userID uint, role int) (string, error) {
+	secret, err := GetJWTSecret()
+	if err != nil {
+		return "", err
+	}
+	expireHours := GetUserJWTExpireHours()
+	sessionID, err := common.GenerateRandomString(16)
+	if err != nil {
+		return "", err
+	}
+	return common.SignUserJWT(userID, role, sessionID, time.Duration(expireHours)*time.Hour, secret)
+}
+
+func loadOAuthProviderConfig(provider string) (oauthProviderConfig, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if !validExternalProviderName(provider) {
+		return oauthProviderConfig{}, ErrOAuthProviderDisabled
+	}
+	if !loginBoolSettingDefault("auth.login.oauth.enabled", false) || !loginBoolSettingDefault("oauth."+provider+".enabled", false) {
+		return oauthProviderConfig{}, ErrOAuthProviderDisabled
+	}
+	cfg := oauthProviderConfig{
+		Provider:     provider,
+		ClientID:     oauthProviderSetting(provider, "client_id"),
+		ClientSecret: oauthProviderSetting(provider, "client_secret"),
+		AuthURL:      oauthProviderSetting(provider, "auth_url"),
+		TokenURL:     oauthProviderSetting(provider, "token_url"),
+		UserinfoURL:  oauthProviderSetting(provider, "userinfo_url"),
+		Scopes:       oauthProviderSetting(provider, "scopes"),
+	}
+	if cfg.ClientID == "" || cfg.AuthURL == "" || cfg.TokenURL == "" || cfg.UserinfoURL == "" {
+		return oauthProviderConfig{}, ErrOAuthProviderDisabled
+	}
+	return cfg, nil
+}
+
+func oauthProviderSetting(provider, suffix string) string {
+	value, err := NewSettingService().Get("oauth." + provider + "." + suffix)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func validExternalProviderName(provider string) bool {
+	if provider == "" || len(provider) > 64 {
+		return false
+	}
+	for _, r := range provider {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func exchangeOAuthCode(cfg oauthProviderConfig, code, redirectURI string) (string, error) {
+	values := url.Values{}
+	values.Set("grant_type", "authorization_code")
+	values.Set("code", strings.TrimSpace(code))
+	values.Set("client_id", cfg.ClientID)
+	if cfg.ClientSecret != "" {
+		values.Set("client_secret", cfg.ClientSecret)
+	}
+	if strings.TrimSpace(redirectURI) != "" {
+		values.Set("redirect_uri", redirectURI)
+	}
+	req, err := http.NewRequest(http.MethodPost, cfg.TokenURL, strings.NewReader(values.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := oauthHTTPClient().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", errors.New("oauth token exchange failed")
+	}
+	var payload struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.AccessToken) == "" {
+		return "", errors.New("oauth token response missing access_token")
+	}
+	return strings.TrimSpace(payload.AccessToken), nil
+}
+
+func fetchOAuthUserinfo(cfg oauthProviderConfig, accessToken string) (map[string]interface{}, error) {
+	req, err := http.NewRequest(http.MethodGet, cfg.UserinfoURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := oauthHTTPClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, errors.New("oauth userinfo fetch failed")
+	}
+	var payload map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func oauthStableIdentifier(payload map[string]interface{}) string {
+	for _, key := range []string{"id", "sub"} {
+		switch value := payload[key].(type) {
+		case string:
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		case float64:
+			if value > 0 {
+				return strconv.FormatInt(int64(value), 10)
+			}
+		}
+	}
+	return ""
+}
+
+func oauthHTTPClient() *http.Client {
+	return &http.Client{Timeout: 5 * time.Second}
 }
 
 func localAccountPasswordHash(userID uint) (string, error) {

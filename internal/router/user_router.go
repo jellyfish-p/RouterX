@@ -22,6 +22,8 @@ func setupUserRoutes(
 	{
 		api.POST("/register", authH.Register)
 		api.POST("/login", authH.UserLogin)
+		api.GET("/oauth/:provider/login", authH.OAuthLogin)
+		api.GET("/oauth/:provider/callback", authH.OAuthCallback)
 
 		jwtRequired := api.Group("")
 		jwtRequired.Use(middleware.UserJwtAuthRequired())

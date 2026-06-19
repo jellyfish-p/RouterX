@@ -21,7 +21,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认和基础用户名恢复账号所需的账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名账号时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，并统一校验同一用户的 `username/local` 主密码；当前 username 注册附带的 email identity 不保存重复密码哈希。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC、隐私字段擦除和非用户名恢复属于目标设计，需要按阶段继续实现。
+当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认、基础用户名恢复账号，以及 OAuth 已绑定身份登录所需的账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名账号时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，并统一校验同一用户的 `username/local` 主密码；当前 username 注册附带的 email identity 不保存重复密码哈希。OAuth 当前支持授权跳转、state Cookie 校验、code 换 token、userinfo 稳定 id/sub 登录已绑定 `oauth/provider/identifier` 身份，并明确禁止因相同 email 自动绑定或接管已有账号。本文档中的完整验证码校验、邮箱/手机号注册、OAuth 首次补齐注册、OAuth 注销账号恢复、OIDC、隐私字段擦除和非用户名恢复属于目标设计，需要按阶段继续实现。
 
 阶段边界：
 
@@ -501,6 +501,8 @@ GET /v0/user/oauth/:provider/callback
 - 一个 OAuth identity 只能绑定一个用户。
 - 禁用 OAuth 登录后，不删除绑定身份，但禁止用该身份登录。
 - OAuth 首次注册必须检查 `oauth/provider/identifier` 是否命中注销账号，命中时恢复原账号，不能创建新账号。
+
+当前已落地 OAuth 基础登录闭环：`GET /v0/user/oauth/:provider/login` 读取 `oauth.{provider}.*` settings，生成 state Cookie 后跳转 provider；`GET /v0/user/oauth/:provider/callback` 校验 state，调用 provider token/userinfo 接口，并只在 `user_identities(method=oauth, provider, identifier)` 已存在且用户启用时签发 User JWT、更新 identity 最近使用时间和写入 `user.login` 审计。尚未落地首次 OAuth 补齐注册、OAuth 注销账号恢复、用户自助绑定/解绑界面和 provider 侧更复杂错误恢复。
 
 ## OIDC 登录
 

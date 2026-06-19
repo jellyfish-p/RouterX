@@ -703,6 +703,8 @@ Provider 退款请求：
 |------|------|----------|------|
 | POST | `/v0/user/register` | 已实现 | 基础用户名密码注册，受自助注册 settings 控制；可附带或恢复补齐 email 本地登录标识但不保存重复密码哈希；命中已注销同名账号时恢复原账号 |
 | POST | `/v0/user/login` | 已实现 | 用户统一登录；用户名密码始终可用，email/phone 密码登录受 settings 控制并复用 `username/local` 主密码；成功登录写 `user.login` 管理审计，摘要不包含密码或 JWT |
+| GET | `/v0/user/oauth/:provider/login` | 基础实现 | OAuth 授权跳转；检查 `auth.login.oauth.enabled` 和 `oauth.{provider}.enabled`，生成一次性 state Cookie 后跳转 provider 授权地址 |
+| GET | `/v0/user/oauth/:provider/callback` | 基础实现 | OAuth 回调；校验 state Cookie，使用 provider token/userinfo 接口解析稳定 id/sub，只允许已绑定 `oauth/provider/identifier` 身份登录并写 `user.login` 审计；相同 email 不自动绑定 |
 | GET | `/v0/user/self` | 已实现 | 获取个人信息 |
 | PUT | `/v0/user/self` | 已实现 | 修改个人信息；提交 email 时会规范化并同步同用户 `email/local` 登录标识，邮箱已被其他账号占用时整笔拒绝 |
 | DELETE | `/v0/user/self` | 已实现 | 注销当前普通用户账号；请求体必须提供 `password` 做二次确认，成功后禁用登录和 API Key，保留账号、身份、日志、额度与历史事实，并写 `user.self_cancel` 审计；缺少或错误密码会写 `user.self_cancel_denied` 拒绝审计 |
@@ -745,6 +747,8 @@ Provider 退款请求：
   "message": ""
 }
 ```
+
+OAuth 基础登录当前用于已绑定第三方身份的登录闭环。`GET /v0/user/oauth/:provider/login` 会读取 `oauth.{provider}.auth_url`、`client_id`、`client_secret`、`token_url`、`userinfo_url` 和 `scopes` 等 settings，生成 state 并写入 HttpOnly Cookie 后返回 302。`GET /v0/user/oauth/:provider/callback` 要求回调 state 与 Cookie 匹配，再用 code 换 token、拉取 userinfo，并以 userinfo 的稳定 `id` 或 `sub` 查询 `user_identities(method=oauth, provider, identifier)`。未绑定的第三方身份返回 403，即使 email 与已有账号相同也不会自动绑定或接管；首次补齐注册、注销账号恢复和完整 OIDC 流程仍按 `docs/ACCOUNTS.md` 后续扩展。
 
 ### API Key
 

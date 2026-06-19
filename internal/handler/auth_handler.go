@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"crypto/subtle"
 	"errors"
+	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"routerx/internal/common"
@@ -81,6 +84,53 @@ func (h *AuthHandler) UserLogin(c *gin.Context) {
 	common.Success(c, dto.LoginResponse{Token: token, User: dto.UserBriefFromModel(user)})
 }
 
+// GET /v0/user/oauth/:provider/login — 发起 OAuth 登录。
+func (h *AuthHandler) OAuthLogin(c *gin.Context) {
+	provider := c.Param("provider")
+	state, err := common.GenerateRandomString(24)
+	if err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "生成 OAuth state 失败")
+		return
+	}
+	redirectURI := oauthCallbackURL(c, provider)
+	location, err := h.svc.OAuthLoginURL(provider, state, redirectURI)
+	if err != nil {
+		common.FailWithStatus(c, http.StatusForbidden, err.Error())
+		return
+	}
+	setOAuthStateCookie(c, provider, state, 10*60)
+	c.Redirect(http.StatusFound, location)
+}
+
+// GET /v0/user/oauth/:provider/callback — 处理 OAuth 回调并登录已绑定身份。
+func (h *AuthHandler) OAuthCallback(c *gin.Context) {
+	provider := c.Param("provider")
+	state := strings.TrimSpace(c.Query("state"))
+	code := strings.TrimSpace(c.Query("code"))
+	cookieState, err := c.Cookie(oauthStateCookieName(provider))
+	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(cookieState)) != 1 {
+		common.FailWithStatus(c, http.StatusBadRequest, "OAuth state 无效或已过期")
+		return
+	}
+	setOAuthStateCookie(c, provider, "", -1)
+	user, token, err := h.svc.OAuthCallbackLogin(provider, code, oauthCallbackURL(c, provider))
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, service.ErrOAuthIdentityNotBound) || errors.Is(err, service.ErrOAuthProviderDisabled) {
+			status = http.StatusForbidden
+		} else if errors.Is(err, service.ErrOAuthInvalidCallback) {
+			status = http.StatusBadRequest
+		}
+		common.FailWithStatus(c, status, err.Error())
+		return
+	}
+	if err := h.recordLoginAudit(c, user); err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.LoginResponse{Token: token, User: dto.UserBriefFromModel(user)})
+}
+
 // POST /v0/user/self/password — 修改密码
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	var req dto.ChangePasswordRequest
@@ -129,6 +179,31 @@ func (h *AuthHandler) recordLoginAudit(c *gin.Context, user *model.User) error {
 func setJWTCookie(c *gin.Context, token string) {
 	c.SetSameSite(2)
 	c.SetCookie("jwt_token", token, 7*24*3600, "/", "", c.Request.TLS != nil, true)
+}
+
+func setOAuthStateCookie(c *gin.Context, provider, state string, maxAge int) {
+	c.SetSameSite(2)
+	c.SetCookie(oauthStateCookieName(provider), state, maxAge, "/v0/user/oauth/"+provider, "", c.Request.TLS != nil, true)
+}
+
+func oauthStateCookieName(provider string) string {
+	return "routerx_oauth_state_" + strings.ToLower(strings.TrimSpace(provider))
+}
+
+func oauthCallbackURL(c *gin.Context, provider string) string {
+	scheme := c.GetHeader("X-Forwarded-Proto")
+	if scheme == "" {
+		if c.Request != nil && c.Request.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := c.Request.Host
+	if host == "" {
+		host = "localhost"
+	}
+	return scheme + "://" + host + "/v0/user/oauth/" + provider + "/callback"
 }
 
 func currentUser(c *gin.Context) (*model.User, bool) {

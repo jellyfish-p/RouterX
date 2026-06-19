@@ -26,7 +26,7 @@
 | `TestApifoxOpenAPIOperationsHaveHumanReadableDocs` | 解析 `docs/apifox/openapi.yaml`，确保每个公开 operation 都包含 `summary`、`description` 和 `responses`，避免 Apifox 导入后出现只有路径、缺少人类可读说明的接口 |
 | `TestApifoxOpenAPIPathParametersAreDeclared` | 解析 `docs/apifox/openapi.yaml`，确保每个 `{path}` 变量都有匹配且 `required=true` 的 `in: path` 参数，防止 Apifox 导入后路径参数模板不可用 |
 | `TestApifoxOpenAPIInternalRefsResolve` | 递归检查 `docs/apifox/openapi.yaml` 内部 `$ref`，确保 requestBodies、responses、schemas、parameters 等组件引用都能解析，防止 Apifox 导入时出现断链 |
-| `TestApifoxOpenAPISecurityMatchesRouteGroups` | 检查 `/v1/*` operation 声明 `ApiKeyBearer`，`/v0/admin/*` 和除注册/登录外的 `/v0/user/*` operation 声明 `UserJWT`，避免可导入文档遗漏鉴权要求 |
+| `TestApifoxOpenAPISecurityMatchesRouteGroups` | 检查 `/v1/*` operation 声明 `ApiKeyBearer`，`/v0/admin/*` 和除注册/登录/OAuth 公开入口外的 `/v0/user/*` operation 声明 `UserJWT`，避免可导入文档遗漏鉴权要求 |
 | `TestApifoxOpenAPIOperationTagsAreDeclared` | 检查每个公开 operation 都带有非空 tags，且对应 tag 已在 OpenAPI 顶层声明并带说明，避免 Apifox 导入后接口分组缺失或漂移 |
 | `TestApifoxOpenAITextEndpointsUseTypedRequestBodies` | 检查 OpenAI Responses 和 Legacy Completions 不再使用通用 JSON 占位 requestBody，确保 Apifox 导入后能展示字段级请求说明 |
 | `TestApifoxV1OperationsUseTypedRequestBodies` | 检查所有 `/v1` operation 的 requestBody 都使用专用 schema，避免新增模型入口时退回通用 JSON 占位 |
@@ -35,6 +35,7 @@
 | `TestTraceabilityP1EntryProtocolEvidenceIncludesConcreteMatrixTests` | 检查 `P1-C2` 多入口协议证据必须列出模型协议选择、Anthropic/Gemini 成功与降级、countTokens、Gemini Embeddings 和入口协议错误外形测试 |
 | `TestTraceabilityP1RouterXExtensionEvidenceIncludesProviderSpecificTests` | 检查 `P1-C4` 的 `routerx` 扩展参数证据必须列出 provider-specific body 补充、Gemini safetySettings 和 Anthropic/Gemini 原生字段保真测试 |
 | `TestTraceabilityP1UpstreamConversionEvidenceIncludesConcreteMatrixTests` | 检查 `P1-C3` 多上游转换证据必须列出 Azure deployment 路径和 Responses 到 Claude/Gemini 的具体转换测试 |
+| `TestTraceabilityP2EnterpriseIdentityEvidenceIncludesConcreteOAuthTests` | 检查 `P2-C1` 企业身份证据必须列出本地登录审计、OAuth 已绑定身份登录和防 email 自动接管测试 |
 | `TestTraceabilityP2AdminAuditEvidenceIncludesConcreteAuditTests` | 检查 `P2-C2` 管理审计证据必须列出登录、API Key、用户/分组、通道、日志导出、settings 拒绝和超级管理员边界测试 |
 | `TestTraceabilityP2AdvancedAPIEvidenceIncludesConcreteEndpointTests` | 检查 `P2-C5` 高级 API 证据必须列出 Responses、Embeddings、Images、Audio、Moderations 和 multipart 防护的具体测试 |
 | `TestTraceabilityP2AdvancedAPIKeyEvidenceIncludesConcreteManagementTests` | 检查 `P2-C6` 高级 API Key 管理证据必须列出生命周期、元数据过滤、服务账号主体、批量操作、风险视图、泄露窗口、告警投递和指标测试 |
@@ -125,6 +126,8 @@
 | `TestUserRegisterRespectsRegistrationSettings` | 自助注册默认关闭；开启后仍受用户名注册和验证码开关约束，并应用默认额度/分组；附带 email identity 不保存重复密码哈希且可复用主密码登录 |
 | `TestUserLoginRespectsLoginMethodSettings` | 用户名密码登录保持可用；email/phone 密码登录默认关闭，开启对应 setting 后已有本地身份可登录，且 email 身份可复用 `username/local` 主密码 |
 | `TestUserLoginWritesAuditLogWithoutSecrets` | 成功登录写入 `user.login` 管理审计，超级管理员可按动作和用户资源查询，审计摘要不包含密码或 JWT |
+| `TestOAuthCallbackLogsInBoundIdentityWithState` | OAuth 登录生成 state Cookie 并跳转 provider；回调校验 state、换取 token/userinfo 后只登录已绑定的 provider subject，并写 `user.login` 审计 |
+| `TestOAuthCallbackDoesNotAutoBindExistingEmail` | OAuth 回调中 provider email 命中已有本地账号时，不会自动创建第三方 identity 或签发登录态 |
 | `TestUserSelfCancelDisablesAccountButPreservesIdentity` | 当前用户自助注销必须提供正确本地密码二次确认；缺少或错误密码不会禁用账号/API Key，会写 `user.self_cancel_denied` 拒绝审计且不泄露密码；确认通过后账号禁用、API Key 禁用、用户名和 email identity 及历史账号记录保留；同名重新注册恢复原账号、只更新主密码、不恢复旧 API Key，并写 `user.self_cancel` 与 `user.recover` 审计 |
 | `TestUserRecoveryCreatesEmailIdentity` | 无 email 的注销账号用同名注册恢复时，可补齐未占用的 `email/local` 登录标识；该 identity 不保存重复密码哈希，并可在邮箱登录开关开启后复用主密码登录 |
 | `TestUserSelfEmailUpdateMaintainsLocalIdentity` | 当前用户自助修改 email 时会规范化 `users.email`、创建或更新同用户 `email/local` 登录标识且不保存重复密码哈希；邮箱密码登录开启后复用主密码，目标邮箱已被其他账号占用时资料和 identity 都不落库 |
