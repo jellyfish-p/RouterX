@@ -5,7 +5,9 @@ import (
 	crand "crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,6 +100,13 @@ type channelCandidateCacheInvalidationMessage struct {
 type ChannelUpstreamTarget struct {
 	BaseURL string
 	APIKey  string
+}
+
+type ChannelSecretRotationResult struct {
+	ScannedChannels int
+	RotatedChannels int
+	RotatedSecrets  int
+	SkippedSecrets  int
 }
 
 // RoutePreference describes request-level routerx.route filters after policy checks.
@@ -818,6 +827,46 @@ func (s *ChannelService) FetchUpstreamModels(channelID uint) ([]string, error) {
 	return adapter.GetModelList(ctx, target.BaseURL, target.APIKey)
 }
 
+func (s *ChannelService) RotateEncryptedSecrets(previousKey string) (ChannelSecretRotationResult, error) {
+	result := ChannelSecretRotationResult{}
+	previousKey = strings.TrimSpace(previousKey)
+	currentKey := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
+	if previousKey == "" {
+		return result, errors.New("previous_encryption_key is required")
+	}
+	if currentKey == "" {
+		return result, errors.New("ENCRYPTION_KEY is required")
+	}
+	if previousKey == currentKey {
+		return result, errors.New("previous_encryption_key must differ from ENCRYPTION_KEY")
+	}
+
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		var channels []model.Channel
+		if err := tx.Select("id", "api_key", "api_keys", "upstreams").Find(&channels).Error; err != nil {
+			return err
+		}
+		result.ScannedChannels = len(channels)
+		for _, channel := range channels {
+			updates, counts, err := rotateChannelSecretFields(channel, previousKey, currentKey)
+			if err != nil {
+				return fmt.Errorf("channel %d secret rotation failed: %w", channel.ID, err)
+			}
+			result.RotatedSecrets += counts.rotated
+			result.SkippedSecrets += counts.skipped
+			if len(updates) == 0 {
+				continue
+			}
+			if err := tx.Model(&model.Channel{}).Where("id = ?", channel.ID).Updates(updates).Error; err != nil {
+				return err
+			}
+			result.RotatedChannels++
+		}
+		return nil
+	})
+	return result, err
+}
+
 func (s *ChannelService) ListModels() ([]string, error) {
 	var channels []model.Channel
 	if err := internal.DB.Where("status = ?", common.ChannelStatusEnabled).Order("idx ASC, priority DESC, id ASC").Find(&channels).Error; err != nil {
@@ -978,6 +1027,100 @@ func encryptChannelSecrets(channel *model.Channel) error {
 	}
 	channel.Upstreams = encryptedUpstreams
 	return nil
+}
+
+type channelSecretRotationCounts struct {
+	rotated int
+	skipped int
+}
+
+func rotateChannelSecretFields(channel model.Channel, previousKey, currentKey string) (map[string]interface{}, channelSecretRotationCounts, error) {
+	updates := map[string]interface{}{}
+	counts := channelSecretRotationCounts{}
+	if common.IsEncryptedSecret(channel.APIKey) {
+		rotated, err := rotateEncryptedSecretValue(channel.APIKey, previousKey, currentKey)
+		if err != nil {
+			return nil, counts, err
+		}
+		updates["api_key"] = rotated
+		counts.rotated++
+	} else if strings.TrimSpace(channel.APIKey) != "" {
+		counts.skipped++
+	}
+
+	if common.ContainsEncryptedSecret(string(channel.APIKeys)) {
+		rotated, nestedCounts, err := rotateEncryptedAPIKeysJSON(channel.APIKeys, previousKey, currentKey)
+		if err != nil {
+			return nil, counts, err
+		}
+		updates["api_keys"] = rotated
+		counts.rotated += nestedCounts.rotated
+		counts.skipped += nestedCounts.skipped
+	}
+	if common.ContainsEncryptedSecret(string(channel.Upstreams)) {
+		rotated, nestedCounts, err := rotateEncryptedUpstreamsJSON(channel.Upstreams, previousKey, currentKey)
+		if err != nil {
+			return nil, counts, err
+		}
+		updates["upstreams"] = rotated
+		counts.rotated += nestedCounts.rotated
+		counts.skipped += nestedCounts.skipped
+	}
+	return updates, counts, nil
+}
+
+func rotateEncryptedAPIKeysJSON(raw model.JSONValue, previousKey, currentKey string) (model.JSONValue, channelSecretRotationCounts, error) {
+	counts := channelSecretRotationCounts{}
+	var keys []string
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return nil, counts, err
+	}
+	for i, key := range keys {
+		if common.IsEncryptedSecret(key) {
+			rotated, err := rotateEncryptedSecretValue(key, previousKey, currentKey)
+			if err != nil {
+				return nil, counts, err
+			}
+			keys[i] = rotated
+			counts.rotated++
+			continue
+		}
+		if strings.TrimSpace(key) != "" {
+			counts.skipped++
+		}
+	}
+	return model.NewJSONValue(keys), counts, nil
+}
+
+func rotateEncryptedUpstreamsJSON(raw model.JSONValue, previousKey, currentKey string) (model.JSONValue, channelSecretRotationCounts, error) {
+	counts := channelSecretRotationCounts{}
+	var upstreams []channelUpstreamConfig
+	if err := json.Unmarshal(raw, &upstreams); err != nil {
+		return nil, counts, err
+	}
+	for i, upstream := range upstreams {
+		if common.IsEncryptedSecret(upstream.APIKey) {
+			rotated, err := rotateEncryptedSecretValue(upstream.APIKey, previousKey, currentKey)
+			if err != nil {
+				return nil, counts, err
+			}
+			upstreams[i].APIKey = rotated
+			counts.rotated++
+			continue
+		}
+		if strings.TrimSpace(upstream.APIKey) != "" {
+			counts.skipped++
+		}
+	}
+	return model.NewJSONValue(upstreams), counts, nil
+}
+
+func rotateEncryptedSecretValue(value, previousKey, currentKey string) (string, error) {
+	plain, err := common.DecryptSecretWithKey(value, previousKey)
+	if err != nil {
+		return "", err
+	}
+	return common.EncryptSecretWithKey(plain, currentKey)
 }
 
 func hasAnyChannelKey(channel *model.Channel) bool {

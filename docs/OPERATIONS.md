@@ -330,7 +330,7 @@ volumes:
 目标生产就绪检查应继续补充：
 
 - 生产模式下 `JWT_SECRET` 或数据库 `jwt.secret` 可用且跨实例一致。
-- KMS provider 可用性、轮换任务和存量密文重加密流程。
+- KMS provider 可用性、`enc:v*` 版本升级、OAuth/OIDC client secret 等更多敏感字段轮换流程。
 - Redis 策略符合当前模式：SQLite 单镜像可无 Redis；外部数据库和集群模式必须 Redis 可用。
 - 更完整的必要 settings 覆盖和跨模块配置巡检。
 
@@ -371,7 +371,7 @@ Redis 失败处理：
 | 密钥 | 创建 | 轮换 | 丢失影响 |
 |------|------|------|----------|
 | `jwt.secret` | 初始化或 `JWT_SECRET` 注入 | 支持双签或短窗口强制重新登录 | 旧 JWT 失效，跨实例登录异常 |
-| `ENCRYPTION_KEY` | 环境变量或 KMS 注入 | 目标支持逐条解密后重加密，更新 `enc:v*` 版本 | 已加密下游密钥不可解密 |
+| `ENCRYPTION_KEY` | 环境变量或 KMS 注入 | 通道 `api_key`、`api_keys` 和 `upstreams.api_key` 已支持用旧主密钥逐条解密后重加密到当前 `ENCRYPTION_KEY`，并写 `security.secret_rotate` 审计；KMS provider 和 `enc:v*` 版本升级继续演进 | 已加密下游密钥不可解密 |
 | API Key 明文 | 用户创建时生成一次 | 用户重新创建或禁用旧 key | 明文不可恢复，只能重建 |
 | 下游 API Key | 管理员配置 | 新旧通道或同通道多 key 灰度切换 | 影响对应通道调用 |
 | 支付密钥 | 支付 provider 后台生成 | 按 provider 规则双密钥或短暂停机切换 | 回调校验失败，不能入账 |

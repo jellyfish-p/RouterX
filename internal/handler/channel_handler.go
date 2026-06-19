@@ -329,6 +329,40 @@ func (h *ChannelHandler) FetchModels(c *gin.Context) {
 	common.Success(c, dto.FetchChannelModelsResult{Models: models})
 }
 
+// POST /v0/admin/security/rotate-secrets — 轮换通道密文主密钥
+func (h *ChannelHandler) RotateSecrets(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	var req dto.RotateChannelSecretsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, 400, "轮换密钥参数无效")
+		return
+	}
+	result, err := h.svc.RotateEncryptedSecrets(req.PreviousEncryptionKey)
+	if err != nil {
+		_ = h.recordSecurityAuditResult(c, operator, "security.secret_rotate_denied", "channel_secrets", nil, map[string]interface{}{
+			"scope": "channel_secrets",
+			"error": "secret_rotation_failed",
+		}, "denied", "secret_rotation_failed")
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	payload := dto.RotateChannelSecretsResult{
+		ScannedChannels: result.ScannedChannels,
+		RotatedChannels: result.RotatedChannels,
+		RotatedSecrets:  result.RotatedSecrets,
+		SkippedSecrets:  result.SkippedSecrets,
+	}
+	if err := h.recordSecurityAuditResult(c, operator, "security.secret_rotate", "channel_secrets", nil, payload, "success", ""); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	common.Success(c, payload)
+}
+
 func (h *ChannelHandler) recordChannelAudit(c *gin.Context, operator *model.User, action string, id uint, before, after interface{}) error {
 	return h.recordChannelAuditResult(c, operator, action, id, before, after, "success", "")
 }
@@ -361,6 +395,23 @@ func (h *ChannelHandler) recordChannelAuditResult(c *gin.Context, operator *mode
 		Action:        action,
 		ResourceType:  "channel",
 		ResourceID:    strconv.FormatUint(uint64(id), 10),
+		BeforeSummary: auditSummary(before),
+		AfterSummary:  auditSummary(after),
+		Result:        result,
+		ErrorCode:     errorCode,
+		IP:            c.ClientIP(),
+		UserAgent:     c.GetHeader("User-Agent"),
+	})
+}
+
+func (h *ChannelHandler) recordSecurityAuditResult(c *gin.Context, operator *model.User, action, resourceID string, before, after interface{}, result, errorCode string) error {
+	return h.auditSvc.RecordAdminAuditLog(service.AdminAuditRecordInput{
+		RequestID:     c.GetString("request_id"),
+		ActorUserID:   operator.ID,
+		ActorRole:     operator.Role,
+		Action:        action,
+		ResourceType:  "security",
+		ResourceID:    resourceID,
 		BeforeSummary: auditSummary(before),
 		AfterSummary:  auditSummary(after),
 		Result:        result,

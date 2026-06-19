@@ -550,6 +550,8 @@ Provider 退款请求：
 | `channel.enable` | `PATCH /v0/admin/channel/:id/enable` |
 | `channel.test` | `POST /v0/admin/channel/:id/test` |
 | `channel.fetch_models` | `GET /v0/admin/channel/:id/models` |
+| `security.secret_rotate` | `POST /v0/admin/security/rotate-secrets` 成功轮换通道密文 |
+| `security.secret_rotate_denied` | `POST /v0/admin/security/rotate-secrets` 旧主密钥错误、当前主密钥缺失或参数无效 |
 | `log.clear` | `DELETE /v0/admin/log` |
 | `log.export` | `GET /v0/admin/log/export` |
 
@@ -633,6 +635,7 @@ Provider 退款请求：
 | GET | `/v0/admin/dashboard` | 基础实现 | 仪表盘统计；基础用户/通道/API Key 数来自主库，今日调用和额度在配置 `LOG_SQL_DSN` 时来自日志库；同时返回 `ready`、`ready_status` 和数据库、迁移、Redis、日志库、settings 依赖状态，便于控制台解释当前可用性 |
 | GET | `/v0/admin/setting` | 已实现 | 获取系统设置，仅超级管理员 |
 | PUT | `/v0/admin/setting` | 已实现 | 批量更新系统设置，仅超级管理员，成功后按 key 写管理审计 |
+| POST | `/v0/admin/security/rotate-secrets` | 基础实现 | 仅超级管理员；使用请求中的 `previous_encryption_key` 解密现有通道 `api_key`、`api_keys` 和 `upstreams.api_key`，再用当前 `ENCRYPTION_KEY` 重新加密；整批事务失败回滚，响应和审计只返回扫描/轮换计数 |
 
 看板响应示例：
 

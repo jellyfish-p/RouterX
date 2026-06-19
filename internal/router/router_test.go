@@ -10408,6 +10408,103 @@ func TestReadinessDecryptsEncryptedChannelSecrets(t *testing.T) {
 	}
 }
 
+func TestAdminRotateChannelSecretsReencryptsWithCurrentKey(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "old-channel-secret-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "rotating-secrets",
+		"models":   "gpt-rotate",
+		"base_url": "https://upstream.example",
+		"api_key":  "primary-secret",
+		"api_keys": []string{"secondary-secret"},
+		"upstreams": []map[string]string{{
+			"base_url": "https://upstream-alt.example",
+			"api_key":  "upstream-secret",
+		}},
+	})
+	if channelResp.Code != http.StatusOK || strings.Contains(channelResp.Body.String(), "primary-secret") {
+		t.Fatalf("channel create failed or leaked secret: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	t.Setenv("ENCRYPTION_KEY", "new-channel-secret-key")
+	notReady := performJSON(r, http.MethodGet, "/ready", "", nil)
+	if notReady.Code != http.StatusServiceUnavailable || !strings.Contains(notReady.Body.String(), "ENCRYPTION_KEY") {
+		t.Fatalf("old-key encrypted channel should be not ready under new key, got %d %s", notReady.Code, notReady.Body.String())
+	}
+
+	rotateResp := performJSON(r, http.MethodPost, "/v0/admin/security/rotate-secrets", rootJWT, map[string]interface{}{
+		"previous_encryption_key": "old-channel-secret-key",
+	})
+	if rotateResp.Code != http.StatusOK {
+		t.Fatalf("secret rotation failed: %d %s", rotateResp.Code, rotateResp.Body.String())
+	}
+	var rotatePayload struct {
+		Data struct {
+			ScannedChannels int `json:"scanned_channels"`
+			RotatedChannels int `json:"rotated_channels"`
+			RotatedSecrets  int `json:"rotated_secrets"`
+			SkippedSecrets  int `json:"skipped_secrets"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rotateResp.Body.Bytes(), &rotatePayload); err != nil {
+		t.Fatal(err)
+	}
+	if rotatePayload.Data.ScannedChannels != 1 || rotatePayload.Data.RotatedChannels != 1 || rotatePayload.Data.RotatedSecrets != 3 || rotatePayload.Data.SkippedSecrets != 0 {
+		t.Fatalf("unexpected rotation summary: %+v", rotatePayload.Data)
+	}
+
+	var stored model.Channel
+	if err := internal.DB.Where("name = ?", "rotating-secrets").First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ENCRYPTION_KEY", "old-channel-secret-key")
+	if plain, err := common.DecryptSecret(stored.APIKey); err == nil || plain == "primary-secret" {
+		t.Fatalf("rotated api_key should no longer decrypt with old key, plain=%q err=%v", plain, err)
+	}
+	t.Setenv("ENCRYPTION_KEY", "new-channel-secret-key")
+	primary, err := common.DecryptSecret(stored.APIKey)
+	if err != nil || primary != "primary-secret" {
+		t.Fatalf("rotated api_key should decrypt with new key, plain=%q err=%v", primary, err)
+	}
+	var multiKeys []string
+	if err := json.Unmarshal(stored.APIKeys, &multiKeys); err != nil {
+		t.Fatal(err)
+	}
+	secondary, err := common.DecryptSecret(multiKeys[0])
+	if err != nil || secondary != "secondary-secret" {
+		t.Fatalf("rotated api_keys should decrypt with new key, plain=%q err=%v", secondary, err)
+	}
+	target, err := service.NewChannelService().ResolveUpstream(&stored)
+	if err != nil || target.APIKey != "upstream-secret" {
+		t.Fatalf("rotated upstream secret should remain usable, target=%+v err=%v", target, err)
+	}
+	readyResp := performJSON(r, http.MethodGet, "/ready", "", nil)
+	if readyResp.Code != http.StatusOK {
+		t.Fatalf("rotated channel secrets should restore readiness, got %d %s", readyResp.Code, readyResp.Body.String())
+	}
+
+	var audit model.AdminAuditLog
+	if err := internal.DB.Where("action = ? AND resource_type = ?", "security.secret_rotate", "security").First(&audit).Error; err != nil {
+		t.Fatal(err)
+	}
+	auditBody := audit.AfterSummary + audit.BeforeSummary
+	if strings.Contains(auditBody, "primary-secret") || strings.Contains(auditBody, "secondary-secret") || strings.Contains(auditBody, "upstream-secret") ||
+		strings.Contains(auditBody, "old-channel-secret-key") || strings.Contains(auditBody, "new-channel-secret-key") {
+		t.Fatalf("secret rotation audit leaked sensitive material: before=%s after=%s", audit.BeforeSummary, audit.AfterSummary)
+	}
+}
+
 func TestReadinessRejectsInvalidCriticalSettings(t *testing.T) {
 	cases := []struct {
 		key   string

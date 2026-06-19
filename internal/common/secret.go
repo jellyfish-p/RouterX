@@ -29,6 +29,14 @@ func ContainsEncryptedSecret(value string) bool {
 
 func EncryptSecret(plain string) (string, error) {
 	key := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
+	return EncryptSecretWithKey(plain, key)
+}
+
+// EncryptSecretWithKey encrypts a secret with an explicit master key. It is
+// used by rotation jobs that need to re-encrypt existing database secrets while
+// keeping the normal request path tied to ENCRYPTION_KEY.
+func EncryptSecretWithKey(plain, key string) (string, error) {
+	key = strings.TrimSpace(key)
 	if key == "" || plain == "" || IsEncryptedSecret(plain) {
 		return plain, nil
 	}
@@ -48,10 +56,18 @@ func EncryptSecret(plain string) (string, error) {
 }
 
 func DecryptSecret(value string) (string, error) {
+	key := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
+	return DecryptSecretWithKey(value, key)
+}
+
+// DecryptSecretWithKey decrypts a RouterX secret with an explicit master key.
+// Plain values are returned unchanged so callers can safely scan mixed legacy
+// rows without leaking or rewriting non-encrypted values.
+func DecryptSecretWithKey(value, key string) (string, error) {
 	if !IsEncryptedSecret(value) {
 		return value, nil
 	}
-	key := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
+	key = strings.TrimSpace(key)
 	if key == "" {
 		return "", errors.New("ENCRYPTION_KEY is required to decrypt secret")
 	}

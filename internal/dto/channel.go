@@ -101,3 +101,14 @@ type TestChannelResult struct {
 type FetchChannelModelsResult struct {
 	Models []string `json:"models"`
 }
+
+type RotateChannelSecretsRequest struct {
+	PreviousEncryptionKey string `json:"previous_encryption_key" binding:"required"`
+}
+
+type RotateChannelSecretsResult struct {
+	ScannedChannels int `json:"scanned_channels"`
+	RotatedChannels int `json:"rotated_channels"`
+	RotatedSecrets  int `json:"rotated_secrets"`
+	SkippedSecrets  int `json:"skipped_secrets"`
+}

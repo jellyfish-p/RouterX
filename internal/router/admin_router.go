@@ -90,6 +90,7 @@ func setupAdminRoutes(
 			authRequired.PATCH("/channel/:id/enable", channelH.Enable)
 			authRequired.POST("/channel/:id/test", channelH.Test)
 			authRequired.GET("/channel/:id/models", channelH.FetchModels)
+			authRequired.POST("/security/rotate-secrets", middleware.RequireSuperAdmin(), channelH.RotateSecrets)
 
 			authRequired.GET("/log", logH.AdminList)
 			authRequired.GET("/log/export", logH.AdminExport)
