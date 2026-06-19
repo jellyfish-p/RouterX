@@ -2823,7 +2823,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 图像生成转发
-      description: OpenAI-compatible 图像生成基础实现；JSON 请求体透传到上游 /v1/images/generations，Azure OpenAI 通道转发到 /openai/v1/images/generations?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 私有字段。图像生成响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整安全扫描、尺寸/文件策略和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible 图像生成基础实现；JSON 请求体透传到上游 /v1/images/generations，Azure OpenAI 通道转发到 /openai/v1/images/generations?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 私有字段。size 缺省、空字符串或 auto 会透传，WIDTHxHEIGHT 会在上游前校验为正整数、单边不超过 4096 且总像素不超过 4194304，非法返回 invalid_image_size 且不调用上游、不扣费。图像生成响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整安全扫描、文件策略和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2831,7 +2831,7 @@ paths:
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
-        $ref: "#/components/requestBodies/GenericJSON"
+        $ref: "#/components/requestBodies/ImageGenerationJSON"
       responses:
         "200":
           $ref: "#/components/responses/GenericJSON"
@@ -3784,6 +3784,47 @@ components:
                 type: object
                 additionalProperties: true
                 description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
+    ImageGenerationJSON:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [model, prompt]
+            properties:
+              model:
+                type: string
+                description: OpenAI-compatible 图像生成模型名；Azure OpenAI 通道会把该值作为 deployment 名。
+                example: gpt-image-1
+              prompt:
+                type: string
+                minLength: 1
+                description: 图像生成提示词；RouterX 不在本地改写。
+                example: draw a small router on a clean desk
+              size:
+                type: string
+                description: 省略、空字符串或 auto 表示交给上游默认策略；WIDTHxHEIGHT 必须为正整数，单边不超过 4096，总像素不超过 4194304。非法值返回 invalid_image_size，且不调用上游、不扣费。
+                example: 1024x1024
+              n:
+                type: integer
+                minimum: 1
+                description: 生成图片数量；具体上限由上游模型决定。
+                example: 1
+              quality:
+                type: string
+                description: 质量选项透传到上游；合法值由上游模型决定。
+                example: standard
+              response_format:
+                type: string
+                enum: [url, b64_json]
+                description: OpenAI-compatible 响应格式；部分新模型可能忽略该字段。
+              user:
+                type: string
+                description: 上游 user 字段；按原样透传。
+              routerx:
+                type: object
+                additionalProperties: true
+                description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
     GenericJSON:
       required: true
       content:
@@ -3896,7 +3937,7 @@ components:
           schema:
             $ref: "#/components/schemas/StandardResponse"
     OpenAIError:
-      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
+      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；Image Generations size 超出基础边界时返回 400 invalid_image_size；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
       content:
         application/json:
           schema:

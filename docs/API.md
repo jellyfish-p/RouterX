@@ -914,7 +914,7 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/chat/completions` | 基础实现，Chat Completions；支持非流式和 OpenAI-compatible SSE 流式 |
 | POST | `/v1/completions` | 基础实现，Legacy Completions；支持非流式、Azure deployment 路径转发和 OpenAI-compatible SSE 流式 |
 | POST | `/v1/embeddings` | 基础实现，OpenAI-compatible Embeddings JSON 透传、Azure deployment 路径转发、`routerx` 剥离、usage 扣费，以及上游前 `input` schema 和 2048 批量边界校验 |
-| POST | `/v1/images/generations` | 基础实现，OpenAI-compatible 图像生成 JSON 透传；Azure OpenAI 通道转发到 `/openai/v1/images/generations?api-version=preview`，保留 `model` 作为 deployment 名；无 usage 时按 P0 最低计费 |
+| POST | `/v1/images/generations` | 基础实现，OpenAI-compatible 图像生成 JSON 透传；Azure OpenAI 通道转发到 `/openai/v1/images/generations?api-version=preview`，保留 `model` 作为 deployment 名；`size` 支持缺省、空字符串、`auto` 或 `WIDTHxHEIGHT`，本地校验单边不超过 4096 且总像素不超过 4194304，非法返回 `invalid_image_size` 且不上游、不扣费；无 usage 时按 P0 最低计费 |
 | POST | `/v1/images/edits` | 基础实现，OpenAI-compatible multipart 图像表单透传，Azure OpenAI 可转发到 `/openai/v1/images/edits?api-version=preview`；`routerx` 表单字段剥离和路由偏好；单文件字段受 `relay.max_multipart_file_bytes` 限制，路径形态、危险扩展名、非图片扩展名、非图片文件头或可执行/脚本内容签名会本地拒绝；无 usage 时按 P0 最低计费 |
 | POST | `/v1/images/variations` | 基础实现，OpenAI-compatible multipart 图像表单透传，Azure OpenAI 可转发到 `/openai/v1/images/variations?api-version=preview`；`routerx` 表单字段剥离和路由偏好；单文件字段受 `relay.max_multipart_file_bytes` 限制，路径形态、危险扩展名、非图片扩展名、非图片文件头或可执行/脚本内容签名会本地拒绝；无 usage 时按 P0 最低计费 |
 | POST | `/v1/audio/transcriptions` | 基础实现，OpenAI-compatible multipart 音频表单透传；Azure OpenAI 通道转发到 `/openai/v1/audio/transcriptions?api-version=preview`；`routerx` 表单字段剥离和路由偏好；单文件字段受 `relay.max_multipart_file_bytes` 限制，路径形态、危险扩展名、非音频扩展名、非音频文件头或可执行/脚本内容签名会本地拒绝；无 usage 时按 P0 最低计费 |

@@ -182,6 +182,7 @@
 | `TestAzureModerationsUnsupportedAPITypeDoesNotCallUpstream` | Azure OpenAI 当前未确认 Moderations 端点时返回 502 `unsupported_api_type`，不调用上游、不扣用户额度或 API Key 预算，并写通道能力失败日志 |
 | `TestUsageMissingStrategyRejectsWithoutDeductingQuota` | `billing.usage_missing_strategy=reject` 时，上游成功但缺少 usage 会返回 `usage_missing`、写 billing 失败日志且不扣费 |
 | `TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage` | Image Generations 基础 JSON 透传、`routerx` 剥离、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestImageGenerationsRejectsInvalidSizeBeforeUpstream` | Image Generations 在上游前拒绝超界 `size`，返回 `invalid_image_size`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestImageMultipartPassthroughUsesRouteAndMinimumCharge` | Image Edits/Variations multipart 表单透传、`routerx` 表单字段剥离与路由偏好、图像/遮罩文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge` | Audio Speech 基础 JSON 透传、`routerx` 剥离、二进制音频响应和 Content-Type 透传、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge` | Audio Transcriptions multipart 表单透传、`routerx` 表单字段剥离与路由偏好、文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |

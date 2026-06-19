@@ -404,9 +404,12 @@ var (
 	errInvalidRouterXRoute    = errors.New("invalid routerx route")
 	errInvalidEmbeddingInput  = errors.New("embeddings input must be a non-empty string, string array, token array, or token array batch")
 	errEmbeddingBatchTooLarge = errors.New("embeddings input batch exceeds maximum size")
+	errInvalidImageSize       = errors.New("image size must be auto or WIDTHxHEIGHT within configured bounds")
 )
 
 const maxEmbeddingBatchSize = 2048
+const maxImageGenerationDimension = 4096
+const maxImageGenerationPixels = 4194304
 
 func (e *HTTPError) Error() string {
 	return e.Message
@@ -1324,6 +1327,7 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 		Model   string          `json:"model"`
 		Stream  bool            `json:"stream"`
 		Input   json.RawMessage `json:"input"`
+		Size    json.RawMessage `json:"size"`
 		RouterX json.RawMessage `json:"routerx"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -1346,7 +1350,47 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 			return relayRequestInfo{}, err
 		}
 	}
+	if apiType == relay.APIImagesGenerations {
+		if err := validateImageGenerationSize(payload.Size); err != nil {
+			return relayRequestInfo{}, err
+		}
+	}
 	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream, Route: route, Upstream: upstream}, nil
+}
+
+// Image Generations 在本地挡住明显异常的尺寸，避免无效请求进入上游和计费链路。
+func validateImageGenerationSize(raw json.RawMessage) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || isJSONNull(raw) {
+		return nil
+	}
+	var size string
+	if err := json.Unmarshal(raw, &size); err != nil {
+		return errInvalidImageSize
+	}
+	size = strings.ToLower(strings.TrimSpace(size))
+	if size == "" || size == "auto" {
+		return nil
+	}
+	parts := strings.Split(size, "x")
+	if len(parts) != 2 {
+		return errInvalidImageSize
+	}
+	width, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return errInvalidImageSize
+	}
+	height, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return errInvalidImageSize
+	}
+	if width <= 0 || height <= 0 || width > maxImageGenerationDimension || height > maxImageGenerationDimension {
+		return errInvalidImageSize
+	}
+	if int64(width)*int64(height) > maxImageGenerationPixels {
+		return errInvalidImageSize
+	}
+	return nil
 }
 
 // Embeddings 在本地验证 OpenAI 支持的 input 形态，避免无效批量请求进入会计费的上游链路。
@@ -1537,6 +1581,8 @@ func relayRequestErrorCode(err error) string {
 		return "invalid_embedding_input"
 	case errors.Is(err, errEmbeddingBatchTooLarge):
 		return "embedding_batch_too_large"
+	case errors.Is(err, errInvalidImageSize):
+		return "invalid_image_size"
 	default:
 		return "invalid_request"
 	}
