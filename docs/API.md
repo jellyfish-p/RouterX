@@ -922,7 +922,7 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/audio/speech` | 基础实现，OpenAI-compatible 文本转语音 JSON 透传，Azure OpenAI 通道转发到 `/openai/v1/audio/speech?api-version=preview`，二进制音频响应透传；本地要求 `input` 为 1-4096 字符字符串、`voice` 为非空字符串，`response_format` 支持缺省、空字符串或 `mp3`、`opus`、`aac`、`flac`、`wav`、`pcm`，非法请求返回 `invalid_audio_speech_input`、`invalid_audio_speech_voice` 或 `invalid_audio_response_format` 且不上游、不扣费；无 usage 时按 P0 最低计费 |
 | GET | `/v1/models` | 基础实现，模型列表；Gemini 外形会在 `supportedGenerationMethods` 声明 `generateContent`、`streamGenerateContent`、`countTokens`、`embedContent` 和 `batchEmbedContents` |
 | GET | `/v1/models/:model` | 基础实现，模型详情；支持 `format`、`routerx_protocol` 或 `X-RouterX-Protocol` 选择 OpenAI、Gemini 或 Anthropic 外形 |
-| POST | `/v1/moderations` | 基础实现，OpenAI-compatible Moderations JSON 透传；未支持该 APIType 的上游 adapter 返回 `unsupported_api_type`；无 usage 时按 P0 最低计费 |
+| POST | `/v1/moderations` | 基础实现，OpenAI-compatible Moderations JSON 透传；本地要求 `input` 为非空字符串或非空字符串数组，非法返回 `invalid_moderation_input` 且不上游、不扣费；未支持该 APIType 的上游 adapter 返回 `unsupported_api_type`；无 usage 时按 P0 最低计费 |
 
 #### Chat Completions 契约
 

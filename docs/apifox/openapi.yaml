@@ -2952,7 +2952,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 内容审核转发
-      description: OpenAI-compatible Moderations 基础实现；JSON 请求体透传到支持该 APIType 的上游 /v1/moderations，发出前剥离 routerx 私有字段；命中未实现 Moderations 的上游 adapter 时返回 502 unsupported_api_type，不调用上游且不扣费。OpenAI Moderations 响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整安全策略、分类字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Moderations 基础实现；JSON 请求体透传到支持该 APIType 的上游 /v1/moderations，发出前剥离 routerx 私有字段。本地要求 input 为非空字符串或非空字符串数组，非法返回 invalid_moderation_input 且不调用上游、不扣费；命中未实现 Moderations 的上游 adapter 时返回 502 unsupported_api_type，不调用上游且不扣费。OpenAI Moderations 响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整安全策略、分类字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2960,7 +2960,7 @@ paths:
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
-        $ref: "#/components/requestBodies/GenericJSON"
+        $ref: "#/components/requestBodies/ModerationsJSON"
       responses:
         "200":
           $ref: "#/components/responses/GenericJSON"
@@ -3865,6 +3865,38 @@ components:
                 type: object
                 additionalProperties: true
                 description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
+    ModerationsJSON:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [model, input]
+            properties:
+              model:
+                type: string
+                description: OpenAI-compatible 内容审核模型名；RouterX 使用该值选择通道。
+                example: omni-moderation-latest
+              input:
+                oneOf:
+                  - type: string
+                    minLength: 1
+                    description: 单条非空审核文本；空白字符串返回 invalid_moderation_input。
+                    example: hello
+                  - type: array
+                    minItems: 1
+                    description: 非空审核文本数组；空数组、空白元素或非字符串元素返回 invalid_moderation_input。
+                    items:
+                      type: string
+                      minLength: 1
+                    example: ["hello", "world"]
+              user:
+                type: string
+                description: 上游 user 字段；按原样透传。
+              routerx:
+                type: object
+                additionalProperties: true
+                description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
     GenericJSON:
       required: true
       content:
@@ -3979,7 +4011,7 @@ components:
           schema:
             $ref: "#/components/schemas/StandardResponse"
     OpenAIError:
-      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；Images size 超出基础边界时返回 400 invalid_image_size；Audio Speech input/voice/response_format 超出基础契约时返回 400 invalid_audio_speech_input、invalid_audio_speech_voice 或 invalid_audio_response_format；Audio Transcriptions/Translations response_format 超出基础枚举时返回 400 invalid_audio_response_format；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
+      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；Images size 超出基础边界时返回 400 invalid_image_size；Audio Speech input/voice/response_format 超出基础契约时返回 400 invalid_audio_speech_input、invalid_audio_speech_voice 或 invalid_audio_response_format；Audio Transcriptions/Translations response_format 超出基础枚举时返回 400 invalid_audio_response_format；Moderations input 超出基础契约时返回 400 invalid_moderation_input；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
       content:
         application/json:
           schema:

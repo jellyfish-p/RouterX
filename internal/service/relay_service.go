@@ -408,6 +408,7 @@ var (
 	errInvalidAudioFormat     = errors.New("audio response_format is not supported for this API")
 	errInvalidAudioInput      = errors.New("audio speech input must be a non-empty string within configured bounds")
 	errInvalidAudioVoice      = errors.New("audio speech voice must be a non-empty string")
+	errInvalidModerationInput = errors.New("moderations input must be a non-empty string or string array")
 )
 
 const maxEmbeddingBatchSize = 2048
@@ -1372,6 +1373,11 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 			return relayRequestInfo{}, err
 		}
 	}
+	if apiType == relay.APIModerations {
+		if err := validateModerationInput(payload.Input); err != nil {
+			return relayRequestInfo{}, err
+		}
+	}
 	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream, Route: route, Upstream: upstream}, nil
 }
 
@@ -1464,6 +1470,36 @@ func validateAudioSpeechVoice(raw json.RawMessage) error {
 		return errInvalidAudioVoice
 	}
 	return nil
+}
+
+// Moderations 只接受 OpenAI 兼容的文本输入形态，避免空审核请求进入上游和计费链路。
+func validateModerationInput(raw json.RawMessage) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || isJSONNull(raw) {
+		return errInvalidModerationInput
+	}
+	switch raw[0] {
+	case '"':
+		var input string
+		if err := json.Unmarshal(raw, &input); err != nil || strings.TrimSpace(input) == "" {
+			return errInvalidModerationInput
+		}
+		return nil
+	case '[':
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil || len(items) == 0 {
+			return errInvalidModerationInput
+		}
+		for _, item := range items {
+			var input string
+			if err := json.Unmarshal(item, &input); err != nil || strings.TrimSpace(input) == "" {
+				return errInvalidModerationInput
+			}
+		}
+		return nil
+	default:
+		return errInvalidModerationInput
+	}
 }
 
 // Embeddings 在本地验证 OpenAI 支持的 input 形态，避免无效批量请求进入会计费的上游链路。
@@ -1699,6 +1735,8 @@ func relayRequestErrorCode(err error) string {
 		return "invalid_audio_speech_input"
 	case errors.Is(err, errInvalidAudioVoice):
 		return "invalid_audio_speech_voice"
+	case errors.Is(err, errInvalidModerationInput):
+		return "invalid_moderation_input"
 	default:
 		return "invalid_request"
 	}

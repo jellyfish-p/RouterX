@@ -179,6 +179,7 @@
 | `TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota` | Embeddings 基础 JSON 透传、`routerx` 剥离、`prompt_tokens/total_tokens` usage 映射、日志和扣费 |
 | `TestEmbeddingsRejectsInvalidInputBeforeUpstream` | Embeddings 在上游前拒绝空 `input` 和超过 2048 的批量输入，返回稳定错误码且不调用上游 |
 | `TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | Moderations 基础 JSON 透传、`routerx` 剥离、上游无 usage 时按 P0 最低计费写日志、记录 minimum usage_source、minimum 表达式快照并扣费 |
+| `TestModerationsRejectsInvalidInputBeforeUpstream` | Moderations 在上游前拒绝缺失、空白或非字符串 `input`，返回 `invalid_moderation_input`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestAzureModerationsUnsupportedAPITypeDoesNotCallUpstream` | Azure OpenAI 当前未确认 Moderations 端点时返回 502 `unsupported_api_type`，不调用上游、不扣用户额度或 API Key 预算，并写通道能力失败日志 |
 | `TestUsageMissingStrategyRejectsWithoutDeductingQuota` | `billing.usage_missing_strategy=reject` 时，上游成功但缺少 usage 会返回 `usage_missing`、写 billing 失败日志且不扣费 |
 | `TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage` | Image Generations 基础 JSON 透传、`routerx` 剥离、上游无 usage 时按 P0 最低计费写日志和扣费 |
