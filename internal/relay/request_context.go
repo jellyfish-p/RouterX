@@ -11,6 +11,7 @@ import (
 
 type requestIDContextKey struct{}
 type traceparentContextKey struct{}
+type tracestateContextKey struct{}
 type upstreamOptionsContextKey struct{}
 type routerXHopContextKey struct{}
 type routerXChainContextKey struct{}
@@ -63,6 +64,28 @@ func TraceparentFromContext(ctx context.Context) string {
 		return ""
 	}
 	value, _ := ctx.Value(traceparentContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
+// ContextWithTracestate stores a validated W3C tracestate for outbound calls.
+// It is meaningful only together with a valid traceparent.
+func ContextWithTracestate(ctx context.Context, tracestate string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	normalized, ok := common.NormalizeTracestate(tracestate)
+	if !ok {
+		normalized = ""
+	}
+	return context.WithValue(ctx, tracestateContextKey{}, normalized)
+}
+
+// TracestateFromContext returns the outbound W3C tracestate, if present.
+func TracestateFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(tracestateContextKey{}).(string)
 	return strings.TrimSpace(value)
 }
 
@@ -139,6 +162,9 @@ func SetTraceparentHeader(req *http.Request) {
 	}
 	if traceparent := TraceparentFromContext(req.Context()); traceparent != "" {
 		req.Header.Set(common.TraceparentHeaderName, traceparent)
+		if tracestate := TracestateFromContext(req.Context()); tracestate != "" {
+			req.Header.Set(common.TracestateHeaderName, tracestate)
+		}
 	}
 }
 

@@ -34,6 +34,9 @@ func Recovery() gin.HandlerFunc {
 					if traceID := c.GetString("trace_id"); traceID != "" {
 						entry["trace_id"] = traceID
 						entry["traceparent"] = c.GetString("traceparent")
+						if tracestate := c.GetString("tracestate"); tracestate != "" {
+							entry["tracestate"] = tracestate
+						}
 					}
 					writeStructuredLog(entry, func() {
 						writeTextPanicLog(requestID, c.Request.Method, path, c.ClientIP(), panicType, stack)

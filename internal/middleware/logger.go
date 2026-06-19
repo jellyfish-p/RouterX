@@ -84,6 +84,10 @@ func Logger() gin.HandlerFunc {
 			c.Set("traceparent", traceparent)
 			c.Set("trace_id", traceID)
 			c.Header(common.TraceparentHeaderName, traceparent)
+			if tracestate, ok := common.NormalizeTracestate(c.GetHeader(common.TracestateHeaderName)); ok {
+				c.Set("tracestate", tracestate)
+				c.Header(common.TracestateHeaderName, tracestate)
+			}
 		}
 
 		c.Next()
@@ -110,6 +114,9 @@ func Logger() gin.HandlerFunc {
 			if traceID != "" {
 				entry["trace_id"] = traceID
 				entry["traceparent"] = traceparent
+				if tracestate := c.GetString("tracestate"); tracestate != "" {
+					entry["tracestate"] = tracestate
+				}
 			}
 			writeStructuredLog(entry, func() {
 				writeTextHTTPLog(c, status, latency, requestID)
