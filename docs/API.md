@@ -670,7 +670,7 @@ Provider 退款请求：
 
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
-| POST | `/v0/user/register` | 已实现 | 基础用户名密码注册，受自助注册 settings 控制；可附带 email 本地登录标识但不保存重复密码哈希；命中已注销同名账号时恢复原账号 |
+| POST | `/v0/user/register` | 已实现 | 基础用户名密码注册，受自助注册 settings 控制；可附带或恢复补齐 email 本地登录标识但不保存重复密码哈希；命中已注销同名账号时恢复原账号 |
 | POST | `/v0/user/login` | 已实现 | 用户统一登录；用户名密码始终可用，email/phone 密码登录受 settings 控制并复用 `username/local` 主密码；成功登录写 `user.login` 管理审计，摘要不包含密码或 JWT |
 | GET | `/v0/user/self` | 已实现 | 获取个人信息 |
 | PUT | `/v0/user/self` | 已实现 | 修改个人信息 |
@@ -688,7 +688,7 @@ Provider 退款请求：
 }
 ```
 
-注册策略拒绝返回 403，例如公开注册关闭、用户名注册关闭，或当前无验证码请求但 `auth.register.captcha.required=true`。新账号注册成功时会应用 `auth.register.default_quota` 和可解析的 `auth.register.default_group_id`。如果请求提供 `email`，服务端会规范化并创建 `email/local` identity 作为可选登录标识，但密码哈希只保存到 `username/local` 主身份。若同名 `username/local` identity 命中已注销的普通用户账号，当前接口会恢复原 `users.id`，把账号状态改回启用，更新本地密码身份和展示名，保留原额度、分组、日志和历史流水，不会自动启用旧 API Key，并写入 `user.recover` 审计。
+注册策略拒绝返回 403，例如公开注册关闭、用户名注册关闭，或当前无验证码请求但 `auth.register.captcha.required=true`。新账号注册成功时会应用 `auth.register.default_quota` 和可解析的 `auth.register.default_group_id`。如果请求提供 `email`，服务端会规范化并创建 `email/local` identity 作为可选登录标识，但密码哈希只保存到 `username/local` 主身份。若同名 `username/local` identity 命中已注销的普通用户账号，当前接口会恢复原 `users.id`，把账号状态改回启用，更新本地密码身份和展示名；恢复请求附带未被其他账号占用的 `email` 时，会补齐同用户的 `email/local` 登录标识。恢复保留原额度、分组、日志和历史流水，不会自动启用旧 API Key，并写入 `user.recover` 审计。
 
 自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号，请求体必须提交当前本地密码进行二次确认。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key；不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史。缺少密码或密码错误时不会修改账号和 API Key 状态，并写入 `user.self_cancel_denied` 拒绝审计，`error_code` 分别为 `self_cancel_password_required` 或 `self_cancel_password_invalid`，审计摘要不保存密码。注销后用户名密码登录返回统一认证失败，同名注册会走上述恢复流程；隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复会在 `docs/ACCOUNTS.md` 的规则基础上继续扩展。
 

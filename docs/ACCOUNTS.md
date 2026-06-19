@@ -256,7 +256,7 @@ POST /v0/user/register
     -> 清理当前登录会话
 ```
 
-当前已落地基础接口 `DELETE /v0/user/self`：要求当前 User JWT 和本地密码二次确认，限制普通用户只能注销自己；服务端将 `users.status` 置为禁用、禁用该用户已启用 API Key 并写入 `user.self_cancel` 审计。缺少密码或密码错误时拒绝注销，用户和 API Key 状态保持不变，并写入 `user.self_cancel_denied` 拒绝审计，错误码区分 `self_cancel_password_required` 和 `self_cancel_password_invalid`，审计摘要不保存密码。该接口不删除 `users`、`user_identities`、`tokens`、`logs`、余额或额度流水。当前基础用户名注册会在相同 `username/local` identity 命中已注销普通用户时恢复原账号，写入 `user.recover` 审计，并要求用户用本次提交的新密码重新登录；旧 API Key 不会自动恢复启用。当前版本尚未实现隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复入口。
+当前已落地基础接口 `DELETE /v0/user/self`：要求当前 User JWT 和本地密码二次确认，限制普通用户只能注销自己；服务端将 `users.status` 置为禁用、禁用该用户已启用 API Key 并写入 `user.self_cancel` 审计。缺少密码或密码错误时拒绝注销，用户和 API Key 状态保持不变，并写入 `user.self_cancel_denied` 拒绝审计，错误码区分 `self_cancel_password_required` 和 `self_cancel_password_invalid`，审计摘要不保存密码。该接口不删除 `users`、`user_identities`、`tokens`、`logs`、余额或额度流水。当前基础用户名注册会在相同 `username/local` identity 命中已注销普通用户时恢复原账号，写入 `user.recover` 审计，并要求用户用本次提交的新密码重新登录；恢复请求附带未被占用的 email 时会补齐 `email/local` 登录标识且不写重复密码哈希。旧 API Key 不会自动恢复启用。当前版本尚未实现隐私字段擦除和手机号/OAuth/OIDC 恢复入口。
 
 注销后保留的数据：
 
@@ -290,7 +290,7 @@ POST /v0/user/register
 - 欠款、历史消费、风控标签不能因恢复而清零。
 - API Key 默认不自动恢复启用，建议要求用户重新创建。
 
-当前基础用户名恢复实现保留原 `quota`、`group_id` 和历史事实，只更新 `users.status`、可选展示资料和本地身份密码；恢复不会重新应用 `auth.register.default_quota` 或默认分组。
+当前基础用户名恢复实现保留原 `quota`、`group_id` 和历史事实，只更新 `users.status`、可选展示资料和 `username/local` 主密码；请求附带未被其他账号占用的 email 时，会创建或保留同用户 `email/local` identity 作为登录标识。恢复不会重新应用 `auth.register.default_quota` 或默认分组。
 
 隐私处理：
 

@@ -147,8 +147,10 @@ func recoverRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, 
 	if identity == nil || identity.User == nil {
 		return nil, errors.New("account identity is invalid")
 	}
+	var emailIdentity *model.UserIdentity
 	if email != "" {
-		emailIdentity, err := findIdentityForRecovery(tx, model.UserIdentityMethodEmail, email)
+		var err error
+		emailIdentity, err = findIdentityForRecovery(tx, model.UserIdentityMethodEmail, email)
 		if err != nil {
 			return nil, err
 		}
@@ -186,6 +188,23 @@ func recoverRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, 
 			"verified_at":   &now,
 		}).Error; err != nil {
 		return nil, err
+	}
+	if email != "" {
+		if emailIdentity == nil {
+			if err := tx.Create(&model.UserIdentity{
+				UserID:     identity.UserID,
+				Method:     model.UserIdentityMethodEmail,
+				Provider:   model.UserIdentityProviderLocal,
+				Identifier: email,
+				VerifiedAt: &now,
+			}).Error; err != nil {
+				return nil, err
+			}
+		} else if strings.TrimSpace(emailIdentity.PasswordHash) != "" {
+			if err := tx.Model(&model.UserIdentity{}).Where("id = ?", emailIdentity.ID).Update("password_hash", "").Error; err != nil {
+				return nil, err
+			}
+		}
 	}
 	var recovered model.User
 	if err := tx.First(&recovered, identity.UserID).Error; err != nil {

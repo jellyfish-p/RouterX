@@ -2320,6 +2320,83 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 	}
 }
 
+func TestUserRecoveryCreatesEmailIdentity(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("auth.register.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.username.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.captcha.required", "false"); err != nil {
+		t.Fatal(err)
+	}
+
+	registerResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "recover-email-user",
+		"password":     "password123",
+		"display_name": "Recover Email User",
+	})
+	if registerResp.Code != http.StatusOK {
+		t.Fatalf("register user failed: %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	userJWT := loginBearer(t, r, "recover-email-user", "password123")
+	var user model.User
+	if err := internal.DB.Where("username = ?", "recover-email-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	cancelResp := performJSON(r, http.MethodDelete, "/v0/user/self", userJWT, map[string]interface{}{
+		"password": "password123",
+	})
+	if cancelResp.Code != http.StatusOK {
+		t.Fatalf("self cancel should succeed, got %d %s", cancelResp.Code, cancelResp.Body.String())
+	}
+
+	recoverResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "recover-email-user",
+		"password":     "newpassword123",
+		"display_name": "Recovered Email User",
+		"email":        "Recovered-Email@Example.COM",
+	})
+	if recoverResp.Code != http.StatusOK {
+		t.Fatalf("recovery with email should succeed, got %d %s", recoverResp.Code, recoverResp.Body.String())
+	}
+	var emailIdentity model.UserIdentity
+	if err := internal.DB.Where(
+		"user_id = ? AND method = ? AND provider = ? AND identifier = ?",
+		user.ID,
+		model.UserIdentityMethodEmail,
+		model.UserIdentityProviderLocal,
+		"recovered-email@example.com",
+	).First(&emailIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
+	if emailIdentity.PasswordHash != "" {
+		t.Fatalf("recovered email identity should not store duplicated password hash")
+	}
+	if err := settingSvc.Set("auth.login.email_password.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	emailLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "recovered-email@example.com",
+		"password": "newpassword123",
+	})
+	if emailLogin.Code != http.StatusOK {
+		t.Fatalf("recovered email identity should log in with primary password, got %d %s", emailLogin.Code, emailLogin.Body.String())
+	}
+}
+
 func TestUserLoginRespectsLoginMethodSettings(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
