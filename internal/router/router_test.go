@@ -3634,6 +3634,29 @@ func TestAdminStripeRefundRequestCreatesProviderRefundAndPendingOrder(t *testing
 		t.Fatal(err)
 	}
 
+	missingReasonResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refund-requests", rootJWT, map[string]interface{}{
+		"order_no":        order.OrderNo,
+		"refund_amount":   "5.00",
+		"idempotency_key": "refund-request-missing-reason",
+	})
+	if missingReasonResp.Code != http.StatusBadRequest {
+		t.Fatalf("stripe refund request without reason should fail, got %d %s", missingReasonResp.Code, missingReasonResp.Body.String())
+	}
+	if atomic.LoadInt32(&refundAPICalls) != 0 {
+		t.Fatalf("invalid stripe refund request must not call provider, got %d", refundAPICalls)
+	}
+	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo+"&result=denied", rootJWT, nil)
+	deniedAuditBody := deniedAuditResp.Body.String()
+	if deniedAuditResp.Code != http.StatusOK ||
+		!strings.Contains(deniedAuditBody, `"action":"payment_refund.request_denied"`) ||
+		!strings.Contains(deniedAuditBody, `"error_code":"payment_refund_reason_required"`) ||
+		!strings.Contains(deniedAuditBody, "refund-request-missing-reason") {
+		t.Fatalf("denied stripe refund request should write audit log, got %d %s", deniedAuditResp.Code, deniedAuditBody)
+	}
+	if strings.Contains(deniedAuditBody, "sk_test_refund") || strings.Contains(deniedAuditBody, "re_refund_request_1") {
+		t.Fatalf("denied stripe refund request audit leaked provider secrets: %s", deniedAuditBody)
+	}
+
 	refundResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refund-requests", rootJWT, map[string]interface{}{
 		"order_no":        order.OrderNo,
 		"refund_amount":   "5.00",
@@ -3861,6 +3884,17 @@ func TestAdminEpayRefundRequestCreatesProviderRefundAndPendingOrder(t *testing.T
 	}
 	if atomic.LoadInt32(&refundAPICalls) != 1 {
 		t.Fatalf("duplicate epay refund request must not call provider again, got %d", refundAPICalls)
+	}
+	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo+"&result=denied", rootJWT, nil)
+	deniedAuditBody := deniedAuditResp.Body.String()
+	if deniedAuditResp.Code != http.StatusOK ||
+		!strings.Contains(deniedAuditBody, `"action":"payment_refund.request_denied"`) ||
+		!strings.Contains(deniedAuditBody, `"error_code":"payment_refund_idempotency_key_used"`) ||
+		!strings.Contains(deniedAuditBody, "epay-refund-request-1") {
+		t.Fatalf("duplicate epay refund request should write denied audit, got %d %s", deniedAuditResp.Code, deniedAuditBody)
+	}
+	if strings.Contains(deniedAuditBody, "epay-refund-secret") {
+		t.Fatalf("duplicate epay refund request audit leaked provider secret: %s", deniedAuditBody)
 	}
 }
 

@@ -384,7 +384,7 @@ Provider 退款请求：
 }
 ```
 
-`refund_amount` 为空时按订单全额退款；非空时必须大于 0 且不能超过订单金额。接口需要订单为 `paid` 状态；Stripe 订单必须已保存 `provider_payment_id`，易支付订单需要配置 `payment.epay.pid`、`payment.epay.refund_url` 和 `PAYMENT_EPAY_KEY`。成功后本地订单进入 `refund_pending`，写 `payment_refund_requests` 和 `payment_refund.requested` 审计；最终退款状态和可选额度扣回仍以可信 provider webhook 或后续人工收尾为准。
+`refund_amount` 为空时按订单全额退款；非空时必须大于 0 且不能超过订单金额。接口需要订单为 `paid` 状态；Stripe 订单必须已保存 `provider_payment_id`，易支付订单需要配置 `payment.epay.pid`、`payment.epay.refund_url` 和 `PAYMENT_EPAY_KEY`。成功后本地订单进入 `refund_pending`，写 `payment_refund_requests` 和 `payment_refund.requested` 审计；本地参数、订单状态或幂等键拒绝会写 `payment_refund.request_denied` 且 `result=denied`，provider 调用失败会写同动作但 `result=failed`。最终退款状态和可选额度扣回仍以可信 provider webhook 或后续人工收尾为准。
 
 ### 模型价格管理
 
@@ -483,6 +483,7 @@ Provider 退款请求：
 | `payment_webhook.failed` | Stripe `checkout.session.async_payment_failed` 或易支付明确失败通知将 pending 订单置为 `failed` |
 | `payment_order.paid` | 支付 provider 成功回调入账 |
 | `payment_refund.requested` | `POST /v0/admin/payment/refund-requests` 向 Stripe 或易支付发起退款请求 |
+| `payment_refund.request_denied` | `POST /v0/admin/payment/refund-requests` 本地拒绝或 provider 发起失败 |
 | `payment_refund.processed` | `POST /v0/payment/stripe/webhook` 处理全额或部分退款事件 |
 | `payment_refund.deducted` | Stripe 全额或部分退款按 settings 自动扣回额度 |
 | `payment_refund.manual` | `POST /v0/admin/payment/refunds` 管理员人工确认退款并扣回额度 |

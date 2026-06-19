@@ -330,7 +330,7 @@ user submits code
 - 易支付同步返回页已支持本地订单状态只读展示，不作为入账依据。
 - 支付相关人工补账/扣回已支持 `POST /v0/admin/payment/adjustments`，会写 `manual_credit` 或 `manual_debit` 额度流水，并在同一事务中写 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 审计。
 - 管理员确认后的人工退款已支持 `POST /v0/admin/payment/refunds`，会校验 `paid` 订单，按退款额度写 `refund_deduct` 额度流水，将订单置为 `refunded` 或 `partially_refunded`，并写 `payment_refund.manual` 审计。
-- Stripe 和易支付 provider 侧退款请求已支持 `POST /v0/admin/payment/refund-requests`，会创建 provider refund、记录退款请求并将订单置为 `refund_pending`；Stripe 最终状态仍由 webhook 确认，易支付需等待可信后续通知或人工收尾。
+- Stripe 和易支付 provider 侧退款请求已支持 `POST /v0/admin/payment/refund-requests`，会创建 provider refund、记录退款请求并将订单置为 `refund_pending`；本地参数、订单状态或幂等键拒绝会写 `payment_refund.request_denied` 且 `result=denied`，provider 调用失败会写同动作但 `result=failed`，摘要不保存 provider secret；Stripe 最终状态仍由 webhook 确认，易支付需等待可信后续通知或人工收尾。
 - 更多 provider 会话创建、更多 provider 自动退款适配和更多 provider 争议生命周期仍属于后续增强，不能把当前实现误写成完整支付闭环。
 
 要求：
@@ -371,7 +371,7 @@ user submits code
 当前基础实现：
 
 - Stripe `charge.refunded` 退款事件会校验原订单金额和币种，写入 `payment_events` 幂等事实；全额退款将订单置为 `refunded`，部分退款将订单置为 `partially_refunded`，并可收尾此前由管理端发起后进入 `refund_pending` 的订单。
-- 管理员可通过 `POST /v0/admin/payment/refund-requests` 向 Stripe 或易支付发起 provider 退款请求；接口会调用 Stripe Refund API 或配置的易支付退款地址，写入 `payment_refund_requests`，订单进入 `refund_pending`，并写 `payment_refund.requested` 审计。退款是否最终成功仍以后续可信 provider 事件或人工收尾为准。
+- 管理员可通过 `POST /v0/admin/payment/refund-requests` 向 Stripe 或易支付发起 provider 退款请求；接口会调用 Stripe Refund API 或配置的易支付退款地址，写入 `payment_refund_requests`，订单进入 `refund_pending`，并写 `payment_refund.requested` 审计。缺少原因、重复幂等键、订单不存在、订单未支付、退款金额非法或 provider 发起失败会写 `payment_refund.request_denied` 审计，使用稳定 `error_code` 区分拒绝原因。退款是否最终成功仍以后续可信 provider 事件或人工收尾为准。
 - 默认 `payment.refund.auto_deduct=false`，退款只记录订单状态，不扣用户额度。
 - 退款处理成功会写入 `payment_refund.processed` 管理审计，摘要记录 provider、event_id、订单号、金额、币种、额度和扣回策略快照。
 - 开启 `payment.refund.auto_deduct=true` 后，如果用户余额足够，写入 `quota_transactions(type=refund_deduct, source_type=refund)` 并扣回原订单额度或按退款金额比例扣回额度，同时写入 `payment_refund.deducted` 审计；重复退款事件不重复扣回。
@@ -529,10 +529,10 @@ receive webhook
 - 支付入账。
 - 退款记录和扣回。
 - 充值码创建、作废、兑换。
-- 人工补账、扣回、人工退款落账、Stripe/易支付 provider 退款请求和争议生命周期。
+- 人工补账、扣回、人工退款落账、Stripe/易支付 provider 退款请求、provider 退款请求拒绝和争议生命周期。
 - 支付 settings 和密钥引用变更。
 
-当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建，Stripe/易支付 webhook 入账，Stripe async payment failed 与易支付明确失败通知审计，Stripe 全额/部分退款和扣回，Stripe 争议生命周期记录和可选 API Key 禁用，支付相关人工补账/扣回、人工退款落账、Stripe/易支付 provider 退款请求，以及充值码生成、导入、批次/备注/过期策略、作废、兑换的成功审计；更多 provider 自动退款适配和更多失败分支审计仍需继续补齐。
+当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建，Stripe/易支付 webhook 入账，Stripe async payment failed 与易支付明确失败通知审计，Stripe 全额/部分退款和扣回，Stripe 争议生命周期记录和可选 API Key 禁用，支付相关人工补账/扣回、人工退款落账、Stripe/易支付 provider 退款请求及本地拒绝审计，以及充值码生成、导入、批次/备注/过期策略、作废、兑换的成功审计；更多 provider 自动退款适配和更多失败分支审计仍需继续补齐。
 
 审计字段：
 

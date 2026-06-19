@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -415,6 +416,7 @@ func (h *UserHandler) CreatePaymentProviderRefundRequest(c *gin.Context) {
 	}
 	var req dto.PaymentProviderRefundRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		h.recordPaymentProviderRefundDenied(c, operator, req, "payment_refund_invalid_request", "denied")
 		common.FailWithStatus(c, 400, "退款请求参数无效")
 		return
 	}
@@ -427,10 +429,71 @@ func (h *UserHandler) CreatePaymentProviderRefundRequest(c *gin.Context) {
 		UserAgent:      c.GetHeader("User-Agent"),
 	}, c.GetString("request_id"))
 	if err != nil {
+		errorCode := paymentProviderRefundRequestErrorCode(err)
+		h.recordPaymentProviderRefundDenied(c, operator, req, errorCode, paymentProviderRefundRequestAuditResult(errorCode))
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
 	common.Success(c, result)
+}
+
+func (h *UserHandler) recordPaymentProviderRefundDenied(c *gin.Context, operator *model.User, req dto.PaymentProviderRefundRequest, errorCode, result string) {
+	if operator == nil {
+		return
+	}
+	orderNo := strings.TrimSpace(req.OrderNo)
+	if orderNo == "" {
+		orderNo = "refund_request"
+	}
+	summary := map[string]interface{}{
+		"order_no":        strings.TrimSpace(req.OrderNo),
+		"refund_amount":   strings.TrimSpace(req.RefundAmount),
+		"reason":          strings.TrimSpace(req.Reason),
+		"idempotency_key": strings.TrimSpace(req.IdempotencyKey),
+		"error_code":      errorCode,
+	}
+	_ = h.recordAdminAuditStringResult(c, operator, "payment_refund.request_denied", common.QuotaSourceTypePaymentOrder, orderNo, nil, summary, result, errorCode)
+}
+
+func paymentProviderRefundRequestAuditResult(errorCode string) string {
+	if errorCode == "payment_refund_provider_failed" {
+		return "failed"
+	}
+	return "denied"
+}
+
+func paymentProviderRefundRequestErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "payment_refund_order_not_found"
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(msg, "order_no is required"):
+		return "payment_refund_order_required"
+	case strings.Contains(msg, "reason is required"):
+		return "payment_refund_reason_required"
+	case strings.Contains(msg, "idempotency_key is required"):
+		return "payment_refund_idempotency_key_required"
+	case strings.Contains(msg, "idempotency_key has already been used"):
+		return "payment_refund_idempotency_key_used"
+	case strings.Contains(msg, "not paid"):
+		return "payment_refund_order_not_paid"
+	case strings.Contains(msg, "refund_amount must be positive"):
+		return "payment_refund_amount_invalid"
+	case strings.Contains(msg, "refund_amount exceeds order amount"):
+		return "payment_refund_amount_exceeds_order"
+	case strings.Contains(msg, "refund_quota must be positive"):
+		return "payment_refund_quota_invalid"
+	case strings.Contains(msg, "provider refund request"):
+		return "payment_refund_provider_failed"
+	case strings.Contains(msg, "permission denied"):
+		return "payment_refund_forbidden"
+	default:
+		return "payment_refund_rejected"
+	}
 }
 
 // GET /v0/admin/redem — 充值码列表
