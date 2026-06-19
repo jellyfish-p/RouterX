@@ -46,6 +46,7 @@ type RelayRawResult struct {
 
 type relayUserAgentContextKey struct{}
 type relayRequestIDContextKey struct{}
+type relayIngressProtocolContextKey struct{}
 type relayRouterXOptionsContextKey struct{}
 type relayRouterXHopContextKey struct{}
 type relayRouterXChainContextKey struct{}
@@ -162,6 +163,17 @@ func ContextWithRelayRequestSnapshot(ctx context.Context, snapshot string) conte
 	return context.WithValue(ctx, relayRequestSnapshotContextKey{}, strings.TrimSpace(snapshot))
 }
 
+func contextWithRelayIngressProtocol(ctx context.Context, protocol string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	protocol = strings.TrimSpace(protocol)
+	if protocol == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, relayIngressProtocolContextKey{}, protocol)
+}
+
 func contextWithRelayAdapterDegradations(ctx context.Context, degradations []relayAdapterDegradation) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -256,6 +268,14 @@ func relayRequestSnapshotFromContext(ctx context.Context) string {
 		return ""
 	}
 	value, _ := ctx.Value(relayRequestSnapshotContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
+func relayIngressProtocolFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(relayIngressProtocolContextKey{}).(string)
 	return strings.TrimSpace(value)
 }
 
@@ -407,6 +427,7 @@ func (s *RelayService) RelayAnthropicMessages(ctx context.Context, token *model.
 	if err != nil {
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolAnthropic)
 	ctx = contextWithRelayAdapterDegradations(ctx, anthropicAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -424,6 +445,7 @@ func (s *RelayService) RelayAnthropicMessagesStream(ctx context.Context, token *
 	if err != nil {
 		return nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolAnthropic)
 	ctx = contextWithRelayAdapterDegradations(ctx, anthropicAdapterDegradations(body))
 	result, err := s.RelayStream(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -449,6 +471,7 @@ func (s *RelayService) RelayGeminiGenerateContent(ctx context.Context, token *mo
 	if err != nil {
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolGemini)
 	ctx = contextWithRelayAdapterDegradations(ctx, geminiGenerateAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -466,6 +489,7 @@ func (s *RelayService) RelayGeminiEmbedContent(ctx context.Context, token *model
 	if err != nil {
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolGemini)
 	ctx = contextWithRelayAdapterDegradations(ctx, geminiEmbedContentAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
 	if err != nil {
@@ -483,6 +507,7 @@ func (s *RelayService) RelayGeminiBatchEmbedContents(ctx context.Context, token 
 	if err != nil {
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolGemini)
 	ctx = contextWithRelayAdapterDegradations(ctx, geminiBatchEmbedContentsAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
 	if err != nil {
@@ -500,6 +525,7 @@ func (s *RelayService) RelayGeminiGenerateContentStream(ctx context.Context, tok
 	if err != nil {
 		return nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolGemini)
 	ctx = contextWithRelayAdapterDegradations(ctx, geminiGenerateAdapterDegradations(body))
 	result, err := s.RelayStream(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -733,6 +759,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	for i := 0; i < maxAttempts; i++ {
 		channel := attemptCandidates[i]
 		attemptCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, &channel, retryAttempts, filteredReasons))
+		attemptCtx = ContextWithRelayRequestSnapshot(attemptCtx, buildRelayRequestSnapshotForChannel(attemptCtx, apiType, reqInfo, &channel))
 		result, usage, retryable, err := s.relayNonStreamAttempt(attemptCtx, token, apiType, reqInfo, body, contentType, clientIP, &channel, rawResponse)
 		if err == nil {
 			return result, usage, nil
@@ -963,6 +990,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	}
 	channel := pickRelayChannelCandidate(candidates)
 	ctx = ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, channel, nil, filteredReasons))
+	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshotForChannel(ctx, apiType, reqInfo, channel))
 	if err := s.enforceChannelRateLimit(ctx, token, channel, reqInfo.Model, clientIP); err != nil {
 		return nil, err
 	}
@@ -3568,7 +3596,15 @@ func logUsageSource(usage *relay.Usage, status int, quotaUsed int64) string {
 }
 
 func buildRelayRequestSnapshot(ctx context.Context, apiType relay.APIType, reqInfo relayRequestInfo) string {
+	return buildRelayRequestSnapshotForChannel(ctx, apiType, reqInfo, nil)
+}
+
+func buildRelayRequestSnapshotForChannel(ctx context.Context, apiType relay.APIType, reqInfo relayRequestInfo, channel *model.Channel) string {
 	apiTypeName := relayAPITypeScopeName(apiType)
+	ingressProtocol := relayIngressProtocolFromContext(ctx)
+	if ingressProtocol == "" {
+		ingressProtocol = relayIngressProtocolFromAPIType(apiType)
+	}
 	snapshot := map[string]interface{}{
 		"schema":           "routerx.snapshot.v1",
 		"kind":             "request",
@@ -3576,7 +3612,7 @@ func buildRelayRequestSnapshot(ctx context.Context, apiType relay.APIType, reqIn
 		"source":           "relay",
 		"redacted":         true,
 		"request_id":       relayRequestIDFromContext(ctx),
-		"ingress_protocol": relayIngressProtocolFromAPIType(apiType),
+		"ingress_protocol": ingressProtocol,
 		"api_type":         apiTypeName,
 		"requested_model":  strings.TrimSpace(reqInfo.Model),
 		"stream":           reqInfo.Stream,
@@ -3586,7 +3622,7 @@ func buildRelayRequestSnapshot(ctx context.Context, apiType relay.APIType, reqIn
 			"route": preference,
 		}
 	}
-	if degradations := relayAdapterDegradationsFromContext(ctx); len(degradations) > 0 {
+	if degradations := relayAdapterDegradationsForSnapshot(ctx, apiType, channel); len(degradations) > 0 {
 		snapshot["adapter_degradations"] = degradations
 	}
 	raw, err := json.Marshal(snapshot)
@@ -3594,6 +3630,27 @@ func buildRelayRequestSnapshot(ctx context.Context, apiType relay.APIType, reqIn
 		return ""
 	}
 	return string(raw)
+}
+
+func relayAdapterDegradationsForSnapshot(ctx context.Context, apiType relay.APIType, channel *model.Channel) []relayAdapterDegradation {
+	degradations := relayAdapterDegradationsFromContext(ctx)
+	if len(degradations) == 0 {
+		return nil
+	}
+	if channel == nil {
+		return degradations
+	}
+	if apiType == relay.APIChatCompletions && channel.Type == common.ChannelTypeGemini && strings.EqualFold(relayIngressProtocolFromContext(ctx), inputProtocolGemini) {
+		filtered := make([]relayAdapterDegradation, 0, len(degradations))
+		for _, degradation := range degradations {
+			if strings.EqualFold(degradation.Protocol, inputProtocolGemini) {
+				continue
+			}
+			filtered = append(filtered, degradation)
+		}
+		return filtered
+	}
+	return degradations
 }
 
 func relayIngressProtocolFromAPIType(apiType relay.APIType) string {

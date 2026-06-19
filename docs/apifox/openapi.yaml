@@ -3152,7 +3152,7 @@ paths:
         Gin 当前注册为 /v1/models/:model，可匹配 gemini-pro:generateContent 这一类单段路径。
         命中 OpenAI-compatible 上游时会转换到 Chat 主链路，再返回 Gemini-compatible response；contents/systemInstruction 中的 text part 保留，非文本 parts 会以 compact JSON 文本降级。
         OpenAI-compatible 上游路径中，generationConfig.maxOutputTokens、temperature、topP、stopSequences 会映射到 OpenAI-compatible 字段；其他有值子字段会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。
-        命中 Gemini 上游时，会以原生 Gemini body 保留 contents、systemInstruction、generationConfig、safetySettings、tools、toolConfig 和 cachedContent，不发送 OpenAI messages/max_tokens。
+        命中 Gemini 上游时，会以原生 Gemini body 保留 contents、systemInstruction、generationConfig、safetySettings、tools、toolConfig 和 cachedContent，不发送 OpenAI messages/max_tokens；成功日志保留 ingress_protocol=gemini，且不会把这些已保真字段误记为 dropped。
         API Key、配额、本地限流、路由和基础下游错误均返回 Gemini-compatible error envelope；本地限流 status 为 RESOURCE_EXHAUSTED。
       security:
         - ApiKeyBearer: []
@@ -3484,7 +3484,7 @@ components:
           schema:
             type: object
             required: [contents]
-            description: Gemini-compatible generateContent 请求；命中 Gemini 上游时保留列出的原生字段，命中 OpenAI-compatible 上游时按 Chat 形态转换并记录不可映射字段降级。
+            description: Gemini-compatible generateContent 请求；命中 Gemini 上游时保留列出的原生字段，且成功日志不会把这些字段误记为 dropped；命中 OpenAI-compatible 上游时按 Chat 形态转换并记录不可映射字段降级。
             properties:
               contents:
                 type: array

@@ -9895,6 +9895,7 @@ func TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields(t *testing.T
 	})
 	var tokenPayload struct {
 		Data struct {
+			ID  uint   `json:"id"`
 			Key string `json:"key"`
 		} `json:"data"`
 	}
@@ -9984,6 +9985,22 @@ func TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields(t *testing.T
 	}
 	if upstreamBody["cachedContent"] != "cachedContents/demo" {
 		t.Fatalf("Gemini cachedContent should be preserved natively: %#v", upstreamBody)
+	}
+	var callLog model.Log
+	if err := internal.DB.Where("token_id = ? AND status = ?", tokenPayload.Data.ID, common.LogStatusSuccess).First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RequestSnapshot), &snapshot); err != nil {
+		t.Fatalf("Gemini native request snapshot should be JSON, got %q: %v", callLog.RequestSnapshot, err)
+	}
+	if snapshot["ingress_protocol"] != "gemini" {
+		t.Fatalf("Gemini native request snapshot should keep Gemini ingress protocol: %+v", snapshot)
+	}
+	for _, field := range []string{"generationConfig.responseMimeType", "safetySettings", "tools", "cachedContent"} {
+		if snapshotHasAdapterDegradation(snapshot, "gemini", field, "dropped") {
+			t.Fatalf("Gemini native-preserved field %s should not be logged as dropped: %+v", field, snapshot)
+		}
 	}
 }
 

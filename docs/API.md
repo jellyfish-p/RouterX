@@ -976,7 +976,7 @@ P0 明确失败：
 |------|------|------|
 | GET | `/v1/models` | 基础实现，模型列表 |
 | GET | `/v1/models/{model}` | 基础实现，模型详情；支持协议选择器返回 Gemini 或 Anthropic 外形 |
-| POST | `/v1/models/{model}:generateContent` | 基础实现，内容生成；命中 OpenAI-compatible 上游时转 OpenAI Chat，非文本 parts 降级为 compact JSON 文本，`generationConfig.maxOutputTokens/temperature/topP/stopSequences` 会映射，其他有值子字段会进入 `request_snapshot.adapter_degradations`；命中 Gemini 上游时会以原生 Gemini body 发送 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent` |
+| POST | `/v1/models/{model}:generateContent` | 基础实现，内容生成；命中 OpenAI-compatible 上游时转 OpenAI Chat，非文本 parts 降级为 compact JSON 文本，`generationConfig.maxOutputTokens/temperature/topP/stopSequences` 会映射，其他有值子字段会进入 `request_snapshot.adapter_degradations`；命中 Gemini 上游时会以原生 Gemini body 发送 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent`，且这些已保真字段不会被成功日志误记为 dropped |
 | POST | `/v1/models/{model}:streamGenerateContent` | 基础实现，流式内容生成；当前将 Gemini 请求转 OpenAI-compatible Chat SSE，再输出 Gemini SSE 事件 |
 | POST | `/v1/models/{model}:countTokens` | 基础实现，本地近似 Token 计数；优先统计 `contents[].parts[]`、`systemInstruction.parts[]` 或 `generateContentRequest` 内的文本内容，`generateContentRequest` 存在时忽略顶层 `contents` |
 | POST | `/v1/models/{model}:embedContent` | 基础实现，Gemini embedContent 当前转 OpenAI-compatible Embeddings 上游并返回 Gemini embedding 外形；`outputDimensionality` 会映射为 OpenAI `dimensions`，`taskType/title` 暂不转发但会进入 `request_snapshot.adapter_degradations` |
