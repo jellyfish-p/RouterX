@@ -6757,19 +6757,24 @@ components:
       type: object
       properties:
         token:
-          $ref: "#/components/schemas/Token"
+          description: 被分析的脱敏 API Key 摘要。
+          allOf:
+            - $ref: "#/components/schemas/Token"
         token_id:
           type: integer
           format: uint64
+          description: 被分析的 API Key 内部 Token ID。
         window_hours:
           type: integer
           description: 归一化后的分析窗口小时数。
         window_start:
           type: string
           format: date-time
+          description: 分析窗口起点。
         window_end:
           type: string
           format: date-time
+          description: 分析窗口终点。
         call_count:
           type: integer
           format: int64
@@ -6777,9 +6782,11 @@ components:
         success_count:
           type: integer
           format: int64
+          description: 窗口内成功日志数。
         error_count:
           type: integer
           format: int64
+          description: 窗口内失败日志数。
         total_quota:
           type: integer
           format: int64
@@ -6792,16 +6799,20 @@ components:
           type: string
           format: date-time
           nullable: true
+          description: 窗口内首次调用时间；没有日志时为空。
         last_used_at:
           type: string
           format: date-time
           nullable: true
+          description: 窗口内最近调用时间；没有日志时为空。
         models:
           type: array
+          description: 窗口内按模型聚合的调用次数。
           items:
             $ref: "#/components/schemas/TokenLeakWindowCounter"
         error_codes:
           type: array
+          description: 窗口内按稳定错误 code 聚合的失败次数。
           items:
             $ref: "#/components/schemas/TokenLeakWindowCounter"
         source_ip_hashes:
@@ -6819,19 +6830,24 @@ components:
       type: object
       properties:
         token:
-          $ref: "#/components/schemas/Token"
+          description: 被分析的脱敏 API Key 摘要。
+          allOf:
+            - $ref: "#/components/schemas/Token"
         token_id:
           type: integer
           format: uint64
+          description: 被分析的 API Key 内部 Token ID。
         window_hours:
           type: integer
           description: 归一化后的分析窗口小时数。
         window_start:
           type: string
           format: date-time
+          description: 事件分析窗口起点。
         window_end:
           type: string
           format: date-time
+          description: 事件分析窗口终点。
         event_count:
           type: integer
           format: int64
@@ -6848,16 +6864,20 @@ components:
           type: string
           format: date-time
           nullable: true
+          description: 窗口内首次失败或限流事件时间；没有事件时为空。
         last_seen_at:
           type: string
           format: date-time
           nullable: true
+          description: 窗口内最近失败或限流事件时间；没有事件时为空。
         error_codes:
           type: array
+          description: 按稳定错误 code 聚合的失败事件计数。
           items:
             $ref: "#/components/schemas/TokenEventCounter"
         error_sources:
           type: array
+          description: 按错误来源聚合的失败事件计数。
           items:
             $ref: "#/components/schemas/TokenEventCounter"
         upstream_statuses:
@@ -6872,6 +6892,7 @@ components:
             $ref: "#/components/schemas/TokenEventCounter"
         models:
           type: array
+          description: 按模型聚合的失败或限流事件计数。
           items:
             $ref: "#/components/schemas/TokenEventCounter"
         last_used_ip_hash:
@@ -6884,7 +6905,9 @@ components:
       type: object
       properties:
         token:
-          $ref: "#/components/schemas/Token"
+          description: 被评估的脱敏 API Key 摘要。
+          allOf:
+            - $ref: "#/components/schemas/Token"
         call_count:
           type: integer
           format: int64
@@ -6947,32 +6970,60 @@ components:
     ReportTokenLeakResponse:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
+        id:
+          type: integer
+          format: uint64
+          description: 已上报泄露并被禁用的 API Key 内部 Token ID。
         status:
           type: integer
           example: 0
-        revoked_reason: { type: string }
+          description: 上报后的 API Key 状态；泄露上报成功后为 0=禁用。
+        revoked_reason:
+          type: string
+          description: 禁用原因；泄露上报通常为用户提交原因或 leak_reported。
         replacement_recommended:
           type: boolean
           example: true
+          description: 是否建议立即创建或轮换替换 Key。
     BatchDisableTokensResponse:
       type: object
       properties:
-        matched_count: { type: integer, format: int64 }
-        disabled_count: { type: integer, format: int64 }
-        reason: { type: string }
+        matched_count:
+          type: integer
+          format: int64
+          description: 本次筛选命中的 API Key 数量。
+        disabled_count:
+          type: integer
+          format: int64
+          description: 实际从启用状态改为禁用的 API Key 数量。
+        reason:
+          type: string
+          description: 写入 revoked_reason 和审计摘要的批量禁用原因。
         token_ids:
           type: array
+          description: 本次操作影响的 API Key ID 列表。
           items: { type: integer, format: uint64 }
     BatchExpireTokensResponse:
       type: object
       properties:
-        matched_count: { type: integer, format: int64 }
-        expired_count: { type: integer, format: int64 }
-        reason: { type: string }
-        expired_at: { type: string, format: date-time }
+        matched_count:
+          type: integer
+          format: int64
+          description: 本次筛选命中的 API Key 数量。
+        expired_count:
+          type: integer
+          format: int64
+          description: 实际被设置为立即过期的 API Key 数量。
+        reason:
+          type: string
+          description: 写入审计摘要的批量过期原因。
+        expired_at:
+          type: string
+          format: date-time
+          description: 服务端写入的立即过期时间。
         token_ids:
           type: array
+          description: 本次操作影响的 API Key ID 列表。
           items: { type: integer, format: uint64 }
     TokenPage:
       allOf:

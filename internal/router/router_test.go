@@ -623,6 +623,25 @@ func TestApifoxAPIKeyResponseSchemasHaveHumanReadablePropertyDescriptions(t *tes
 	}
 }
 
+func TestApifoxAPIKeyRiskResponseSchemasHaveHumanReadablePropertyDescriptions(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := apifoxSchemaPropertyDescriptionIssues(doc, []string{
+		"TokenLeakWindowCounter",
+		"TokenEventCounter",
+		"TokenLeakWindow",
+		"TokenEventWindow",
+		"TokenRisk",
+		"ReportTokenLeakResponse",
+		"BatchDisableTokensResponse",
+		"BatchExpireTokensResponse",
+	})
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml API Key risk response schemas need human-readable property descriptions:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
