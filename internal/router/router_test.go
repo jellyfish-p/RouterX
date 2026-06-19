@@ -749,6 +749,73 @@ func TestTraceabilityP1UpstreamConversionEvidenceIncludesConcreteMatrixTests(t *
 	}
 }
 
+func TestTraceabilityP2AdminAuditEvidenceIncludesConcreteAuditTests(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TRACEABILITY.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var evidence string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "| P2-C2 ") {
+			continue
+		}
+		cells := strings.Split(line, "|")
+		if len(cells) < 7 {
+			t.Fatalf("malformed P2-C2 traceability row: %s", line)
+		}
+		evidence = strings.TrimSpace(cells[len(cells)-2])
+		break
+	}
+	if evidence == "" {
+		t.Fatal("missing P2-C2 traceability row")
+	}
+
+	issues := make([]string, 0)
+	testFile, err := os.ReadFile("router_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rest := evidence; ; {
+		start := strings.Index(rest, "`Test")
+		if start < 0 {
+			break
+		}
+		rest = rest[start+1:]
+		end := strings.Index(rest, "`")
+		if end < 0 {
+			break
+		}
+		testName := rest[:end]
+		if !strings.Contains(string(testFile), "func "+testName+"(") {
+			issues = append(issues, "unknown test reference "+testName)
+		}
+		rest = rest[end+1:]
+	}
+
+	requiredTests := []string{
+		"TestUserLoginWritesAuditLogWithoutSecrets",
+		"TestUserAPIKeyManagementAuditLogs",
+		"TestAdminUserManagementAuditLogs",
+		"TestAdminUserGroupManagement",
+		"TestAdminChannelManagementAuditLogs",
+		"TestAdminLogExportWritesAuditLogAndRedactsSensitiveFields",
+		"TestAdminSettingValidationFailureWritesDeniedAuditLog",
+		"TestAdminAuditRequiresSuperAdmin",
+	}
+	for _, testName := range requiredTests {
+		if !strings.Contains(evidence, testName) {
+			issues = append(issues, "missing "+testName)
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("P2-C2 admin audit traceability evidence needs concrete audit tests:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
