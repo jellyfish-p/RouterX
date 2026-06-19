@@ -443,6 +443,53 @@ func TestApifoxOpenAPIParametersHaveHumanReadableDescriptions(t *testing.T) {
 	}
 }
 
+func TestApifoxOpenAPIRequestBodiesHaveHumanReadableDescriptionsAndSchemas(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := make([]string, 0)
+
+	for _, operation := range apifoxOperationsWithRequestBodies(doc) {
+		rawRequestBody, ok := apifoxOperationRequestBody(doc, operation)
+		if !ok {
+			issues = append(issues, operation+" missing requestBody")
+			continue
+		}
+		requestBody, ok := apifoxResolveMapRef(doc, rawRequestBody)
+		if !ok {
+			issues = append(issues, operation+" requestBody ref did not resolve to an object")
+			continue
+		}
+		description, _ := requestBody["description"].(string)
+		if strings.TrimSpace(description) == "" {
+			issues = append(issues, operation+" requestBody missing description")
+		}
+		content, ok := requestBody["content"].(map[string]interface{})
+		if !ok || len(content) == 0 {
+			issues = append(issues, operation+" requestBody missing content")
+			continue
+		}
+		for mediaType, rawMedia := range content {
+			media, ok := rawMedia.(map[string]interface{})
+			if !ok {
+				issues = append(issues, operation+" requestBody "+mediaType+" media type is not an object")
+				continue
+			}
+			schema, ok := media["schema"].(map[string]interface{})
+			if !ok {
+				issues = append(issues, operation+" requestBody "+mediaType+" missing schema")
+				continue
+			}
+			if !apifoxSchemaHasShape(schema) {
+				issues = append(issues, operation+" requestBody "+mediaType+" schema missing type/ref/composition")
+			}
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml request bodies need human-readable descriptions and schemas:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxOpenAPIInternalRefsResolve(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
@@ -684,6 +731,9 @@ func TestAcceptanceG0EvidenceNamesDocLinkCheck(t *testing.T) {
 	}
 	if !strings.Contains(evidence, "TestApifoxOpenAPIParametersHaveHumanReadableDescriptions") {
 		issues = append(issues, "G0 evidence must name TestApifoxOpenAPIParametersHaveHumanReadableDescriptions")
+	}
+	if !strings.Contains(evidence, "TestApifoxOpenAPIRequestBodiesHaveHumanReadableDescriptionsAndSchemas") {
+		issues = append(issues, "G0 evidence must name TestApifoxOpenAPIRequestBodiesHaveHumanReadableDescriptionsAndSchemas")
 	}
 	if strings.Contains(evidence, "文档链接检查") {
 		issues = append(issues, "G0 evidence still uses manual 文档链接检查 wording")
@@ -25182,20 +25232,47 @@ func collectApifoxRefIssues(value interface{}, path string, root interface{}, is
 }
 
 func apifoxRefExists(root interface{}, ref string) bool {
+	_, ok := apifoxResolveInternalRef(root, ref)
+	return ok
+}
+
+func apifoxResolveMapRef(root interface{}, value map[string]interface{}) (map[string]interface{}, bool) {
+	ref, _ := value["$ref"].(string)
+	if strings.TrimSpace(ref) == "" {
+		return value, true
+	}
+	resolved, ok := apifoxResolveInternalRef(root, ref)
+	if !ok {
+		return nil, false
+	}
+	resolvedMap, ok := resolved.(map[string]interface{})
+	return resolvedMap, ok
+}
+
+func apifoxResolveInternalRef(root interface{}, ref string) (interface{}, bool) {
 	current := root
 	for _, part := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
 		part = strings.ReplaceAll(strings.ReplaceAll(part, "~1", "/"), "~0", "~")
 		object, ok := current.(map[string]interface{})
 		if !ok {
-			return false
+			return nil, false
 		}
 		var exists bool
 		current, exists = object[part]
 		if !exists {
-			return false
+			return nil, false
 		}
 	}
-	return true
+	return current, true
+}
+
+func apifoxSchemaHasShape(schema map[string]interface{}) bool {
+	for _, key := range []string{"$ref", "type", "oneOf", "anyOf", "allOf"} {
+		if _, ok := schema[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveApifoxParameters(parameters []apifoxParameterDoc, components map[string]apifoxParameterDoc) []apifoxParameterDoc {

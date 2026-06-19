@@ -216,6 +216,7 @@ paths:
       summary: 首次初始化超级管理员
       description: 仅未初始化时可调用；会创建超级管理员、本地身份和默认 settings。
       requestBody:
+        description: 首次初始化超级管理员 请求体。
         required: true
         content:
           application/json:
@@ -275,6 +276,7 @@ paths:
       summary: 用户注册
       description: 统一自助注册入口；公开入口先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。默认关闭公开注册。register_method 省略时按 username 处理，也支持 email 和 phone；三种方法都必须提交 username/password，并分别要求 auth.register.username.enabled、auth.register.email.enabled 或 auth.register.phone.enabled 为 true。auth.register.captcha.required=true 时必须提交 captcha_id/captcha_code，服务端读取 auth:register_captcha:<captcha_id> Redis 记录并比对 SHA256(captcha_code)，成功后一次性删除验证码；验证码缺失、过期、错误、超过尝试次数或 Redis 不可用会拒绝注册。新账号注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id；请求提供 email/phone 时会创建 email/local 或 phone/local 登录标识，但密码哈希只保存到 username/local 主身份；同名、同邮箱或同手机号 identity 命中已注销普通用户时会恢复原 users.id、启用账号、更新本地密码身份和展示名，补齐同用户本地登录标识，保留额度/分组/日志/历史流水，不自动启用旧 API Key，并写 user.recover 审计。
       requestBody:
+        description: 用户注册 请求体。
         required: true
         content:
           application/json:
@@ -311,6 +313,7 @@ paths:
       summary: 生成邮箱或手机号登录验证码
       description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。根据 account 识别 email 或 phone，检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled，确认本地身份、用户状态和 username/local 主密码存在后，生成 6 位验证码并写入 Redis key auth:login_code:<captcha_id>，value 包含 method、account、SHA256(captcha_code)、attempts 和 max_attempts，并按 auth.captcha.ttl_seconds 设置 TTL。当前基础实现尚未接入真实邮件/短信网关，默认不返回验证码明文；只有显式开启 auth.captcha.debug_response.enabled=true 时，响应才会返回 debug_code 供自部署前端和 Apifox 调试。Redis 不可用时返回 503 fail-closed，不生成不可消费验证码。
       requestBody:
+        description: 生成邮箱或手机号登录验证码 请求体。
         required: true
         content:
           application/json:
@@ -357,6 +360,7 @@ paths:
       summary: 用户统一登录
       description: 管理后台也使用本接口获取 User JWT，不提供独立 /v0/admin/login；公开入口先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。credential_type 省略时按 password 处理；用户名密码登录始终可用；email/phone 密码登录仅对已有本地身份生效，并分别受 auth.login.email_password.enabled 与 auth.login.phone_password.enabled 控制，默认关闭；本地 email/phone 身份复用同一用户的 username/local 主密码，不要求各自保存独立密码哈希。credential_type=code 当前只识别邮箱或手机号账号并检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled；随后读取 auth:login_code:<captcha_id> Redis 记录，校验 method、account 和 SHA256(captcha_code)，成功后一次性删除验证码并签发 JWT；验证码缺失、过期、错误或超过尝试次数返回 401，账号类型不支持、开关关闭或 Redis 校验器不可用返回 403，不会回退为密码登录。成功登录会写入 user.login 管理审计，审计摘要不包含密码或 JWT。
       requestBody:
+        description: 用户统一登录 请求体。
         required: true
         content:
           application/json:
@@ -479,6 +483,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/OAuthProvider"
       requestBody:
+        description: OAuth 首次登录补齐注册或恢复 请求体。
         required: true
         content:
           application/json:
@@ -609,6 +614,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/OIDCProvider"
       requestBody:
+        description: OIDC 首次登录补齐注册或恢复 请求体。
         required: true
         content:
           application/json:
@@ -846,6 +852,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 修改个人信息 请求体。
         required: true
         content:
           application/json:
@@ -866,6 +873,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 注销当前账号 请求体。
         required: true
         content:
           application/json:
@@ -887,6 +895,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 修改登录密码 请求体。
         required: true
         content:
           application/json:
@@ -986,6 +995,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 创建 API Key 请求体。
         required: true
         content:
           application/json:
@@ -1016,6 +1026,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 编辑 API Key 请求体。
         required: true
         content:
           application/json:
@@ -1053,6 +1064,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 禁用 API Key 请求体。
         required: false
         content:
           application/json:
@@ -1109,6 +1121,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 上报 API Key 泄露 请求体。
         required: false
         content:
           application/json:
@@ -1139,6 +1152,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 更新 API Key scope 请求体。
         required: true
         content:
           application/json:
@@ -1354,6 +1368,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 使用充值码 请求体。
         required: true
         content:
           application/json:
@@ -1428,6 +1443,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 创建支付订单 请求体。
         required: true
         content:
           application/json:
@@ -1540,6 +1556,7 @@ paths:
           schema: { type: string }
           description: Stripe webhook 签名 header，格式包含 t 和 v1。
       requestBody:
+        description: Stripe Webhook 异步通知 请求体。
         required: true
         content:
           application/json:
@@ -1567,6 +1584,7 @@ paths:
       summary: 易支付异步通知
       description: 基础实现；使用 PAYMENT_EPAY_KEY 校验 MD5 签名，校验 out_trade_no、money 和状态。成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计；明确失败状态会将 pending 订单置为 failed，写 payment_webhook.failed 审计且不增加额度；重复通知幂等返回 success。
       requestBody:
+        description: 易支付异步通知 请求体。
         required: true
         content:
           application/x-www-form-urlencoded:
@@ -1653,6 +1671,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 创建普通用户 请求体。
         required: true
         content:
           application/json:
@@ -1683,6 +1702,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 编辑普通用户 请求体。
         required: true
         content:
           application/json:
@@ -1718,6 +1738,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 调整用户额度 请求体。
         required: true
         content:
           application/json:
@@ -1800,6 +1821,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 创建用户分组 请求体。
         required: true
         content:
           application/json:
@@ -1830,6 +1852,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 更新用户分组 请求体。
         required: true
         content:
           application/json:
@@ -2144,6 +2167,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 批量禁用 API Key 请求体。
         required: true
         content:
           application/json:
@@ -2172,6 +2196,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 批量过期 API Key 请求体。
         required: true
         content:
           application/json:
@@ -2396,6 +2421,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 生成或导入充值码 请求体。
         required: true
         content:
           application/json:
@@ -2536,6 +2562,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 创建支付商品 请求体。
         required: true
         content:
           application/json:
@@ -2566,6 +2593,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 更新支付商品 请求体。
         required: true
         content:
           application/json:
@@ -2652,6 +2680,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 创建系统模型价格 请求体。
         required: true
         content:
           application/json:
@@ -2682,6 +2711,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 更新系统模型价格 请求体。
         required: true
         content:
           application/json:
@@ -2778,6 +2808,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 创建通道模型价格覆盖 请求体。
         required: true
         content:
           application/json:
@@ -2808,6 +2839,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 更新通道模型价格覆盖 请求体。
         required: true
         content:
           application/json:
@@ -2866,6 +2898,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 支付人工补账或扣回 请求体。
         required: true
         content:
           application/json:
@@ -2894,6 +2927,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 支付人工退款落账 请求体。
         required: true
         content:
           application/json:
@@ -2922,6 +2956,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 发起 provider 退款请求 请求体。
         required: true
         content:
           application/json:
@@ -2972,6 +3007,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 创建管理员 请求体。
         required: true
         content:
           application/json:
@@ -2997,6 +3033,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 编辑管理员 请求体。
         required: true
         content:
           application/json:
@@ -3057,6 +3094,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 创建通道 请求体。
         required: true
         content:
           application/json:
@@ -3087,6 +3125,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ID"
       requestBody:
+        description: 编辑通道 请求体。
         required: true
         content:
           application/json:
@@ -3198,6 +3237,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 轮换数据库密文主密钥 请求体。
         required: true
         content:
           application/json:
@@ -3367,6 +3407,7 @@ paths:
       security:
         - UserJWT: []
       requestBody:
+        description: 批量更新系统设置 请求体。
         required: true
         content:
           application/json:
@@ -3422,6 +3463,7 @@ paths:
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
+        description: OpenAI Chat Completions 转发 请求体。
         required: true
         content:
           application/json:
@@ -3828,6 +3870,7 @@ paths:
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
+        description: Anthropic Messages 请求体。
         required: true
         content:
           application/json:
@@ -4181,6 +4224,7 @@ components:
       description: 查询时间范围终点；使用 RFC3339/date-time 格式。
   requestBodies:
     AnthropicCountTokensJSON:
+      description: Anthropic-compatible count_tokens JSON 请求体；用于本地近似 token 计数。
       required: true
       content:
         application/json:
@@ -4238,6 +4282,7 @@ components:
                   type: object
                   additionalProperties: true
     GeminiGenerateContentJSON:
+      description: Gemini generateContent/streamGenerateContent JSON 请求体；保留 Gemini 原生生成字段并支持转换到 OpenAI-compatible 上游。
       required: true
       content:
         application/json:
@@ -4333,6 +4378,7 @@ components:
                 type: string
                 description: Gemini 原生 cachedContent 引用；命中 Gemini 上游时透传。
     GeminiEmbedContentJSON:
+      description: Gemini embedContent JSON 请求体；描述单条 embedding 输入和可选任务参数。
       required: true
       content:
         application/json:
@@ -4367,6 +4413,7 @@ components:
                 minimum: 1
                 description: 命中 Gemini 上游时作为原生 outputDimensionality 透传；命中 OpenAI-compatible 上游时映射为 dimensions。
     GeminiBatchEmbedContentsJSON:
+      description: Gemini batchEmbedContents JSON 请求体；描述批量 embedding 输入和维度约束。
       required: true
       content:
         application/json:
@@ -4414,6 +4461,7 @@ components:
                       parts:
                         - text: world
     GeminiCountTokensJSON:
+      description: Gemini countTokens JSON 请求体；用于本地近似 token 计数。
       required: true
       content:
         application/json:
@@ -4486,6 +4534,7 @@ components:
                             text:
                               type: string
     EmbeddingsJSON:
+      description: OpenAI-compatible Embeddings JSON 请求体；描述文本或 token 输入、维度和 RouterX 私有选项。
       required: true
       content:
         application/json:
@@ -4544,6 +4593,7 @@ components:
                 additionalProperties: true
                 description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
     ImageGenerationJSON:
+      description: OpenAI-compatible 图像生成 JSON 请求体；描述模型、提示词、尺寸、数量和 RouterX 私有选项。
       required: true
       content:
         application/json:
@@ -4585,6 +4635,7 @@ components:
                 additionalProperties: true
                 description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
     AudioSpeechJSON:
+      description: OpenAI-compatible 文本转语音 JSON 请求体；描述合成文本、语音、输出格式和 RouterX 私有选项。
       required: true
       content:
         application/json:
@@ -4625,6 +4676,7 @@ components:
                 additionalProperties: true
                 description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
     ModerationsJSON:
+      description: OpenAI-compatible 内容审核 JSON 请求体；描述待审核输入、模型和 RouterX 私有选项。
       required: true
       content:
         application/json:
@@ -4657,6 +4709,7 @@ components:
                 additionalProperties: true
                 description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
     OpenAIResponsesJSON:
+      description: OpenAI Responses JSON 请求体；保留原生字段，并在命中 Anthropic/Gemini 上游时转换基础字段。
       required: true
       content:
         application/json:
@@ -4710,6 +4763,7 @@ components:
                 additionalProperties: true
                 description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
     OpenAICompletionsJSON:
+      description: Legacy OpenAI Completions JSON 请求体；支持 OpenAI-compatible 透传和 Azure deployment 路径转发。
       required: true
       content:
         application/json:
@@ -4783,6 +4837,7 @@ components:
                 additionalProperties: true
                 description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
     GenericJSON:
+      description: 通用 JSON 请求体；仅用于尚未细化字段的非 /v1 管理入口。
       required: true
       content:
         application/json:
@@ -4790,6 +4845,7 @@ components:
             type: object
             additionalProperties: true
     AudioMultipart:
+      description: OpenAI-compatible 音频 multipart 请求体；包含模型、文件、可选提示词和输出格式。
       required: true
       content:
         multipart/form-data:
@@ -4827,6 +4883,7 @@ components:
                 type: string
                 description: RouterX 私有 JSON 字符串，例如 {"route":{"channel_group":"premium"},"upstream":{"headers":{"X-Upstream-Feature":"beta"}}}；发往真实上游前会被剥离，multipart 当前不合并 upstream.body 回文件表单。
     ImageMultipart:
+      description: OpenAI-compatible 图像 multipart 请求体；包含模型、图片文件、可选 mask 和路由字段。
       required: true
       content:
         multipart/form-data:
