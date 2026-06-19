@@ -66,6 +66,9 @@ const (
 	maxTokenScopeEntryProtocols = 8
 	maxTokenScopeIPCIDRs        = 64
 	maxTokenScopeMethods        = 128
+	maxTokenMetadataTags        = 20
+	maxTokenMetadataValueLength = 128
+	maxTokenMetadataNoteLength  = 256
 )
 
 type TokenScope struct {
@@ -80,6 +83,15 @@ type TokenScope struct {
 	MaxConcurrency *int64   `json:"max_concurrency,omitempty"` // 单 Key 同时在途请求上限
 	RPM            *int64   `json:"rpm,omitempty"`             // 单 Key 每分钟请求上限
 	TPM            *int64   `json:"tpm,omitempty"`             // 单 Key 每分钟模型 token 上限
+}
+
+type TokenMetadata struct {
+	Environment string   `json:"environment,omitempty"`
+	Team        string   `json:"team,omitempty"`
+	App         string   `json:"app,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	ExternalID  string   `json:"external_id,omitempty"`
+	Note        string   `json:"note,omitempty"`
 }
 
 var tokenConcurrencyScopes = newTokenConcurrencyTracker()
@@ -104,6 +116,17 @@ type TokenRiskFilter struct {
 	LowQuotaBelow int64
 	Page          int
 	PageSize      int
+}
+
+type TokenListFilter struct {
+	UserID      *uint
+	Status      *int
+	Environment string
+	Team        string
+	App         string
+	Tag         string
+	Page        int
+	PageSize    int
 }
 
 type TokenRiskItem struct {
@@ -359,13 +382,34 @@ func (s *TokenService) List(userID uint, page, pageSize int) ([]model.Token, int
 }
 
 func (s *TokenService) ListFiltered(userID *uint, status *int, page, pageSize int) ([]model.Token, int64, error) {
-	page, pageSize = normalizePage(page, pageSize)
+	return s.ListByFilter(TokenListFilter{UserID: userID, Status: status, Page: page, PageSize: pageSize})
+}
+
+func (s *TokenService) ListByFilter(filter TokenListFilter) ([]model.Token, int64, error) {
+	page, pageSize := normalizePage(filter.Page, filter.PageSize)
 	query := internal.DB.Model(&model.Token{})
-	if userID != nil {
-		query = query.Where("user_id = ?", *userID)
+	if filter.UserID != nil {
+		query = query.Where("user_id = ?", *filter.UserID)
 	}
-	if status != nil {
-		query = query.Where("status = ?", *status)
+	if filter.Status != nil {
+		query = query.Where("status = ?", *filter.Status)
+	}
+	if filter.hasMetadataFilter() {
+		var all []model.Token
+		if err := query.Order("id DESC").Find(&all).Error; err != nil {
+			return nil, 0, err
+		}
+		filtered := filterTokensByMetadata(all, filter)
+		total := int64(len(filtered))
+		start := (page - 1) * pageSize
+		if start >= len(filtered) {
+			return []model.Token{}, total, nil
+		}
+		end := start + pageSize
+		if end > len(filtered) {
+			end = len(filtered)
+		}
+		return filtered[start:end], total, nil
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -385,7 +429,7 @@ func (s *TokenService) GetByIDForUser(id, userID uint) (*model.Token, error) {
 }
 
 // Create 创建 API Token, 生成 sk-xxxx 格式 Key。
-func (s *TokenService) Create(userID uint, name string, remainQuota int64, unlimited bool, expiredAt *int64) (*model.Token, error) {
+func (s *TokenService) Create(userID uint, name string, remainQuota int64, unlimited bool, expiredAt *int64, metadata ...TokenMetadata) (*model.Token, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "default"
@@ -400,10 +444,14 @@ func (s *TokenService) Create(userID uint, name string, remainQuota int64, unlim
 		t := time.Unix(*expiredAt, 0)
 		expires = &t
 	}
+	tokenMetadata, err := optionalTokenMetadata(metadata...)
+	if err != nil {
+		return nil, err
+	}
 
 	var created *model.Token
 	var plainKey string
-	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+	err = internal.DB.Transaction(func(tx *gorm.DB) error {
 		var user model.User
 		if err := tx.First(&user, userID).Error; err != nil {
 			return err
@@ -412,12 +460,13 @@ func (s *TokenService) Create(userID uint, name string, remainQuota int64, unlim
 			return ErrAPIUserDisabled
 		}
 		token, plain, err := createTokenWithPlain(tx, model.Token{
-			UserID:      userID,
-			Name:        name,
-			Status:      common.TokenStatusEnabled,
-			ExpiredAt:   expires,
-			RemainQuota: remainQuota,
-			Unlimited:   unlimited,
+			UserID:       userID,
+			Name:         name,
+			Status:       common.TokenStatusEnabled,
+			ExpiredAt:    expires,
+			RemainQuota:  remainQuota,
+			Unlimited:    unlimited,
+			MetadataJSON: tokenMetadata,
 		})
 		if err != nil {
 			return err
@@ -450,6 +499,136 @@ func createTokenWithPlain(tx *gorm.DB, base model.Token) (*model.Token, string, 
 		return &token, plain, nil
 	}
 	return nil, "", errors.New("failed to generate api key")
+}
+
+func optionalTokenMetadata(items ...TokenMetadata) (model.JSONValue, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	metadata, err := NormalizeTokenMetadata(items[0])
+	if err != nil {
+		return nil, err
+	}
+	if tokenMetadataEmpty(metadata) {
+		return nil, nil
+	}
+	return model.NewJSONValue(metadata), nil
+}
+
+func NormalizeTokenMetadata(input TokenMetadata) (TokenMetadata, error) {
+	metadata := TokenMetadata{
+		Environment: strings.ToLower(strings.TrimSpace(input.Environment)),
+		Team:        strings.ToLower(strings.TrimSpace(input.Team)),
+		App:         strings.ToLower(strings.TrimSpace(input.App)),
+		ExternalID:  strings.TrimSpace(input.ExternalID),
+		Note:        strings.TrimSpace(input.Note),
+	}
+	if err := validateTokenMetadataValue("environment", metadata.Environment, maxTokenMetadataValueLength); err != nil {
+		return TokenMetadata{}, err
+	}
+	if err := validateTokenMetadataValue("team", metadata.Team, maxTokenMetadataValueLength); err != nil {
+		return TokenMetadata{}, err
+	}
+	if err := validateTokenMetadataValue("app", metadata.App, maxTokenMetadataValueLength); err != nil {
+		return TokenMetadata{}, err
+	}
+	if err := validateTokenMetadataValue("external_id", metadata.ExternalID, maxTokenMetadataValueLength); err != nil {
+		return TokenMetadata{}, err
+	}
+	if err := validateTokenMetadataValue("note", metadata.Note, maxTokenMetadataNoteLength); err != nil {
+		return TokenMetadata{}, err
+	}
+
+	seen := map[string]struct{}{}
+	for _, tag := range input.Tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if tag == "" {
+			continue
+		}
+		if err := validateTokenMetadataValue("tags", tag, maxTokenMetadataValueLength); err != nil {
+			return TokenMetadata{}, err
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		metadata.Tags = append(metadata.Tags, tag)
+		if len(metadata.Tags) > maxTokenMetadataTags {
+			return TokenMetadata{}, errors.New("metadata tags exceeds limit")
+		}
+	}
+	return metadata, nil
+}
+
+func ParseTokenMetadata(raw model.JSONValue) TokenMetadata {
+	if len(raw) == 0 {
+		return TokenMetadata{}
+	}
+	var metadata TokenMetadata
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return TokenMetadata{}
+	}
+	metadata, err := NormalizeTokenMetadata(metadata)
+	if err != nil {
+		return TokenMetadata{}
+	}
+	return metadata
+}
+
+func validateTokenMetadataValue(field, value string, maxLen int) error {
+	if len(value) > maxLen {
+		return fmt.Errorf("metadata %s is too long", field)
+	}
+	if strings.Contains(strings.ToLower(value), "sk-") {
+		return fmt.Errorf("metadata %s must not contain api keys", field)
+	}
+	return nil
+}
+
+func tokenMetadataEmpty(metadata TokenMetadata) bool {
+	return metadata.Environment == "" && metadata.Team == "" && metadata.App == "" &&
+		metadata.ExternalID == "" && metadata.Note == "" && len(metadata.Tags) == 0
+}
+
+func (filter TokenListFilter) hasMetadataFilter() bool {
+	return strings.TrimSpace(filter.Environment) != "" ||
+		strings.TrimSpace(filter.Team) != "" ||
+		strings.TrimSpace(filter.App) != "" ||
+		strings.TrimSpace(filter.Tag) != ""
+}
+
+func filterTokensByMetadata(tokens []model.Token, filter TokenListFilter) []model.Token {
+	wantEnvironment := strings.ToLower(strings.TrimSpace(filter.Environment))
+	wantTeam := strings.ToLower(strings.TrimSpace(filter.Team))
+	wantApp := strings.ToLower(strings.TrimSpace(filter.App))
+	wantTag := strings.ToLower(strings.TrimSpace(filter.Tag))
+	filtered := make([]model.Token, 0, len(tokens))
+	for _, token := range tokens {
+		metadata := ParseTokenMetadata(token.MetadataJSON)
+		if wantEnvironment != "" && metadata.Environment != wantEnvironment {
+			continue
+		}
+		if wantTeam != "" && metadata.Team != wantTeam {
+			continue
+		}
+		if wantApp != "" && metadata.App != wantApp {
+			continue
+		}
+		if wantTag != "" && !metadataHasTag(metadata, wantTag) {
+			continue
+		}
+		filtered = append(filtered, token)
+	}
+	return filtered
+}
+
+func metadataHasTag(metadata TokenMetadata, tag string) bool {
+	for _, item := range metadata.Tags {
+		if item == tag {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *TokenService) RotateForUser(id, userID uint) (*model.Token, *model.Token, error) {
@@ -490,6 +669,7 @@ func (s *TokenService) RotateForUser(id, userID uint) (*model.Token, *model.Toke
 			Unlimited:     old.Unlimited,
 			RotatedFromID: &rotatedFromID,
 			ScopeJSON:     append(model.JSONValue(nil), old.ScopeJSON...),
+			MetadataJSON:  append(model.JSONValue(nil), old.MetadataJSON...),
 		})
 		if err != nil {
 			return err
@@ -1535,7 +1715,7 @@ func (s *TokenService) BatchExpire(input BatchExpireTokensInput) (BatchExpireTok
 
 // Update 编辑 Token。
 func (s *TokenService) Update(id uint, updates map[string]interface{}) error {
-	allowed := filterUpdates(updates, "name", "status", "expired_at")
+	allowed := filterUpdates(updates, "name", "status", "expired_at", "metadata_json")
 	if status, ok := allowed["status"].(int); ok {
 		if status != common.TokenStatusDisabled && status != common.TokenStatusEnabled {
 			return errors.New("invalid token status")

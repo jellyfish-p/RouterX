@@ -1223,6 +1223,153 @@ func TestAPIKeyLeakAlertWebhookDeliveryReplay(t *testing.T) {
 	}
 }
 
+func TestAPIKeyMetadataFiltersAndSanitizedExport(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createProdResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "prod-router-key",
+		"remain_quota": int64(100),
+		"metadata": map[string]interface{}{
+			"environment": "prod",
+			"team":        "platform",
+			"app":         "router",
+			"tags":        []string{"gateway", "rotation"},
+			"external_id": "svc-router-prod",
+			"note":        "owned by platform",
+		},
+	})
+	var prodPayload struct {
+		Data struct {
+			ID       uint   `json:"id"`
+			Key      string `json:"key"`
+			Metadata struct {
+				Environment string   `json:"environment"`
+				Team        string   `json:"team"`
+				App         string   `json:"app"`
+				Tags        []string `json:"tags"`
+				ExternalID  string   `json:"external_id"`
+				Note        string   `json:"note"`
+			} `json:"metadata"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createProdResp.Body.Bytes(), &prodPayload); err != nil {
+		t.Fatalf("create prod token response should be json: %v", err)
+	}
+	if createProdResp.Code != http.StatusOK || prodPayload.Data.ID == 0 || prodPayload.Data.Key == "" {
+		t.Fatalf("create prod token failed: %d %s", createProdResp.Code, createProdResp.Body.String())
+	}
+	if prodPayload.Data.Metadata.Environment != "prod" || prodPayload.Data.Metadata.Team != "platform" || len(prodPayload.Data.Metadata.Tags) != 2 {
+		t.Fatalf("create response should include sanitized metadata, got %#v", prodPayload.Data.Metadata)
+	}
+
+	createDevResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "dev-router-key",
+		"remain_quota": int64(100),
+		"metadata": map[string]interface{}{
+			"environment": "dev",
+			"team":        "lab",
+			"app":         "router",
+			"tags":        []string{"sandbox"},
+		},
+	})
+	if createDevResp.Code != http.StatusOK {
+		t.Fatalf("create dev token failed: %d %s", createDevResp.Code, createDevResp.Body.String())
+	}
+
+	updateResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(prodPayload.Data.ID), rootJWT, map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"environment": "prod",
+			"team":        "platform",
+			"app":         "router",
+			"tags":        []string{"gateway", "rotated"},
+			"external_id": "svc-router-prod",
+			"note":        "rotated owner metadata",
+		},
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update prod metadata failed: %d %s", updateResp.Code, updateResp.Body.String())
+	}
+
+	listResp := performJSON(r, http.MethodGet, "/v0/admin/token?environment=prod&team=platform&tag=rotated", rootJWT, nil)
+	var listPayload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				ID       uint   `json:"id"`
+				Name     string `json:"name"`
+				Metadata struct {
+					Environment string   `json:"environment"`
+					Team        string   `json:"team"`
+					Tags        []string `json:"tags"`
+				} `json:"metadata"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(listResp.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("admin metadata list should be json: %v", err)
+	}
+	if listResp.Code != http.StatusOK || listPayload.Data.Total != 1 || len(listPayload.Data.Data) != 1 {
+		t.Fatalf("admin metadata filter should return one prod token, got %d %s", listResp.Code, listResp.Body.String())
+	}
+	hasRotatedTag := false
+	for _, tag := range listPayload.Data.Data[0].Metadata.Tags {
+		if tag == "rotated" {
+			hasRotatedTag = true
+			break
+		}
+	}
+	if listPayload.Data.Data[0].ID != prodPayload.Data.ID || listPayload.Data.Data[0].Metadata.Environment != "prod" ||
+		listPayload.Data.Data[0].Metadata.Team != "platform" || !hasRotatedTag {
+		t.Fatalf("unexpected filtered token: %+v", listPayload.Data.Data[0])
+	}
+	if strings.Contains(listResp.Body.String(), prodPayload.Data.Key) || strings.Contains(listResp.Body.String(), "sk-") {
+		t.Fatalf("admin metadata list leaked API key: %s", listResp.Body.String())
+	}
+
+	exportResp := performRaw(r, http.MethodGet, "/v0/admin/token/export?environment=prod&tag=rotated&limit=10", rootJWT, "")
+	if exportResp.Code != http.StatusOK {
+		t.Fatalf("admin token export failed: %d %s", exportResp.Code, exportResp.Body.String())
+	}
+	if contentType := exportResp.Header().Get("Content-Type"); !strings.Contains(contentType, "text/csv") {
+		t.Fatalf("token export should return csv content type, got %q", contentType)
+	}
+	exportBody := exportResp.Body.String()
+	if strings.Contains(exportBody, prodPayload.Data.Key) || strings.Contains(exportBody, "sk-") {
+		t.Fatalf("token export leaked API key: %s", exportBody)
+	}
+	records, err := csv.NewReader(strings.NewReader(exportBody)).ReadAll()
+	if err != nil {
+		t.Fatalf("token export should be valid csv: %v\n%s", err, exportBody)
+	}
+	if len(records) != 2 {
+		t.Fatalf("token export should include header and one row, got %d records: %#v", len(records), records)
+	}
+	header := strings.Join(records[0], ",")
+	row := strings.Join(records[1], ",")
+	if !strings.Contains(header, "environment") || !strings.Contains(header, "tags") ||
+		!strings.Contains(row, "prod") || !strings.Contains(row, "platform") || !strings.Contains(row, "rotated") {
+		t.Fatalf("token export should include metadata columns and values, got header=%#v row=%#v", records[0], records[1])
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?action=api_key.export", rootJWT, nil)
+	if auditResp.Code != http.StatusOK || !strings.Contains(auditResp.Body.String(), `"api_key.export"`) {
+		t.Fatalf("token export should write audit log, got %d %s", auditResp.Code, auditResp.Body.String())
+	}
+	if strings.Contains(auditResp.Body.String(), prodPayload.Data.Key) || strings.Contains(auditResp.Body.String(), "sk-") {
+		t.Fatalf("token export audit leaked API key: %s", auditResp.Body.String())
+	}
+}
+
 func TestAPIKeyLeakWindowSummarizesRecentUse(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	r := newTestRouter(t)

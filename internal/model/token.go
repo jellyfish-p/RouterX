@@ -21,6 +21,7 @@ type Token struct {
 	RotatedFromID     *uint          `gorm:"index" json:"rotated_from_id,omitempty"` // 轮换来源 Token ID
 	RevokedReason     string         `gorm:"type:varchar(128);not null;default:''" json:"revoked_reason,omitempty"`
 	ScopeJSON         JSONValue      `gorm:"type:json" json:"scope_json,omitempty"`                                      // API Key 能力范围, 例如模型 allow-list
+	MetadataJSON      JSONValue      `gorm:"type:json" json:"metadata_json,omitempty"`                                   // 环境、团队、标签等非安全元数据
 	LastUsedAt        *time.Time     `gorm:"index" json:"last_used_at,omitempty"`                                        // 最近一次成功或失败调用时间
 	LastUsedIPHash    string         `gorm:"type:varchar(64);not null;default:''" json:"last_used_ip_hash,omitempty"`    // 最近来源 IP 的 SHA-256 摘要
 	LastUserAgentHash string         `gorm:"type:varchar(64);not null;default:''" json:"last_user_agent_hash,omitempty"` // 最近 User-Agent 的 SHA-256 摘要

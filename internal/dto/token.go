@@ -13,18 +13,20 @@ type TokenListRequest struct {
 }
 
 type CreateTokenRequest struct {
-	Name        string `json:"name" binding:"required,max=64"`
-	RemainQuota int64  `json:"remain_quota"`
-	Unlimited   bool   `json:"unlimited"`
-	ExpiredAt   *int64 `json:"expired_at"`
+	Name        string                `json:"name" binding:"required,max=64"`
+	RemainQuota int64                 `json:"remain_quota"`
+	Unlimited   bool                  `json:"unlimited"`
+	ExpiredAt   *int64                `json:"expired_at"`
+	Metadata    *TokenMetadataRequest `json:"metadata"`
 }
 
 type UpdateTokenRequest struct {
-	Name        *string `json:"name"`
-	Status      *int    `json:"status"`
-	RemainQuota *int64  `json:"remain_quota"`
-	Unlimited   *bool   `json:"unlimited"`
-	ExpiredAt   *int64  `json:"expired_at"`
+	Name        *string               `json:"name"`
+	Status      *int                  `json:"status"`
+	RemainQuota *int64                `json:"remain_quota"`
+	Unlimited   *bool                 `json:"unlimited"`
+	ExpiredAt   *int64                `json:"expired_at"`
+	Metadata    *TokenMetadataRequest `json:"metadata"`
 }
 
 type ReportTokenLeakRequest struct {
@@ -71,24 +73,43 @@ type TokenScopeResponse struct {
 	TPM            *int64   `json:"tpm,omitempty"`
 }
 
+type TokenMetadataRequest struct {
+	Environment string   `json:"environment"`
+	Team        string   `json:"team"`
+	App         string   `json:"app"`
+	Tags        []string `json:"tags"`
+	ExternalID  string   `json:"external_id"`
+	Note        string   `json:"note"`
+}
+
+type TokenMetadataResponse struct {
+	Environment string   `json:"environment,omitempty"`
+	Team        string   `json:"team,omitempty"`
+	App         string   `json:"app,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	ExternalID  string   `json:"external_id,omitempty"`
+	Note        string   `json:"note,omitempty"`
+}
+
 type TokenResponse struct {
-	ID                uint                `json:"id"`
-	UserID            uint                `json:"user_id"`
-	Name              string              `json:"name"`
-	Status            int                 `json:"status"`
-	ExpiredAt         *time.Time          `json:"expired_at,omitempty"`
-	RemainQuota       int64               `json:"remain_quota"`
-	Unlimited         bool                `json:"unlimited"`
-	RotatedFromID     *uint               `json:"rotated_from_id,omitempty"`
-	RevokedReason     string              `json:"revoked_reason,omitempty"`
-	Scope             *TokenScopeResponse `json:"scope,omitempty"`
-	LastUsedAt        *time.Time          `json:"last_used_at,omitempty"`
-	LastUsedIPHash    string              `json:"last_used_ip_hash,omitempty"`
-	LastUserAgentHash string              `json:"last_user_agent_hash,omitempty"`
-	LastModel         string              `json:"last_model,omitempty"`
-	LastErrorCode     string              `json:"last_error_code,omitempty"`
-	CreatedAt         time.Time           `json:"created_at"`
-	UpdatedAt         time.Time           `json:"updated_at"`
+	ID                uint                   `json:"id"`
+	UserID            uint                   `json:"user_id"`
+	Name              string                 `json:"name"`
+	Status            int                    `json:"status"`
+	ExpiredAt         *time.Time             `json:"expired_at,omitempty"`
+	RemainQuota       int64                  `json:"remain_quota"`
+	Unlimited         bool                   `json:"unlimited"`
+	RotatedFromID     *uint                  `json:"rotated_from_id,omitempty"`
+	RevokedReason     string                 `json:"revoked_reason,omitempty"`
+	Scope             *TokenScopeResponse    `json:"scope,omitempty"`
+	Metadata          *TokenMetadataResponse `json:"metadata,omitempty"`
+	LastUsedAt        *time.Time             `json:"last_used_at,omitempty"`
+	LastUsedIPHash    string                 `json:"last_used_ip_hash,omitempty"`
+	LastUserAgentHash string                 `json:"last_user_agent_hash,omitempty"`
+	LastModel         string                 `json:"last_model,omitempty"`
+	LastErrorCode     string                 `json:"last_error_code,omitempty"`
+	CreatedAt         time.Time              `json:"created_at"`
+	UpdatedAt         time.Time              `json:"updated_at"`
 }
 
 type CreateTokenResponse struct {
@@ -188,6 +209,7 @@ func TokenFromModel(token model.Token) TokenResponse {
 		RotatedFromID:     token.RotatedFromID,
 		RevokedReason:     token.RevokedReason,
 		Scope:             TokenScopeFromJSON(token.ScopeJSON),
+		Metadata:          TokenMetadataFromJSON(token.MetadataJSON),
 		LastUsedAt:        token.LastUsedAt,
 		LastUsedIPHash:    token.LastUsedIPHash,
 		LastUserAgentHash: token.LastUserAgentHash,
@@ -196,6 +218,20 @@ func TokenFromModel(token model.Token) TokenResponse {
 		CreatedAt:         token.CreatedAt,
 		UpdatedAt:         token.UpdatedAt,
 	}
+}
+
+func TokenMetadataFromJSON(raw model.JSONValue) *TokenMetadataResponse {
+	if len(raw) == 0 {
+		return nil
+	}
+	var metadata TokenMetadataResponse
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return nil
+	}
+	if metadata.Environment == "" && metadata.Team == "" && metadata.App == "" && len(metadata.Tags) == 0 && metadata.ExternalID == "" && metadata.Note == "" {
+		return nil
+	}
+	return &metadata
 }
 
 func TokenScopeFromJSON(raw model.JSONValue) *TokenScopeResponse {

@@ -61,6 +61,7 @@ func setupAdminRoutes(
 			authRequired.POST("/payment/refunds", userH.CreatePaymentManualRefund)
 			authRequired.POST("/payment/refund-requests", userH.CreatePaymentProviderRefundRequest)
 			authRequired.GET("/token", tokenH.AdminList)
+			authRequired.GET("/token/export", tokenH.AdminExport)
 			authRequired.GET("/token/risk", tokenH.AdminRisk)
 			authRequired.GET("/token/:id/leak-window", tokenH.AdminLeakWindow)
 			authRequired.POST("/token/batch-disable", tokenH.BatchDisable)

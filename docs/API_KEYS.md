@@ -42,6 +42,7 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 - 有限 API Key 创建不扣用户余额，`remain_quota` 或目标字段只表示 Key 剩余预算上限；成功调用同时扣用户余额和 Key 预算。
 - `unlimited=true` 或 `remain_quota=-1` 表示 API Key 自身不限额；成功调用仍扣用户额度。
 - API Key 支持用户轮换、泄露上报、单 Key 用量摘要、按 Key 过滤用户日志和账单聚合、显式禁用、管理员跨用户脱敏查询，以及按 `token_ids`/`user_id` 批量禁用和批量过期。
+- API Key 已支持 `metadata_json` 非安全元数据，创建和编辑时可维护环境、团队、应用、标签、外部 ID 和备注；管理员可按 `environment`、`team`、`app`、`tag` 过滤并导出脱敏摘要。
 - 泄露上报会创建管理员告警收件箱记录，管理员可通过 `/v0/admin/alerts` 查询、通过 `/v0/admin/alerts/:id/ack` 确认处理；启用 `alert.webhook.*` 后会写入 Webhook 投递 outbox，并可通过 `/v0/admin/alerts/deliveries` 查看和重放。
 - 管理员 API Key 风险视图已支持按时间窗口聚合失败数、成功数、额度消耗、低剩余额度、泄露上报、禁用、过期和最近错误风险；泄露风险会返回基础轮换建议，响应只返回脱敏 Key 摘要。
 - `tokens.rotated_from_id` 保存轮换来源，`tokens.revoked_reason` 保存禁用原因；轮换会创建替换 Key、返回新明文一次并禁用旧 Key。
@@ -162,7 +163,7 @@ User JWT 登录
 | `hash_version` | 哈希算法或迁移版本，支持未来升级。 |
 | `quota_limit` | 目标字段。Key 最大消耗额度；`null` 或 `-1` 表示不限 Key 自身额度。 |
 | `quota_used` | 目标字段。Key 已累计消耗额度，用于和 `quota_limit` 计算剩余预算。 |
-| `metadata_json` | 环境、应用名、团队、标签、外部系统关联 ID 等非安全元数据。 |
+| `metadata_json` | 当前已落地；环境、应用名、团队、标签、外部系统关联 ID 和备注等非安全元数据，不保存 API Key 明文、上游密钥或支付密钥。 |
 | `created_by_user_id` | 创建动作的登录用户。 |
 | `updated_by_user_id` | 最近一次管理动作的登录用户。 |
 
@@ -261,7 +262,8 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 | 作用域扩展 | `PUT /v0/user/token/:id/scope` | 管理员或具备策略权限的用户 | 在已实现 `allow_models`、`api_types`、`channel_groups`、`entry_protocols`、`ip_cidrs`、`methods`、`daily_quota`、`monthly_quota`、`max_concurrency`、`rpm` 和 `tpm` 基础上继续扩展更完整策略快照。 |
 | 批量禁用 | `POST /v0/admin/token/batch-disable` | 管理员 | 按用户、标签、环境、异常条件批量禁用；缺少筛选条件时返回 400 并写 `api_key.batch_disable_denied`。 |
 | 批量过期 | `POST /v0/admin/token/batch-expire` | 管理员 | 按 `token_ids` 或 `user_id` 立即设置过期时间，必须带筛选条件；缺少筛选条件时返回 400 并写 `api_key.batch_expire_denied`。 |
-| 管理查询 | `GET /v0/admin/token` | 管理员 | 跨用户按状态、最近使用、错误、额度和标签检索脱敏摘要。 |
+| 管理查询 | `GET /v0/admin/token` | 管理员 | 跨用户按状态、元数据、最近使用、错误和额度检索脱敏摘要。 |
+| 脱敏导出 | `GET /v0/admin/token/export` | 管理员 | 按管理查询过滤条件导出脱敏 CSV 摘要，包含元数据列，不包含明文 Key 或哈希；成功后写 `api_key.export` 审计。 |
 | 风险视图 | `GET /v0/admin/token/risk` | 管理员 | 按窗口聚合异常 Key，返回风险等级、原因、建议动作和基础轮换建议，不暴露明文 Key 或哈希。 |
 | 告警收件箱 | `GET /v0/admin/alerts`、`POST /v0/admin/alerts/:id/ack`、`GET /v0/admin/alerts/deliveries`、`POST /v0/admin/alerts/deliveries/replay` | 管理员 | 查询 API Key 泄露等主动告警、确认处理并查看/重放 Webhook 投递；告警正文和 Webhook payload 只保存脱敏上下文，不暴露明文 Key 或哈希。 |
 
@@ -375,7 +377,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 ### P2 验收
 
 - 管理员已支持跨用户查询、批量禁用、批量过期、基础异常 Key 风险视图、泄露风险基础轮换建议、单 Key 泄露窗口分析、基础主动告警收件箱和 Webhook 外部投递 outbox；基础鉴权映射缓存失效已覆盖，邮件和 IM 推送渠道仍待补。
-- 支持企业团队、服务账号、标签、环境和导出脱敏摘要。
+- 已支持环境、团队、应用、标签、外部 ID、备注等 Key 元数据、按元数据过滤和导出脱敏摘要；服务账号主体仍待补。
 - 已支持入口协议 allow-list、IP/CIDR allow-list、日预算、月预算、并发上限和 RPM/TPM；更完整策略快照仍待补。
 - 已支持泄露上报、替换建议、风险视图基础轮换建议、基于调用日志的窗口分析、管理员告警确认和 Webhook 告警投递；邮件和 IM 外部告警推送渠道仍待补。
 - API Key 预算调整、支付入账、退款、充值码和人工补账统一走对应审计或额度流水。

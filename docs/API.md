@@ -713,8 +713,8 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/v0/user/token` | 已实现 | 当前用户 API Key 列表 |
-| POST | `/v0/user/token` | 已实现 | 创建 API Key，明文只返回一次，成功后写 `api_key.created` 审计 |
-| PUT | `/v0/user/token/:id` | 已实现 | 编辑 API Key 名称、状态、过期时间；普通编辑写 `api_key.updated`，禁用写 `api_key.disabled`，额度/无限标记编辑拒绝写 `api_key.quota_limit_denied` |
+| POST | `/v0/user/token` | 已实现 | 创建 API Key，明文只返回一次；可写入 `metadata.environment/team/app/tags/external_id/note` 非安全元数据；成功后写 `api_key.created` 审计 |
+| PUT | `/v0/user/token/:id` | 已实现 | 编辑 API Key 名称、状态、过期时间和元数据；普通编辑写 `api_key.updated`，禁用写 `api_key.disabled`，额度/无限标记编辑拒绝写 `api_key.quota_limit_denied` |
 | DELETE | `/v0/user/token/:id` | 已实现 | 删除 API Key，成功后写 `api_key.deleted` 审计 |
 | POST | `/v0/user/token/:id/disable` | 已实现 | 禁用自己的 API Key，可记录禁用原因，成功后写 `api_key.disabled` 审计 |
 | POST | `/v0/user/token/:id/rotate` | 已实现 | 创建替换 Key、返回新明文一次、写入 `rotated_from_id` 并禁用旧 Key，成功后写 `api_key.rotated` 审计 |
@@ -722,7 +722,8 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | PUT | `/v0/user/token/:id/scope` | 基础实现 | 更新自己的 Key 收窄 scope，当前支持 `allow_models`、`api_types`、`channel_groups`、`entry_protocols`、`ip_cidrs`、`methods`、`daily_quota`、`monthly_quota`、`max_concurrency`、`rpm` 和 `tpm`；成功后写 `api_key.scope_updated` 审计 |
 | GET | `/v0/user/token/:id/usage` | 已实现 | 返回该 Key 的调用数、成功/失败数、额度消耗、总 tokens 和最近调用摘要 |
 | GET | `/v0/user/token/:id/leak-window` | 基础实现 | 当前用户查询单 Key 最近窗口调用摘要；`window_hours` 默认 24、最大 720，返回模型、错误 code 和来源 IP 哈希计数，不返回明文 Key 或原始 IP |
-| GET | `/v0/admin/token` | 已实现 | 管理员跨用户查询脱敏 API Key 摘要，可按 `user_id` 和 `status` 过滤 |
+| GET | `/v0/admin/token` | 已实现 | 管理员跨用户查询脱敏 API Key 摘要，可按 `user_id`、`status`、`environment`、`team`、`app` 和 `tag` 过滤 |
+| GET | `/v0/admin/token/export` | 基础实现 | 管理员按同样过滤条件导出脱敏 API Key CSV 摘要；`limit` 默认 1000、最大 10000，成功后写 `api_key.export` 审计 |
 | GET | `/v0/admin/token/risk` | 基础实现 | 管理员查看异常 API Key 风险视图，支持 `user_id`、`window_hours`、`min_error_count` 和 `low_quota_below` 过滤；泄露风险会返回基础轮换建议，不返回明文 Key 或哈希 |
 | GET | `/v0/admin/token/:id/leak-window` | 基础实现 | 管理员跨用户查询单 Key 泄露窗口摘要；输出字段与用户侧一致，用于泄露处置和工单排障 |
 | POST | `/v0/admin/token/batch-disable` | 已实现 | 管理员按 `token_ids` 或 `user_id` 批量禁用 Key，必须提供筛选条件；成功后写 `api_key.batch_disabled` 审计，缺少筛选条件时返回 400 并写 `api_key.batch_disable_denied` |

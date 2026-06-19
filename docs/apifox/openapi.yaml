@@ -361,7 +361,7 @@ paths:
     get:
       tags: [User API Key]
       summary: 当前用户 API Key 列表
-      description: 返回当前用户自己的 API Key 分页列表；仅包含脱敏前缀、状态、过期时间、额度和最近使用摘要，不返回完整 sk- 明文或哈希。
+      description: 返回当前用户自己的 API Key 分页列表；仅包含脱敏前缀、状态、过期时间、额度、非安全元数据和最近使用摘要，不返回完整 sk- 明文或哈希。
       security:
         - UserJWT: []
       parameters:
@@ -382,7 +382,7 @@ paths:
     post:
       tags: [User API Key]
       summary: 创建 API Key
-      description: 返回一次性 sk- 明文；有限额度 Key 创建时只设置预算上限，不扣用户余额，调用成功时再扣费。成功后写入 api_key.created 管理审计，审计摘要不包含完整明文 Key 或哈希。
+      description: 返回一次性 sk- 明文；可写入 environment/team/app/tags/external_id/note 非安全元数据；有限额度 Key 创建时只设置预算上限，不扣用户余额，调用成功时再扣费。成功后写入 api_key.created 管理审计，审计摘要不包含完整明文 Key 或哈希。
       security:
         - UserJWT: []
       requestBody:
@@ -409,7 +409,7 @@ paths:
     put:
       tags: [User API Key]
       summary: 编辑 API Key
-      description: 普通用户只能编辑名称、状态和过期时间，不能通过本接口修改额度或无限标记。普通编辑成功后写 api_key.updated 并清理 Redis 鉴权 lookup cache；将状态改为禁用写 api_key.disabled；尝试修改 remain_quota 或 unlimited 会返回 403 并写 api_key.quota_limit_denied。
+      description: 普通用户只能编辑名称、状态、过期时间和非安全元数据，不能通过本接口修改额度或无限标记。普通编辑成功后写 api_key.updated 并清理 Redis 鉴权 lookup cache；将状态改为禁用写 api_key.disabled；尝试修改 remain_quota 或 unlimited 会返回 403 并写 api_key.quota_limit_denied。
       security:
         - UserJWT: []
       parameters:
@@ -1201,7 +1201,7 @@ paths:
     get:
       tags: [Admin API Key]
       summary: 管理员 API Key 列表
-      description: 管理员跨用户查询脱敏 API Key 摘要；不会返回完整明文 Key 或哈希。当前支持按 user_id 和 status 过滤。
+      description: 管理员跨用户查询脱敏 API Key 摘要；不会返回完整明文 Key 或哈希。支持按 user_id、status、environment、team、app 和 tag 过滤。
       security:
         - UserJWT: []
       parameters:
@@ -1219,6 +1219,30 @@ paths:
             type: integer
             enum: [0, 1]
           description: 0=禁用，1=启用。
+        - name: environment
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按 API Key 非安全元数据 environment 过滤。
+          example: prod
+        - name: team
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按 API Key 非安全元数据 team 过滤。
+          example: platform
+        - name: app
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按 API Key 非安全元数据 app 过滤。
+          example: router
+        - name: tag
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按 API Key 非安全元数据 tags 单个标签过滤。
+          example: rotated
       responses:
         "200":
           description: API Key 分页列表。
@@ -1231,6 +1255,69 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/TokenPage"
+  /v0/admin/token/export:
+    get:
+      tags: [Admin API Key]
+      summary: 导出 API Key 脱敏摘要
+      description: 管理员按 user_id、status、environment、team、app 和 tag 过滤导出 CSV；导出内容不包含完整明文 Key、key_hash 或来源 IP/User-Agent 明文，并写入 api_key.export 管理审计。
+      security:
+        - UserJWT: []
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          schema: { type: integer, format: uint64 }
+          description: 按所属用户过滤。
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: 0=禁用，1=启用。
+        - name: environment
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按 API Key 非安全元数据 environment 过滤。
+          example: prod
+        - name: team
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按 API Key 非安全元数据 team 过滤。
+          example: platform
+        - name: app
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按 API Key 非安全元数据 app 过滤。
+          example: router
+        - name: tag
+          in: query
+          required: false
+          schema: { type: string }
+          description: 按 API Key 非安全元数据 tags 单个标签过滤。
+          example: rotated
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 1000
+          description: 导出最大行数，默认 1000，最大 10000。
+      responses:
+        "200":
+          description: 脱敏 CSV 文件。
+          content:
+            text/csv:
+              schema:
+                type: string
+              example: |
+                id,user_id,name,status,environment,team,app,tags,external_id,note,expired_at,last_used_at,last_model,last_error_code,created_at
+                12,1,prod-router,1,prod,platform,router,gateway|rotated,svc-router-prod,owned by platform,,,gpt-4o-mini,,2026-06-19T10:00:00Z
   /v0/admin/token/risk:
     get:
       tags: [Admin API Key]
@@ -4600,6 +4687,8 @@ components:
           format: int64
           nullable: true
           description: Unix 秒时间戳。
+        metadata:
+          $ref: "#/components/schemas/TokenMetadata"
     UpdateTokenRequest:
       type: object
       properties:
@@ -4617,6 +4706,38 @@ components:
           nullable: true
           deprecated: true
           description: 用户编辑接口不允许修改无限标记；传入会返回 403。
+        metadata:
+          $ref: "#/components/schemas/TokenMetadata"
+    TokenMetadata:
+      type: object
+      description: API Key 非安全元数据，用于环境、团队、应用和标签筛选；不得包含 API Key 明文、上游密钥、支付密钥或其他敏感凭据。
+      properties:
+        environment:
+          type: string
+          description: 环境标识，服务端会去空格并归一为小写。
+          example: prod
+        team:
+          type: string
+          description: 团队或责任方标识，服务端会去空格并归一为小写。
+          example: platform
+        app:
+          type: string
+          description: 应用或服务标识，服务端会去空格并归一为小写。
+          example: router
+        tags:
+          type: array
+          description: 标签列表，服务端会去重、去空格并归一为小写。
+          items:
+            type: string
+          example: ["gateway", "rotated"]
+        external_id:
+          type: string
+          description: 外部系统中的服务账号、项目或工单 ID。
+          example: svc-router-prod
+        note:
+          type: string
+          description: 简短备注，不应填写任何密钥或敏感凭据。
+          example: owned by platform
     ReportTokenLeakRequest:
       type: object
       properties:
@@ -4773,6 +4894,8 @@ components:
           description: 禁用原因；启用 Key 通常为空。
         scope:
           $ref: "#/components/schemas/TokenScope"
+        metadata:
+          $ref: "#/components/schemas/TokenMetadata"
         last_used_at:
           type: string
           format: date-time

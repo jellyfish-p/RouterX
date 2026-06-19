@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/csv"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -54,7 +57,7 @@ func (h *TokenHandler) Create(c *gin.Context) {
 		common.FailWithStatus(c, 400, "创建 API Key 参数无效")
 		return
 	}
-	token, err := h.svc.Create(user.ID, req.Name, req.RemainQuota, req.Unlimited, req.ExpiredAt)
+	token, err := h.svc.Create(user.ID, req.Name, req.RemainQuota, req.Unlimited, req.ExpiredAt, tokenMetadataFromRequest(req.Metadata))
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
@@ -110,6 +113,14 @@ func (h *TokenHandler) Update(c *gin.Context) {
 			t := time.Unix(*req.ExpiredAt, 0)
 			updates["expired_at"] = &t
 		}
+	}
+	if req.Metadata != nil {
+		metadataJSON, err := tokenMetadataJSONFromRequest(req.Metadata)
+		if err != nil {
+			common.FailWithStatus(c, 400, err.Error())
+			return
+		}
+		updates["metadata_json"] = metadataJSON
 	}
 	if err := h.svc.Update(id, updates); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
@@ -346,11 +357,9 @@ func (h *TokenHandler) LeakWindow(c *gin.Context) {
 }
 
 func (h *TokenHandler) AdminList(c *gin.Context) {
-	userID := queryUintPtr(c, "user_id")
-	status := queryIntPtr(c, "status")
 	page := queryInt(c, "page", 1)
 	pageSize := queryInt(c, "page_size", 20)
-	tokens, total, err := h.svc.ListFiltered(userID, status, page, pageSize)
+	tokens, total, err := h.svc.ListByFilter(adminTokenFilterFromQuery(c, page, pageSize))
 	if err != nil {
 		common.FailWithStatus(c, 500, "查询 API Key 失败")
 		return
@@ -361,6 +370,32 @@ func (h *TokenHandler) AdminList(c *gin.Context) {
 	}
 	page, pageSize = pageValues(page, pageSize)
 	common.Success(c, dto.PaginatedResult{Total: total, Page: page, PageSize: pageSize, Data: data})
+}
+
+func (h *TokenHandler) AdminExport(c *gin.Context) {
+	operator, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	limit := normalizeTokenExportLimit(queryInt(c, "limit", 0))
+	filter := adminTokenFilterFromQuery(c, 1, limit)
+	tokens, _, err := h.svc.ListByFilter(filter)
+	if err != nil {
+		common.FailWithStatus(c, 500, "导出 API Key 失败")
+		return
+	}
+	csvBytes, err := buildTokenExportCSV(tokens)
+	if err != nil {
+		common.FailWithStatus(c, 500, "生成 API Key 导出文件失败")
+		return
+	}
+	if err := h.recordAPIKeyAuditResource(c, operator, "api_key.export", "export", nil, tokenExportAuditSummary(filter, limit, len(tokens)), "success", ""); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	c.Header("Content-Disposition", `attachment; filename="routerx-api-keys.csv"`)
+	c.Data(200, "text/csv; charset=utf-8", csvBytes)
 }
 
 func (h *TokenHandler) AdminRisk(c *gin.Context) {
@@ -578,6 +613,109 @@ func tokenLeakWindowCounters(items []service.TokenLeakWindowCounter) []dto.Token
 	return out
 }
 
+func tokenMetadataFromRequest(req *dto.TokenMetadataRequest) service.TokenMetadata {
+	if req == nil {
+		return service.TokenMetadata{}
+	}
+	return service.TokenMetadata{
+		Environment: req.Environment,
+		Team:        req.Team,
+		App:         req.App,
+		Tags:        req.Tags,
+		ExternalID:  req.ExternalID,
+		Note:        req.Note,
+	}
+}
+
+func tokenMetadataJSONFromRequest(req *dto.TokenMetadataRequest) (model.JSONValue, error) {
+	metadata, err := service.NormalizeTokenMetadata(tokenMetadataFromRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	if metadata.Environment == "" && metadata.Team == "" && metadata.App == "" && metadata.ExternalID == "" && metadata.Note == "" && len(metadata.Tags) == 0 {
+		return nil, nil
+	}
+	return model.NewJSONValue(metadata), nil
+}
+
+func adminTokenFilterFromQuery(c *gin.Context, page, pageSize int) service.TokenListFilter {
+	return service.TokenListFilter{
+		UserID:      queryUintPtr(c, "user_id"),
+		Status:      queryIntPtr(c, "status"),
+		Environment: c.Query("environment"),
+		Team:        c.Query("team"),
+		App:         c.Query("app"),
+		Tag:         c.Query("tag"),
+		Page:        page,
+		PageSize:    pageSize,
+	}
+}
+
+func normalizeTokenExportLimit(limit int) int {
+	if limit <= 0 {
+		return 1000
+	}
+	if limit > 10000 {
+		return 10000
+	}
+	return limit
+}
+
+func buildTokenExportCSV(tokens []model.Token) ([]byte, error) {
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	header := []string{"id", "user_id", "name", "status", "environment", "team", "app", "tags", "external_id", "note", "expired_at", "last_used_at", "last_model", "last_error_code", "created_at"}
+	if err := writer.Write(header); err != nil {
+		return nil, err
+	}
+	for _, token := range tokens {
+		metadata := service.ParseTokenMetadata(token.MetadataJSON)
+		if err := writer.Write([]string{
+			strconv.FormatUint(uint64(token.ID), 10),
+			strconv.FormatUint(uint64(token.UserID), 10),
+			token.Name,
+			strconv.Itoa(token.Status),
+			metadata.Environment,
+			metadata.Team,
+			metadata.App,
+			strings.Join(metadata.Tags, "|"),
+			metadata.ExternalID,
+			metadata.Note,
+			timePtrString(token.ExpiredAt),
+			timePtrString(token.LastUsedAt),
+			token.LastModel,
+			token.LastErrorCode,
+			token.CreatedAt.Format(time.RFC3339),
+		}); err != nil {
+			return nil, err
+		}
+	}
+	writer.Flush()
+	return buf.Bytes(), writer.Error()
+}
+
+func tokenExportAuditSummary(filter service.TokenListFilter, limit, exportedCount int) map[string]interface{} {
+	return map[string]interface{}{
+		"filters": map[string]interface{}{
+			"user_id":     filter.UserID,
+			"status":      filter.Status,
+			"environment": strings.TrimSpace(filter.Environment),
+			"team":        strings.TrimSpace(filter.Team),
+			"app":         strings.TrimSpace(filter.App),
+			"tag":         strings.TrimSpace(filter.Tag),
+		},
+		"limit":          limit,
+		"exported_count": exportedCount,
+	}
+}
+
+func timePtrString(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.Format(time.RFC3339)
+}
+
 // tokenAuditSummary 使用公开 DTO 字段白名单，避免把哈希或一次性明文 Key 写入审计。
 func tokenAuditSummary(token *model.Token) map[string]interface{} {
 	if token == nil {
@@ -595,6 +733,7 @@ func tokenAuditSummary(token *model.Token) map[string]interface{} {
 		"rotated_from_id":      info.RotatedFromID,
 		"revoked_reason":       info.RevokedReason,
 		"scope":                info.Scope,
+		"metadata":             info.Metadata,
 		"last_used_at":         info.LastUsedAt,
 		"last_used_ip_hash":    info.LastUsedIPHash,
 		"last_user_agent_hash": info.LastUserAgentHash,
