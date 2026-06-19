@@ -5044,15 +5044,19 @@ components:
           type: string
           minLength: 3
           maxLength: 64
+          description: 初始超级管理员用户名。
         password:
           type: string
           minLength: 6
           maxLength: 128
+          description: 初始超级管理员本地登录密码。
         display_name:
           type: string
+          description: 初始超级管理员展示名；为空时可由前端回退到用户名。
         email:
           type: string
           format: email
+          description: 初始超级管理员邮箱；可用于资料展示和后续本地 email 身份。
     RegisterRequest:
       type: object
       required: [username, password]
@@ -5069,6 +5073,7 @@ components:
           description: 本地账号密码；密码哈希只保存到 username/local 主身份。
         display_name:
           type: string
+          description: 可选展示名；为空时服务端使用 username。
         email:
           type: string
           format: email
@@ -5299,23 +5304,62 @@ components:
       type: object
       required: [username, password]
       properties:
-        username: { type: string, minLength: 3, maxLength: 64 }
-        password: { type: string, minLength: 6, maxLength: 128 }
-        display_name: { type: string }
-        email: { type: string }
-        phone: { type: string }
-        role: { type: integer }
-        quota: { type: integer, format: int64 }
-        group_id: { type: integer, format: uint64, nullable: true }
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+          description: 新用户本地用户名；同名 identity 已存在时返回错误或按注销恢复路径处理。
+        password:
+          type: string
+          minLength: 6
+          maxLength: 128
+          description: 新用户本地登录密码；审计摘要不会记录明文。
+        display_name:
+          type: string
+          description: 新用户展示名；为空时可使用用户名展示。
+        email:
+          type: string
+          description: 新用户邮箱；提供时会同步 email/local 登录标识。
+        phone:
+          type: string
+          description: 新用户手机号；提供时会同步 phone/local 登录标识。
+        role:
+          type: integer
+          description: 用户角色；1=user，10=admin，100=super admin。
+        quota:
+          type: integer
+          format: int64
+          description: 初始可用额度。
+        group_id:
+          type: integer
+          format: uint64
+          nullable: true
+          description: 所属用户分组 ID；为空时使用默认分组。
     UpdateUserRequest:
       type: object
       properties:
-        display_name: { type: string }
-        email: { type: string }
-        phone: { type: string }
-        role: { type: integer, nullable: true }
-        status: { type: integer, nullable: true }
-        group_id: { type: integer, format: uint64, nullable: true }
+        display_name:
+          type: string
+          description: 新展示名；未传则保留原值。
+        email:
+          type: string
+          description: 新邮箱；服务端会规范化并同步 email/local 登录标识。
+        phone:
+          type: string
+          description: 新手机号；服务端会规范化并同步 phone/local 登录标识。
+        role:
+          type: integer
+          nullable: true
+          description: 新角色；权限边界由管理员级别校验。
+        status:
+          type: integer
+          nullable: true
+          description: 新用户状态；禁用后不能继续登录或使用 API Key。
+        group_id:
+          type: integer
+          format: uint64
+          nullable: true
+          description: 新用户分组 ID；为空时清理显式分组。
     UserGroupInfo:
       type: object
       properties:
@@ -5336,7 +5380,12 @@ components:
       type: object
       required: [name]
       properties:
-        name: { type: string, minLength: 1, maxLength: 64, example: vip }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 用户分组名称；同名分组不可重复。
+          example: vip
         ratio:
           type: number
           format: double
@@ -5345,7 +5394,11 @@ components:
     UpdateUserGroupRequest:
       type: object
       properties:
-        name: { type: string, maxLength: 64, example: vip-renamed }
+        name:
+          type: string
+          maxLength: 64
+          description: 新用户分组名称；未传则保留原名称。
+          example: vip-renamed
         ratio:
           type: number
           format: double
@@ -5377,6 +5430,7 @@ components:
       properties:
         code:
           type: string
+          description: 用户要兑换的充值码；成功后会一次性标记为已使用。
           example: OFFLINE-CREDIT-1
     RedeemCodeResult:
       type: object
@@ -5562,9 +5616,11 @@ components:
       properties:
         product_id:
           type: string
+          description: 商品唯一业务 ID；订单创建时按该值选择商品。
           example: quota_100
         name:
           type: string
+          description: 商品展示名称。
           example: 100 credits
         amount:
           type: string
@@ -5572,6 +5628,7 @@ components:
           example: "9.99"
         currency:
           type: string
+          description: 币种代码；会与 provider 回调金额币种快照比对。
           example: usd
         quota:
           type: integer
@@ -5902,7 +5959,10 @@ components:
         provider:
           type: string
           enum: [stripe, epay]
-        product_id: { type: string }
+          description: 支付 provider；必须已在 settings 中启用。
+        product_id:
+          type: string
+          description: 要购买的支付商品 ID。
         pay_type:
           type: string
           description: 易支付支付方式；Stripe 可忽略或使用 card。
@@ -5955,6 +6015,7 @@ components:
           example: checkout.session.completed
         data:
           type: object
+          description: Stripe 事件数据包；核心对象位于 data.object。
           required: [object]
           properties:
             object:
@@ -5997,20 +6058,35 @@ components:
       type: object
       required: [out_trade_no, money, trade_status, sign]
       properties:
-        pid: { type: string }
-        type: { type: string, example: alipay }
-        out_trade_no: { type: string }
-        trade_no: { type: string }
-        money: { type: string }
+        pid:
+          type: string
+          description: 易支付商户 ID。
+        type:
+          type: string
+          description: 易支付支付方式。
+          example: alipay
+        out_trade_no:
+          type: string
+          description: RouterX 本地订单号。
+        trade_no:
+          type: string
+          description: 易支付平台交易号。
+        money:
+          type: string
+          description: 支付金额字符串；服务端会与订单快照比对。
         trade_status:
           type: string
+          description: 易支付交易状态；TRADE_SUCCESS 表示成功入账。
           example: TRADE_SUCCESS
-        name: { type: string }
+        name:
+          type: string
+          description: 易支付商品名称快照。
         sign:
           type: string
           description: 排除 sign、sign_type 和空值字段后按易支付规则生成的 MD5 签名。
         sign_type:
           type: string
+          description: 签名算法；当前基础实现按 MD5 校验。
           example: MD5
     CreateRedemCodesRequest:
       type: object
@@ -6074,8 +6150,13 @@ components:
       type: object
       required: [old_password, new_password]
       properties:
-        old_password: { type: string }
-        new_password: { type: string, minLength: 6 }
+        old_password:
+          type: string
+          description: 当前本地登录密码；校验失败不会修改密码。
+        new_password:
+          type: string
+          minLength: 6
+          description: 新本地登录密码；成功后只更新 username/local 主身份密码哈希。
     UpdateQuotaRequest:
       type: object
       required: [quota]
@@ -6168,7 +6249,10 @@ components:
       type: object
       required: [name]
       properties:
-        name: { type: string, maxLength: 64 }
+        name:
+          type: string
+          maxLength: 64
+          description: API Key 名称；用于列表、审计和人类识别。
         remain_quota:
           type: integer
           format: int64
@@ -6186,9 +6270,18 @@ components:
     UpdateTokenRequest:
       type: object
       properties:
-        name: { type: string }
-        status: { type: integer, nullable: true }
-        expired_at: { type: integer, format: int64, nullable: true }
+        name:
+          type: string
+          description: 新 API Key 名称；未传则保留原名称。
+        status:
+          type: integer
+          nullable: true
+          description: 新 API Key 状态；禁用会清理鉴权 lookup cache。
+        expired_at:
+          type: integer
+          format: int64
+          nullable: true
+          description: Unix 秒过期时间；为空时不设置过期时间。
         remain_quota:
           type: integer
           format: int64
@@ -6793,8 +6886,12 @@ components:
     ChannelUpstreamRequest:
       type: object
       properties:
-        base_url: { type: string }
-        api_key: { type: string }
+        base_url:
+          type: string
+          description: 单个上游端点地址。
+        api_key:
+          type: string
+          description: 该上游端点专用密钥；保存时会按密钥策略加密或脱敏。
     ChannelUpstreamPublic:
       type: object
       properties:
@@ -6804,41 +6901,65 @@ components:
       type: object
       required: [type, name, models]
       properties:
-        idx: { type: integer }
-        type: { type: integer, minimum: 1 }
-        name: { type: string, maxLength: 64 }
+        idx:
+          type: integer
+          description: 排序或兼容索引字段；未传时由服务端默认处理。
+        type:
+          type: integer
+          minimum: 1
+          description: 通道类型；对应后端 adapter/provider 枚举。
+        name:
+          type: string
+          maxLength: 64
+          description: 通道人类可读名称。
         models:
           type: string
           description: 逗号分隔模型名，* 表示匹配所有模型。
-        base_url: { type: string }
+        base_url:
+          type: string
+          description: 默认上游基础地址；单上游通道可直接使用该字段。
         base_urls:
           type: array
+          description: 多基础地址列表；服务端会按通道策略选择上游端点。
           items: { type: string }
         api_key:
           type: string
+          description: 默认上游 API Key；响应和审计不会返回明文。
           writeOnly: true
         api_keys:
           type: array
+          description: 多密钥池；保存时会按密钥策略处理，响应只返回数量或脱敏信息。
           items: { type: string }
           writeOnly: true
         key_selection_mode:
           type: string
           enum: [round_robin, random]
+          description: 多密钥选择模式。
         upstreams:
           type: array
+          description: 多上游端点配置；每项可独立填写 base_url 和 api_key。
           items:
             $ref: "#/components/schemas/ChannelUpstreamRequest"
         model_rewrites:
           type: object
+          description: 模型名重写表；key 为 RouterX 对外模型名，value 为上游实际模型名。
           additionalProperties: { type: string }
         group:
           type: string
+          description: 通道分组；用于访问控制、候选筛选和管理查询。
         upstream_options:
           type: object
+          description: 通道级上游补充选项；不得包含下游密钥或敏感凭据明文。
           additionalProperties: true
-        priority: { type: integer }
-        weight: { type: integer }
-        status: { type: integer }
+        priority:
+          type: integer
+          description: 候选排序优先级；数值语义由当前路由策略定义。
+        weight:
+          type: integer
+          description: 同优先级候选的权重；用于加权选择。
+        status:
+          type: integer
+          description: 通道状态；禁用状态不会进入可用候选。
     UpdateChannelRequest:
       allOf:
         - $ref: "#/components/schemas/CreateChannelRequest"
