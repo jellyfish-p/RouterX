@@ -101,7 +101,7 @@
 | `model` | 调用方请求模型 |
 | `prompt_tokens` / `completion_tokens` / `total_tokens` | usage |
 | `usage_source` | usage 来源；当前已落地 upstream 和 minimum |
-| `usage_snapshot` | 脱敏 usage 快照；当前包含 usage 来源、token 数、安全 raw_usage_summary 和最低用量原因 |
+| `usage_snapshot` | 脱敏 usage 快照；当前包含 request_id、usage 来源、token 数、安全 raw_usage_summary 和最低用量原因 |
 | `quota_used` | 本次消耗额度 |
 | `status` | 成功或失败 |
 | `request_id` | 串联访问日志、调用日志和审计 |

@@ -374,7 +374,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `completion_tokens` | int | 输出 token 数 |
 | `total_tokens` | int | 总 token 数 |
 | `usage_source` | string | usage 来源；当前已落地 `upstream` 和 `minimum` |
-| `usage_snapshot` | text/json string | 脱敏 usage 快照；当前包含 usage 来源、token 数、安全 raw_usage_summary 和最低用量原因 |
+| `usage_snapshot` | text/json string | 脱敏 usage 快照；当前包含 request_id、usage 来源、token 数、安全 raw_usage_summary 和最低用量原因 |
 | `quota_used` | int64 | 本次消耗额度 |
 | `status` | int | `0` 未知，`1` 成功，`2` 失败 |
 | `request_id` | nullable string | HTTP 请求追踪 ID |

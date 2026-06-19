@@ -16863,6 +16863,7 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if !ok ||
 		usageSnapshot["schema"] != "routerx.snapshot.v1" ||
 		usageSnapshot["kind"] != "usage" ||
+		usageSnapshot["request_id"] != callLog.RequestID ||
 		usageSnapshot["source"] != "relay" ||
 		usageSnapshot["redacted"] != true ||
 		usageSnapshot["usage_source"] != common.LogUsageSourceUpstream ||

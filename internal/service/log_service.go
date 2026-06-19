@@ -594,8 +594,24 @@ func normalizeLogUsageSnapshot(log *model.Log) string {
 	if log == nil {
 		return ""
 	}
+	requestID := strings.TrimSpace(log.RequestID)
 	if snapshot := strings.TrimSpace(log.UsageSnapshot); snapshot != "" {
-		return snapshot
+		if requestID == "" {
+			return snapshot
+		}
+		var existing map[string]interface{}
+		if err := json.Unmarshal([]byte(snapshot), &existing); err != nil {
+			return snapshot
+		}
+		if logSnapshotString(existing["request_id"]) == requestID {
+			return snapshot
+		}
+		existing["request_id"] = requestID
+		encoded, err := json.Marshal(existing)
+		if err != nil {
+			return snapshot
+		}
+		return string(encoded)
 	}
 	usageSource := strings.TrimSpace(log.UsageSource)
 	if usageSource == "" {
@@ -626,6 +642,9 @@ func normalizeLogUsageSnapshot(log *model.Log) string {
 		"completion_tokens": log.CompletionTokens,
 		"total_tokens":      log.TotalTokens,
 		"raw_usage_summary": rawUsageSummary,
+	}
+	if requestID != "" {
+		snapshot["request_id"] = requestID
 	}
 	if usageSource == common.LogUsageSourceMinimum {
 		snapshot["minimum_reason"] = "missing_upstream_usage"

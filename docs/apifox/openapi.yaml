@@ -6757,7 +6757,7 @@ components:
           enum: ["", upstream, minimum, adapter, tokenizer, estimate]
         usage_snapshot:
           type: string
-          description: 脱敏 usage 快照 JSON 字符串；当前包含 usage_source、prompt_tokens、completion_tokens、total_tokens、raw_usage_summary 和 minimum_reason。
+          description: 脱敏 usage 快照 JSON 字符串；当前包含 request_id、usage_source、prompt_tokens、completion_tokens、total_tokens、raw_usage_summary 和 minimum_reason。
         quota_used: { type: integer, format: int64 }
         status: { type: integer, description: "1=success, 2=failed" }
         content:
