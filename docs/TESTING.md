@@ -27,6 +27,7 @@
 | `TestApifoxOpenAPIPathParametersAreDeclared` | 解析 `docs/apifox/openapi.yaml`，确保每个 `{path}` 变量都有匹配且 `required=true` 的 `in: path` 参数，防止 Apifox 导入后路径参数模板不可用 |
 | `TestApifoxOpenAPIParametersHaveHumanReadableDescriptions` | 检查每个 path/query/header 参数都有可读说明，避免 Apifox 导入后只显示字段名而缺少用途说明 |
 | `TestApifoxOpenAPIRequestBodiesHaveHumanReadableDescriptionsAndSchemas` | 检查每个 requestBody 都有可读说明、content 和 schema，避免 Apifox 导入后请求体节点只有空壳或缺少字段结构 |
+| `TestApifoxOpenAPIResponsesHaveHumanReadableDescriptionsAndSchemas` | 检查每个响应码都有非泛化可读说明，且声明了 content 时必须带 schema，避免 Apifox 导入后响应示例只显示 OK/Ready 等占位文本 |
 | `TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v0` 请求体顶层字段都有可读说明，避免管理端和用户端接口在 Apifox 中只有字段名而缺少用途、边界或安全语义 |
 | `TestApifoxV1RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v1` 模型入口请求体顶层字段都有可读说明，避免 OpenAI/Anthropic/Gemini 兼容接口在 Apifox 中缺少字段用途或转换语义 |
 | `TestApifoxOpenAPIInternalRefsResolve` | 递归检查 `docs/apifox/openapi.yaml` 内部 `$ref`，确保 requestBodies、responses、schemas、parameters 等组件引用都能解析，防止 Apifox 导入时出现断链 |

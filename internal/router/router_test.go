@@ -490,6 +490,71 @@ func TestApifoxOpenAPIRequestBodiesHaveHumanReadableDescriptionsAndSchemas(t *te
 	}
 }
 
+func TestApifoxOpenAPIResponsesHaveHumanReadableDescriptionsAndSchemas(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := make([]string, 0)
+	genericDescriptions := map[string]struct{}{
+		"created":   {},
+		"error":     {},
+		"healthy":   {},
+		"not ready": {},
+		"ok":        {},
+		"ready":     {},
+		"success":   {},
+	}
+
+	for _, operation := range loadApifoxOperations(t) {
+		responses, ok := apifoxOperationResponses(doc, operation.Key)
+		if !ok || len(responses) == 0 {
+			issues = append(issues, operation.Key+" missing responses")
+			continue
+		}
+		for status, rawResponse := range responses {
+			response, ok := rawResponse.(map[string]interface{})
+			if !ok {
+				issues = append(issues, operation.Key+" response "+status+" is not an object")
+				continue
+			}
+			response, ok = apifoxResolveMapRef(doc, response)
+			if !ok {
+				issues = append(issues, operation.Key+" response "+status+" ref did not resolve to an object")
+				continue
+			}
+			description := strings.TrimSpace(fmt.Sprint(response["description"]))
+			if description == "" {
+				issues = append(issues, operation.Key+" response "+status+" missing description")
+			}
+			if _, generic := genericDescriptions[strings.ToLower(description)]; generic {
+				issues = append(issues, operation.Key+" response "+status+" description is too generic: "+description)
+			}
+			content, ok := response["content"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			for mediaType, rawMedia := range content {
+				media, ok := rawMedia.(map[string]interface{})
+				if !ok {
+					issues = append(issues, operation.Key+" response "+status+" "+mediaType+" media type is not an object")
+					continue
+				}
+				schema, ok := media["schema"].(map[string]interface{})
+				if !ok {
+					issues = append(issues, operation.Key+" response "+status+" "+mediaType+" missing schema")
+					continue
+				}
+				if !apifoxSchemaHasShape(schema) {
+					issues = append(issues, operation.Key+" response "+status+" "+mediaType+" schema missing type/ref/composition")
+				}
+			}
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml responses need human-readable descriptions and schemas:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
@@ -25298,6 +25363,31 @@ func apifoxOperationRequestBody(doc interface{}, operation string) (map[string]i
 	}
 	requestBody, ok := operationItem["requestBody"].(map[string]interface{})
 	return requestBody, ok
+}
+
+func apifoxOperationResponses(doc interface{}, operation string) (map[string]interface{}, bool) {
+	method, path, ok := strings.Cut(operation, " ")
+	if !ok {
+		return nil, false
+	}
+	root, ok := doc.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	paths, ok := root["paths"].(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	pathItem, ok := paths[path].(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	operationItem, ok := pathItem[strings.ToLower(method)].(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	responses, ok := operationItem["responses"].(map[string]interface{})
+	return responses, ok
 }
 
 func apifoxOperationsWithRequestBodies(doc interface{}) []string {

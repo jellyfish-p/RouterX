@@ -65,7 +65,7 @@ paths:
       description: 不要求系统初始化或鉴权，只证明 HTTP 进程存活。
       responses:
         "200":
-          description: Healthy
+          description: HTTP 进程存活，未检查数据库、Redis 或初始化状态。
           content:
             application/json:
               schema:
@@ -78,13 +78,13 @@ paths:
       description: '检查数据库可用性、schema_migrations dirty 状态；SQL_DSN 指向 PostgreSQL/MySQL 等外部数据库时还要求 Redis 可用；初始化后还会检查 JWT 配置、关键 auth/relay/rate-limit settings 注册表校验、已启用支付 provider 的必需环境密钥，以及存在 enc:v1: 通道密钥或外部登录 client_secret 时的 ENCRYPTION_KEY 和逐条解密结果。迁移 dirty 时返回 not_ready 并在 migration 字段返回 dirty；关键 settings 因直接改库或迁移漂移变成非法值时会返回 not_ready 并在 setting 字段指出问题 key；已有通道密文或外部登录 client_secret 缺少主密钥或无法解密时会返回 setting=ENCRYPTION_KEY。配置 LOG_SQL_DSN 时，独立日志库在启动期初始化，初始化失败会阻止服务启动；运行期日志库写入失败会保留主库调用事实并写应用告警。'
       responses:
         "200":
-          description: Ready
+          description: 服务依赖和关键配置均可用，可以接收业务请求。
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadyResponse"
         "503":
-          description: Not ready
+          description: 服务依赖或关键配置不可用，响应体会指出失败依赖。
           content:
             application/json:
               schema:
