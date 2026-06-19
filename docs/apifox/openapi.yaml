@@ -511,6 +511,60 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
         "401":
           $ref: "#/components/responses/StandardUnauthorized"
+  /v0/user/identities:
+    get:
+      tags: [User Auth]
+      summary: 当前用户身份列表
+      description: 返回当前登录用户已绑定且未解绑的登录身份，包括 username/local、email/local、phone/local、oauth/provider 和 oidc/provider 等。响应只包含身份元数据，不返回 password_hash、JWT、API Key 或其他凭据。
+      security:
+        - UserJWT: []
+      responses:
+        "200":
+          description: 当前用户可见的登录身份列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UserIdentityBrief"
+        "401":
+          $ref: "#/components/responses/StandardUnauthorized"
+  /v0/user/identities/{id}:
+    delete:
+      tags: [User Auth]
+      summary: 解绑当前用户身份
+      description: 软删除当前登录用户名下的非主登录身份。username/local 主身份不能解绑，避免账号失去基础登录方式；解绑 OAuth/OIDC 等身份后，该身份不再出现在列表中，也不能继续用于登录。成功后写 user.identity_unbound 审计。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: 身份已解绑；data 返回本次解绑的身份元数据快照。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserIdentityBrief"
+        "400":
+          description: 身份 ID 无效，或尝试解绑 username/local 主身份。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "401":
+          $ref: "#/components/responses/StandardUnauthorized"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
   /v0/user/token:
     get:
       tags: [User API Key]
@@ -4408,6 +4462,32 @@ components:
         quota: { type: integer, format: int64 }
         status: { type: integer }
         group_id: { type: integer, format: uint64, nullable: true }
+    UserIdentityBrief:
+      type: object
+      properties:
+        id: { type: integer, format: uint64 }
+        method:
+          type: string
+          enum: [username, email, phone, oauth, oidc]
+        provider:
+          type: string
+          description: local 或第三方 provider 别名。
+          example: github
+        identifier:
+          type: string
+          description: 登录标识，例如用户名、邮箱、手机号、OAuth user id 或 OIDC sub。
+          example: gh-123456
+        verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
     CreateUserRequest:
       type: object
       required: [username, password]

@@ -526,6 +526,7 @@ Provider 退款请求：
 | `user.self_cancel` | `DELETE /v0/user/self` |
 | `user.self_cancel_denied` | `DELETE /v0/user/self` 缺少或未通过本地密码二次确认 |
 | `user.recover` | `POST /v0/user/register` 命中已注销同名账号并恢复 |
+| `user.identity_unbound` | `DELETE /v0/user/identities/:id` 用户解绑非主登录身份 |
 | `user_group.create` | `POST /v0/admin/groups` |
 | `user_group.update` | `PUT /v0/admin/groups/:id` |
 | `user_group.delete` | `DELETE /v0/admin/groups/:id` |
@@ -707,6 +708,8 @@ Provider 退款请求：
 | GET | `/v0/user/oauth/:provider/callback` | 基础实现 | OAuth 回调；校验 state Cookie，使用 provider token/userinfo 接口解析稳定 id/sub，只允许已绑定 `oauth/provider/identifier` 身份登录并写 `user.login` 审计；相同 email 不自动绑定 |
 | GET | `/v0/user/oauth/:provider/bind` | 基础实现 | 登录用户发起 OAuth identity 绑定；写入 state Cookie 和签名 bind Cookie 后跳转 provider，bind Cookie 只用于证明本次绑定由当前用户发起 |
 | GET | `/v0/user/oauth/:provider/bind/callback` | 基础实现 | OAuth 绑定回调；校验 state 与签名 bind Cookie 后创建或刷新 `oauth/provider/identifier` 身份；同一第三方 subject 已绑定其他用户时返回 409 |
+| GET | `/v0/user/identities` | 已实现 | 当前用户身份列表；只返回身份元数据，不返回密码哈希、JWT 或 API Key |
+| DELETE | `/v0/user/identities/:id` | 已实现 | 当前用户解绑非 `username/local` 主身份；软删除目标 identity，解绑后该身份不能继续登录，并写 `user.identity_unbound` 审计 |
 | GET | `/v0/user/self` | 已实现 | 获取个人信息 |
 | PUT | `/v0/user/self` | 已实现 | 修改个人信息；提交 email 时会规范化并同步同用户 `email/local` 登录标识，邮箱已被其他账号占用时整笔拒绝 |
 | DELETE | `/v0/user/self` | 已实现 | 注销当前普通用户账号；请求体必须提供 `password` 做二次确认，成功后禁用登录和 API Key，保留账号、身份、日志、额度与历史事实，并写 `user.self_cancel` 审计；缺少或错误密码会写 `user.self_cancel_denied` 拒绝审计 |
@@ -753,6 +756,8 @@ Provider 退款请求：
 OAuth 基础登录当前用于已绑定第三方身份的登录闭环。`GET /v0/user/oauth/:provider/login` 会读取 `oauth.{provider}.auth_url`、`client_id`、`client_secret`、`token_url`、`userinfo_url` 和 `scopes` 等 settings，生成 state 并写入 HttpOnly Cookie 后返回 302。`GET /v0/user/oauth/:provider/callback` 要求回调 state 与 Cookie 匹配，再用 code 换 token、拉取 userinfo，并以 userinfo 的稳定 `id` 或 `sub` 查询 `user_identities(method=oauth, provider, identifier)`。未绑定的第三方身份返回 403，即使 email 与已有账号相同也不会自动绑定或接管。
 
 OAuth 绑定由已登录用户通过 `GET /v0/user/oauth/:provider/bind` 发起。该接口需要 User JWT，会同时写入 state Cookie 和签名 bind Cookie；bind Cookie 用 `jwt.secret` 对 provider、state 和 user_id 签名，只用于回调时确认本次绑定由哪个本地用户发起。`GET /v0/user/oauth/:provider/bind/callback` 校验 state 和签名后，仍只使用 userinfo 的稳定 `id` 或 `sub` 创建 `user_identities(method=oauth, provider, identifier)`，不会按 email 自动绑定；同一 provider subject 已属于其他用户时返回 409。首次补齐注册、注销账号恢复和完整 OIDC 流程仍按 `docs/ACCOUNTS.md` 后续扩展。
+
+用户身份管理通过 `GET /v0/user/identities` 和 `DELETE /v0/user/identities/:id` 暴露。列表接口只返回当前用户未解绑的身份元数据；解绑接口只允许删除当前用户名下的非 `username/local` 主身份，采用软删除保留历史事实，成功后写入 `user.identity_unbound` 审计。解绑后的 OAuth/OIDC identity 不再可用于登录。
 
 ### API Key
 

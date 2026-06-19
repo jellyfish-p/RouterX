@@ -204,6 +204,52 @@ func (h *AuthHandler) OAuthBindCallback(c *gin.Context) {
 	})
 }
 
+// GET /v0/user/identities — 当前用户身份列表。
+func (h *AuthHandler) ListIdentities(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, http.StatusUnauthorized, "未登录或登录已过期")
+		return
+	}
+	identities, err := h.svc.ListUserIdentities(user.ID)
+	if err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "读取身份列表失败")
+		return
+	}
+	common.Success(c, dto.UserIdentityBriefsFromModels(identities))
+}
+
+// DELETE /v0/user/identities/:id — 解绑当前用户的非主登录身份。
+func (h *AuthHandler) UnbindIdentity(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, http.StatusUnauthorized, "未登录或登录已过期")
+		return
+	}
+	parsed, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || parsed == 0 {
+		common.FailWithStatus(c, http.StatusBadRequest, "身份 ID 无效")
+		return
+	}
+	identity, err := h.svc.UnbindUserIdentity(user.ID, uint(parsed))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrUserIdentityPrimary):
+			common.FailWithStatus(c, http.StatusBadRequest, err.Error())
+		case errors.Is(err, service.ErrUserIdentityNotFound):
+			common.FailWithStatus(c, http.StatusNotFound, err.Error())
+		default:
+			common.FailWithStatus(c, http.StatusInternalServerError, "解绑身份失败")
+		}
+		return
+	}
+	if err := h.recordIdentityUnboundAudit(c, user, identity); err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.UserIdentityBriefFromModel(identity))
+}
+
 // POST /v0/user/self/password — 修改密码
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	var req dto.ChangePasswordRequest
@@ -268,6 +314,29 @@ func (h *AuthHandler) recordIdentityBoundAudit(c *gin.Context, userID uint, iden
 		Result:    "success",
 		IP:        c.ClientIP(),
 		UserAgent: c.GetHeader("User-Agent"),
+	})
+}
+
+func (h *AuthHandler) recordIdentityUnboundAudit(c *gin.Context, user *model.User, identity *model.UserIdentity) error {
+	if user == nil || identity == nil {
+		return nil
+	}
+	summary := map[string]interface{}{
+		"method":     identity.Method,
+		"provider":   identity.Provider,
+		"identifier": identity.Identifier,
+	}
+	return service.NewUserService().RecordAdminAuditLog(service.AdminAuditRecordInput{
+		RequestID:     c.GetString("request_id"),
+		ActorUserID:   user.ID,
+		ActorRole:     user.Role,
+		Action:        "user.identity_unbound",
+		ResourceType:  "user_identity",
+		ResourceID:    identity.Provider + ":" + identity.Identifier,
+		BeforeSummary: auditSummary(summary),
+		Result:        "success",
+		IP:            c.ClientIP(),
+		UserAgent:     c.GetHeader("User-Agent"),
 	})
 }
 

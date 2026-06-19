@@ -24,6 +24,8 @@ var (
 	ErrOAuthInvalidCallback         = errors.New("oauth callback is invalid")
 	ErrOAuthIdentityNotBound        = errors.New("oauth identity is not bound")
 	ErrOAuthIdentityAlreadyBound    = errors.New("oauth identity is already bound")
+	ErrUserIdentityNotFound         = errors.New("user identity is not found")
+	ErrUserIdentityPrimary          = errors.New("primary username identity cannot be unbound")
 )
 
 type AuthService struct{}
@@ -463,6 +465,53 @@ func (s *AuthService) OAuthBindCallback(userID uint, provider, code, redirectURI
 		return nil, ErrOAuthInvalidCallback
 	}
 	return bound, nil
+}
+
+// ListUserIdentities returns active login identities owned by the current user.
+// It intentionally uses GORM's default scope so soft-deleted identities stay hidden.
+func (s *AuthService) ListUserIdentities(userID uint) ([]model.UserIdentity, error) {
+	if userID == 0 {
+		return nil, ErrUserIdentityNotFound
+	}
+	var identities []model.UserIdentity
+	if err := internal.DB.Where("user_id = ?", userID).Order("id ASC").Find(&identities).Error; err != nil {
+		return nil, err
+	}
+	return identities, nil
+}
+
+// UnbindUserIdentity soft-deletes a non-primary login identity owned by userID.
+// The required username/local identity is protected so every account remains loginable.
+func (s *AuthService) UnbindUserIdentity(userID, identityID uint) (*model.UserIdentity, error) {
+	if userID == 0 || identityID == 0 {
+		return nil, ErrUserIdentityNotFound
+	}
+	var removed *model.UserIdentity
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		var identity model.UserIdentity
+		err := tx.Where("id = ? AND user_id = ?", identityID, userID).First(&identity).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserIdentityNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if identity.Method == model.UserIdentityMethodUsername && identity.Provider == model.UserIdentityProviderLocal {
+			return ErrUserIdentityPrimary
+		}
+		if err := tx.Delete(&identity).Error; err != nil {
+			return err
+		}
+		removed = &identity
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if removed == nil {
+		return nil, ErrUserIdentityNotFound
+	}
+	return removed, nil
 }
 
 func signUserLoginToken(userID uint, role int) (string, error) {

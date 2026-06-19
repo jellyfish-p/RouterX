@@ -34,6 +34,8 @@ func setupUserRoutes(
 			jwtRequired.PUT("/self", userH.UpdateSelf)
 			jwtRequired.DELETE("/self", userH.CancelSelf)
 			jwtRequired.POST("/self/password", authH.ChangePassword)
+			jwtRequired.GET("/identities", authH.ListIdentities)
+			jwtRequired.DELETE("/identities/:id", authH.UnbindIdentity)
 
 			jwtRequired.GET("/token", tokenH.List)
 			jwtRequired.POST("/token", tokenH.Create)

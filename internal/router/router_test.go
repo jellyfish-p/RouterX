@@ -789,6 +789,8 @@ func TestTraceabilityP2EnterpriseIdentityEvidenceIncludesConcreteOAuthTests(t *t
 		"TestOAuthCallbackDoesNotAutoBindExistingEmail",
 		"TestOAuthBindCallbackCreatesIdentityForLoggedInUser",
 		"TestOAuthBindCallbackRejectsIdentityBoundToAnotherUser",
+		"TestUserIdentityListAndUnbindOAuthIdentity",
+		"TestUserIdentityUnbindRejectsPrimaryUsernameIdentity",
 	}
 	issues := make([]string, 0)
 	for _, testName := range requiredTests {
@@ -3724,6 +3726,190 @@ func TestOAuthBindCallbackRejectsIdentityBoundToAnotherUser(t *testing.T) {
 	}
 	if secondIdentityCount != 0 {
 		t.Fatalf("second user must not receive already-bound oauth identity, got %d", secondIdentityCount)
+	}
+}
+
+func TestUserIdentityListAndUnbindOAuthIdentity(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "identity-user",
+		"password":     "password123",
+		"display_name": "Identity User",
+		"email":        "identity-user@example.com",
+		"role":         common.RoleUser,
+		"quota":        10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "identity-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	oauthIdentity := model.UserIdentity{
+		UserID:     user.ID,
+		Method:     model.UserIdentityMethodOAuth,
+		Provider:   "github",
+		Identifier: "gh-unbind",
+		VerifiedAt: &now,
+	}
+	if err := internal.DB.Create(&oauthIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
+	userJWT := loginBearer(t, r, "identity-user", "password123")
+
+	listResp := performJSON(r, http.MethodGet, "/v0/user/identities", userJWT, nil)
+	if listResp.Code != http.StatusOK || strings.Contains(listResp.Body.String(), "password_hash") {
+		t.Fatalf("identity list should succeed without password hashes, got %d %s", listResp.Code, listResp.Body.String())
+	}
+	var listPayload struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			ID         uint   `json:"id"`
+			Method     string `json:"method"`
+			Provider   string `json:"provider"`
+			Identifier string `json:"identifier"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(listResp.Body.Bytes(), &listPayload); err != nil {
+		t.Fatal(err)
+	}
+	if !listPayload.Success {
+		t.Fatalf("identity list should return success=true: %s", listResp.Body.String())
+	}
+	hasUsername := false
+	hasOAuth := false
+	for _, identity := range listPayload.Data {
+		if identity.Method == model.UserIdentityMethodUsername && identity.Provider == model.UserIdentityProviderLocal && identity.Identifier == "identity-user" {
+			hasUsername = true
+		}
+		if identity.ID == oauthIdentity.ID && identity.Method == model.UserIdentityMethodOAuth && identity.Provider == "github" && identity.Identifier == "gh-unbind" {
+			hasOAuth = true
+		}
+	}
+	if !hasUsername || !hasOAuth {
+		t.Fatalf("identity list should include username and oauth identities: %+v", listPayload.Data)
+	}
+
+	deleteResp := performJSON(r, http.MethodDelete, "/v0/user/identities/"+uintString(oauthIdentity.ID), userJWT, nil)
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("oauth identity unbind should succeed, got %d %s", deleteResp.Code, deleteResp.Body.String())
+	}
+	var defaultQueryCount int64
+	if err := internal.DB.Model(&model.UserIdentity{}).Where("id = ?", oauthIdentity.ID).Count(&defaultQueryCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if defaultQueryCount != 0 {
+		t.Fatalf("soft-deleted oauth identity should be hidden from normal queries, got %d", defaultQueryCount)
+	}
+	var deletedIdentity model.UserIdentity
+	if err := internal.DB.Unscoped().First(&deletedIdentity, oauthIdentity.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !deletedIdentity.DeletedAt.Valid {
+		t.Fatalf("oauth identity should be soft deleted: %+v", deletedIdentity)
+	}
+	var auditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "user.identity_unbound", "user_identity", "github:gh-unbind").
+		Count(&auditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if auditCount == 0 {
+		t.Fatalf("identity unbind should write user.identity_unbound audit log")
+	}
+	afterListResp := performJSON(r, http.MethodGet, "/v0/user/identities", userJWT, nil)
+	if afterListResp.Code != http.StatusOK || strings.Contains(afterListResp.Body.String(), "gh-unbind") {
+		t.Fatalf("identity list should hide unbound oauth identity, got %d %s", afterListResp.Code, afterListResp.Body.String())
+	}
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"unbound-token","token_type":"Bearer"}`))
+		case "/userinfo":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"gh-unbind","email":"identity-user@example.com"}`))
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer provider.Close()
+	configureOAuthProvider(t, "github", provider.URL)
+	loginResp := performJSON(r, http.MethodGet, "/v0/user/oauth/github/login", "", nil)
+	location, err := url.Parse(loginResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := location.Query().Get("state")
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oauth/github/callback?state="+url.QueryEscape(state)+"&code=unbound-code", nil)
+	for _, cookie := range loginResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+	if callbackResp.Code != http.StatusForbidden {
+		t.Fatalf("unbound oauth identity must not login, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+}
+
+func TestUserIdentityUnbindRejectsPrimaryUsernameIdentity(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "primary-identity-user",
+		"password":     "password123",
+		"display_name": "Primary Identity User",
+		"email":        "primary-identity-user@example.com",
+		"role":         common.RoleUser,
+		"quota":        10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "primary-identity-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	var usernameIdentity model.UserIdentity
+	if err := internal.DB.Where("user_id = ? AND method = ? AND provider = ?", user.ID, model.UserIdentityMethodUsername, model.UserIdentityProviderLocal).First(&usernameIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
+	userJWT := loginBearer(t, r, "primary-identity-user", "password123")
+
+	deleteResp := performJSON(r, http.MethodDelete, "/v0/user/identities/"+uintString(usernameIdentity.ID), userJWT, nil)
+	if deleteResp.Code != http.StatusBadRequest {
+		t.Fatalf("primary username identity unbind should be rejected, got %d %s", deleteResp.Code, deleteResp.Body.String())
+	}
+	var identityCount int64
+	if err := internal.DB.Model(&model.UserIdentity{}).Where("id = ?", usernameIdentity.ID).Count(&identityCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if identityCount != 1 {
+		t.Fatalf("primary username identity should remain active, got %d", identityCount)
 	}
 }
 
