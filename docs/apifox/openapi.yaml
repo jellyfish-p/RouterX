@@ -5012,16 +5012,20 @@ components:
       properties:
         success:
           type: boolean
+          description: RouterX 统一响应是否成功；/v0 接口成功通常为 true，失败通常为 false。
         message:
           type: string
+          description: 面向调用方的人类可读提示；失败时描述拒绝或错误原因。
         data:
           nullable: true
+          description: 业务数据载荷；不同接口会使用各自 schema，失败或无数据时可能为 null。
       required: [success]
     HealthResponse:
       type: object
       properties:
         status:
           type: string
+          description: 进程存活状态；当前健康检查成功时固定返回 healthy。
           example: healthy
     ReadyResponse:
       type: object
@@ -5029,9 +5033,11 @@ components:
         status:
           type: string
           enum: [ready, not_ready]
+          description: 服务整体就绪状态；ready 表示依赖和关键配置可用，not_ready 表示至少一项检查失败。
         database:
           type: string
           nullable: true
+          description: 主数据库检查结果；不可用或迁移状态异常时会返回失败原因摘要。
         redis:
           type: string
           nullable: true
@@ -5045,9 +5051,11 @@ components:
         jwt:
           type: string
           nullable: true
+          description: JWT 配置检查结果；初始化后缺少或非法 JWT_SECRET 时返回失败摘要。
         setting:
           type: string
           nullable: true
+          description: 关键 settings 或加密配置检查结果；配置非法、缺少 ENCRYPTION_KEY 或密文解密失败时返回问题 key。
     SetupStatus:
       type: object
       properties:

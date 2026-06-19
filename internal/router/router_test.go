@@ -555,6 +555,45 @@ func TestApifoxOpenAPIResponsesHaveHumanReadableDescriptionsAndSchemas(t *testin
 	}
 }
 
+func TestApifoxCoreResponseSchemasHaveHumanReadablePropertyDescriptions(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := make([]string, 0)
+	coreSchemas := []string{"StandardResponse", "HealthResponse", "ReadyResponse"}
+
+	for _, schemaName := range coreSchemas {
+		rawSchema, ok := apifoxResolveInternalRef(doc, "#/components/schemas/"+schemaName)
+		if !ok {
+			issues = append(issues, schemaName+" schema missing")
+			continue
+		}
+		schema, ok := rawSchema.(map[string]interface{})
+		if !ok {
+			issues = append(issues, schemaName+" schema is not an object")
+			continue
+		}
+		properties, ok := schema["properties"].(map[string]interface{})
+		if !ok || len(properties) == 0 {
+			issues = append(issues, schemaName+" schema missing properties")
+			continue
+		}
+		for propertyName, rawProperty := range properties {
+			property, ok := rawProperty.(map[string]interface{})
+			if !ok {
+				issues = append(issues, schemaName+"."+propertyName+" property is not an object")
+				continue
+			}
+			if strings.TrimSpace(apifoxSchemaDescription(doc, property)) == "" {
+				issues = append(issues, schemaName+"."+propertyName+" missing description")
+			}
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml core response schemas need human-readable property descriptions:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
