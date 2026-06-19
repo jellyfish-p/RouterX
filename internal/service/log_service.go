@@ -621,8 +621,8 @@ func normalizeLogEnvelopeSnapshot(raw string, log *model.Log) string {
 		return snapshot
 	}
 	changed := enrichLogSnapshotEnvelope(existing, log)
-	changed = enrichNestedLogSnapshotEnvelope(existing, "rate_limit_snapshot", log) || changed
-	changed = enrichNestedLogSnapshotEnvelope(existing, "breaker_snapshot", log) || changed
+	changed = enrichNestedLogSnapshotEnvelope(existing, "rate_limit_snapshot", "rate_limit", "rate_limit", log) || changed
+	changed = enrichNestedLogSnapshotEnvelope(existing, "breaker_snapshot", "breaker", "relay", log) || changed
 	if !changed {
 		return snapshot
 	}
@@ -633,15 +633,32 @@ func normalizeLogEnvelopeSnapshot(raw string, log *model.Log) string {
 	return string(encoded)
 }
 
-func enrichNestedLogSnapshotEnvelope(parent map[string]interface{}, key string, log *model.Log) bool {
+func enrichNestedLogSnapshotEnvelope(parent map[string]interface{}, key, kind, source string, log *model.Log) bool {
 	nested, ok := logSnapshotMap(parent[key])
 	if !ok {
 		return false
 	}
-	if !enrichLogSnapshotEnvelope(nested, log) {
+	changed := enrichLogSnapshotEnvelope(nested, log)
+	changed = ensureLogSnapshotEnvelopeDefault(nested, "schema", "routerx.snapshot.v1") || changed
+	changed = ensureLogSnapshotEnvelopeDefault(nested, "kind", kind) || changed
+	changed = ensureLogSnapshotEnvelopeDefault(nested, "stage", "p1") || changed
+	changed = ensureLogSnapshotEnvelopeDefault(nested, "source", source) || changed
+	if nested["redacted"] != true {
+		nested["redacted"] = true
+		changed = true
+	}
+	if !changed {
 		return false
 	}
 	parent[key] = nested
+	return true
+}
+
+func ensureLogSnapshotEnvelopeDefault(snapshot map[string]interface{}, key, value string) bool {
+	if logSnapshotString(snapshot[key]) != "" {
+		return false
+	}
+	snapshot[key] = value
 	return true
 }
 

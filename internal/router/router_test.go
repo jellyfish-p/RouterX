@@ -13918,6 +13918,11 @@ func TestRateLimitGlobalAndIPWriteSnapshotDetails(t *testing.T) {
 		}
 		rateLimitSnapshot, ok := policySnapshot["rate_limit_snapshot"].(map[string]interface{})
 		if !ok ||
+			rateLimitSnapshot["schema"] != "routerx.snapshot.v1" ||
+			rateLimitSnapshot["kind"] != "rate_limit" ||
+			rateLimitSnapshot["stage"] != "p1" ||
+			rateLimitSnapshot["source"] != "rate_limit" ||
+			rateLimitSnapshot["redacted"] != true ||
 			rateLimitSnapshot["request_id"] != failedLog.RequestID ||
 			rateLimitSnapshot["dimension"] != dimension ||
 			rateLimitSnapshot["window"] != "minute" ||
@@ -23791,6 +23796,11 @@ func TestNoAvailableChannelWritesBreakerSnapshot(t *testing.T) {
 		t.Fatalf("breaker denial should include breaker_snapshot: %+v", policySnapshot)
 	}
 	if breakerSnapshot["decision"] != "deny" ||
+		breakerSnapshot["schema"] != "routerx.snapshot.v1" ||
+		breakerSnapshot["kind"] != "breaker" ||
+		breakerSnapshot["stage"] != "p1" ||
+		breakerSnapshot["source"] != "relay" ||
+		breakerSnapshot["redacted"] != true ||
 		breakerSnapshot["request_id"] != failedLog.RequestID ||
 		breakerSnapshot["reason"] != "health_blocked" ||
 		breakerSnapshot["auto_ban"] != true ||

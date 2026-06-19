@@ -111,7 +111,7 @@
 | `error_snapshot` | 脱敏错误快照；失败日志包含 request_id、created_at、稳定 code、失败来源、上游状态、可重试判断、扣费标记和安全摘要 |
 | `content` / `response` | 默认为空；显式开启 body 日志并配置正数上限后，保存截断和脱敏后的非流式请求/响应片段 |
 | `request_snapshot` | 脱敏请求快照；当前包含 request_id、created_at、用户/Key 安全摘要、来源摘要、入口协议、API 类型、请求模型、stream 标记、合法 trace context 摘要和安全路由摘要 |
-| `policy_snapshot` | 脱敏策略快照；当前包含 request_id、created_at、用户/Key 状态摘要、成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝、含 request_id/created_at 的 `breaker_snapshot`，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝摘要和含 request_id/created_at 的 `rate_limit_snapshot` |
+| `policy_snapshot` | 脱敏策略快照；当前包含 request_id、created_at、用户/Key 状态摘要、成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝、含完整封套的 `breaker_snapshot`，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝摘要和含完整封套的 `rate_limit_snapshot` |
 | `access_rule_snapshot` | 脱敏访问控制快照；当前包含 request_id、created_at，并从策略快照派生 access_decision、scope_result、token/user 状态、拒绝原因和选中通道分组 |
 | `route_snapshot` | 脱敏路由快照；当前包含 request_id、created_at、请求模型、归一化模型、基础选择事实、候选过滤原因、上游 base URL 安全索引、模型重写摘要和非流式重试摘要 |
 | `billing_snapshot` | 脱敏计费快照；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式摘要、规则 ID/版本、倍率摘要、Key 预算前后、用户余额前后和最终扣费；扣费失败时包含试算额度和失败原因 |
@@ -129,8 +129,8 @@
 | `billing_snapshot.expression` / `billing_snapshot.multiplier` | 商业价格规则版本和业务倍率摘要 |
 | `multiplier_snapshot` | 用户分组倍率、通道分组倍率、组合覆盖倍率、倍率模式和最终 `effective_ratio` |
 | `access_rule_snapshot` | 访问控制事实 |
-| `rate_limit_snapshot` | 限流拒绝事实，包含 request_id、created_at、维度、窗口、阈值和当前计数摘要 |
-| `breaker_snapshot` | 自动熔断过滤事实和被挡通道摘要，包含 request_id 和 created_at |
+| `rate_limit_snapshot` | 限流拒绝事实，包含 schema、kind、source、request_id、created_at、维度、窗口、阈值和当前计数摘要 |
+| `breaker_snapshot` | 自动熔断过滤事实和被挡通道摘要，包含 schema、kind、source、request_id 和 created_at |
 | `key_budget_snapshot` | API Key 最大消耗额度、调用前后剩余预算或累计已用 |
 | `retry_count` | 本次调用重试次数 |
 | `latency_ms` | RouterX 端到端耗时 |
