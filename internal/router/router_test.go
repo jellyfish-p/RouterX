@@ -23783,6 +23783,16 @@ func TestNoAvailableChannelWritesBreakerSnapshot(t *testing.T) {
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg = ?", common.LogStatusFailed, tokenPayload.Data.ID, "no available channel").First(&failedLog).Error; err != nil {
 		t.Fatal(err)
 	}
+	var errorSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(failedLog.ErrorSnapshot), &errorSnapshot); err != nil {
+		t.Fatalf("breaker denial should store error snapshot JSON, got %q: %v", failedLog.ErrorSnapshot, err)
+	}
+	if errorSnapshot["error_code"] != "no_available_channel" ||
+		errorSnapshot["error_source"] != common.LogErrorSourceRoute ||
+		errorSnapshot["called_upstream"] != false ||
+		errorSnapshot["http_status"] != float64(http.StatusBadGateway) {
+		t.Fatalf("unexpected breaker error snapshot: %+v", errorSnapshot)
+	}
 	var policySnapshot map[string]interface{}
 	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
 		t.Fatalf("breaker denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)

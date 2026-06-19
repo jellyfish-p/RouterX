@@ -416,6 +416,7 @@ func normalizeLogErrorSnapshot(log *model.Log) string {
 	}
 	errorSource := normalizeLogErrorSource(log)
 	upstreamStatus := normalizeLogUpstreamStatus(log)
+	httpStatus := logErrorHTTPStatus(errorCode, errorSource, upstreamStatus)
 	snapshot := map[string]interface{}{
 		"schema":       "routerx.snapshot.v1",
 		"kind":         "error",
@@ -432,8 +433,10 @@ func normalizeLogErrorSnapshot(log *model.Log) string {
 		snapshot["request_id"] = requestID
 	}
 	enrichLogSnapshotEnvelope(snapshot, log)
+	if httpStatus > 0 {
+		snapshot["http_status"] = httpStatus
+	}
 	if upstreamStatus > 0 {
-		snapshot["http_status"] = upstreamStatus
 		snapshot["upstream_status"] = upstreamStatus
 	}
 	if safeMessage := logErrorSafeMessage(log.ErrorMsg); safeMessage != "" {
@@ -448,6 +451,38 @@ func normalizeLogErrorSnapshot(log *model.Log) string {
 
 func logErrorCalledUpstream(errorSource string, upstreamStatus int) bool {
 	return strings.TrimSpace(errorSource) == common.LogErrorSourceUpstream || upstreamStatus > 0
+}
+
+func logErrorHTTPStatus(errorCode, errorSource string, upstreamStatus int) int {
+	if upstreamStatus > 0 {
+		return upstreamStatus
+	}
+	switch strings.TrimSpace(errorCode) {
+	case "insufficient_quota", "rate_limit_exceeded":
+		return http.StatusTooManyRequests
+	case "rate_limit_unavailable":
+		return http.StatusServiceUnavailable
+	case "route_forbidden", "model_not_allowed", "token_forbidden":
+		return http.StatusForbidden
+	case "no_available_channel", "unsupported_api_type":
+		return http.StatusBadGateway
+	case "routerx_hop_exceeded":
+		return http.StatusBadRequest
+	}
+	switch strings.TrimSpace(errorSource) {
+	case common.LogErrorSourceRequest:
+		return http.StatusBadRequest
+	case common.LogErrorSourceAuth:
+		return http.StatusForbidden
+	case common.LogErrorSourceQuota:
+		return http.StatusTooManyRequests
+	case common.LogErrorSourceRoute, common.LogErrorSourceChannel, common.LogErrorSourceUpstream:
+		return http.StatusBadGateway
+	case common.LogErrorSourceSystem:
+		return http.StatusInternalServerError
+	default:
+		return 0
+	}
 }
 
 func logErrorRetryable(errorCode string, upstreamStatus int) bool {
