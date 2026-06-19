@@ -20,9 +20,10 @@ import (
 )
 
 var (
-	ErrOIDCProviderDisabled = errors.New("oidc provider is disabled")
-	ErrOIDCInvalidCallback  = errors.New("oidc callback is invalid")
-	ErrOIDCIdentityNotBound = errors.New("oidc identity is not bound")
+	ErrOIDCProviderDisabled     = errors.New("oidc provider is disabled")
+	ErrOIDCInvalidCallback      = errors.New("oidc callback is invalid")
+	ErrOIDCIdentityNotBound     = errors.New("oidc identity is not bound")
+	ErrOIDCIdentityAlreadyBound = errors.New("oidc identity is already bound")
 )
 
 type oidcProviderConfig struct {
@@ -118,6 +119,83 @@ func (s *AuthService) OIDCCallbackLogin(provider, code, redirectURI, expectedNon
 		return nil, "", err
 	}
 	return identity.User, token, nil
+}
+
+// OIDCBindCallback binds a verified OIDC subject to an existing logged-in user.
+// Email claims are intentionally ignored; the stable sub claim is the identity key.
+func (s *AuthService) OIDCBindCallback(userID uint, provider, code, redirectURI, expectedNonce string) (*model.UserIdentity, error) {
+	cfg, err := loadOIDCProviderConfig(provider)
+	if err != nil {
+		return nil, err
+	}
+	if userID == 0 || strings.TrimSpace(code) == "" || strings.TrimSpace(expectedNonce) == "" {
+		return nil, ErrOIDCInvalidCallback
+	}
+	discovery, err := discoverOIDCProvider(cfg)
+	if err != nil {
+		return nil, err
+	}
+	idToken, err := exchangeOIDCCode(cfg, discovery, code, redirectURI)
+	if err != nil {
+		return nil, err
+	}
+	claims, err := validateOIDCIDToken(discovery, cfg, idToken, expectedNonce)
+	if err != nil {
+		return nil, err
+	}
+
+	var bound *model.UserIdentity
+	err = internal.DB.Transaction(func(tx *gorm.DB) error {
+		var user model.User
+		if err := tx.First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.Status != common.UserStatusEnabled {
+			return ErrOIDCInvalidCallback
+		}
+		var existing model.UserIdentity
+		err := tx.Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOIDC, cfg.Provider, claims.Subject).First(&existing).Error
+		now := time.Now()
+		switch {
+		case err == nil:
+			if existing.UserID != userID {
+				return ErrOIDCIdentityAlreadyBound
+			}
+			if err := tx.Model(&existing).Updates(map[string]interface{}{
+				"verified_at":  &now,
+				"last_used_at": &now,
+			}).Error; err != nil {
+				return err
+			}
+			existing.VerifiedAt = &now
+			existing.LastUsedAt = &now
+			bound = &existing
+			return nil
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			identity := model.UserIdentity{
+				UserID:     userID,
+				Method:     model.UserIdentityMethodOIDC,
+				Provider:   cfg.Provider,
+				Identifier: claims.Subject,
+				VerifiedAt: &now,
+				LastUsedAt: &now,
+			}
+			if err := tx.Create(&identity).Error; err != nil {
+				return err
+			}
+			bound = &identity
+			return nil
+		default:
+			return err
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if bound == nil {
+		return nil, ErrOIDCInvalidCallback
+	}
+	return bound, nil
 }
 
 func loadOIDCProviderConfig(provider string) (oidcProviderConfig, error) {

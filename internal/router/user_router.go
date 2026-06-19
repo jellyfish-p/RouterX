@@ -27,11 +27,13 @@ func setupUserRoutes(
 		api.GET("/oauth/:provider/bind/callback", authH.OAuthBindCallback)
 		api.GET("/oidc/:provider/login", authH.OIDCLogin)
 		api.GET("/oidc/:provider/callback", authH.OIDCCallback)
+		api.GET("/oidc/:provider/bind/callback", authH.OIDCBindCallback)
 
 		jwtRequired := api.Group("")
 		jwtRequired.Use(middleware.UserJwtAuthRequired())
 		{
 			jwtRequired.GET("/oauth/:provider/bind", authH.OAuthBind)
+			jwtRequired.GET("/oidc/:provider/bind", authH.OIDCBind)
 			jwtRequired.GET("/self", userH.Self)
 			jwtRequired.PUT("/self", userH.UpdateSelf)
 			jwtRequired.DELETE("/self", userH.CancelSelf)

@@ -9,7 +9,7 @@ info:
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 缺少必填 image/file 文件字段时返回 400 multipart_file_required，单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态/危险扩展名、扩展名或文件头与图片/音频 API 不匹配或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，以上均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
-    - 充值码、充值码创建/兑换拒绝审计、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook/邮件/IM 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期、最近使用、额度、轮换和泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、订单创建拒绝审计与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知、易支付同步返回基础接口，以及 OAuth 基础登录、绑定和回调、OIDC Discovery 与已绑定身份回调登录接口已注册；OIDC 首次补齐注册流程仍属目标扩展。
+    - 充值码、充值码创建/兑换拒绝审计、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook/邮件/IM 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期、最近使用、额度、轮换和泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、订单创建拒绝审计与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知、易支付同步返回基础接口，以及 OAuth 基础登录、绑定和回调、OIDC Discovery、已绑定身份回调登录和登录用户绑定接口已注册；OIDC 首次补齐注册流程仍属目标扩展。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -414,6 +414,84 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
         "403":
           description: OIDC provider 未启用，或 provider subject 尚未绑定本地账号。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "502":
+          description: Discovery、JWKS 或 token endpoint 请求失败。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+  /v0/user/oidc/{provider}/bind:
+    get:
+      tags: [User Auth]
+      summary: 发起 OIDC 身份绑定
+      description: 登录用户绑定企业 OIDC identity 的起点；需要 User JWT。服务端通过 Discovery 构造授权地址，生成一次性 state、nonce 和签名 bind Cookie，bind Cookie 记录发起绑定的本地用户并由 JWT secret 签名，然后 302 跳转 authorization_endpoint，redirect_uri 指向 bind/callback。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/OIDCProvider"
+      responses:
+        "302":
+          description: 已跳转到 OIDC provider 授权页。
+          headers:
+            Location:
+              schema: { type: string, format: uri }
+              description: provider 授权地址，redirect_uri 指向 /v0/user/oidc/{provider}/bind/callback。
+            Set-Cookie:
+              schema: { type: string }
+              description: HttpOnly state Cookie、nonce Cookie 和签名 bind Cookie。
+        "401":
+          $ref: "#/components/responses/StandardUnauthorized"
+        "403":
+          description: OIDC 全局登录或指定 provider 未启用，或 provider 配置/Discovery 不完整。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+  /v0/user/oidc/{provider}/bind/callback:
+    get:
+      tags: [User Auth]
+      summary: OIDC 回调绑定当前用户
+      description: 公开回调；校验 state Cookie、nonce Cookie 和签名 bind Cookie 后，使用 code 请求 token_endpoint，校验 ID Token 的 RS256 签名、iss、aud、exp、nonce 和 sub。服务端只使用 sub 创建 `user_identities(method=oidc, provider, identifier)`，不使用 email 自动绑定。若同一 provider subject 已绑定其他用户，返回 409；若已绑定当前用户，则更新 verified_at/last_used_at 并幂等成功。
+      parameters:
+        - $ref: "#/components/parameters/OIDCProvider"
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+          description: bind 阶段生成并写入 Cookie 的一次性 state。
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+          description: OIDC provider 返回的 authorization code。
+      responses:
+        "200":
+          description: OIDC identity 绑定成功。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          method: { type: string, example: oidc }
+                          provider: { type: string, example: corp }
+                          identifier: { type: string, example: "00uabc123" }
+        "400":
+          description: state、nonce 或签名 bind Cookie 缺失、不匹配、已过期，或 ID Token 校验失败。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "409":
+          description: provider subject 已绑定到其他本地账号。
           content:
             application/json:
               schema:

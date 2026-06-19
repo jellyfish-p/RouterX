@@ -21,7 +21,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认、基础用户名恢复账号，以及 OAuth 已绑定身份登录、登录用户绑定 OAuth identity、OIDC 已绑定身份登录和自助列出/解绑非主 identity 所需的账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名账号时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，并统一校验同一用户的 `username/local` 主密码；当前 username 注册附带的 email identity 不保存重复密码哈希。OAuth 当前支持授权跳转、state Cookie 校验、code 换 token、userinfo 稳定 id/sub 登录或绑定 `oauth/provider/identifier` 身份，并明确禁止因相同 email 自动绑定或接管已有账号。OIDC 当前支持 Discovery、state/nonce、RS256 ID Token 签名、`iss/aud/exp/sub` 校验，并只允许已绑定 `oidc/provider/sub` 身份登录。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC 首次补齐注册、OAuth/OIDC 注销账号恢复、隐私字段擦除和非用户名恢复属于目标设计，需要按阶段继续实现。
+当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认、基础用户名恢复账号，以及 OAuth 已绑定身份登录、登录用户绑定 OAuth identity、OIDC 已绑定身份登录、登录用户绑定 OIDC identity 和自助列出/解绑非主 identity 所需的账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名账号时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，并统一校验同一用户的 `username/local` 主密码；当前 username 注册附带的 email identity 不保存重复密码哈希。OAuth 当前支持授权跳转、state Cookie 校验、code 换 token、userinfo 稳定 id/sub 登录或绑定 `oauth/provider/identifier` 身份，并明确禁止因相同 email 自动绑定或接管已有账号。OIDC 当前支持 Discovery、state/nonce、RS256 ID Token 签名、`iss/aud/exp/sub` 校验，并只允许已绑定 `oidc/provider/sub` 身份登录或绑定。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC 首次补齐注册、OAuth/OIDC 注销账号恢复、隐私字段擦除和非用户名恢复属于目标设计，需要按阶段继续实现。
 
 阶段边界：
 
@@ -128,7 +128,7 @@ password_hash = bcrypt hash
 | `auth.login.email_code.enabled` | `false` | 当前已校验；邮箱验证码登录仍属后续增强 |
 | `auth.login.phone_code.enabled` | `false` | 当前已校验；手机号验证码登录仍属后续增强 |
 | `auth.login.oauth.enabled` | `false` | 当前已落地 OAuth 已绑定身份登录和登录用户绑定流程的总开关 |
-| `auth.login.oidc.enabled` | `false` | 当前已校验；OIDC 登录仍属后续增强 |
+| `auth.login.oidc.enabled` | `false` | 当前已落地；是否允许 OIDC 已绑定身份登录和登录用户绑定 OIDC identity |
 
 ### 注册开关
 
@@ -551,7 +551,7 @@ Discovery issuer
 - OIDC 首次注册也必须设置用户名、密码和验证码。
 - OIDC 首次注册必须检查 `oidc/provider/sub` 是否命中注销账号，命中时恢复原账号，不能创建新账号。
 
-当前已落地 OIDC 已绑定身份登录闭环：`GET /v0/user/oidc/:provider/login` 读取 `oidc.{provider}.*` settings，通过 issuer Discovery 获取授权端点、token 端点和 JWKS 地址，生成 state/nonce Cookie 后跳转；`GET /v0/user/oidc/:provider/callback` 校验 state/nonce，使用 code 换取 ID Token，校验 RS256 签名、`iss`、`aud`、`exp` 和 `sub`，并只在 `user_identities(method=oidc, provider, identifier)` 已存在且用户启用时签发 User JWT、更新最近使用时间和写入 `user.login` 审计。相同 email 不会自动绑定。OIDC 首次补齐注册、OIDC 注销账号恢复、OIDC 绑定入口和更完整 claim 映射仍需后续扩展。
+当前已落地 OIDC 已绑定身份登录和绑定闭环：`GET /v0/user/oidc/:provider/login` 读取 `oidc.{provider}.*` settings，通过 issuer Discovery 获取授权端点、token 端点和 JWKS 地址，生成 state/nonce Cookie 后跳转；`GET /v0/user/oidc/:provider/callback` 校验 state/nonce，使用 code 换取 ID Token，校验 RS256 签名、`iss`、`aud`、`exp` 和 `sub`，并只在 `user_identities(method=oidc, provider, identifier)` 已存在且用户启用时签发 User JWT、更新最近使用时间和写入 `user.login` 审计。已登录用户可通过 `GET /v0/user/oidc/:provider/bind` 发起绑定；服务端会写入 state、nonce 和签名 bind Cookie，`GET /v0/user/oidc/:provider/bind/callback` 校验后创建或刷新同用户 OIDC identity，并写入 `user.identity_bound` 审计。同一 provider subject 已绑定其他用户时拒绝，相同 email 不会自动绑定。OIDC 首次补齐注册、OIDC 注销账号恢复和更完整 claim 映射仍需后续扩展。
 
 ## 管理员账号
 

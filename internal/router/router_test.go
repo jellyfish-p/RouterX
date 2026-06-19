@@ -466,7 +466,7 @@ func isPublicUserOperation(path string) bool {
 	switch path {
 	case "/v0/user/register", "/v0/user/login",
 		"/v0/user/oauth/{provider}/login", "/v0/user/oauth/{provider}/callback", "/v0/user/oauth/{provider}/bind/callback",
-		"/v0/user/oidc/{provider}/login", "/v0/user/oidc/{provider}/callback":
+		"/v0/user/oidc/{provider}/login", "/v0/user/oidc/{provider}/callback", "/v0/user/oidc/{provider}/bind/callback":
 		return true
 	default:
 		return false
@@ -800,6 +800,8 @@ func TestTraceabilityP2EnterpriseIdentityEvidenceIncludesConcreteOAuthTests(t *t
 		"TestUserIdentityUnbindRejectsPrimaryUsernameIdentity",
 		"TestOIDCCallbackLogsInBoundIdentityWithNonceAndSignedIDToken",
 		"TestOIDCCallbackRejectsTamperedOrMismatchedNonceIDToken",
+		"TestOIDCBindCallbackCreatesIdentityForLoggedInUser",
+		"TestOIDCBindCallbackRejectsIdentityBoundToAnotherUser",
 	}
 	issues := make([]string, 0)
 	for _, testName := range requiredTests {
@@ -4104,6 +4106,177 @@ func TestOIDCCallbackRejectsTamperedOrMismatchedNonceIDToken(t *testing.T) {
 		if callbackResp.Code != http.StatusBadRequest {
 			t.Fatalf("oidc callback should reject %s id_token, got %d %s", code, callbackResp.Code, callbackResp.Body.String())
 		}
+	}
+}
+
+func TestOIDCBindCallbackCreatesIdentityForLoggedInUser(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "oidc-bind-user",
+		"password":     "password123",
+		"display_name": "OIDC Bind User",
+		"email":        "oidc-bind@example.com",
+		"role":         common.RoleUser,
+		"quota":        10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "oidc-bind-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	userJWT := loginBearer(t, r, "oidc-bind-user", "password123")
+
+	key := newOIDCTestRSAKey(t)
+	var issuedNonce string
+	provider := newOIDCTestProvider(t, key, func(issuer string, req *http.Request) string {
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if req.Form.Get("code") != "bind-code" {
+			t.Fatalf("unexpected oidc bind code: %s", req.Form.Get("code"))
+		}
+		return signedOIDCIDToken(t, key, oidcTestKeyID, issuer, "routerx-oidc-client", "oidc-bind-sub", issuedNonce)
+	})
+	defer provider.Close()
+	configureOIDCProvider(t, "corp", provider.URL)
+
+	bindResp := performJSON(r, http.MethodGet, "/v0/user/oidc/corp/bind", userJWT, nil)
+	if bindResp.Code != http.StatusFound {
+		t.Fatalf("oidc bind should redirect to provider, got %d %s", bindResp.Code, bindResp.Body.String())
+	}
+	location, err := url.Parse(bindResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := location.Query().Get("state")
+	issuedNonce = location.Query().Get("nonce")
+	if state == "" || issuedNonce == "" || !strings.Contains(location.Query().Get("redirect_uri"), "/v0/user/oidc/corp/bind/callback") {
+		t.Fatalf("oidc bind redirect should include bind callback, state and nonce, got %s", bindResp.Header().Get("Location"))
+	}
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oidc/corp/bind/callback?state="+url.QueryEscape(state)+"&code=bind-code", nil)
+	for _, cookie := range bindResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+	if callbackResp.Code != http.StatusOK {
+		t.Fatalf("oidc bind callback should create identity, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+	var identity model.UserIdentity
+	if err := internal.DB.Where("user_id = ? AND method = ? AND provider = ? AND identifier = ?", user.ID, model.UserIdentityMethodOIDC, "corp", "oidc-bind-sub").First(&identity).Error; err != nil {
+		t.Fatal(err)
+	}
+	if identity.PasswordHash != "" || identity.VerifiedAt == nil || identity.LastUsedAt == nil {
+		t.Fatalf("bound oidc identity should be verified, passwordless and recently used: %+v", identity)
+	}
+	var auditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "user.identity_bound", "user_identity", "corp:oidc-bind-sub").
+		Count(&auditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if auditCount == 0 {
+		t.Fatalf("oidc bind should write user.identity_bound audit log")
+	}
+}
+
+func TestOIDCBindCallbackRejectsIdentityBoundToAnotherUser(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	for _, username := range []string{"oidc-owner", "oidc-second"} {
+		createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+			"username":     username,
+			"password":     "password123",
+			"display_name": username,
+			"email":        username + "@example.com",
+			"role":         common.RoleUser,
+			"quota":        10,
+		})
+		if createResp.Code != http.StatusOK {
+			t.Fatalf("create %s failed: %d %s", username, createResp.Code, createResp.Body.String())
+		}
+	}
+	var owner, second model.User
+	if err := internal.DB.Where("username = ?", "oidc-owner").First(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Where("username = ?", "oidc-second").First(&second).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := internal.DB.Create(&model.UserIdentity{
+		UserID:     owner.ID,
+		Method:     model.UserIdentityMethodOIDC,
+		Provider:   "corp",
+		Identifier: "oidc-owned",
+		VerifiedAt: &now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	secondJWT := loginBearer(t, r, "oidc-second", "password123")
+
+	key := newOIDCTestRSAKey(t)
+	var issuedNonce string
+	provider := newOIDCTestProvider(t, key, func(issuer string, req *http.Request) string {
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		return signedOIDCIDToken(t, key, oidcTestKeyID, issuer, "routerx-oidc-client", "oidc-owned", issuedNonce)
+	})
+	defer provider.Close()
+	configureOIDCProvider(t, "corp", provider.URL)
+
+	bindResp := performJSON(r, http.MethodGet, "/v0/user/oidc/corp/bind", secondJWT, nil)
+	if bindResp.Code != http.StatusFound {
+		t.Fatalf("oidc bind should redirect to provider, got %d %s", bindResp.Code, bindResp.Body.String())
+	}
+	location, err := url.Parse(bindResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := location.Query().Get("state")
+	issuedNonce = location.Query().Get("nonce")
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oidc/corp/bind/callback?state="+url.QueryEscape(state)+"&code=owned-code", nil)
+	for _, cookie := range bindResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+	if callbackResp.Code != http.StatusConflict {
+		t.Fatalf("oidc bind should reject identity bound to another user, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+	var secondIdentityCount int64
+	if err := internal.DB.Model(&model.UserIdentity{}).
+		Where("user_id = ? AND method = ? AND provider = ? AND identifier = ?", second.ID, model.UserIdentityMethodOIDC, "corp", "oidc-owned").
+		Count(&secondIdentityCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if secondIdentityCount != 0 {
+		t.Fatalf("second user must not receive already-bound oidc identity, got %d", secondIdentityCount)
 	}
 }
 

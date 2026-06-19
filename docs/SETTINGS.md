@@ -48,7 +48,7 @@
 | `auth.login.email_code.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前登录接口暂未使用 |
 | `auth.login.phone_code.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前登录接口暂未使用 |
 | `auth.login.oauth.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 OAuth 已绑定身份登录和绑定入口 |
-| `auth.login.oidc.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 OIDC 已绑定身份登录入口 |
+| `auth.login.oidc.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 OIDC 已绑定身份登录和绑定入口 |
 | `auth.register.enabled` | `auth` | bool | `false` | 否 | hot | auth | bool |
 | `auth.register.username.enabled` | `auth` | bool | `true` | 否 | hot | auth | bool |
 | `auth.register.email.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前注册接口暂未使用 |
@@ -143,7 +143,7 @@ P0 补齐这些配置时，应同时补测试：
 | `auth.login.email_code.enabled` | `false` | P1 | 当前已校验；邮箱验证码登录仍属后续增强 |
 | `auth.login.phone_code.enabled` | `false` | P1 | 当前已校验；手机号验证码登录仍属后续增强 |
 | `auth.login.oauth.enabled` | `false` | P1 | 当前已落地；控制 OAuth 已绑定身份登录和登录用户绑定 OAuth identity |
-| `auth.login.oidc.enabled` | `false` | P1 | 当前已落地；控制 OIDC Discovery、nonce/ID Token 校验和已绑定 subject 登录 |
+| `auth.login.oidc.enabled` | `false` | P1 | 当前已落地；控制 OIDC Discovery、nonce/ID Token 校验、已绑定 subject 登录和登录用户绑定 OIDC identity |
 | `auth.register.enabled` | `false` | P1 | 当前已落地；是否开放公开自助注册，默认关闭 |
 | `auth.register.username.enabled` | `true` | P1 | 当前已落地；开启注册后是否允许用户名注册 |
 | `auth.register.email.enabled` | `false` | P1 | 当前已校验；邮箱注册入口仍属后续增强 |
