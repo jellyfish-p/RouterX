@@ -10436,7 +10436,7 @@ func TestReadinessDecryptsEncryptedExternalProviderSecrets(t *testing.T) {
 	}
 }
 
-func TestAdminRotateChannelSecretsReencryptsWithCurrentKey(t *testing.T) {
+func TestAdminRotateSecretsReencryptsWithCurrentKey(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "old-channel-secret-key")
 	r := newTestRouter(t)
@@ -10464,6 +10464,13 @@ func TestAdminRotateChannelSecretsReencryptsWithCurrentKey(t *testing.T) {
 	if channelResp.Code != http.StatusOK || strings.Contains(channelResp.Body.String(), "primary-secret") {
 		t.Fatalf("channel create failed or leaked secret: %d %s", channelResp.Code, channelResp.Body.String())
 	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.BatchSet(map[string]string{
+		"oauth.github.client_secret": "oauth-secret",
+		"oidc.corp.client_secret":    "oidc-secret",
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	t.Setenv("ENCRYPTION_KEY", "new-channel-secret-key")
 	notReady := performJSON(r, http.MethodGet, "/ready", "", nil)
@@ -10481,6 +10488,8 @@ func TestAdminRotateChannelSecretsReencryptsWithCurrentKey(t *testing.T) {
 		Data struct {
 			ScannedChannels int `json:"scanned_channels"`
 			RotatedChannels int `json:"rotated_channels"`
+			ScannedSettings int `json:"scanned_settings"`
+			RotatedSettings int `json:"rotated_settings"`
 			RotatedSecrets  int `json:"rotated_secrets"`
 			SkippedSecrets  int `json:"skipped_secrets"`
 		} `json:"data"`
@@ -10488,7 +10497,9 @@ func TestAdminRotateChannelSecretsReencryptsWithCurrentKey(t *testing.T) {
 	if err := json.Unmarshal(rotateResp.Body.Bytes(), &rotatePayload); err != nil {
 		t.Fatal(err)
 	}
-	if rotatePayload.Data.ScannedChannels != 1 || rotatePayload.Data.RotatedChannels != 1 || rotatePayload.Data.RotatedSecrets != 3 || rotatePayload.Data.SkippedSecrets != 0 {
+	if rotatePayload.Data.ScannedChannels != 1 || rotatePayload.Data.RotatedChannels != 1 ||
+		rotatePayload.Data.ScannedSettings != 2 || rotatePayload.Data.RotatedSettings != 2 ||
+		rotatePayload.Data.RotatedSecrets != 5 || rotatePayload.Data.SkippedSecrets != 0 {
 		t.Fatalf("unexpected rotation summary: %+v", rotatePayload.Data)
 	}
 
@@ -10517,6 +10528,22 @@ func TestAdminRotateChannelSecretsReencryptsWithCurrentKey(t *testing.T) {
 	if err != nil || target.APIKey != "upstream-secret" {
 		t.Fatalf("rotated upstream secret should remain usable, target=%+v err=%v", target, err)
 	}
+	for key, want := range map[string]string{
+		"oauth.github.client_secret": "oauth-secret",
+		"oidc.corp.client_secret":    "oidc-secret",
+	} {
+		var setting model.Setting
+		if err := internal.DB.Where("key = ?", key).First(&setting).Error; err != nil {
+			t.Fatal(err)
+		}
+		if plain, err := common.DecryptSecretWithKey(setting.Value, "old-channel-secret-key"); err == nil || plain == want {
+			t.Fatalf("%s should no longer decrypt with old key, plain=%q err=%v", key, plain, err)
+		}
+		plain, err := common.DecryptSecretWithKey(setting.Value, "new-channel-secret-key")
+		if err != nil || plain != want {
+			t.Fatalf("%s should decrypt with new key, plain=%q err=%v", key, plain, err)
+		}
+	}
 	readyResp := performJSON(r, http.MethodGet, "/ready", "", nil)
 	if readyResp.Code != http.StatusOK {
 		t.Fatalf("rotated channel secrets should restore readiness, got %d %s", readyResp.Code, readyResp.Body.String())
@@ -10528,6 +10555,7 @@ func TestAdminRotateChannelSecretsReencryptsWithCurrentKey(t *testing.T) {
 	}
 	auditBody := audit.AfterSummary + audit.BeforeSummary
 	if strings.Contains(auditBody, "primary-secret") || strings.Contains(auditBody, "secondary-secret") || strings.Contains(auditBody, "upstream-secret") ||
+		strings.Contains(auditBody, "oauth-secret") || strings.Contains(auditBody, "oidc-secret") ||
 		strings.Contains(auditBody, "old-channel-secret-key") || strings.Contains(auditBody, "new-channel-secret-key") {
 		t.Fatalf("secret rotation audit leaked sensitive material: before=%s after=%s", audit.BeforeSummary, audit.AfterSummary)
 	}

@@ -372,7 +372,7 @@ Redis 失败处理：
 | 密钥 | 创建 | 轮换 | 丢失影响 |
 |------|------|------|----------|
 | `jwt.secret` | 初始化或 `JWT_SECRET` 注入 | 支持双签或短窗口强制重新登录 | 旧 JWT 失效，跨实例登录异常 |
-| `ENCRYPTION_KEY` | 环境变量或 KMS 注入 | 通道 `api_key`、`api_keys` 和 `upstreams.api_key` 已支持用旧主密钥逐条解密后重加密到当前 `ENCRYPTION_KEY`，并写 `security.secret_rotate` 审计；KMS provider 和 `enc:v*` 版本升级继续演进 | 已加密下游密钥不可解密 |
+| `ENCRYPTION_KEY` | 环境变量或 KMS 注入 | 通道 `api_key`、`api_keys`、`upstreams.api_key` 和外部登录 `client_secret` 已支持用旧主密钥逐条解密后重加密到当前 `ENCRYPTION_KEY`，并写 `security.secret_rotate` 审计；KMS provider 和 `enc:v*` 版本升级继续演进 | 已加密密钥不可解密 |
 | API Key 明文 | 用户创建时生成一次 | 用户重新创建或禁用旧 key | 明文不可恢复，只能重建 |
 | 下游 API Key | 管理员配置 | 新旧通道或同通道多 key 灰度切换 | 影响对应通道调用 |
 | 支付密钥 | 支付 provider 后台生成 | 按 provider 规则双密钥或短暂停机切换 | 回调校验失败，不能入账 |

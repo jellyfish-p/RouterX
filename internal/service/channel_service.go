@@ -105,6 +105,8 @@ type ChannelUpstreamTarget struct {
 type ChannelSecretRotationResult struct {
 	ScannedChannels int
 	RotatedChannels int
+	ScannedSettings int
+	RotatedSettings int
 	RotatedSecrets  int
 	SkippedSecrets  int
 }
@@ -831,6 +833,7 @@ func (s *ChannelService) RotateEncryptedSecrets(previousKey string) (ChannelSecr
 	result := ChannelSecretRotationResult{}
 	previousKey = strings.TrimSpace(previousKey)
 	currentKey := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
+	rotatedSettingValues := map[string]string{}
 	if previousKey == "" {
 		return result, errors.New("previous_encryption_key is required")
 	}
@@ -862,8 +865,14 @@ func (s *ChannelService) RotateEncryptedSecrets(previousKey string) (ChannelSecr
 			}
 			result.RotatedChannels++
 		}
+		if err := rotateEncryptedProviderSettings(tx, previousKey, currentKey, &result, rotatedSettingValues); err != nil {
+			return err
+		}
 		return nil
 	})
+	if err == nil {
+		refreshRotatedSettingCache(rotatedSettingValues)
+	}
 	return result, err
 }
 
@@ -1121,6 +1130,49 @@ func rotateEncryptedSecretValue(value, previousKey, currentKey string) (string, 
 		return "", err
 	}
 	return common.EncryptSecretWithKey(plain, currentKey)
+}
+
+func rotateEncryptedProviderSettings(tx *gorm.DB, previousKey, currentKey string, result *ChannelSecretRotationResult, rotatedSettingValues map[string]string) error {
+	var settings []model.Setting
+	if err := tx.Select("id", "key", "value").Find(&settings).Error; err != nil {
+		return err
+	}
+	for _, setting := range settings {
+		if !SettingKeyRequiresSecretEncryption(setting.Key) {
+			continue
+		}
+		result.ScannedSettings++
+		if !common.IsEncryptedSecret(setting.Value) {
+			if strings.TrimSpace(setting.Value) != "" {
+				result.SkippedSecrets++
+			}
+			continue
+		}
+		rotated, err := rotateEncryptedSecretValue(setting.Value, previousKey, currentKey)
+		if err != nil {
+			return fmt.Errorf("setting %s secret rotation failed: %w", setting.Key, err)
+		}
+		if err := tx.Model(&model.Setting{}).Where("id = ?", setting.ID).Update("value", rotated).Error; err != nil {
+			return err
+		}
+		result.RotatedSettings++
+		result.RotatedSecrets++
+		rotatedSettingValues[setting.Key] = rotated
+	}
+	return nil
+}
+
+func refreshRotatedSettingCache(values map[string]string) {
+	if internal.RDB == nil || len(values) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	args := make(map[string]interface{}, len(values))
+	for key, value := range values {
+		args[key] = value
+	}
+	_ = internal.RDB.HSet(ctx, "settings", args).Err()
 }
 
 func hasAnyChannelKey(channel *model.Channel) bool {

@@ -2961,8 +2961,8 @@ paths:
   /v0/admin/security/rotate-secrets:
     post:
       tags: [Admin Security]
-      summary: 轮换通道密文主密钥
-      description: 仅超级管理员；使用 previous_encryption_key 解密现有通道 api_key、api_keys 和 upstreams.api_key，再用当前 ENCRYPTION_KEY 重新加密。整批事务失败回滚；响应和 security.secret_rotate 审计只包含扫描/轮换计数，不返回任何主密钥或下游密钥明文。
+      summary: 轮换数据库密文主密钥
+      description: 仅超级管理员；使用 previous_encryption_key 解密现有通道 api_key、api_keys、upstreams.api_key 和外部登录 oauth.*.client_secret/oidc.*.client_secret，再用当前 ENCRYPTION_KEY 重新加密。整批事务失败回滚；响应和 security.secret_rotate 审计只包含扫描/轮换计数，不返回任何主密钥、下游密钥或 provider client_secret 明文。
       security:
         - UserJWT: []
       requestBody:
@@ -2970,7 +2970,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RotateChannelSecretsRequest"
+              $ref: "#/components/schemas/RotateSecretsRequest"
       responses:
         "200":
           description: 轮换成功，返回脱敏计数摘要。
@@ -2982,7 +2982,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/RotateChannelSecretsResult"
+                        $ref: "#/components/schemas/RotateSecretsResult"
         "400":
           $ref: "#/components/responses/StandardBadRequest"
         "403":
@@ -6498,7 +6498,7 @@ components:
         models:
           type: array
           items: { type: string }
-    RotateChannelSecretsRequest:
+    RotateSecretsRequest:
       type: object
       required: [previous_encryption_key]
       properties:
@@ -6506,7 +6506,7 @@ components:
           type: string
           writeOnly: true
           description: 旧 ENCRYPTION_KEY；仅用于本次重加密，不会写入响应或管理审计。
-    RotateChannelSecretsResult:
+    RotateSecretsResult:
       type: object
       properties:
         scanned_channels:
@@ -6517,10 +6517,18 @@ components:
           type: integer
           description: 至少有一个密文字段被重加密的通道数量。
           example: 10
+        scanned_settings:
+          type: integer
+          description: 本次扫描的外部登录密钥 settings 数量。
+          example: 2
+        rotated_settings:
+          type: integer
+          description: 至少有一个密文字段被重加密的 settings 数量。
+          example: 2
         rotated_secrets:
           type: integer
-          description: 成功重加密的密文字段数量。
-          example: 18
+          description: 成功重加密的密文字段数量，包含通道密钥和外部登录 client_secret。
+          example: 20
         skipped_secrets:
           type: integer
           description: 扫描到但保持不变的非加密兼容字段数量。

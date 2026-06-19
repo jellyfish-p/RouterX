@@ -329,34 +329,36 @@ func (h *ChannelHandler) FetchModels(c *gin.Context) {
 	common.Success(c, dto.FetchChannelModelsResult{Models: models})
 }
 
-// POST /v0/admin/security/rotate-secrets — 轮换通道密文主密钥
+// POST /v0/admin/security/rotate-secrets — 轮换数据库密文主密钥
 func (h *ChannelHandler) RotateSecrets(c *gin.Context) {
 	operator, ok := currentUser(c)
 	if !ok {
 		common.FailWithStatus(c, 401, "未登录或登录已过期")
 		return
 	}
-	var req dto.RotateChannelSecretsRequest
+	var req dto.RotateSecretsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.FailWithStatus(c, 400, "轮换密钥参数无效")
 		return
 	}
 	result, err := h.svc.RotateEncryptedSecrets(req.PreviousEncryptionKey)
 	if err != nil {
-		_ = h.recordSecurityAuditResult(c, operator, "security.secret_rotate_denied", "channel_secrets", nil, map[string]interface{}{
-			"scope": "channel_secrets",
+		_ = h.recordSecurityAuditResult(c, operator, "security.secret_rotate_denied", "encrypted_secrets", nil, map[string]interface{}{
+			"scope": "encrypted_secrets",
 			"error": "secret_rotation_failed",
 		}, "denied", "secret_rotation_failed")
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
-	payload := dto.RotateChannelSecretsResult{
+	payload := dto.RotateSecretsResult{
 		ScannedChannels: result.ScannedChannels,
 		RotatedChannels: result.RotatedChannels,
+		ScannedSettings: result.ScannedSettings,
+		RotatedSettings: result.RotatedSettings,
 		RotatedSecrets:  result.RotatedSecrets,
 		SkippedSecrets:  result.SkippedSecrets,
 	}
-	if err := h.recordSecurityAuditResult(c, operator, "security.secret_rotate", "channel_secrets", nil, payload, "success", ""); err != nil {
+	if err := h.recordSecurityAuditResult(c, operator, "security.secret_rotate", "encrypted_secrets", nil, payload, "success", ""); err != nil {
 		common.FailWithStatus(c, 500, "写入审计日志失败")
 		return
 	}

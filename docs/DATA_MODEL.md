@@ -928,7 +928,7 @@ QuotaUnlimited = -1
 - 用户密码：bcrypt 哈希。
 - API Key：数据库长期保存 SHA256 哈希，兼容早期明文存量时验证成功后迁移为哈希。
 - 下游通道 API Key：应使用 `ENCRYPTION_KEY` 或 KMS 派生的服务端密钥加密后存储；当前通道 `api_key`、`api_keys` 和 `upstreams.api_key` 可通过 `POST /v0/admin/security/rotate-secrets` 用旧主密钥解密后重加密到当前 `ENCRYPTION_KEY`。
-- OAuth client_secret 和 OIDC client_secret：当前 `oauth.*.client_secret` 与 `oidc.*.client_secret` 已通过 `ENCRYPTION_KEY` 加密存储，后续可接入 KMS。
+- OAuth client_secret 和 OIDC client_secret：当前 `oauth.*.client_secret` 与 `oidc.*.client_secret` 已通过 `ENCRYPTION_KEY` 加密存储，也可通过 `POST /v0/admin/security/rotate-secrets` 重加密到当前主密钥，后续可接入 KMS。
 
 必须脱敏的数据：
 
