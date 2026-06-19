@@ -73,7 +73,10 @@ type contentTypeRelayAdapter interface {
 }
 
 const (
-	defaultRouterXMaxHops = 3
+	defaultRouterXMaxHops          = 3
+	relaySnapshotHashPrefixLength  = 16
+	relaySnapshotTokenPrefixLength = 12
+	relaySnapshotUserAgentMaxRunes = 128
 
 	inputProtocolAnthropic = "anthropic"
 	inputProtocolGemini    = "gemini"
@@ -765,7 +768,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 		return nil, nil, &HTTPError{Status: 400, Message: "stream is not supported in P0 relay", Type: "invalid_request_error", Code: "unsupported_stream"}
 	}
 	ctx = s.contextWithRelayLogRequestBody(ctx, body)
-	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshot(ctx, apiType, reqInfo))
+	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshot(ctx, token, clientIP, apiType, reqInfo))
 	if err := s.enforceTokenScope(ctx, token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, nil, err
 	}
@@ -829,7 +832,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	for i := 0; i < maxAttempts; i++ {
 		channel := attemptCandidates[i]
 		attemptCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, &channel, retryAttempts, filteredReasons))
-		attemptCtx = ContextWithRelayRequestSnapshot(attemptCtx, buildRelayRequestSnapshotForChannel(attemptCtx, apiType, reqInfo, &channel))
+		attemptCtx = ContextWithRelayRequestSnapshot(attemptCtx, buildRelayRequestSnapshotForChannel(attemptCtx, token, clientIP, apiType, reqInfo, &channel))
 		result, usage, retryable, err := s.relayNonStreamAttempt(attemptCtx, token, apiType, reqInfo, body, contentType, clientIP, &channel, rawResponse)
 		if err == nil {
 			return result, usage, nil
@@ -1009,7 +1012,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		return nil, &HTTPError{Status: 400, Message: "stream is required", Type: "invalid_request_error", Code: "stream_required"}
 	}
 	ctx = s.contextWithRelayLogRequestBody(ctx, body)
-	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshot(ctx, apiType, reqInfo))
+	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshot(ctx, token, clientIP, apiType, reqInfo))
 	if err := s.enforceTokenScope(ctx, token, apiType, reqInfo.Model, clientIP); err != nil {
 		return nil, err
 	}
@@ -1059,7 +1062,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	}
 	channel := pickRelayChannelCandidate(candidates)
 	ctx = ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, candidates, channel, nil, filteredReasons))
-	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshotForChannel(ctx, apiType, reqInfo, channel))
+	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshotForChannel(ctx, token, clientIP, apiType, reqInfo, channel))
 	if err := s.enforceChannelRateLimit(ctx, token, channel, reqInfo.Model, clientIP); err != nil {
 		return nil, err
 	}
@@ -4204,11 +4207,11 @@ func logUsageSource(usage *relay.Usage, status int, quotaUsed int64) string {
 	return ""
 }
 
-func buildRelayRequestSnapshot(ctx context.Context, apiType relay.APIType, reqInfo relayRequestInfo) string {
-	return buildRelayRequestSnapshotForChannel(ctx, apiType, reqInfo, nil)
+func buildRelayRequestSnapshot(ctx context.Context, token *model.Token, clientIP string, apiType relay.APIType, reqInfo relayRequestInfo) string {
+	return buildRelayRequestSnapshotForChannel(ctx, token, clientIP, apiType, reqInfo, nil)
 }
 
-func buildRelayRequestSnapshotForChannel(ctx context.Context, apiType relay.APIType, reqInfo relayRequestInfo, channel *model.Channel) string {
+func buildRelayRequestSnapshotForChannel(ctx context.Context, token *model.Token, clientIP string, apiType relay.APIType, reqInfo relayRequestInfo, channel *model.Channel) string {
 	apiTypeName := relayAPITypeScopeName(apiType)
 	ingressProtocol := relayIngressProtocolFromContext(ctx)
 	if ingressProtocol == "" {
@@ -4225,6 +4228,23 @@ func buildRelayRequestSnapshotForChannel(ctx context.Context, apiType relay.APIT
 		"api_type":         apiTypeName,
 		"requested_model":  strings.TrimSpace(reqInfo.Model),
 		"stream":           reqInfo.Stream,
+	}
+	if token != nil {
+		if token.UserID > 0 {
+			snapshot["user_id"] = token.UserID
+		}
+		if token.ID > 0 {
+			snapshot["token_id"] = token.ID
+		}
+		if tokenPrefix := relayTokenPrefixForSnapshot(token); tokenPrefix != "" {
+			snapshot["token_prefix"] = tokenPrefix
+		}
+	}
+	if clientIPSummary := relayHashSummaryForSnapshot(clientIP, relaySnapshotHashPrefixLength); clientIPSummary != "" {
+		snapshot["client_ip_summary"] = clientIPSummary
+	}
+	if userAgentSummary := relayUserAgentSummaryForSnapshot(relayUserAgentFromContext(ctx)); userAgentSummary != "" {
+		snapshot["user_agent_summary"] = userAgentSummary
 	}
 	if traceparent, traceID, ok := common.NormalizeTraceparent(relay.TraceparentFromContext(ctx)); ok {
 		// Re-normalize before persistence so only bounded W3C trace context reaches audit logs.
@@ -4247,6 +4267,47 @@ func buildRelayRequestSnapshotForChannel(ctx context.Context, apiType relay.APIT
 		return ""
 	}
 	return string(raw)
+}
+
+func relayTokenPrefixForSnapshot(token *model.Token) string {
+	if token == nil {
+		return ""
+	}
+	keyHash := strings.TrimSpace(token.Key)
+	if keyHash == "" {
+		return ""
+	}
+	if strings.HasPrefix(keyHash, "sk-") {
+		keyHash = common.SHA256Hex(keyHash)
+	}
+	if len(keyHash) > relaySnapshotTokenPrefixLength {
+		keyHash = keyHash[:relaySnapshotTokenPrefixLength]
+	}
+	return "sha256:" + keyHash
+}
+
+func relayHashSummaryForSnapshot(value string, prefixLength int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || prefixLength <= 0 {
+		return ""
+	}
+	hash := common.SHA256Hex(value)
+	if len(hash) > prefixLength {
+		hash = hash[:prefixLength]
+	}
+	return "sha256:" + hash
+}
+
+func relayUserAgentSummaryForSnapshot(userAgent string) string {
+	userAgent = strings.Join(strings.Fields(strings.TrimSpace(userAgent)), " ")
+	if userAgent == "" {
+		return ""
+	}
+	runes := []rune(userAgent)
+	if len(runes) > relaySnapshotUserAgentMaxRunes {
+		userAgent = string(runes[:relaySnapshotUserAgentMaxRunes])
+	}
+	return userAgent
 }
 
 func relayAdapterDegradationsForSnapshot(ctx context.Context, apiType relay.APIType, channel *model.Channel) []relayAdapterDegradation {

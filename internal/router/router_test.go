@@ -16775,12 +16775,13 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	}
 
 	requestID := "req-upstream-propagation"
+	userAgent := "RouterX-Test-UA/1.0 (snapshot)"
 	chatResp := performRawWithHeaders(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, `{
 		"model": "gpt-test",
 		"messages": [{"role": "user", "content": "hello"}],
 		"stream": false,
 		"routerx": {"route": {"channel_group": "paid"}}
-	}`, map[string]string{"X-Request-Id": requestID})
+	}`, map[string]string{"X-Request-Id": requestID, "User-Agent": userAgent})
 	if chatResp.Code != http.StatusOK {
 		t.Fatalf("chat completion failed: %d %s", chatResp.Code, chatResp.Body.String())
 	}
@@ -16847,6 +16848,18 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 		requestSnapshot["stream"] != false ||
 		requestSnapshot["request_id"] != callLog.RequestID {
 		t.Fatalf("unexpected request snapshot: %+v log=%+v", requestSnapshot, callLog)
+	}
+	expectedTokenPrefix := "sha256:" + common.SHA256Hex(tokenPayload.Data.Key)[:12]
+	expectedIPSummary := "sha256:" + common.SHA256Hex(callLog.IP)[:16]
+	if requestSnapshot["user_id"] != float64(root.ID) ||
+		requestSnapshot["token_id"] != float64(tokenPayload.Data.ID) ||
+		requestSnapshot["token_prefix"] != expectedTokenPrefix ||
+		requestSnapshot["client_ip_summary"] != expectedIPSummary ||
+		requestSnapshot["user_agent_summary"] != userAgent {
+		t.Fatalf("request snapshot should include safe actor and source summaries: %+v", requestSnapshot)
+	}
+	if requestSnapshot["client_ip_summary"] == callLog.IP || strings.Contains(fmt.Sprint(requestSnapshot["token_prefix"]), tokenPayload.Data.Key) {
+		t.Fatalf("request snapshot leaked raw source or token facts: %+v log=%+v", requestSnapshot, callLog)
 	}
 	var policySnapshotRaw string
 	if err := internal.DB.Model(&model.Log{}).Select("policy_snapshot").Where("id = ?", callLog.ID).Scan(&policySnapshotRaw).Error; err != nil {
