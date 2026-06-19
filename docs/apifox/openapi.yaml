@@ -3212,7 +3212,7 @@ paths:
     post:
       tags: [Gemini Compatible]
       summary: Gemini embedContent
-      description: 基础实现；Gemini content.parts 文本会转换为 OpenAI-compatible Embeddings input，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings 上游，OpenAI embedding 响应会转换为 Gemini embedding.values。usage 写入 RouterX 日志并扣费；taskType/title 暂不转发但会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要，Gemini 原生上游以 docs/PROTOCOLS.md 为准。
+      description: 基础实现；命中 OpenAI-compatible 上游时，Gemini content.parts 文本会转换为 Embeddings input，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings，上游响应会转换为 Gemini embedding.values，taskType/title 会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。命中 Gemini 上游时会原生调用 /v1beta/models/{model}:embedContent，保留 content、taskType、title 和 outputDimensionality，并从 usageMetadata 写入 RouterX 日志和扣费。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -3599,14 +3599,14 @@ components:
                       - text: world
               taskType:
                 type: string
-                description: 当前基础实现暂不转发；有值时会记录 dropped 降级摘要，后续按 docs/PROTOCOLS.md 补齐字段保真。
+                description: Gemini 原生 embedding 任务类型；命中 Gemini 上游时透传，命中 OpenAI-compatible 上游时记录 dropped 降级摘要。
               title:
                 type: string
-                description: 当前基础实现暂不转发；有值时会记录 dropped 降级摘要，后续按 docs/PROTOCOLS.md 补齐字段保真。
+                description: Gemini RETRIEVAL_DOCUMENT 标题；命中 Gemini 上游时透传，命中 OpenAI-compatible 上游时记录 dropped 降级摘要。
               outputDimensionality:
                 type: integer
                 minimum: 1
-                description: 映射为 OpenAI-compatible Embeddings dimensions。
+                description: 命中 Gemini 上游时作为原生 outputDimensionality 透传；命中 OpenAI-compatible 上游时映射为 dimensions。
     GeminiBatchEmbedContentsJSON:
       required: true
       content:

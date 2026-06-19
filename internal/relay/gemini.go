@@ -27,11 +27,17 @@ func (a *GeminiAdapter) GetChannelType() int {
 }
 
 func (a *GeminiAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
-	if apiType != APIChatCompletions && apiType != APIGeminiGenerateContent && apiType != APIGeminiStreamGenerateContent {
+	if apiType != APIChatCompletions && apiType != APIGeminiGenerateContent && apiType != APIGeminiStreamGenerateContent && apiType != APIEmbeddings {
 		return nil, errors.New("unsupported api type")
 	}
 	if native, ok := geminiNativeGenerateRequest(apiType, body); ok {
 		return json.Marshal(native)
+	}
+	if native, ok := geminiNativeEmbedContentRequest(apiType, body); ok {
+		return json.Marshal(native)
+	}
+	if apiType == APIEmbeddings {
+		return nil, errors.New("unsupported api type")
 	}
 	var input openAIChatRequest
 	if err := json.Unmarshal(body, &input); err != nil {
@@ -127,6 +133,39 @@ func geminiNativeGenerateRequest(apiType APIType, body []byte) (map[string]json.
 	return output, true
 }
 
+func geminiNativeEmbedContentRequest(apiType APIType, body []byte) (map[string]json.RawMessage, bool) {
+	if apiType != APIEmbeddings {
+		return nil, false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, false
+	}
+	var source string
+	if err := json.Unmarshal(payload["_routerx_source_protocol"], &source); err != nil ||
+		!strings.EqualFold(strings.TrimSpace(source), "gemini_embed_content") {
+		return nil, false
+	}
+	if !geminiRawFieldPresent(payload["content"]) {
+		return nil, false
+	}
+	fields := []string{
+		"content",
+		"taskType",
+		"title",
+		"outputDimensionality",
+	}
+	output := make(map[string]json.RawMessage, len(fields))
+	for _, field := range fields {
+		raw, ok := payload[field]
+		if !ok || !geminiRawFieldPresent(raw) {
+			continue
+		}
+		output[field] = append(json.RawMessage(nil), raw...)
+	}
+	return output, true
+}
+
 func geminiNativeSourceProtocol(payload map[string]json.RawMessage) bool {
 	var source string
 	if err := json.Unmarshal(payload["_routerx_source_protocol"], &source); err != nil {
@@ -148,6 +187,8 @@ func (a *GeminiAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 		return "/v1beta/models/" + escapedModel + ":generateContent"
 	case APIGeminiStreamGenerateContent:
 		return "/v1beta/models/" + escapedModel + ":streamGenerateContent"
+	case APIEmbeddings:
+		return "/v1beta/models/" + escapedModel + ":embedContent"
 	case APIModels:
 		return "/v1beta/models"
 	default:
@@ -187,6 +228,9 @@ func (a *GeminiAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey
 }
 
 func (a *GeminiAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
+	if apiType == APIEmbeddings {
+		return geminiEmbeddingToOpenAI(body)
+	}
 	if apiType != APIChatCompletions && apiType != APIGeminiGenerateContent && apiType != APIGeminiStreamGenerateContent {
 		return nil, nil, errors.New("unsupported api type")
 	}
@@ -238,6 +282,44 @@ func (a *GeminiAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *
 		"model":   input.ModelVersion,
 		"choices": choices,
 		"usage":   usage,
+	}
+	converted, err := json.Marshal(output)
+	return converted, usage, err
+}
+
+func geminiEmbeddingToOpenAI(body []byte) ([]byte, *Usage, error) {
+	var input struct {
+		Embedding struct {
+			Values []float64 `json:"values"`
+		} `json:"embedding"`
+		UsageMetadata struct {
+			PromptTokenCount int `json:"promptTokenCount"`
+			TotalTokenCount  int `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, nil, err
+	}
+	if len(input.Embedding.Values) == 0 {
+		return nil, nil, errors.New("embedding response is empty")
+	}
+	usage := &Usage{
+		PromptTokens: input.UsageMetadata.PromptTokenCount,
+		TotalTokens:  input.UsageMetadata.TotalTokenCount,
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens
+	}
+	output := map[string]interface{}{
+		"object": "list",
+		"data": []map[string]interface{}{
+			{
+				"object":    "embedding",
+				"index":     0,
+				"embedding": input.Embedding.Values,
+			},
+		},
+		"usage": usage,
 	}
 	converted, err := json.Marshal(output)
 	return converted, usage, err

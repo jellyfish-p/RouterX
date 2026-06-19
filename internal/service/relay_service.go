@@ -2335,6 +2335,10 @@ func rawJSONFieldPresent(raw json.RawMessage) bool {
 }
 
 func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {
+	var rawPayload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &rawPayload); err != nil {
+		return nil, errInvalidJSONBody
+	}
 	var input struct {
 		Content struct {
 			Parts []json.RawMessage `json:"parts"`
@@ -2362,7 +2366,40 @@ func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {
 		}
 		output["dimensions"] = *input.OutputDimensionality
 	}
+	if native := geminiEmbedContentNativeProviderBody(rawPayload); len(native) > 0 {
+		// Preserve Gemini embedContent fields only when route selection lands on a Gemini upstream.
+		output["routerx"] = map[string]interface{}{
+			"provider": map[string]interface{}{
+				"gemini": native,
+			},
+		}
+	}
 	return json.Marshal(output)
+}
+
+func geminiEmbedContentNativeProviderBody(payload map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(payload) == 0 {
+		return nil
+	}
+	fields := []string{
+		"content",
+		"taskType",
+		"title",
+		"outputDimensionality",
+	}
+	native := make(map[string]json.RawMessage, len(fields)+1)
+	for _, field := range fields {
+		raw, ok := payload[field]
+		if !ok || !rawJSONFieldPresent(raw) {
+			continue
+		}
+		native[field] = append(json.RawMessage(nil), raw...)
+	}
+	if len(native) == 0 {
+		return nil
+	}
+	native["_routerx_source_protocol"] = json.RawMessage(`"gemini_embed_content"`)
+	return native
 }
 
 func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, int, error) {
@@ -3736,7 +3773,7 @@ func relayAdapterDegradationsForSnapshot(ctx context.Context, apiType relay.APIT
 	if channel == nil {
 		return degradations
 	}
-	if apiType == relay.APIChatCompletions && channel.Type == common.ChannelTypeGemini && strings.EqualFold(relayIngressProtocolFromContext(ctx), inputProtocolGemini) {
+	if supportsGeminiNativeRequest(ctx, apiType, channel.Type) {
 		filtered := make([]relayAdapterDegradation, 0, len(degradations))
 		for _, degradation := range degradations {
 			if strings.EqualFold(degradation.Protocol, inputProtocolGemini) {
@@ -4523,7 +4560,22 @@ func supportsOpenAICompatibleStream(channelType int) bool {
 }
 
 func supportsGeminiNativeStream(ctx context.Context, apiType relay.APIType, channelType int) bool {
+	return supportsGeminiNativeGenerateRequest(ctx, apiType, channelType)
+}
+
+func supportsGeminiNativeRequest(ctx context.Context, apiType relay.APIType, channelType int) bool {
+	return supportsGeminiNativeGenerateRequest(ctx, apiType, channelType) ||
+		supportsGeminiNativeEmbedContentRequest(ctx, apiType, channelType)
+}
+
+func supportsGeminiNativeGenerateRequest(ctx context.Context, apiType relay.APIType, channelType int) bool {
 	return apiType == relay.APIChatCompletions &&
+		channelType == common.ChannelTypeGemini &&
+		strings.EqualFold(relayIngressProtocolFromContext(ctx), inputProtocolGemini)
+}
+
+func supportsGeminiNativeEmbedContentRequest(ctx context.Context, apiType relay.APIType, channelType int) bool {
+	return apiType == relay.APIEmbeddings &&
 		channelType == common.ChannelTypeGemini &&
 		strings.EqualFold(relayIngressProtocolFromContext(ctx), inputProtocolGemini)
 }
