@@ -100,6 +100,8 @@ erDiagram
         int prompt_tokens
         int completion_tokens
         int total_tokens
+        string usage_source
+        text usage_snapshot
         int64 quota_used
         int status
     }
@@ -370,6 +372,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `completion_tokens` | int | 输出 token 数 |
 | `total_tokens` | int | 总 token 数 |
 | `usage_source` | string | usage 来源；当前已落地 `upstream` 和 `minimum` |
+| `usage_snapshot` | text/json string | 脱敏 usage 快照；当前包含 usage 来源、token 数、安全 raw_usage_summary 和最低用量原因 |
 | `quota_used` | int64 | 本次消耗额度 |
 | `status` | int | `0` 未知，`1` 成功，`2` 失败 |
 | `request_id` | nullable string | HTTP 请求追踪 ID |
@@ -878,6 +881,7 @@ QuotaUnlimited = -1
 | `020_alert_events` | 新增管理员告警收件箱表和类型、状态、资源、用户、API Key 索引 |
 | `021_alert_delivery_outbox` | 新增管理员告警外部投递 outbox、目标/告警唯一索引和状态/重试时间索引 |
 | `022_token_metadata` | 新增 API Key 非安全元数据 JSON 字段，用于环境、团队、应用、标签、服务账号主体和脱敏导出 |
+| `023_log_usage_snapshot` | 新增调用日志 usage_snapshot 脱敏 JSON 字符串 |
 
 重要说明：
 

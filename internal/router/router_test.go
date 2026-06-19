@@ -16834,6 +16834,24 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if callLog.UsageSource != common.LogUsageSourceUpstream {
 		t.Fatalf("success log should record upstream usage source, got %+v", callLog)
 	}
+	var usageSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.UsageSnapshot), &usageSnapshot); err != nil {
+		t.Fatalf("success log should store usage snapshot JSON, got %q: %v", callLog.UsageSnapshot, err)
+	}
+	rawUsageSummary, ok := usageSnapshot["raw_usage_summary"].(map[string]interface{})
+	if !ok ||
+		usageSnapshot["schema"] != "routerx.snapshot.v1" ||
+		usageSnapshot["kind"] != "usage" ||
+		usageSnapshot["source"] != "relay" ||
+		usageSnapshot["redacted"] != true ||
+		usageSnapshot["usage_source"] != common.LogUsageSourceUpstream ||
+		usageSnapshot["prompt_tokens"] != float64(3) ||
+		usageSnapshot["completion_tokens"] != float64(2) ||
+		usageSnapshot["total_tokens"] != float64(5) ||
+		rawUsageSummary["present"] != true ||
+		rawUsageSummary["source"] != common.LogUsageSourceUpstream {
+		t.Fatalf("unexpected usage snapshot: %+v", usageSnapshot)
+	}
 	if callLog.TokenID == nil || *callLog.TokenID != tokenPayload.Data.ID || callLog.ChannelID == nil {
 		t.Fatalf("success log should reference token and channel: %+v", callLog)
 	}
@@ -16953,9 +16971,10 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	logResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
 	if logResp.Code != http.StatusOK ||
 		!strings.Contains(logResp.Body.String(), `"usage_source":"upstream"`) ||
+		!strings.Contains(logResp.Body.String(), `"usage_snapshot":`) ||
 		!strings.Contains(logResp.Body.String(), `"route_snapshot":`) ||
 		!strings.Contains(logResp.Body.String(), `"billing_snapshot":`) {
-		t.Fatalf("user log should expose upstream usage source, route snapshot and billing snapshot, got %d %s", logResp.Code, logResp.Body.String())
+		t.Fatalf("user log should expose upstream usage facts and snapshots, got %d %s", logResp.Code, logResp.Body.String())
 	}
 }
 

@@ -13,7 +13,7 @@
 
 当前代码已经具备以下基础：
 
-- `logs` 表保存模型调用日志，包含 user、token、channel、model、usage、usage_source、quota、status、request_id、error_code、error_source、upstream_status、error 和 IP。
+- `logs` 表保存模型调用日志，包含 user、token、channel、model、usage、usage_source、usage_snapshot、quota、status、request_id、error_code、error_source、upstream_status、error 和 IP。
 - `LogService.Record` 写入调用日志。
 - `GET /v0/user/log` 查询当前用户日志。
 - `GET /v0/user/billing` 聚合当前用户成功调用的次数、token 和额度。
@@ -101,6 +101,7 @@
 | `model` | 调用方请求模型 |
 | `prompt_tokens` / `completion_tokens` / `total_tokens` | usage |
 | `usage_source` | usage 来源；当前已落地 upstream 和 minimum |
+| `usage_snapshot` | 脱敏 usage 快照；当前包含 usage 来源、token 数、安全 raw_usage_summary 和最低用量原因 |
 | `quota_used` | 本次消耗额度 |
 | `status` | 成功或失败 |
 | `request_id` | 串联访问日志、调用日志和审计 |

@@ -91,6 +91,7 @@ func (s *LogService) Record(log *model.Log) error {
 	log.ErrorCode = normalizeLogErrorCode(log)
 	log.ErrorSource = normalizeLogErrorSource(log)
 	log.UpstreamStatus = normalizeLogUpstreamStatus(log)
+	log.UsageSnapshot = normalizeLogUsageSnapshot(log)
 	log.BillingSnapshot = normalizeLogBillingSnapshot(log)
 	needsExternalReplication := s.usesExternalLogDB()
 	if err := internal.DB.Transaction(func(tx *gorm.DB) error {
@@ -380,6 +381,53 @@ func upstreamStatusFromMessage(message string) int {
 		return 0
 	}
 	return status
+}
+
+func normalizeLogUsageSnapshot(log *model.Log) string {
+	if log == nil {
+		return ""
+	}
+	if snapshot := strings.TrimSpace(log.UsageSnapshot); snapshot != "" {
+		return snapshot
+	}
+	usageSource := strings.TrimSpace(log.UsageSource)
+	if usageSource == "" {
+		if log.TotalTokens > 0 {
+			usageSource = common.LogUsageSourceUpstream
+		} else if log.Status == common.LogStatusSuccess && log.QuotaUsed > 0 {
+			usageSource = common.LogUsageSourceMinimum
+		}
+	}
+	if usageSource == "" {
+		return ""
+	}
+	rawUsageSummary := map[string]interface{}{
+		"present": log.TotalTokens > 0,
+		"source":  usageSource,
+	}
+	if log.TotalTokens > 0 {
+		rawUsageSummary["total_tokens"] = log.TotalTokens
+	}
+	snapshot := map[string]interface{}{
+		"schema":            "routerx.snapshot.v1",
+		"kind":              "usage",
+		"stage":             "p1",
+		"source":            "relay",
+		"redacted":          true,
+		"usage_source":      usageSource,
+		"prompt_tokens":     log.PromptTokens,
+		"completion_tokens": log.CompletionTokens,
+		"total_tokens":      log.TotalTokens,
+		"raw_usage_summary": rawUsageSummary,
+	}
+	if usageSource == common.LogUsageSourceMinimum {
+		snapshot["minimum_reason"] = "missing_upstream_usage"
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 func normalizeLogBillingSnapshot(log *model.Log) string {
