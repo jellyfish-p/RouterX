@@ -406,6 +406,7 @@ var (
 	errInvalidEmbeddingInput  = errors.New("embeddings input must be a non-empty string, string array, token array, or token array batch")
 	errEmbeddingBatchTooLarge = errors.New("embeddings input batch exceeds maximum size")
 	errInvalidImagePrompt     = errors.New("image generation prompt must be a non-empty string")
+	errInvalidImageCount      = errors.New("image generation count must be an integer greater than or equal to 1")
 	errInvalidImageSize       = errors.New("image size must be auto or WIDTHxHEIGHT within configured bounds")
 	errInvalidAudioFormat     = errors.New("audio response_format is not supported for this API")
 	errInvalidAudioInput      = errors.New("audio speech input must be a non-empty string within configured bounds")
@@ -1335,6 +1336,7 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 		Stream  bool            `json:"stream"`
 		Input   json.RawMessage `json:"input"`
 		Prompt  json.RawMessage `json:"prompt"`
+		N       json.RawMessage `json:"n"`
 		Size    json.RawMessage `json:"size"`
 		Voice   json.RawMessage `json:"voice"`
 		Format  json.RawMessage `json:"response_format"`
@@ -1362,6 +1364,9 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 	}
 	if apiType == relay.APIImagesGenerations {
 		if err := validateImageGenerationPrompt(payload.Prompt); err != nil {
+			return relayRequestInfo{}, err
+		}
+		if err := validateImageGenerationCount(payload.N); err != nil {
 			return relayRequestInfo{}, err
 		}
 		if err := validateImageGenerationSize(payload.Size); err != nil {
@@ -1399,6 +1404,22 @@ func validateImageGenerationPrompt(raw json.RawMessage) error {
 	}
 	if strings.TrimSpace(prompt) == "" {
 		return errInvalidImagePrompt
+	}
+	return nil
+}
+
+// Image Generations 的 n 是可选数量字段；显式传入时只接受正整数。
+func validateImageGenerationCount(raw json.RawMessage) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil
+	}
+	if isJSONNull(raw) || strings.ContainsAny(string(raw), ".eE") {
+		return errInvalidImageCount
+	}
+	count, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil || count < 1 {
+		return errInvalidImageCount
 	}
 	return nil
 }
@@ -1772,6 +1793,8 @@ func relayRequestErrorCode(err error) string {
 		return "embedding_batch_too_large"
 	case errors.Is(err, errInvalidImagePrompt):
 		return "invalid_image_prompt"
+	case errors.Is(err, errInvalidImageCount):
+		return "invalid_image_count"
 	case errors.Is(err, errInvalidImageSize):
 		return "invalid_image_size"
 	case errors.Is(err, errInvalidAudioFormat):

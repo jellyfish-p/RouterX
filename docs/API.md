@@ -153,7 +153,7 @@ Gemini-compatible 错误示例：
 
 | HTTP 状态 | 内部 code 示例 | type/status 示例 | 调用方含义 |
 |-----------|----------------|------------------|------------|
-| 400 | `invalid_json`、`invalid_multipart`、`invalid_image_prompt`、`multipart_file_required`、`unsafe_multipart_file`、`model_required`、`invalid_routerx_options`、`routerx_hop_exceeded` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数 |
+| 400 | `invalid_json`、`invalid_multipart`、`invalid_image_prompt`、`invalid_image_count`、`multipart_file_required`、`unsafe_multipart_file`、`model_required`、`invalid_routerx_options`、`routerx_hop_exceeded` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数 |
 | 401 | `invalid_api_key`、`expired_api_key` | `authentication_error` / `UNAUTHENTICATED` | 更换或重新创建 API Key |
 | 403 | `user_disabled`、`token_forbidden`、`model_not_allowed`、`route_forbidden` | `permission_error` / `PERMISSION_DENIED` | 联系管理员调整权限或通道分组 |
 | 404 | `model_not_found`、`unsupported_api`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名、接口路径或资源 ID |
@@ -171,6 +171,7 @@ Gemini-compatible 错误示例：
 - 选中通道 adapter 不支持当前 APIType 时返回 502 `unsupported_api_type`，不调用上游且不扣费。
 - 下游非流式响应超过 `relay.max_response_body_bytes` 时返回 502 `upstream_response_too_large`，不反射完整下游响应体且不扣费。
 - OpenAI-compatible Image Generations 缺少非空字符串 `prompt` 时返回 400 `invalid_image_prompt`，不调用上游且不扣费。
+- OpenAI-compatible Image Generations 显式传入的 `n` 不是大于等于 1 的整数时返回 400 `invalid_image_count`，不调用上游且不扣费。
 - OpenAI-compatible Images/Audio multipart 缺少必填 `image` 或 `file` 文件字段时返回 400 `multipart_file_required`，不调用上游且不扣费。
 - OpenAI-compatible Images/Audio multipart 单个文件字段超过 `relay.max_multipart_file_bytes` 时返回 413 `request_file_too_large`，不调用上游且不扣费。
 - OpenAI-compatible Images/Audio multipart 文件名、扩展名或内容命中基础文件安全策略时返回 400 `unsafe_multipart_file`，不调用上游且不扣费。
@@ -916,7 +917,7 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/chat/completions` | 基础实现，Chat Completions；支持非流式和 OpenAI-compatible SSE 流式 |
 | POST | `/v1/completions` | 基础实现，Legacy Completions；支持非流式、Azure deployment 路径转发和 OpenAI-compatible SSE 流式 |
 | POST | `/v1/embeddings` | 基础实现，OpenAI-compatible Embeddings JSON 透传、Azure deployment 路径转发、`routerx` 剥离、usage 扣费，以及上游前 `input` schema 和 2048 批量边界校验 |
-| POST | `/v1/images/generations` | 基础实现，OpenAI-compatible 图像生成 JSON 透传；Azure OpenAI 通道转发到 `/openai/v1/images/generations?api-version=preview`，保留 `model` 作为 deployment 名；缺少非空字符串 `prompt` 时返回 `invalid_image_prompt` 且不上游、不扣费；`size` 支持缺省、空字符串、`auto` 或 `WIDTHxHEIGHT`，本地校验单边不超过 4096 且总像素不超过 4194304，非法返回 `invalid_image_size` 且不上游、不扣费；无 usage 时按 P0 最低计费 |
+| POST | `/v1/images/generations` | 基础实现，OpenAI-compatible 图像生成 JSON 透传；Azure OpenAI 通道转发到 `/openai/v1/images/generations?api-version=preview`，保留 `model` 作为 deployment 名；缺少非空字符串 `prompt` 时返回 `invalid_image_prompt` 且不上游、不扣费；显式 `n` 必须为大于等于 1 的整数，非法返回 `invalid_image_count` 且不上游、不扣费；`size` 支持缺省、空字符串、`auto` 或 `WIDTHxHEIGHT`，本地校验单边不超过 4096 且总像素不超过 4194304，非法返回 `invalid_image_size` 且不上游、不扣费；无 usage 时按 P0 最低计费 |
 | POST | `/v1/images/edits` | 基础实现，OpenAI-compatible multipart 图像表单透传，Azure OpenAI 可转发到 `/openai/v1/images/edits?api-version=preview`；`routerx` 表单字段剥离和路由偏好；缺少 `image` 文件字段返回 `multipart_file_required` 且不上游、不扣费；`size` 支持缺省、空字符串、`auto` 或 `WIDTHxHEIGHT`，本地校验单边不超过 4096 且总像素不超过 4194304，非法返回 `invalid_image_size` 且不上游、不扣费；单文件字段受 `relay.max_multipart_file_bytes` 限制，路径形态、危险扩展名、非图片扩展名、非图片文件头或可执行/脚本内容签名会本地拒绝；无 usage 时按 P0 最低计费 |
 | POST | `/v1/images/variations` | 基础实现，OpenAI-compatible multipart 图像表单透传，Azure OpenAI 可转发到 `/openai/v1/images/variations?api-version=preview`；`routerx` 表单字段剥离和路由偏好；缺少 `image` 文件字段返回 `multipart_file_required` 且不上游、不扣费；`size` 支持缺省、空字符串、`auto` 或 `WIDTHxHEIGHT`，本地校验单边不超过 4096 且总像素不超过 4194304，非法返回 `invalid_image_size` 且不上游、不扣费；单文件字段受 `relay.max_multipart_file_bytes` 限制，路径形态、危险扩展名、非图片扩展名、非图片文件头或可执行/脚本内容签名会本地拒绝；无 usage 时按 P0 最低计费 |
 | POST | `/v1/audio/transcriptions` | 基础实现，OpenAI-compatible multipart 音频表单透传；Azure OpenAI 通道转发到 `/openai/v1/audio/transcriptions?api-version=preview`；`routerx` 表单字段剥离和路由偏好；缺少 `file` 文件字段返回 `multipart_file_required` 且不上游、不扣费；`response_format` 支持缺省、空字符串或 `json`、`text`、`srt`、`verbose_json`、`vtt`，非法返回 `invalid_audio_response_format` 且不上游、不扣费；单文件字段受 `relay.max_multipart_file_bytes` 限制，路径形态、危险扩展名、非音频扩展名、非音频文件头或可执行/脚本内容签名会本地拒绝；无 usage 时按 P0 最低计费 |
