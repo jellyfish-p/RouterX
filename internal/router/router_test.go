@@ -4707,6 +4707,126 @@ func TestOAuthCallbackRegistrationTicketCreatesPasswordAccount(t *testing.T) {
 	}
 }
 
+func TestOAuthRegistrationRequiresAndConsumesRedisCaptcha(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":          "true",
+		"auth.register.username.enabled": "true",
+		"auth.register.oauth.enabled":    "true",
+		"auth.register.captcha.required": "true",
+		"oauth.github.register_enabled":  "true",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	oldRDB := internal.RDB
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = oldRDB
+	})
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/token":
+			if err := req.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if req.Form.Get("code") != "captcha-code" {
+				t.Fatalf("unexpected oauth code: %s", req.Form.Get("code"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"captcha-token","token_type":"Bearer"}`))
+		case "/userinfo":
+			if req.Header.Get("Authorization") != "Bearer captcha-token" {
+				t.Fatalf("userinfo should receive bearer token, got %q", req.Header.Get("Authorization"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"gh-captcha","email":"captcha-oauth@example.com","login":"captcha-octo","name":"Captcha OAuth"}`))
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer provider.Close()
+	configureOAuthProvider(t, "github", provider.URL)
+
+	loginResp := performJSON(r, http.MethodGet, "/v0/user/oauth/github/login", "", nil)
+	if loginResp.Code != http.StatusFound {
+		t.Fatalf("oauth login should redirect to provider, got %d %s", loginResp.Code, loginResp.Body.String())
+	}
+	location, err := url.Parse(loginResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oauth/github/callback?state="+url.QueryEscape(location.Query().Get("state"))+"&code=captcha-code", nil)
+	for _, cookie := range loginResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+
+	var callbackPayload struct {
+		Data struct {
+			RegistrationRequired bool   `json:"registration_required"`
+			RegistrationTicket   string `json:"registration_ticket"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(callbackResp.Body.Bytes(), &callbackPayload); err != nil {
+		t.Fatal(err)
+	}
+	if callbackResp.Code != http.StatusOK || !callbackPayload.Data.RegistrationRequired || callbackPayload.Data.RegistrationTicket == "" {
+		t.Fatalf("oauth callback should return registration ticket before captcha is submitted, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+
+	missingCaptchaResp := performJSON(r, http.MethodPost, "/v0/user/oauth/github/register", "", map[string]interface{}{
+		"registration_ticket": callbackPayload.Data.RegistrationTicket,
+		"username":            "captcha-oauth",
+		"password":            "password123",
+	})
+	if missingCaptchaResp.Code != http.StatusForbidden {
+		t.Fatalf("oauth registration without captcha should be forbidden, got %d %s", missingCaptchaResp.Code, missingCaptchaResp.Body.String())
+	}
+
+	seedRouterRegisterCaptcha(t, rdb, "oauth-register-captcha", "123456")
+	registerResp := performJSON(r, http.MethodPost, "/v0/user/oauth/github/register", "", map[string]interface{}{
+		"registration_ticket": callbackPayload.Data.RegistrationTicket,
+		"username":            "captcha-oauth",
+		"password":            "password123",
+		"captcha_id":          "oauth-register-captcha",
+		"captcha_code":        "123456",
+	})
+	var loginPayload struct {
+		Data struct {
+			Token string        `json:"token"`
+			User  dto.UserBrief `json:"user"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(registerResp.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatal(err)
+	}
+	if registerResp.Code != http.StatusOK || loginPayload.Data.Token == "" || loginPayload.Data.User.Username != "captcha-oauth" {
+		t.Fatalf("oauth registration with captcha should create account and login, got %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	if _, err := rdb.Get(context.Background(), routerRegisterCaptchaKey("oauth-register-captcha")).Result(); !errors.Is(err, redis.Nil) {
+		t.Fatalf("oauth registration captcha should be consumed, err=%v", err)
+	}
+}
+
 func TestOAuthRegistrationRestoresSelfCancelledProviderIdentity(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -5510,6 +5630,121 @@ func TestOIDCCallbackRegistrationTicketCreatesPasswordAccount(t *testing.T) {
 	}
 	if loginBearer(t, r, "fresh-oidc", "password123") == "" {
 		t.Fatalf("oidc registered user should be able to login with password")
+	}
+}
+
+func TestOIDCRegistrationRequiresAndConsumesRedisCaptcha(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":          "true",
+		"auth.register.username.enabled": "true",
+		"auth.register.oidc.enabled":     "true",
+		"auth.register.captcha.required": "true",
+		"oidc.corp.register_enabled":     "true",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	oldRDB := internal.RDB
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = oldRDB
+	})
+
+	key := newOIDCTestRSAKey(t)
+	var issuedNonce string
+	provider := newOIDCTestProvider(t, key, func(issuer string, req *http.Request) string {
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if req.Form.Get("code") != "captcha-oidc-code" {
+			t.Fatalf("unexpected oidc code: %s", req.Form.Get("code"))
+		}
+		return signedOIDCIDTokenWithClaims(t, key, oidcTestKeyID, issuer, "routerx-oidc-client", "oidc-captcha-sub", issuedNonce, map[string]interface{}{
+			"email":              "captcha-oidc@example.com",
+			"preferred_username": "captcha-oidc",
+			"name":               "Captcha OIDC",
+		})
+	})
+	defer provider.Close()
+	configureOIDCProvider(t, "corp", provider.URL)
+
+	loginResp := performJSON(r, http.MethodGet, "/v0/user/oidc/corp/login", "", nil)
+	if loginResp.Code != http.StatusFound {
+		t.Fatalf("oidc login should redirect to provider, got %d %s", loginResp.Code, loginResp.Body.String())
+	}
+	location, err := url.Parse(loginResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuedNonce = location.Query().Get("nonce")
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oidc/corp/callback?state="+url.QueryEscape(location.Query().Get("state"))+"&code=captcha-oidc-code", nil)
+	for _, cookie := range loginResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+
+	var callbackPayload struct {
+		Data struct {
+			RegistrationRequired bool   `json:"registration_required"`
+			RegistrationTicket   string `json:"registration_ticket"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(callbackResp.Body.Bytes(), &callbackPayload); err != nil {
+		t.Fatal(err)
+	}
+	if callbackResp.Code != http.StatusOK || !callbackPayload.Data.RegistrationRequired || callbackPayload.Data.RegistrationTicket == "" {
+		t.Fatalf("oidc callback should return registration ticket before captcha is submitted, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+
+	missingCaptchaResp := performJSON(r, http.MethodPost, "/v0/user/oidc/corp/register", "", map[string]interface{}{
+		"registration_ticket": callbackPayload.Data.RegistrationTicket,
+		"username":            "captcha-oidc",
+		"password":            "password123",
+	})
+	if missingCaptchaResp.Code != http.StatusForbidden {
+		t.Fatalf("oidc registration without captcha should be forbidden, got %d %s", missingCaptchaResp.Code, missingCaptchaResp.Body.String())
+	}
+
+	seedRouterRegisterCaptcha(t, rdb, "oidc-register-captcha", "123456")
+	registerResp := performJSON(r, http.MethodPost, "/v0/user/oidc/corp/register", "", map[string]interface{}{
+		"registration_ticket": callbackPayload.Data.RegistrationTicket,
+		"username":            "captcha-oidc",
+		"password":            "password123",
+		"captcha_id":          "oidc-register-captcha",
+		"captcha_code":        "123456",
+	})
+	var loginPayload struct {
+		Data struct {
+			Token string        `json:"token"`
+			User  dto.UserBrief `json:"user"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(registerResp.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatal(err)
+	}
+	if registerResp.Code != http.StatusOK || loginPayload.Data.Token == "" || loginPayload.Data.User.Username != "captcha-oidc" {
+		t.Fatalf("oidc registration with captcha should create account and login, got %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	if _, err := rdb.Get(context.Background(), routerRegisterCaptchaKey("oidc-register-captcha")).Result(); !errors.Is(err, redis.Nil) {
+		t.Fatalf("oidc registration captcha should be consumed, err=%v", err)
 	}
 }
 

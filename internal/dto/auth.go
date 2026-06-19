@@ -42,6 +42,8 @@ type OAuthRegisterRequest struct {
 	Password           string `json:"password" binding:"required,min=6,max=128"`
 	DisplayName        string `json:"display_name"`
 	Email              string `json:"email"`
+	CaptchaID          string `json:"captcha_id"`
+	CaptchaCode        string `json:"captcha_code"`
 }
 
 type OIDCRegistrationRequiredResponse struct {
@@ -58,6 +60,8 @@ type OIDCRegisterRequest struct {
 	Password           string `json:"password" binding:"required,min=6,max=128"`
 	DisplayName        string `json:"display_name"`
 	Email              string `json:"email"`
+	CaptchaID          string `json:"captcha_id"`
+	CaptchaCode        string `json:"captcha_code"`
 }
 
 // UserBrief 用户简要信息 (脱敏)

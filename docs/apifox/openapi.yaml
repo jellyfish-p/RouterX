@@ -322,7 +322,7 @@ paths:
     get:
       tags: [User Auth]
       summary: OAuth 回调登录或返回注册票据
-      description: 公开回调；校验 state Cookie 后使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。userinfo 的稳定 id/sub 已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定或已绑定到注销保留普通用户时不会按 email 自动绑定或接管其他已有账号。只有全局注册、用户名注册、OAuth 注册和 oauth.{provider}.register_enabled 均启用且验证码策略允许时，才返回 registration_required=true 和短期 registration_ticket，用于后续补齐用户名密码账号或恢复原账号。
+      description: 公开回调；校验 state Cookie 后使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。userinfo 的稳定 id/sub 已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定或已绑定到注销保留普通用户时不会按 email 自动绑定或接管其他已有账号。只有全局注册、用户名注册、OAuth 注册和 oauth.{provider}.register_enabled 均启用时，才返回 registration_required=true 和短期 registration_ticket；验证码不在回调阶段提交，用于后续补齐用户名密码账号或恢复原账号。
       parameters:
         - $ref: "#/components/parameters/OAuthProvider"
         - name: state
@@ -371,7 +371,7 @@ paths:
     post:
       tags: [User Auth]
       summary: OAuth 首次登录补齐注册或恢复
-      description: 公开入口；使用 OAuth callback 返回的短期 registration_ticket 创建本地有密码账号并绑定 user_identities(method=oauth, provider, identifier)，或在票据中的 provider subject 命中已注销普通用户时恢复原 users.id。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重和密码要求；全新绑定成功后写 user.identity_bound 与 user.login 审计，恢复成功后写 user.recover 与 user.login 审计，都会返回 User JWT。恢复会更新本地密码、展示名和 OAuth identity 最近使用时间，不创建第二个账号，不自动启用旧 API Key，也不会根据 provider email 自动绑定已有账号。
+      description: 公开入口；使用 OAuth callback 返回的短期 registration_ticket 创建本地有密码账号并绑定 user_identities(method=oauth, provider, identifier)，或在票据中的 provider subject 命中已注销普通用户时恢复原 users.id。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重、密码要求，并在 auth.register.captcha.required=true 时校验并一次性消费 captcha_id/captcha_code 对应的 Redis 注册验证码；全新绑定成功后写 user.identity_bound 与 user.login 审计，恢复成功后写 user.recover 与 user.login 审计，都会返回 User JWT。恢复会更新本地密码、展示名和 OAuth identity 最近使用时间，不创建第二个账号，不自动启用旧 API Key，也不会根据 provider email 自动绑定已有账号。
       parameters:
         - $ref: "#/components/parameters/OAuthProvider"
       requestBody:
@@ -399,7 +399,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
         "403":
-          description: 自助注册、OAuth 注册或 provider 注册开关关闭，或验证码策略阻断补齐注册。
+          description: 自助注册、OAuth 注册或 provider 注册开关关闭，或注册验证码缺失、过期、错误、超过尝试次数或 Redis 不可用。
           content:
             application/json:
               schema:
@@ -437,7 +437,7 @@ paths:
     get:
       tags: [User Auth]
       summary: OIDC 回调登录或返回注册票据
-      description: 公开回调；校验 state Cookie 和 nonce Cookie 后使用 code 请求 token_endpoint，校验 ID Token 的 RS256 签名、iss、aud、exp、nonce 和 sub，并以 sub 查询 user_identities(method=oidc, provider, identifier)。已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定或已绑定到注销保留普通用户时，不会按 email 自动绑定或接管其他已有账号。只有全局注册、用户名注册、OIDC 注册和 oidc.{provider}.register_enabled 均启用且验证码策略允许时，才返回 registration_required=true 和短期 registration_ticket，用于后续补齐用户名密码账号或恢复原账号。
+      description: 公开回调；校验 state Cookie 和 nonce Cookie 后使用 code 请求 token_endpoint，校验 ID Token 的 RS256 签名、iss、aud、exp、nonce 和 sub，并以 sub 查询 user_identities(method=oidc, provider, identifier)。已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定或已绑定到注销保留普通用户时，不会按 email 自动绑定或接管其他已有账号。只有全局注册、用户名注册、OIDC 注册和 oidc.{provider}.register_enabled 均启用时，才返回 registration_required=true 和短期 registration_ticket；验证码不在回调阶段提交，用于后续补齐用户名密码账号或恢复原账号。
       parameters:
         - $ref: "#/components/parameters/OIDCProvider"
         - name: state
@@ -486,7 +486,7 @@ paths:
     post:
       tags: [User Auth]
       summary: OIDC 首次登录补齐注册或恢复
-      description: 公开入口；使用 OIDC callback 返回的短期 registration_ticket 创建本地有密码账号并绑定 user_identities(method=oidc, provider, sub)，或在票据中的 provider subject 命中已注销普通用户时恢复原 users.id。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重和密码要求；全新绑定成功后写 user.identity_bound 与 user.login 审计，恢复成功后写 user.recover 与 user.login 审计，都会返回 User JWT。恢复会更新本地密码、展示名和 OIDC identity 最近使用时间，不创建第二个账号，不自动启用旧 API Key，也不会根据 ID Token email 自动绑定已有账号。
+      description: 公开入口；使用 OIDC callback 返回的短期 registration_ticket 创建本地有密码账号并绑定 user_identities(method=oidc, provider, sub)，或在票据中的 provider subject 命中已注销普通用户时恢复原 users.id。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重、密码要求，并在 auth.register.captcha.required=true 时校验并一次性消费 captcha_id/captcha_code 对应的 Redis 注册验证码；全新绑定成功后写 user.identity_bound 与 user.login 审计，恢复成功后写 user.recover 与 user.login 审计，都会返回 User JWT。恢复会更新本地密码、展示名和 OIDC identity 最近使用时间，不创建第二个账号，不自动启用旧 API Key，也不会根据 ID Token email 自动绑定已有账号。
       parameters:
         - $ref: "#/components/parameters/OIDCProvider"
       requestBody:
@@ -514,7 +514,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
         "403":
-          description: 自助注册、OIDC 注册或 provider 注册开关关闭，或验证码策略阻断补齐注册。
+          description: 自助注册、OIDC 注册或 provider 注册开关关闭，或注册验证码缺失、过期、错误、超过尝试次数或 Redis 不可用。
           content:
             application/json:
               schema:
@@ -4795,6 +4795,12 @@ components:
           type: string
           format: email
           description: 可选邮箱；若票据包含 provider 邮箱，服务端优先使用票据邮箱。
+        captcha_id:
+          type: string
+          description: auth.register.captcha.required=true 时必填；对应 Redis key 为 auth:register_captcha:<captcha_id>。
+        captcha_code:
+          type: string
+          description: auth.register.captcha.required=true 时必填；服务端使用 SHA256(captcha_code) 与 Redis 记录比对，成功后删除该验证码。
     OIDCRegistrationRequiredResponse:
       type: object
       properties:
@@ -4838,6 +4844,12 @@ components:
           type: string
           format: email
           description: 可选邮箱；若票据包含 ID Token 邮箱，服务端优先使用票据邮箱。
+        captcha_id:
+          type: string
+          description: auth.register.captcha.required=true 时必填；对应 Redis key 为 auth:register_captcha:<captcha_id>。
+        captcha_code:
+          type: string
+          description: auth.register.captcha.required=true 时必填；服务端使用 SHA256(captcha_code) 与 Redis 记录比对，成功后删除该验证码。
     LoginRequest:
       type: object
       properties:

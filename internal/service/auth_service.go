@@ -741,10 +741,9 @@ func (s *AuthService) OAuthCallbackLogin(provider, code, redirectURI string) (*O
 }
 
 func (s *AuthService) oauthRegistrationChallenge(cfg oauthProviderConfig, userInfo map[string]interface{}, identifier string) (*OAuthRegistrationChallenge, error) {
-	if err := oauthRegistrationPolicyError(cfg.Provider); err != nil {
+	if err := oauthRegistrationProviderPolicyError(cfg.Provider); err != nil {
 		if errors.Is(err, ErrSelfRegistrationDisabled) ||
 			errors.Is(err, ErrUsernameRegistrationDisabled) ||
-			errors.Is(err, ErrRegistrationCaptchaRequired) ||
 			errors.Is(err, ErrOAuthRegistrationDisabled) {
 			return nil, ErrOAuthIdentityNotBound
 		}
@@ -778,7 +777,7 @@ func (s *AuthService) oauthRegistrationChallenge(cfg oauthProviderConfig, userIn
 	}, nil
 }
 
-func (s *AuthService) OAuthRegister(provider, ticket, username, password, displayName, email string) (*OAuthRegistrationResult, error) {
+func (s *AuthService) OAuthRegister(provider, ticket, username, password, displayName, email, captchaID, captchaCode string) (*OAuthRegistrationResult, error) {
 	claims, err := parseOAuthRegistrationTicket(ticket)
 	if err != nil {
 		return nil, err
@@ -787,7 +786,7 @@ func (s *AuthService) OAuthRegister(provider, ticket, username, password, displa
 	if provider == "" || claims.Provider != provider {
 		return nil, ErrOAuthRegistrationTicketInvalid
 	}
-	if err := oauthRegistrationPolicyError(provider); err != nil {
+	if err := oauthRegistrationProviderPolicyError(provider); err != nil {
 		return nil, err
 	}
 	username = strings.TrimSpace(username)
@@ -806,6 +805,9 @@ func (s *AuthService) OAuthRegister(provider, ticket, username, password, displa
 	}
 	if len(password) < 6 {
 		return nil, errors.New("password length must be at least 6")
+	}
+	if err := registrationCaptchaPolicyError(captchaID, captchaCode); err != nil {
+		return nil, err
 	}
 
 	var result *OAuthRegistrationResult
@@ -1070,8 +1072,10 @@ func signOAuthRegistrationInput(input, secret string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func oauthRegistrationPolicyError(provider string) error {
-	if err := registrationPolicyError(); err != nil {
+// OAuth callbacks issue a short-lived registration ticket before the user can
+// submit a captcha. The captcha gate is therefore applied by OAuthRegister.
+func oauthRegistrationProviderPolicyError(provider string) error {
+	if err := registrationMethodPolicyErrorForMethod("username"); err != nil {
 		return err
 	}
 	if !loginBoolSettingDefault("auth.register.oauth.enabled", false) {

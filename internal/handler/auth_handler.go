@@ -188,7 +188,7 @@ func (h *AuthHandler) OAuthRegister(c *gin.Context) {
 		common.FailWithStatus(c, http.StatusBadRequest, "OAuth 注册参数无效")
 		return
 	}
-	result, err := h.svc.OAuthRegister(provider, req.RegistrationTicket, req.Username, req.Password, req.DisplayName, req.Email)
+	result, err := h.svc.OAuthRegister(provider, req.RegistrationTicket, req.Username, req.Password, req.DisplayName, req.Email, req.CaptchaID, req.CaptchaCode)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, service.ErrSelfRegistrationDisabled) ||
@@ -306,7 +306,7 @@ func (h *AuthHandler) OIDCRegister(c *gin.Context) {
 		common.FailWithStatus(c, http.StatusBadRequest, "OIDC 注册参数无效")
 		return
 	}
-	result, err := h.svc.OIDCRegister(provider, req.RegistrationTicket, req.Username, req.Password, req.DisplayName, req.Email)
+	result, err := h.svc.OIDCRegister(provider, req.RegistrationTicket, req.Username, req.Password, req.DisplayName, req.Email, req.CaptchaID, req.CaptchaCode)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, service.ErrSelfRegistrationDisabled) ||

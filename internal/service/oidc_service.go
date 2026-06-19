@@ -163,10 +163,9 @@ func (s *AuthService) OIDCCallbackLogin(provider, code, redirectURI, expectedNon
 }
 
 func (s *AuthService) oidcRegistrationChallenge(cfg oidcProviderConfig, claims oidcTokenClaims) (*OIDCRegistrationChallenge, error) {
-	if err := oidcRegistrationPolicyError(cfg.Provider); err != nil {
+	if err := oidcRegistrationProviderPolicyError(cfg.Provider); err != nil {
 		if errors.Is(err, ErrSelfRegistrationDisabled) ||
 			errors.Is(err, ErrUsernameRegistrationDisabled) ||
-			errors.Is(err, ErrRegistrationCaptchaRequired) ||
 			errors.Is(err, ErrOIDCRegistrationDisabled) {
 			return nil, ErrOIDCIdentityNotBound
 		}
@@ -202,7 +201,7 @@ func (s *AuthService) oidcRegistrationChallenge(cfg oidcProviderConfig, claims o
 	}, nil
 }
 
-func (s *AuthService) OIDCRegister(provider, ticket, username, password, displayName, email string) (*OIDCRegistrationResult, error) {
+func (s *AuthService) OIDCRegister(provider, ticket, username, password, displayName, email, captchaID, captchaCode string) (*OIDCRegistrationResult, error) {
 	claims, err := parseOIDCRegistrationTicket(ticket)
 	if err != nil {
 		return nil, err
@@ -211,7 +210,7 @@ func (s *AuthService) OIDCRegister(provider, ticket, username, password, display
 	if provider == "" || claims.Provider != provider {
 		return nil, ErrOIDCRegistrationTicketInvalid
 	}
-	if err := oidcRegistrationPolicyError(provider); err != nil {
+	if err := oidcRegistrationProviderPolicyError(provider); err != nil {
 		return nil, err
 	}
 	username = strings.TrimSpace(username)
@@ -230,6 +229,9 @@ func (s *AuthService) OIDCRegister(provider, ticket, username, password, display
 	}
 	if len(password) < 6 {
 		return nil, errors.New("password length must be at least 6")
+	}
+	if err := registrationCaptchaPolicyError(captchaID, captchaCode); err != nil {
+		return nil, err
 	}
 
 	var result *OIDCRegistrationResult
@@ -383,8 +385,10 @@ func parseOIDCRegistrationTicket(ticket string) (*oauthRegistrationTicketClaims,
 	return claims, nil
 }
 
-func oidcRegistrationPolicyError(provider string) error {
-	if err := registrationPolicyError(); err != nil {
+// OIDC callbacks can only issue a registration ticket; captcha submission
+// happens later when the local password account is completed.
+func oidcRegistrationProviderPolicyError(provider string) error {
+	if err := registrationMethodPolicyErrorForMethod("username"); err != nil {
 		return err
 	}
 	if !loginBoolSettingDefault("auth.register.oidc.enabled", false) {
