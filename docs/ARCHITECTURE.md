@@ -50,7 +50,7 @@ internal/service
 | `internal/handler` | Gin HTTP 控制器 |
 | `internal/service` | 核心业务逻辑 |
 | `internal/model` | GORM 数据模型 |
-| `internal/relay` | 下游厂商适配器和注册表 |
+| `internal/relay` | 上游厂商适配器和注册表 |
 | `internal/dto` | 请求和响应 DTO |
 | `internal/common` | 常量、响应结构、密码和 Token 工具函数 |
 

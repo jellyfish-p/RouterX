@@ -29,6 +29,7 @@
 | `TestApifoxOpenAPISecurityMatchesRouteGroups` | 检查 `/v1/*` operation 声明 `ApiKeyBearer`，`/v0/admin/*` 和除注册/登录/OAuth 公开入口及公开回调外的 `/v0/user/*` operation 声明 `UserJWT`，避免可导入文档遗漏鉴权要求 |
 | `TestApifoxOpenAPIOperationTagsAreDeclared` | 检查每个公开 operation 都带有非空 tags，且对应 tag 已在 OpenAPI 顶层声明并带说明，避免 Apifox 导入后接口分组缺失或漂移 |
 | `TestDocsRelativeReferencesResolve` | 扫描 README 和顶层 docs 的 Markdown 相对链接及反引号中的 `docs/*.md`/`docs/apifox/openapi.yaml` 引用，确保设计稿和导入说明不指向缺失文件 |
+| `TestDocsAvoidLegacyTerminology` | 扫描 README 和顶层 docs 中由 `docs/GLOSSARY.md` 定义的不推荐术语，防止模型通道、上游厂商、settings、API Key 哈希存储等概念在设计稿中漂移 |
 | `TestApifoxOpenAITextEndpointsUseTypedRequestBodies` | 检查 OpenAI Responses 和 Legacy Completions 不再使用通用 JSON 占位 requestBody，确保 Apifox 导入后能展示字段级请求说明 |
 | `TestApifoxV1OperationsUseTypedRequestBodies` | 检查所有 `/v1` operation 的 requestBody 都使用专用 schema，避免新增模型入口时退回通用 JSON 占位 |
 | `TestTraceabilityP0RowsUseConcreteEvidence` | 检查 `docs/TRACEABILITY.md` 的 P0 行证据必须落到具体测试名，避免使用泛化占位描述替代可回归证据 |

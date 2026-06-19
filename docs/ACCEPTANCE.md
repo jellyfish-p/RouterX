@@ -56,7 +56,7 @@ P0 可以宣称完成时，必须同时满足以下门禁。
 
 | 门禁 | 必须证明 | 主要证据 |
 |------|----------|----------|
-| G0 文档一致 | 主设计稿、路线图、API、数据模型、Relay、计费、测试不互相冲突；已注册公开 API 必须出现在 Apifox 可导入文档中，且每个公开 operation 都有人类可读说明、可用路径参数、可解析组件引用、明确鉴权要求和可维护的 Apifox 分组。 | `TestApifoxOpenAPICoversRegisteredRoutes`、`TestApifoxOpenAPIOperationsHaveHumanReadableDocs`、`TestApifoxOpenAPIPathParametersAreDeclared`、`TestApifoxOpenAPIInternalRefsResolve`、`TestApifoxOpenAPISecurityMatchesRouteGroups`、`TestApifoxOpenAPIOperationTagsAreDeclared`、`TestDocsRelativeReferencesResolve`、旧术语扫描和 `git diff --check`。 |
+| G0 文档一致 | 主设计稿、路线图、API、数据模型、Relay、计费、测试不互相冲突；已注册公开 API 必须出现在 Apifox 可导入文档中，且每个公开 operation 都有人类可读说明、可用路径参数、可解析组件引用、明确鉴权要求和可维护的 Apifox 分组。 | `TestApifoxOpenAPICoversRegisteredRoutes`、`TestApifoxOpenAPIOperationsHaveHumanReadableDocs`、`TestApifoxOpenAPIPathParametersAreDeclared`、`TestApifoxOpenAPIInternalRefsResolve`、`TestApifoxOpenAPISecurityMatchesRouteGroups`、`TestApifoxOpenAPIOperationTagsAreDeclared`、`TestDocsRelativeReferencesResolve`、`TestDocsAvoidLegacyTerminology` 和 `git diff --check`。 |
 | G1 空库初始化 | 空库能创建超级管理员、默认 settings 和本地身份。 | `TestSetupBootstrapAdminQuota`、`TestP0BackendFlow`。 |
 | G2 就绪状态 | `/ready` 能反映数据库、迁移 dirty 状态、初始化、JWT、密钥和关键配置状态。 | `TestSettingsValidationAndReadiness`、`TestReadinessRejectsDirtyMigrationState`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、`TestReadinessDecryptsEncryptedChannelSecrets`、ready 接口断言。 |
 | G3 账号和权限 | 普通用户、管理员、超级管理员边界正确。 | `TestAdminPrivilegeBoundaries`。 |
@@ -122,14 +122,13 @@ P2 可以宣称完成时，必须证明生产和企业增强不破坏 P0/P1：
 ```text
 go test ./...
 git diff --check
-rg -n "<legacy-or-placeholder-pattern>" README.md docs
-rg -n "<legacy-routing-term>" README.md docs
+go test ./internal/router -run "TestDocsRelativeReferencesResolve|TestDocsAvoidLegacyTerminology" -count=1
 ```
 
 检查规则：
 
-- 第一条搜索用于查旧配置名、旧字段名、旧 API Key 明文字段说法、空泛填充描述和不确定状态描述；应无命中，除非命中内容是刻意保留的代码事实说明。
-- 第二条搜索用于确认模型路由实体没有使用旧称；该旧称只能出现在支付语境或术语表解释中。
+- `TestDocsRelativeReferencesResolve` 用于确认 README 和顶层 docs 的本地文档链接都能解析。
+- `TestDocsAvoidLegacyTerminology` 用于确认 README 和顶层 docs 遵守 `docs/GLOSSARY.md` 的不推荐术语规则。
 - `git diff --check` 允许 Windows 换行提示，但不能有空白错误。
 - 测试失败时不能宣称验收通过。
 

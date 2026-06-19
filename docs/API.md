@@ -106,8 +106,8 @@ OpenAI-compatible Images/Audio multipart 文件名、扩展名或内容命中基
 | 413 | `/v1` 模型请求体超过 `relay.max_request_body_bytes`，或 multipart 单个文件字段超过 `relay.max_multipart_file_bytes`，本地拒绝且不调用上游 |
 | 429 | 限流或余额不足 |
 | 500 | 内部错误 |
-| 502 | 下游厂商错误 |
-| 504 | 下游厂商超时 |
+| 502 | 上游厂商错误 |
+| 504 | 上游厂商超时 |
 
 ## 模型转发错误格式
 

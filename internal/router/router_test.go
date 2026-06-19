@@ -554,6 +554,55 @@ func TestDocsRelativeReferencesResolve(t *testing.T) {
 	}
 }
 
+func TestDocsAvoidLegacyTerminology(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	files := []string{filepath.Join(repoRoot, "README.md")}
+	docFiles, err := filepath.Glob(filepath.Join(repoRoot, "docs", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, docFiles...)
+
+	rules := []struct {
+		legacy    string
+		prefer    string
+		rationale string
+	}{
+		{legacy: "模型渠道", prefer: "模型通道", rationale: "模型路由实体统一称为通道"},
+		{legacy: "模型路由渠道", prefer: "模型路由通道", rationale: "模型路由实体统一称为通道"},
+		{legacy: "路由渠道", prefer: "路由通道", rationale: "模型路由实体统一称为通道"},
+		{legacy: "支付通道", prefer: "支付渠道或支付 provider", rationale: "支付语境避免和模型通道混淆"},
+		{legacy: "Token 表示模型用量", prefer: "模型 token 或 usage token", rationale: "Token 在代码中优先指 API Key 内部实体"},
+		{legacy: "下游厂商", prefer: "上游厂商或上游服务", rationale: "产品设计优先用上游描述模型服务提供方"},
+		{legacy: "系统配置表", prefer: "settings", rationale: "settings 是运行时配置权威来源"},
+		{legacy: "API Key 明文存储", prefer: "API Key 哈希存储", rationale: "明文只在创建时返回一次"},
+	}
+
+	issues := make([]string, 0)
+	for _, file := range files {
+		rel := repoRelativePath(file)
+		if rel == "docs/GLOSSARY.md" {
+			continue
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for lineNumber, line := range strings.Split(string(raw), "\n") {
+			for _, rule := range rules {
+				if strings.Contains(line, rule.legacy) {
+					issues = append(issues, fmt.Sprintf("%s:%d uses %q; prefer %q (%s)", rel, lineNumber+1, rule.legacy, rule.prefer, rule.rationale))
+				}
+			}
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("README.md and docs should follow docs/GLOSSARY.md legacy terminology rules:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestAcceptanceG0EvidenceNamesDocLinkCheck(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "ACCEPTANCE.md"))
 	if err != nil {
@@ -581,12 +630,18 @@ func TestAcceptanceG0EvidenceNamesDocLinkCheck(t *testing.T) {
 	if !strings.Contains(evidence, "TestDocsRelativeReferencesResolve") {
 		issues = append(issues, "G0 evidence must name TestDocsRelativeReferencesResolve")
 	}
+	if !strings.Contains(evidence, "TestDocsAvoidLegacyTerminology") {
+		issues = append(issues, "G0 evidence must name TestDocsAvoidLegacyTerminology")
+	}
 	if strings.Contains(evidence, "文档链接检查") {
 		issues = append(issues, "G0 evidence still uses manual 文档链接检查 wording")
 	}
+	if strings.Contains(evidence, "旧术语扫描") {
+		issues = append(issues, "G0 evidence still uses manual 旧术语扫描 wording")
+	}
 
 	if len(issues) > 0 {
-		t.Fatalf("G0 document-consistency evidence must name automated doc-link checks:\n%s", strings.Join(issues, "\n"))
+		t.Fatalf("G0 document-consistency evidence must name automated doc-consistency checks:\n%s", strings.Join(issues, "\n"))
 	}
 }
 
