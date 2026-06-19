@@ -10676,6 +10676,20 @@ func TestTraceContextPropagatesToResponseStructuredLogAndUpstream(t *testing.T) 
 		entry["trace_id"] != "4bf92f3577b34da6a3ce929d0e0e4736" {
 		t.Fatalf("structured HTTP log should include request and trace identifiers, got %+v", entry)
 	}
+
+	var callLog model.Log
+	if err := internal.DB.Where("request_id = ?", "req-traceparent").Order("id DESC").First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	var requestSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RequestSnapshot), &requestSnapshot); err != nil {
+		t.Fatalf("trace request snapshot should be JSON, got %q: %v", callLog.RequestSnapshot, err)
+	}
+	if requestSnapshot["trace_id"] != "4bf92f3577b34da6a3ce929d0e0e4736" ||
+		requestSnapshot["traceparent"] != traceparent ||
+		requestSnapshot["tracestate"] != tracestate {
+		t.Fatalf("request snapshot should include trace context, got %+v", requestSnapshot)
+	}
 }
 
 func TestMetricsEndpointRequiresSettingAndExposesPrometheusText(t *testing.T) {

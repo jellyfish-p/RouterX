@@ -4226,6 +4226,14 @@ func buildRelayRequestSnapshotForChannel(ctx context.Context, apiType relay.APIT
 		"requested_model":  strings.TrimSpace(reqInfo.Model),
 		"stream":           reqInfo.Stream,
 	}
+	if traceparent, traceID, ok := common.NormalizeTraceparent(relay.TraceparentFromContext(ctx)); ok {
+		// Re-normalize before persistence so only bounded W3C trace context reaches audit logs.
+		snapshot["trace_id"] = traceID
+		snapshot["traceparent"] = traceparent
+		if tracestate := relay.TracestateFromContext(ctx); tracestate != "" {
+			snapshot["tracestate"] = tracestate
+		}
+	}
 	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
 		snapshot["routerx_summary"] = map[string]interface{}{
 			"route": preference,

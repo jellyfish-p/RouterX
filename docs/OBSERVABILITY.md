@@ -74,7 +74,7 @@
 | 响应 | 所有 HTTP 响应通过当前配置的 request id header 返回请求 ID。 |
 | 上下文 | Gin context 中写入 `request_id`。 |
 | `/v1` 上游 | 调用真实上游时传递或生成可追踪 request id，避免覆盖上游鉴权 header。 |
-| W3C Trace Context | 如果请求携带合法 `traceparent`，响应回显 `Traceparent`；合法 `tracestate` 会随同回显。结构化 HTTP/Panic 日志写入 `trace_id`、`traceparent` 和可用时的 `tracestate`，`/v1` 真实上游请求继续透传这些 trace context header；非法值会被忽略。 |
+| W3C Trace Context | 如果请求携带合法 `traceparent`，响应回显 `Traceparent`；合法 `tracestate` 会随同回显。结构化 HTTP/Panic 日志和模型调用 `request_snapshot` 写入 `trace_id`、`traceparent` 和可用时的 `tracestate`，`/v1` 真实上游请求继续透传这些 trace context header；非法值会被忽略。 |
 | 多层 RouterX | 传递 `X-RouterX-Hop` 和 `X-RouterX-Chain`，防止循环并保留链路摘要。 |
 | 日志 | HTTP 日志、调用日志、审计日志和系统错误日志都写 request_id。 |
 
@@ -108,7 +108,7 @@
 | `error_source` | 失败来源，例如 request、auth、quota、route、channel、upstream、billing、system |
 | `upstream_status` | 上游 HTTP 状态；未调用上游或非上游错误时为空/0 |
 | `content` / `response` | 默认为空；显式开启 body 日志并配置正数上限后，保存截断和脱敏后的非流式请求/响应片段 |
-| `request_snapshot` | 脱敏请求快照；当前包含入口协议、API 类型、请求模型、stream 标记和安全路由摘要 |
+| `request_snapshot` | 脱敏请求快照；当前包含入口协议、API 类型、请求模型、stream 标记、合法 trace context 摘要和安全路由摘要 |
 | `policy_snapshot` | 脱敏策略快照；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝、`breaker_snapshot`，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝摘要和 `rate_limit_snapshot` |
 | `route_snapshot` | 脱敏路由快照；当前包含基础选择事实、候选过滤原因、模型重写摘要和非流式重试摘要 |
 | `billing_snapshot` | 脱敏计费快照；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式摘要、规则 ID/版本、倍率摘要、Key 预算前后、用户余额前后和最终扣费；扣费失败时包含试算额度和失败原因 |

@@ -114,7 +114,7 @@
 | `TestMetricsEndpointReportsIndependentLogDBHealth` | `/metrics` 输出独立日志库配置、ping 状态和日志补写 outbox 当前状态，日志库不可用时仍回退主库事实并保持指标可用 |
 | `TestRequestIDHeaderUsesConfiguredSetting` | `observability.request_id_header` 修改后，请求 ID 从配置 header 读取并通过同名响应头返回，缺失时生成新 ID |
 | `TestStructuredHTTPLogsUseJSONWhenEnabled` | `observability.structured_logs_enabled=true` 后 HTTP 访问日志输出可解析 JSON line，并包含 request_id、method、path_group、status、latency_ms 和 client_ip |
-| `TestTraceContextPropagatesToResponseStructuredLogAndUpstream` | 请求携带合法 W3C `traceparent`/`tracestate` 时，RouterX 响应回显 `Traceparent`/`Tracestate`，结构化 HTTP 日志写入 `trace_id`/`traceparent`/`tracestate`，并在 `/v1` 真实上游请求中继续透传 |
+| `TestTraceContextPropagatesToResponseStructuredLogAndUpstream` | 请求携带合法 W3C `traceparent`/`tracestate` 时，RouterX 响应回显 `Traceparent`/`Tracestate`，结构化 HTTP 日志和模型调用 `request_snapshot` 写入 `trace_id`/`traceparent`/`tracestate`，并在 `/v1` 真实上游请求中继续透传 |
 | `TestRecoveryStructuredPanicLogUsesJSONAndRedactsValue` | 结构化日志开启后 Recovery panic 日志输出 JSON line，包含请求上下文、合法 trace context 的 trace_id/traceparent/tracestate 和堆栈，且不记录原始 panic 值 |
 | `TestRecoveryLogsRequestContextAndRedactsPanicValue` | Recovery 捕获 panic 时返回统一 500，并在系统错误日志写入 request_id、method、path、client_ip 和堆栈，同时不记录原始 panic 值 |
 | `TestRecoveryUsesEntryProtocolErrorEnvelopeForV1Panics` | `/v1` panic 会按入口协议返回 Anthropic 或 Gemini 兼容 500，而不是固定 OpenAI 错误外形 |
