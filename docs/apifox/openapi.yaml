@@ -9,7 +9,7 @@ info:
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态/危险扩展名或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
-    - 充值码、额度流水查询、API Key 生命周期审计、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、日志库健康、日志补写 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、额度流水查询、API Key 生命周期审计、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -87,7 +87,7 @@ paths:
     get:
       tags: [Health]
       summary: Prometheus 指标
-      description: 默认由 observability.metrics_enabled=false 关闭；启用后返回 Prometheus text/plain，包含实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、日志补写 outbox 状态、支付、审计和 DB/Redis/日志库基础指标。routerx_api_key_quota_remaining 只统计当前可用且未过期的有限额度 API Key，避免把无限额度 Key 的 -1 混入剩余额度告警。
+      description: 默认由 observability.metrics_enabled=false 关闭；启用后返回 Prometheus text/plain，包含实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、日志补写 outbox 状态、支付、审计和 DB/Redis/日志库基础指标。routerx_db_errors_total/routerx_redis_errors_total 使用 operation 标签标记 ping、log_ping 或 migration_status 等低基数失败点。routerx_api_key_quota_remaining 只统计当前可用且未过期的有限额度 API Key，避免把无限额度 Key 的 -1 混入剩余额度告警。
       responses:
         "200":
           description: Prometheus text format metrics.
@@ -163,6 +163,12 @@ paths:
                   # HELP routerx_redis_up Redis ping status.
                   # TYPE routerx_redis_up gauge
                   routerx_redis_up 0
+                  # HELP routerx_db_errors_total Database errors by operation.
+                  # TYPE routerx_db_errors_total counter
+                  routerx_db_errors_total{operation="migration_status"} 1
+                  # HELP routerx_redis_errors_total Redis errors by operation.
+                  # TYPE routerx_redis_errors_total counter
+                  routerx_redis_errors_total{operation="ping"} 1
                   # HELP routerx_log_db_configured Independent log database configuration status.
                   # TYPE routerx_log_db_configured gauge
                   routerx_log_db_configured 1

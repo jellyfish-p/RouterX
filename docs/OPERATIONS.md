@@ -269,7 +269,7 @@ volumes:
 
 完整指标目录、标签控制和告警建议以 `docs/OBSERVABILITY.md` 为准。
 
-当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、日志补写 outbox 状态、HTTP 请求量/耗时、调用日志状态、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露指标、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标，后续继续补更细错误维度。
+当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、DB/Redis 错误计数、日志补写 outbox 状态、HTTP 请求量/耗时、调用日志状态、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露指标、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标，后续继续补更细错误维度。
 
 核心指标：
 
@@ -300,8 +300,8 @@ volumes:
 | `routerx_log_db_configured` | gauge | 独立日志库配置状态 |
 | `routerx_log_db_up` | gauge | 日志存储 ping 状态 |
 | `routerx_log_replication_outbox_items` | gauge | 日志补写 outbox 当前状态计数 |
-| `routerx_redis_errors_total` | counter | Redis 错误数 |
-| `routerx_db_errors_total` | counter | DB 错误数 |
+| `routerx_redis_errors_total` | counter | Redis 错误数，当前使用 `operation=ping` 标记健康探测失败 |
+| `routerx_db_errors_total` | counter | DB 错误数，当前使用 `operation=ping|log_ping|migration_status` 标记主库、日志库和迁移状态读取失败 |
 
 ## 健康检查
 

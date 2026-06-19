@@ -5566,6 +5566,52 @@ func TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals(t *testing.
 	}
 }
 
+func TestMetricsEndpointCountsInfrastructureErrors(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("observability.metrics_enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Exec("DROP TABLE IF EXISTS schema_migrations").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)").Error; err != nil {
+		t.Fatal(err)
+	}
+	oldRDB := internal.RDB
+	brokenRedis := redis.NewClient(&redis.Options{
+		Addr:            "127.0.0.1:1",
+		Protocol:        2,
+		DisableIdentity: true,
+		DialTimeout:     20 * time.Millisecond,
+		ReadTimeout:     20 * time.Millisecond,
+		WriteTimeout:    20 * time.Millisecond,
+		PoolSize:        1,
+	})
+	internal.RDB = brokenRedis
+	t.Cleanup(func() {
+		_ = brokenRedis.Close()
+		internal.RDB = oldRDB
+	})
+
+	resp := performJSON(r, http.MethodGet, "/metrics", "", nil)
+	body := resp.Body.String()
+	if resp.Code != http.StatusOK ||
+		!strings.Contains(body, `routerx_db_errors_total{operation="migration_status"} 1`) ||
+		!strings.Contains(body, `routerx_redis_errors_total{operation="ping"} 1`) ||
+		!strings.Contains(body, "routerx_ready 0") {
+		t.Fatalf("metrics should include infrastructure error counters, got %d %s", resp.Code, body)
+	}
+}
+
 func TestMetricsEndpointIncludesChannelProbeCounters(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 

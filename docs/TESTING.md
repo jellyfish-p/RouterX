@@ -90,6 +90,7 @@
 | `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
 | `TestMetricsEndpointRequiresSettingAndExposesPrometheusText` | `/metrics` 默认关闭，启用 `observability.metrics_enabled` 后返回 Prometheus 文本和基础实例指标 |
 | `TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals` | `/metrics` 输出 DB/Redis up、调用日志成功/失败计数、Relay 请求数、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标 |
+| `TestMetricsEndpointCountsInfrastructureErrors` | `/metrics` 输出 DB 迁移状态读取失败和 Redis ping 失败的低基数错误计数 |
 | `TestMetricsEndpointReportsIndependentLogDBHealth` | `/metrics` 输出独立日志库配置、ping 状态和日志补写 outbox 当前状态，日志库不可用时仍回退主库事实并保持指标可用 |
 | `TestRequestIDHeaderUsesConfiguredSetting` | `observability.request_id_header` 修改后，请求 ID 从配置 header 读取并通过同名响应头返回，缺失时生成新 ID |
 | `TestRecoveryLogsRequestContextAndRedactsPanicValue` | Recovery 捕获 panic 时返回统一 500，并在系统错误日志写入 request_id、method、path、client_ip 和堆栈，同时不记录原始 panic 值 |
@@ -527,7 +528,7 @@ Gemini-compatible 最小断言：
 | P2 | 企业账号 | 本地密码成功登录审计已覆盖；OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管待补 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、批量操作无筛选拒绝审计、基础风险视图、泄露风险基础轮换建议、单 Key 泄露窗口分析、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝、RPM/TPM 拒绝、基础 Redis 鉴权 lookup cache 命中/预热/禁用失效和 router Redis 兼容已覆盖；主动告警通知待补 |
 | P2 | 支付充值 | 充值码批次/备注/过期策略、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账和明确失败审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回审计、支付人工退款落账审计；更多 provider 自动退款适配待补 |
-| P2 | 观测审计 | 成功登录、API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status 和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis/日志库/outbox 指标测试已覆盖；继续补更完整结构化日志、更多管理审计动作和生产 `/ready` |
+| P2 | 观测审计 | 成功登录、API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status 和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis up 与错误计数/日志库/outbox 指标测试已覆盖；继续补更完整结构化日志、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
 

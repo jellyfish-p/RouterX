@@ -37,6 +37,7 @@ func SetupRouter(
 	middleware.ResetHTTPMetrics()
 	middleware.ResetAPIKeyAuthMetrics()
 	service.ResetRelayMetrics()
+	service.ResetInfrastructureErrorMetrics()
 
 	r := gin.New()
 
@@ -135,13 +136,8 @@ func metricsHandler(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "metrics unavailable\n")
 		return
 	}
-	extended, err := collectExtendedMetrics()
-	if err != nil {
-		c.String(http.StatusInternalServerError, "metrics unavailable\n")
-		return
-	}
 	ready := int64(1)
-	if sqlDB, err := internal.DB.DB(); err != nil || sqlDB.Ping() != nil {
+	if dbUp() == 0 {
 		ready = 0
 	} else if readinessMigrationProblem() != "" {
 		ready = 0
@@ -149,6 +145,11 @@ func metricsHandler(c *gin.Context) {
 		ready = 0
 	} else if internal.IsInitialized() && readinessSettingProblem() != "" {
 		ready = 0
+	}
+	extended, err := collectExtendedMetrics()
+	if err != nil {
+		c.String(http.StatusInternalServerError, "metrics unavailable\n")
+		return
 	}
 	var b strings.Builder
 	writeGauge(&b, "routerx_users_total", "Total users.", userCount)
@@ -160,6 +161,8 @@ func metricsHandler(c *gin.Context) {
 	writeCounter(&b, "routerx_today_quota_total", "Quota used since local midnight.", todayQuota)
 	writeGauge(&b, "routerx_db_up", "Database ping status.", extended.DBUp)
 	writeGauge(&b, "routerx_redis_up", "Redis ping status.", extended.RedisUp)
+	writeLabeledCounter(&b, "routerx_db_errors_total", "Database errors by operation.", extended.DBErrors)
+	writeLabeledCounter(&b, "routerx_redis_errors_total", "Redis errors by operation.", extended.RedisErrors)
 	writeGauge(&b, "routerx_log_db_configured", "Independent log database configuration status.", extended.LogDBConfigured)
 	writeGauge(&b, "routerx_log_db_up", "Log storage ping status.", extended.LogDBUp)
 	writeLabeledGauge(&b, "routerx_log_replication_outbox_items", "Current log replication outbox items by status.", extended.LogReplicationOutbox)
@@ -214,6 +217,8 @@ type metricHistogramSample struct {
 type extendedMetrics struct {
 	DBUp                 int64
 	RedisUp              int64
+	DBErrors             []metricSample
+	RedisErrors          []metricSample
 	LogDBConfigured      int64
 	LogDBUp              int64
 	LogReplicationOutbox []metricSample
@@ -249,6 +254,9 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		LogDBConfigured: logDBConfigured(),
 		LogDBUp:         logDBUp(),
 	}
+	dbErrors, redisErrors := service.InfrastructureErrorMetricsSnapshot()
+	metrics.DBErrors = infrastructureErrorSamples(dbErrors)
+	metrics.RedisErrors = infrastructureErrorSamples(redisErrors)
 	httpRequests, httpRequestDurations := collectHTTPMetrics()
 	metrics.HTTPRequests = httpRequests
 	metrics.HTTPRequestDurations = httpRequestDurations
@@ -921,6 +929,17 @@ func apiKeyLabeledCountSamples(counts map[string]int64, labelName string) []metr
 	return samples
 }
 
+func infrastructureErrorSamples(rows []service.InfrastructureErrorMetricSample) []metricSample {
+	samples := make([]metricSample, 0, len(rows))
+	for _, row := range rows {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{{Name: "operation", Value: row.Operation}},
+			Value:  row.Count,
+		})
+	}
+	return samples
+}
+
 func apiKeyLeakSource(token model.Token) (string, bool) {
 	if token.Status != common.TokenStatusDisabled {
 		return "", false
@@ -1288,7 +1307,12 @@ func dbUp() int64 {
 		return 0
 	}
 	sqlDB, err := internal.DB.DB()
-	if err != nil || sqlDB.Ping() != nil {
+	if err != nil {
+		service.RecordDBError("ping")
+		return 0
+	}
+	if err := sqlDB.Ping(); err != nil {
+		service.RecordDBError("ping")
 		return 0
 	}
 	return 1
@@ -1301,6 +1325,7 @@ func redisUp() int64 {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if err := internal.RDB.Ping(ctx).Err(); err != nil {
+		service.RecordRedisError("ping")
 		return 0
 	}
 	return 1
@@ -1319,7 +1344,12 @@ func logDBUp() int64 {
 		return dbUp()
 	}
 	sqlDB, err := internal.LogDB.DB()
-	if err != nil || sqlDB.Ping() != nil {
+	if err != nil {
+		service.RecordDBError("log_ping")
+		return 0
+	}
+	if err := sqlDB.Ping(); err != nil {
+		service.RecordDBError("log_ping")
 		return 0
 	}
 	return 1
@@ -1360,6 +1390,7 @@ func readinessMigrationProblem() string {
 		Order("version DESC").
 		Limit(1).
 		Scan(&row).Error; err != nil {
+		service.RecordDBError("migration_status")
 		return "unavailable"
 	}
 	if row.Dirty {
