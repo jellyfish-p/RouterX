@@ -377,6 +377,25 @@ func TestApifoxOpenAITextEndpointsUseTypedRequestBodies(t *testing.T) {
 	}
 }
 
+func TestApifoxV1OperationsUseTypedRequestBodies(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := make([]string, 0)
+	for _, operation := range apifoxOperationsWithRequestBodies(doc) {
+		if !strings.HasPrefix(operation, "POST /v1/") {
+			continue
+		}
+		requestBody, _ := apifoxOperationRequestBody(doc, operation)
+		if apifoxRequestBodyIsGenericJSONPlaceholder(requestBody) {
+			issues = append(issues, operation+" still uses a generic JSON placeholder requestBody")
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("/v1 Apifox request bodies need typed schemas:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -19998,6 +20017,38 @@ func apifoxOperationRequestBody(doc interface{}, operation string) (map[string]i
 	}
 	requestBody, ok := operationItem["requestBody"].(map[string]interface{})
 	return requestBody, ok
+}
+
+func apifoxOperationsWithRequestBodies(doc interface{}) []string {
+	root, ok := doc.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	paths, ok := root["paths"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	operations := make([]string, 0)
+	for path, rawPathItem := range paths {
+		pathItem, ok := rawPathItem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for method, rawOperation := range pathItem {
+			if !isOpenAPIHTTPMethod(method) {
+				continue
+			}
+			operation, ok := rawOperation.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if _, ok := operation["requestBody"].(map[string]interface{}); ok {
+				operations = append(operations, strings.ToUpper(method)+" "+path)
+			}
+		}
+	}
+	sort.Strings(operations)
+	return operations
 }
 
 func apifoxRequestBodyIsGenericJSONPlaceholder(requestBody map[string]interface{}) bool {

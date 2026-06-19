@@ -3191,7 +3191,7 @@ paths:
           required: true
           schema: { type: string }
       requestBody:
-        $ref: "#/components/requestBodies/GenericJSON"
+        $ref: "#/components/requestBodies/GeminiGenerateContentJSON"
       responses:
         "200":
           description: Gemini-compatible SSE stream.
