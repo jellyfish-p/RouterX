@@ -5494,8 +5494,14 @@ components:
     RedeemCodeResult:
       type: object
       properties:
-        redeemed_quota: { type: integer, format: int64 }
-        quota: { type: integer, format: int64 }
+        redeemed_quota:
+          type: integer
+          format: int64
+          description: 本次兑换成功入账的额度。
+        quota:
+          type: integer
+          format: int64
+          description: 兑换后用户当前可用额度。
     UserModelInfo:
       type: object
       properties:
@@ -5662,13 +5668,30 @@ components:
     PaymentProductInfo:
       type: object
       properties:
-        product_id: { type: string }
-        name: { type: string }
-        amount: { type: string }
-        currency: { type: string }
-        quota: { type: integer, format: int64 }
-        base_quota: { type: integer, format: int64 }
-        bonus_quota: { type: integer, format: int64 }
+        product_id:
+          type: string
+          description: 支付商品唯一业务 ID；创建订单时使用该值选择商品。
+        name:
+          type: string
+          description: 商品展示名称。
+        amount:
+          type: string
+          description: 商品支付金额，使用定点小数字符串。
+        currency:
+          type: string
+          description: 商品币种代码。
+        quota:
+          type: integer
+          format: int64
+          description: 商品总入账额度，等于 base_quota + bonus_quota。
+        base_quota:
+          type: integer
+          format: int64
+          description: 商品基础额度。
+        bonus_quota:
+          type: integer
+          format: int64
+          description: 商品赠送额度。
     UpsertPaymentProductRequest:
       type: object
       required: [product_id, name, amount, currency, quota]
@@ -5758,22 +5781,29 @@ components:
         user_id:
           type: integer
           format: uint64
+          description: 被人工调整额度的用户 ID。
         order_no:
           type: string
+          description: 关联本地支付订单号；未关联订单时为空。
         amount:
           type: integer
           format: int64
+          description: 本次人工调整额度增量；正数为补账，负数为扣回。
         type:
           type: string
           enum: [manual_credit, manual_debit]
+          description: 本次额度流水类型。
         balance_before:
           type: integer
           format: int64
+          description: 调整前用户余额。
         balance_after:
           type: integer
           format: int64
+          description: 调整后用户余额。
         idempotency_key:
           type: string
+          description: 本次人工调整使用的幂等键。
     PaymentManualRefundRequest:
       type: object
       required: [order_no, refund_quota, reason, idempotency_key]
@@ -5801,22 +5831,29 @@ components:
         user_id:
           type: integer
           format: uint64
+          description: 退款扣回影响的用户 ID。
         order_no:
           type: string
+          description: 被人工退款处理的本地支付订单号。
         refund_quota:
           type: integer
           format: int64
+          description: 本次人工退款扣回额度。
         order_status:
           type: string
           enum: [refunded, partially_refunded]
+          description: 人工退款后订单状态。
         balance_before:
           type: integer
           format: int64
+          description: 扣回前用户余额。
         balance_after:
           type: integer
           format: int64
+          description: 扣回后用户余额。
         idempotency_key:
           type: string
+          description: 本次人工退款使用的幂等键。
     PaymentProviderRefundRequest:
       type: object
       required: [order_no, reason, idempotency_key]
@@ -5843,16 +5880,21 @@ components:
         user_id:
           type: integer
           format: uint64
+          description: provider 退款请求关联的用户 ID。
         order_no:
           type: string
+          description: provider 退款请求关联的本地支付订单号。
         provider:
           type: string
           enum: [stripe, epay]
+          description: 实际发起退款请求的支付 provider。
         provider_refund_id:
           type: string
+          description: provider 返回的退款请求或退款记录 ID。
           example: re_123
         refund_amount:
           type: string
+          description: 本次请求退款金额，使用定点小数字符串。
           example: "5.00"
         refund_amount_minor:
           type: integer
@@ -5865,8 +5907,10 @@ components:
         order_status:
           type: string
           enum: [refund_pending]
+          description: 发起 provider 退款请求后的本地订单状态。
         idempotency_key:
           type: string
+          description: 本次 provider 退款请求使用的幂等键。
     AdminAuditLogInfo:
       type: object
       properties:
@@ -6082,15 +6126,29 @@ components:
     PaymentOrderInfo:
       type: object
       properties:
-        order_no: { type: string }
-        provider: { type: string }
+        order_no:
+          type: string
+          description: RouterX 本地支付订单号。
+        provider:
+          type: string
+          description: 支付 provider，例如 stripe 或 epay。
         status:
           type: string
           enum: [pending, paid, failed, closed, refund_pending, refund_failed, refunded, partially_refunded]
-        product_id: { type: string }
-        amount: { type: string }
-        currency: { type: string }
-        quota: { type: integer, format: int64 }
+          description: 订单当前状态。
+        product_id:
+          type: string
+          description: 订单购买的商品 ID 快照。
+        amount:
+          type: string
+          description: 订单金额快照，使用定点小数字符串。
+        currency:
+          type: string
+          description: 订单币种快照。
+        quota:
+          type: integer
+          format: int64
+          description: 订单支付成功后应入账的额度快照。
         checkout_url:
           type: string
           nullable: true
@@ -6100,8 +6158,15 @@ components:
           format: date-time
           nullable: true
           description: 创建订单时按 payment.order_expire_minutes 生成的过期时间快照。
-        created_at: { type: string, format: date-time }
-        paid_at: { type: string, format: date-time, nullable: true }
+        created_at:
+          type: string
+          format: date-time
+          description: 订单创建时间。
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 订单支付完成时间；未支付时为空。
     PaymentOrderPage:
       allOf:
         - $ref: "#/components/schemas/PaginatedResult"
@@ -6235,18 +6300,45 @@ components:
     RedemCodeInfo:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
-        code: { type: string }
-        quota: { type: integer, format: int64 }
+        id:
+          type: integer
+          format: uint64
+          description: 充值码内部 ID。
+        code:
+          type: string
+          description: 充值码字符串。
+        quota:
+          type: integer
+          format: int64
+          description: 兑换成功后入账的额度。
         status:
           type: integer
           description: "0=unused, 1=used, 2=disabled"
-        batch_no: { type: string }
-        note: { type: string }
-        expired_at: { type: string, format: date-time, nullable: true }
-        used_by: { type: integer, format: uint64, nullable: true }
-        created_at: { type: string, format: date-time }
-        used_at: { type: string, format: date-time, nullable: true }
+        batch_no:
+          type: string
+          description: 充值码批次号，用于运营发放和筛选。
+        note:
+          type: string
+          description: 管理端备注。
+        expired_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 充值码过期时间；不过期时为空。
+        used_by:
+          type: integer
+          format: uint64
+          nullable: true
+          description: 使用该充值码的用户 ID；未使用时为空。
+        created_at:
+          type: string
+          format: date-time
+          description: 充值码创建时间。
+        used_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 充值码使用时间；未使用时为空。
     RedemCodePage:
       allOf:
         - $ref: "#/components/schemas/PaginatedResult"
@@ -6281,8 +6373,14 @@ components:
     QuotaTransactionInfo:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
-        user_id: { type: integer, format: uint64 }
+        id:
+          type: integer
+          format: uint64
+          description: 额度流水内部 ID。
+        user_id:
+          type: integer
+          format: uint64
+          description: 额度流水关联用户 ID。
         type:
           type: string
           description: 额度流水类型。
@@ -6318,7 +6416,10 @@ components:
           type: string
           nullable: true
           description: HTTP 请求追踪 ID。
-        created_at: { type: string, format: date-time }
+        created_at:
+          type: string
+          format: date-time
+          description: 额度流水创建时间。
     QuotaTransactionPage:
       allOf:
         - $ref: "#/components/schemas/PaginatedResult"

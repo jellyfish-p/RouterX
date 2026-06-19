@@ -672,6 +672,25 @@ func TestApifoxObservabilityResponseSchemasHaveHumanReadablePropertyDescriptions
 	}
 }
 
+func TestApifoxPaymentResponseSchemasHaveHumanReadablePropertyDescriptions(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := apifoxSchemaPropertyDescriptionIssues(doc, []string{
+		"RedeemCodeResult",
+		"PaymentProductInfo",
+		"PaymentManualAdjustmentResult",
+		"PaymentManualRefundResult",
+		"PaymentProviderRefundRequestResult",
+		"PaymentOrderInfo",
+		"RedemCodeInfo",
+		"QuotaTransactionInfo",
+	})
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml payment response schemas need human-readable property descriptions:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
