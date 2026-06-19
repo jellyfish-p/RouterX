@@ -700,7 +700,7 @@ Provider 退款请求：
 鉴权：
 
 - 注册和登录不需要 User JWT，但需要系统已初始化。
-- 用户名密码登录是当前本地登录基线；email/phone 密码登录只对已有本地身份生效，并分别受 `auth.login.email_password.enabled` 与 `auth.login.phone_password.enabled` 控制，默认关闭；本地 email/phone 身份复用同一用户的 `username/local` 主密码，不要求各自保存独立密码哈希。`POST /v0/user/login/code` 当前可生成 Redis-backed 登录验证码挑战，统一登录接口已经识别 `credential_type=password|code`；验证码登录支持 Redis 中的短期验证码记录校验和一次性消费，Redis 缺失或不可用时 fail-closed，不会回退为密码登录。
+- 用户名密码登录是当前本地登录基线；email/phone 密码登录只对已有本地身份生效，并分别受 `auth.login.email_password.enabled` 与 `auth.login.phone_password.enabled` 控制，默认关闭；本地 email/phone 身份复用同一用户的 `username/local` 主密码，不要求各自保存独立密码哈希。公开登录、注册、验证码生成、OAuth/OIDC 登录和回调入口会复用 Redis 分钟级 `rate_limit.global_per_min` 与 `rate_limit.per_ip_per_min` 限流，命中返回 429；外部数据库或集群模式下 Redis 限流依赖不可用时 fail-closed 返回 503。`POST /v0/user/login/code` 当前可生成 Redis-backed 登录验证码挑战，统一登录接口已经识别 `credential_type=password|code`；验证码登录支持 Redis 中的短期验证码记录校验和一次性消费，Redis 缺失或不可用时 fail-closed，不会回退为密码登录。
 - 自部署商业级默认关闭公开自助注册；`POST /v0/user/register/captcha` 当前可生成 Redis-backed 注册图片验证码，`POST /v0/user/register` 支持 `register_method=username/email/phone`，分别需要 `auth.register.enabled=true`、对应注册方法开关为 true。`auth.register.captcha.required=true` 时必须提交 Redis 中存在且匹配的注册验证码。
 - 管理员创建用户不受自助注册开关影响。
 - 个人信息、日志和账单需要 User JWT。

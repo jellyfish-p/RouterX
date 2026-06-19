@@ -107,7 +107,7 @@
 - `jwt.secret` 可以由 `JWT_SECRET` 注入；生产和多实例部署必须显式固定，不能让各实例随机生成不同值。
 - `auth.login.username_password.enabled=true` 是商业级基础登录硬约束，配置层会拒绝关闭；email/phone 密码登录默认关闭，只有已有本地 email/phone identity 且对应开关开启时才会命中。
 - `auth.register.enabled=false` 是商业级自部署安全默认；当前统一注册入口会按 `register_method` 检查 `auth.register.username.enabled`、`auth.register.email.enabled` 或 `auth.register.phone.enabled`，并在 `auth.register.captcha.required=true` 时要求消费 Redis 注册验证码。注册图片验证码生成、登录验证码基础生成和消费已落地，真实邮件/短信投递仍按 `docs/ACCOUNTS.md` 分阶段补齐。
-- `rate_limit.global_per_min`、`rate_limit.per_token_per_min`、`rate_limit.per_ip_per_min`、`rate_limit.per_user_per_min`、`rate_limit.per_model_per_min` 和 `rate_limit.per_channel_per_min` 为 `0` 时表示关闭对应维度；Redis 可用时这些 hot setting 会影响后续请求。
+- `rate_limit.global_per_min`、`rate_limit.per_token_per_min`、`rate_limit.per_ip_per_min`、`rate_limit.per_user_per_min`、`rate_limit.per_model_per_min` 和 `rate_limit.per_channel_per_min` 为 `0` 时表示关闭对应维度；Redis 可用时这些 hot setting 会影响后续请求。`global_per_min` 和 `per_ip_per_min` 当前同时覆盖公开登录、注册、验证码、OAuth/OIDC 登录/回调入口和 `/v1` 模型入口；Token/User/Model/Channel 维度只在具备 API Key 上下文的模型入口生效。
 - `relay.retry_count` 默认是 `0`，表示不做自动重试；大于 0 时，非流式 Relay 只对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败进行有限候选通道重试。默认白名单为 429/500/502/503/504，生产环境不建议把 401/403 加入白名单。
 - `relay.error_auto_ban=false` 时仍会记录通道 `error_count`，但候选查询不会因为 `relay.error_ban_threshold` 排除通道；`relay.error_ban_cooldown_seconds>0` 时，达到阈值的通道在最近一次健康状态更新超过冷却窗口后可重新进入候选做半开探测，后台 worker 也会按 `relay.error_probe_*` 定期复测这些通道；`relay.error_ban_cooldown_seconds=0` 表示关闭自动半开和后台探测恢复，只能人工测试或后续成功调用清零。
 - `relay.max_request_body_bytes` 当前已在 `/v1` 模型入口生效，超过限制时按入口协议返回 413 且不调用上游。

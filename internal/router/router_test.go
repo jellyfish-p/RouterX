@@ -4230,6 +4230,147 @@ func TestUserLoginCodeEndpointFailsClosedWithoutRedis(t *testing.T) {
 	}
 }
 
+func TestPublicUserAuthRoutesApplyIPRateLimit(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	oldRDB := internal.RDB
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = oldRDB
+	})
+
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"rate_limit.global_per_min":      "0",
+		"rate_limit.per_ip_per_min":      "1",
+		"rate_limit.per_token_per_min":   "0",
+		"rate_limit.per_user_per_min":    "0",
+		"rate_limit.per_model_per_min":   "0",
+		"rate_limit.per_channel_per_min": "0",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		ip     string
+		body   interface{}
+	}{
+		{
+			name:   "login",
+			method: http.MethodPost,
+			path:   "/v0/user/login",
+			ip:     "203.0.113.10",
+			body:   map[string]interface{}{"account": "missing", "password": "wrong"},
+		},
+		{
+			name:   "register",
+			method: http.MethodPost,
+			path:   "/v0/user/register",
+			ip:     "203.0.113.11",
+			body:   map[string]interface{}{"username": "limited-register", "password": "password123"},
+		},
+		{
+			name:   "register captcha",
+			method: http.MethodPost,
+			path:   "/v0/user/register/captcha",
+			ip:     "203.0.113.12",
+		},
+		{
+			name:   "login code",
+			method: http.MethodPost,
+			path:   "/v0/user/login/code",
+			ip:     "203.0.113.13",
+			body:   map[string]interface{}{"account": "missing@example.com"},
+		},
+		{
+			name:   "oauth callback",
+			method: http.MethodGet,
+			path:   "/v0/user/oauth/github/callback?state=bad&code=bad",
+			ip:     "203.0.113.14",
+		},
+		{
+			name:   "oidc callback",
+			method: http.MethodGet,
+			path:   "/v0/user/oidc/corp/callback?state=bad&code=bad",
+			ip:     "203.0.113.15",
+		},
+	}
+	performFromIP := func(method, path, ip string, body interface{}) *httptest.ResponseRecorder {
+		var reader *bytes.Reader
+		if body != nil {
+			raw, _ := json.Marshal(body)
+			reader = bytes.NewReader(raw)
+		} else {
+			reader = bytes.NewReader(nil)
+		}
+		req := httptest.NewRequest(method, path, reader)
+		req.RemoteAddr = ip + ":1234"
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			first := performFromIP(tc.method, tc.path, tc.ip, tc.body)
+			if first.Code == http.StatusTooManyRequests || first.Code == http.StatusServiceUnavailable {
+				t.Fatalf("first %s request should reach its handler, got %d %s", tc.name, first.Code, first.Body.String())
+			}
+			second := performFromIP(tc.method, tc.path, tc.ip, tc.body)
+			if second.Code != http.StatusTooManyRequests || !strings.Contains(second.Body.String(), "请求过于频繁") {
+				t.Fatalf("second %s request should be IP rate limited, got %d %s", tc.name, second.Code, second.Body.String())
+			}
+		})
+	}
+}
+
+func TestPublicUserAuthRateLimitFailsClosedWithoutRedisInExternalDatabaseMode(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("SQL_DSN", "postgres://routerx:secret@db.example/routerx?sslmode=disable")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	oldRDB := internal.RDB
+	internal.RDB = nil
+	t.Cleanup(func() {
+		internal.RDB = oldRDB
+	})
+
+	resp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "root",
+		"password": "password123",
+	})
+	if resp.Code != http.StatusServiceUnavailable || !strings.Contains(resp.Body.String(), "限流依赖不可用") {
+		t.Fatalf("public auth rate limit should fail closed without Redis in external DB mode, got %d %s", resp.Code, resp.Body.String())
+	}
+}
+
 func TestUserLoginCodeCredentialConsumesRedisCode(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -13441,11 +13582,19 @@ func TestRateLimitRedisUnavailableFailsClosedInExternalDatabaseMode(t *testing.T
 	if initResp.Code != http.StatusOK {
 		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
 	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"rate_limit.global_per_min": "0",
+		"rate_limit.per_ip_per_min": "0",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
 	rootJWT := loginBearer(t, r, "root", "password123")
 	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
 		t.Fatal(err)
 	}
-	settingSvc := service.NewSettingService()
 	for key, value := range map[string]string{
 		"observability.metrics_enabled":  "true",
 		"rate_limit.global_per_min":      "0",

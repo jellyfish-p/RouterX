@@ -235,7 +235,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 生成注册图片验证码
-      description: 公开入口；生成 6 位注册图片验证码，写入 Redis key auth:register_captcha:<captcha_id>，value 包含 SHA256(captcha_code)、attempts 和 max_attempts，并按 auth.captcha.ttl_seconds 设置 TTL。响应返回 captcha_id、可展示的 captcha_image_svg 和 ttl_seconds；Redis 不可用或公开注册/用户名注册关闭时 fail-closed。该验证码是注册防刷验证码，不等同于邮箱或手机号归属验证。
+      description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。生成 6 位注册图片验证码，写入 Redis key auth:register_captcha:<captcha_id>，value 包含 SHA256(captcha_code)、attempts 和 max_attempts，并按 auth.captcha.ttl_seconds 设置 TTL。响应返回 captcha_id、可展示的 captcha_image_svg 和 ttl_seconds；Redis 不可用或公开注册/用户名注册关闭时 fail-closed。该验证码是注册防刷验证码，不等同于邮箱或手机号归属验证。
       responses:
         "200":
           description: 注册验证码已生成。
@@ -254,8 +254,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
         "503":
-          description: Redis 验证码存储不可用，不能生成可消费验证码。
+          description: Redis 验证码存储不可用，或外部数据库/集群模式下 Redis 限流依赖不可用。
           content:
             application/json:
               schema:
@@ -264,7 +266,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 用户注册
-      description: 统一自助注册入口；默认关闭公开注册。register_method 省略时按 username 处理，也支持 email 和 phone；三种方法都必须提交 username/password，并分别要求 auth.register.username.enabled、auth.register.email.enabled 或 auth.register.phone.enabled 为 true。auth.register.captcha.required=true 时必须提交 captcha_id/captcha_code，服务端读取 auth:register_captcha:<captcha_id> Redis 记录并比对 SHA256(captcha_code)，成功后一次性删除验证码；验证码缺失、过期、错误、超过尝试次数或 Redis 不可用会拒绝注册。新账号注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id；请求提供 email/phone 时会创建 email/local 或 phone/local 登录标识，但密码哈希只保存到 username/local 主身份；同名、同邮箱或同手机号 identity 命中已注销普通用户时会恢复原 users.id、启用账号、更新本地密码身份和展示名，补齐同用户本地登录标识，保留额度/分组/日志/历史流水，不自动启用旧 API Key，并写 user.recover 审计。
+      description: 统一自助注册入口；公开入口先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。默认关闭公开注册。register_method 省略时按 username 处理，也支持 email 和 phone；三种方法都必须提交 username/password，并分别要求 auth.register.username.enabled、auth.register.email.enabled 或 auth.register.phone.enabled 为 true。auth.register.captcha.required=true 时必须提交 captcha_id/captcha_code，服务端读取 auth:register_captcha:<captcha_id> Redis 记录并比对 SHA256(captcha_code)，成功后一次性删除验证码；验证码缺失、过期、错误、超过尝试次数或 Redis 不可用会拒绝注册。新账号注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id；请求提供 email/phone 时会创建 email/local 或 phone/local 登录标识，但密码哈希只保存到 username/local 主身份；同名、同邮箱或同手机号 identity 命中已注销普通用户时会恢复原 users.id、启用账号、更新本地密码身份和展示名，补齐同用户本地登录标识，保留额度/分组/日志/历史流水，不自动启用旧 API Key，并写 user.recover 审计。
       requestBody:
         required: true
         content:
@@ -291,11 +293,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
+        "503":
+          $ref: "#/components/responses/StandardServiceUnavailable"
   /v0/user/login/code:
     post:
       tags: [User Auth]
       summary: 生成邮箱或手机号登录验证码
-      description: 公开入口；根据 account 识别 email 或 phone，检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled，确认本地身份、用户状态和 username/local 主密码存在后，生成 6 位验证码并写入 Redis key auth:login_code:<captcha_id>，value 包含 method、account、SHA256(captcha_code)、attempts 和 max_attempts，并按 auth.captcha.ttl_seconds 设置 TTL。当前基础实现尚未接入真实邮件/短信网关，默认不返回验证码明文；只有显式开启 auth.captcha.debug_response.enabled=true 时，响应才会返回 debug_code 供自部署前端和 Apifox 调试。Redis 不可用时返回 503 fail-closed，不生成不可消费验证码。
+      description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。根据 account 识别 email 或 phone，检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled，确认本地身份、用户状态和 username/local 主密码存在后，生成 6 位验证码并写入 Redis key auth:login_code:<captcha_id>，value 包含 method、account、SHA256(captcha_code)、attempts 和 max_attempts，并按 auth.captcha.ttl_seconds 设置 TTL。当前基础实现尚未接入真实邮件/短信网关，默认不返回验证码明文；只有显式开启 auth.captcha.debug_response.enabled=true 时，响应才会返回 debug_code 供自部署前端和 Apifox 调试。Redis 不可用时返回 503 fail-closed，不生成不可消费验证码。
       requestBody:
         required: true
         content:
@@ -328,8 +334,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
         "503":
-          description: Redis 验证码存储不可用，不能生成可消费验证码。
+          description: Redis 验证码存储不可用，或外部数据库/集群模式下 Redis 限流依赖不可用。
           content:
             application/json:
               schema:
@@ -338,7 +346,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 用户统一登录
-      description: 管理后台也使用本接口获取 User JWT，不提供独立 /v0/admin/login。credential_type 省略时按 password 处理；用户名密码登录始终可用；email/phone 密码登录仅对已有本地身份生效，并分别受 auth.login.email_password.enabled 与 auth.login.phone_password.enabled 控制，默认关闭；本地 email/phone 身份复用同一用户的 username/local 主密码，不要求各自保存独立密码哈希。credential_type=code 当前只识别邮箱或手机号账号并检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled；随后读取 auth:login_code:<captcha_id> Redis 记录，校验 method、account 和 SHA256(captcha_code)，成功后一次性删除验证码并签发 JWT；验证码缺失、过期、错误或超过尝试次数返回 401，账号类型不支持、开关关闭或 Redis 校验器不可用返回 403，不会回退为密码登录。成功登录会写入 user.login 管理审计，审计摘要不包含密码或 JWT。
+      description: 管理后台也使用本接口获取 User JWT，不提供独立 /v0/admin/login；公开入口先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。credential_type 省略时按 password 处理；用户名密码登录始终可用；email/phone 密码登录仅对已有本地身份生效，并分别受 auth.login.email_password.enabled 与 auth.login.phone_password.enabled 控制，默认关闭；本地 email/phone 身份复用同一用户的 username/local 主密码，不要求各自保存独立密码哈希。credential_type=code 当前只识别邮箱或手机号账号并检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled；随后读取 auth:login_code:<captcha_id> Redis 记录，校验 method、account 和 SHA256(captcha_code)，成功后一次性删除验证码并签发 JWT；验证码缺失、过期、错误或超过尝试次数返回 401，账号类型不支持、开关关闭或 Redis 校验器不可用返回 403，不会回退为密码登录。成功登录会写入 user.login 管理审计，审计摘要不包含密码或 JWT。
       requestBody:
         required: true
         content:
@@ -367,11 +375,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
+        "503":
+          $ref: "#/components/responses/StandardServiceUnavailable"
   /v0/user/oauth/{provider}/login:
     get:
       tags: [User Auth]
       summary: 发起 OAuth 登录
-      description: 公开入口；检查全局 auth.login.oauth.enabled 和 oauth.{provider}.enabled 后生成一次性 state，写入 HttpOnly Cookie，并 302 跳转到 provider 授权地址。当前基础实现使用 oauth.{provider}.auth_url/client_id/client_secret/token_url/userinfo_url/scopes 等 settings；禁用或配置不完整时返回 403。
+      description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。检查全局 auth.login.oauth.enabled 和 oauth.{provider}.enabled 后生成一次性 state，写入 HttpOnly Cookie，并 302 跳转到 provider 授权地址。当前基础实现使用 oauth.{provider}.auth_url/client_id/client_secret/token_url/userinfo_url/scopes 等 settings；禁用或配置不完整时返回 403。
       parameters:
         - $ref: "#/components/parameters/OAuthProvider"
       responses:
@@ -390,11 +402,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
+        "503":
+          $ref: "#/components/responses/StandardServiceUnavailable"
   /v0/user/oauth/{provider}/callback:
     get:
       tags: [User Auth]
       summary: OAuth 回调登录或返回注册票据
-      description: 公开回调；校验 state Cookie 后使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。userinfo 的稳定 id/sub 已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定或已绑定到注销保留普通用户时不会按 email 自动绑定或接管其他已有账号。只有全局注册、用户名注册、OAuth 注册和 oauth.{provider}.register_enabled 均启用时，才返回 registration_required=true 和短期 registration_ticket；验证码不在回调阶段提交，用于后续补齐用户名密码账号或恢复原账号。
+      description: 公开回调；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。校验 state Cookie 后使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。userinfo 的稳定 id/sub 已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定或已绑定到注销保留普通用户时不会按 email 自动绑定或接管其他已有账号。只有全局注册、用户名注册、OAuth 注册和 oauth.{provider}.register_enabled 均启用时，才返回 registration_required=true 和短期 registration_ticket；验证码不在回调阶段提交，用于后续补齐用户名密码账号或恢复原账号。
       parameters:
         - $ref: "#/components/parameters/OAuthProvider"
         - name: state
@@ -433,6 +449,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
+        "503":
+          $ref: "#/components/responses/StandardServiceUnavailable"
         "502":
           description: provider token 或 userinfo 请求失败。
           content:
@@ -443,7 +463,7 @@ paths:
     post:
       tags: [User Auth]
       summary: OAuth 首次登录补齐注册或恢复
-      description: 公开入口；使用 OAuth callback 返回的短期 registration_ticket 创建本地有密码账号并绑定 user_identities(method=oauth, provider, identifier)，或在票据中的 provider subject 命中已注销普通用户时恢复原 users.id。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重、密码要求，并在 auth.register.captcha.required=true 时校验并一次性消费 captcha_id/captcha_code 对应的 Redis 注册验证码；全新绑定成功后写 user.identity_bound 与 user.login 审计，恢复成功后写 user.recover 与 user.login 审计，都会返回 User JWT。恢复会更新本地密码、展示名和 OAuth identity 最近使用时间，不创建第二个账号，不自动启用旧 API Key，也不会根据 provider email 自动绑定已有账号。
+      description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。使用 OAuth callback 返回的短期 registration_ticket 创建本地有密码账号并绑定 user_identities(method=oauth, provider, identifier)，或在票据中的 provider subject 命中已注销普通用户时恢复原 users.id。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重、密码要求，并在 auth.register.captcha.required=true 时校验并一次性消费 captcha_id/captcha_code 对应的 Redis 注册验证码；全新绑定成功后写 user.identity_bound 与 user.login 审计，恢复成功后写 user.recover 与 user.login 审计，都会返回 User JWT。恢复会更新本地密码、展示名和 OAuth identity 最近使用时间，不创建第二个账号，不自动启用旧 API Key，也不会根据 provider email 自动绑定已有账号。
       parameters:
         - $ref: "#/components/parameters/OAuthProvider"
       requestBody:
@@ -476,6 +496,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
+        "503":
+          $ref: "#/components/responses/StandardServiceUnavailable"
         "409":
           description: OAuth provider subject 已绑定其他或已有账号。
           content:
@@ -486,7 +510,7 @@ paths:
     get:
       tags: [User Auth]
       summary: 发起 OIDC 登录
-      description: 公开入口；检查全局 auth.login.oidc.enabled 和 oidc.{provider}.enabled 后读取 issuer 的 Discovery 文档，生成一次性 state 和 nonce，写入 HttpOnly Cookie，并 302 跳转到 authorization_endpoint。当前实现支持已绑定 OIDC subject 登录、登录用户绑定、首次补齐注册和注销账号恢复。
+      description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。检查全局 auth.login.oidc.enabled 和 oidc.{provider}.enabled 后读取 issuer 的 Discovery 文档，生成一次性 state 和 nonce，写入 HttpOnly Cookie，并 302 跳转到 authorization_endpoint。当前实现支持已绑定 OIDC subject 登录、登录用户绑定、首次补齐注册和注销账号恢复。
       parameters:
         - $ref: "#/components/parameters/OIDCProvider"
       responses:
@@ -505,11 +529,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
+        "503":
+          $ref: "#/components/responses/StandardServiceUnavailable"
   /v0/user/oidc/{provider}/callback:
     get:
       tags: [User Auth]
       summary: OIDC 回调登录或返回注册票据
-      description: 公开回调；校验 state Cookie 和 nonce Cookie 后使用 code 请求 token_endpoint，校验 ID Token 的 RS256 签名、iss、aud、exp、nonce 和 sub，并以 sub 查询 user_identities(method=oidc, provider, identifier)。已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定或已绑定到注销保留普通用户时，不会按 email 自动绑定或接管其他已有账号。只有全局注册、用户名注册、OIDC 注册和 oidc.{provider}.register_enabled 均启用时，才返回 registration_required=true 和短期 registration_ticket；验证码不在回调阶段提交，用于后续补齐用户名密码账号或恢复原账号。
+      description: 公开回调；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。校验 state Cookie 和 nonce Cookie 后使用 code 请求 token_endpoint，校验 ID Token 的 RS256 签名、iss、aud、exp、nonce 和 sub，并以 sub 查询 user_identities(method=oidc, provider, identifier)。已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定或已绑定到注销保留普通用户时，不会按 email 自动绑定或接管其他已有账号。只有全局注册、用户名注册、OIDC 注册和 oidc.{provider}.register_enabled 均启用时，才返回 registration_required=true 和短期 registration_ticket；验证码不在回调阶段提交，用于后续补齐用户名密码账号或恢复原账号。
       parameters:
         - $ref: "#/components/parameters/OIDCProvider"
         - name: state
@@ -548,6 +576,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
+        "503":
+          $ref: "#/components/responses/StandardServiceUnavailable"
         "502":
           description: Discovery、JWKS 或 token endpoint 请求失败。
           content:
@@ -558,7 +590,7 @@ paths:
     post:
       tags: [User Auth]
       summary: OIDC 首次登录补齐注册或恢复
-      description: 公开入口；使用 OIDC callback 返回的短期 registration_ticket 创建本地有密码账号并绑定 user_identities(method=oidc, provider, sub)，或在票据中的 provider subject 命中已注销普通用户时恢复原 users.id。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重、密码要求，并在 auth.register.captcha.required=true 时校验并一次性消费 captcha_id/captcha_code 对应的 Redis 注册验证码；全新绑定成功后写 user.identity_bound 与 user.login 审计，恢复成功后写 user.recover 与 user.login 审计，都会返回 User JWT。恢复会更新本地密码、展示名和 OIDC identity 最近使用时间，不创建第二个账号，不自动启用旧 API Key，也不会根据 ID Token email 自动绑定已有账号。
+      description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。使用 OIDC callback 返回的短期 registration_ticket 创建本地有密码账号并绑定 user_identities(method=oidc, provider, sub)，或在票据中的 provider subject 命中已注销普通用户时恢复原 users.id。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重、密码要求，并在 auth.register.captcha.required=true 时校验并一次性消费 captcha_id/captcha_code 对应的 Redis 注册验证码；全新绑定成功后写 user.identity_bound 与 user.login 审计，恢复成功后写 user.recover 与 user.login 审计，都会返回 User JWT。恢复会更新本地密码、展示名和 OIDC identity 最近使用时间，不创建第二个账号，不自动启用旧 API Key，也不会根据 ID Token email 自动绑定已有账号。
       parameters:
         - $ref: "#/components/parameters/OIDCProvider"
       requestBody:
@@ -591,6 +623,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
+        "503":
+          $ref: "#/components/responses/StandardServiceUnavailable"
         "409":
           description: OIDC provider subject 已绑定其他或已有账号。
           content:
@@ -628,7 +664,7 @@ paths:
     get:
       tags: [User Auth]
       summary: OIDC 回调绑定当前用户
-      description: 公开回调；校验 state Cookie、nonce Cookie 和签名 bind Cookie 后，使用 code 请求 token_endpoint，校验 ID Token 的 RS256 签名、iss、aud、exp、nonce 和 sub。服务端只使用 sub 创建 `user_identities(method=oidc, provider, identifier)`，不使用 email 自动绑定。若同一 provider subject 已绑定其他用户，返回 409；若已绑定当前用户，则更新 verified_at/last_used_at 并幂等成功。
+      description: 公开回调；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。校验 state Cookie、nonce Cookie 和签名 bind Cookie 后，使用 code 请求 token_endpoint，校验 ID Token 的 RS256 签名、iss、aud、exp、nonce 和 sub。服务端只使用 sub 创建 `user_identities(method=oidc, provider, identifier)`，不使用 email 自动绑定。若同一 provider subject 已绑定其他用户，返回 409；若已绑定当前用户，则更新 verified_at/last_used_at 并幂等成功。
       parameters:
         - $ref: "#/components/parameters/OIDCProvider"
         - name: state
@@ -669,6 +705,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
+        "503":
+          $ref: "#/components/responses/StandardServiceUnavailable"
         "502":
           description: Discovery、JWKS 或 token endpoint 请求失败。
           content:
@@ -706,7 +746,7 @@ paths:
     get:
       tags: [User Auth]
       summary: OAuth 回调绑定当前用户
-      description: 公开回调；校验 state Cookie 和签名 bind Cookie 后，使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。服务端只使用 userinfo 的稳定 id/sub 创建 `user_identities(method=oauth, provider, identifier)`，不使用 email 自动绑定。若同一 provider subject 已绑定其他用户，返回 409；若已绑定当前用户，则更新 verified_at/last_used_at 并幂等成功。
+      description: 公开回调；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。校验 state Cookie 和签名 bind Cookie 后，使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。服务端只使用 userinfo 的稳定 id/sub 创建 `user_identities(method=oauth, provider, identifier)`，不使用 email 自动绑定。若同一 provider subject 已绑定其他用户，返回 409；若已绑定当前用户，则更新 verified_at/last_used_at 并幂等成功。
       parameters:
         - $ref: "#/components/parameters/OAuthProvider"
         - name: state
@@ -747,6 +787,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+        "429":
+          $ref: "#/components/responses/StandardTooManyRequests"
+        "503":
+          $ref: "#/components/responses/StandardServiceUnavailable"
         "502":
           description: provider token 或 userinfo 请求失败。
           content:
@@ -4691,6 +4735,18 @@ components:
             $ref: "#/components/schemas/StandardResponse"
     StandardForbidden:
       description: 权限不足。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StandardResponse"
+    StandardTooManyRequests:
+      description: 请求过于频繁；公开账号入口和 /v1 模型入口均使用 Redis 分钟级限流，命中时返回 429。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StandardResponse"
+    StandardServiceUnavailable:
+      description: 服务依赖暂不可用；外部数据库或集群模式下 Redis 限流依赖不可用时 fail-closed 返回 503。
       content:
         application/json:
           schema:

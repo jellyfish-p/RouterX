@@ -428,7 +428,8 @@ Content-Type: application/json
 - `code_hash` 使用 `SHA256(captcha_code)`；账号按邮箱小写去空格、手机号去首尾空格后匹配。
 - 错误尝试会递增 `attempts`，达到 `auth.captcha.max_attempts` 或记录自带 `max_attempts` 后删除验证码。
 - `POST /v0/user/login/code` 当前会生成 6 位验证码并写入 Redis；显式开启 `auth.captcha.debug_response.enabled=true` 时会返回 `debug_code` 供自部署和 Apifox 调试，Redis 缺失或不可用时返回 503 fail-closed。
-- 验证码发送和校验都需要限流；当前已落地基础生成和消费侧，真实邮件/短信投递仍按阶段继续实现。
+- 验证码发送和校验都需要限流；当前公开登录、注册、验证码生成、OAuth/OIDC 登录和回调入口已复用 Redis 分钟级 `rate_limit.global_per_min` 与 `rate_limit.per_ip_per_min` 限流，命中返回 429，外部数据库或集群模式下 Redis 限流依赖不可用时返回 503 fail-closed。
+- 当前已落地登录验证码基础生成和消费侧，真实邮件/短信投递仍按阶段继续实现。
 
 注册验证码规则：
 

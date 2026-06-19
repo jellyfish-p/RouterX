@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +25,17 @@ func (cfg rateLimitConfig) hasActiveDimension() bool {
 	return cfg.globalPerMin > 0 || cfg.perIPPerMin > 0 || cfg.perTokenPerMin > 0 || cfg.perUserPerMin > 0
 }
 
+func (cfg rateLimitConfig) hasActiveDimensionForRequest(c *gin.Context) bool {
+	if cfg.globalPerMin > 0 || cfg.perIPPerMin > 0 {
+		return true
+	}
+	token, ok := CurrentAPIToken(c)
+	if !ok {
+		return false
+	}
+	return cfg.perTokenPerMin > 0 || (cfg.perUserPerMin > 0 && token.UserID > 0)
+}
+
 // RateLimit Gin 中间件：基于 Redis 的分钟级多维限流。
 // rate_limit.* 从 settings 热读取；任一维度配置为 0 时跳过该维度。
 func RateLimit() gin.HandlerFunc {
@@ -34,7 +46,7 @@ func RateLimit() gin.HandlerFunc {
 			return
 		}
 		if internal.RDB == nil {
-			if cfg.hasActiveDimension() && service.RedisRequiredForCurrentMode() {
+			if cfg.hasActiveDimensionForRequest(c) && service.RedisRequiredForCurrentMode() {
 				service.RecordRedisError("rate_limit_required")
 				writeRateLimitUnavailableError(c, "redis", "required")
 				c.Abort()
@@ -134,7 +146,7 @@ func loadRateLimitConfig() rateLimitConfig {
 
 func writeRateLimitError(c *gin.Context, dimension string, limit, current int64) {
 	recordRateLimitDeniedPolicyLog(c, dimension, limit, current)
-	switch entryProtocol(c) {
+	switch rateLimitEntryProtocol(c) {
 	case "anthropic":
 		c.JSON(http.StatusTooManyRequests, common.AnthropicError("rate limit exceeded", "rate_limit_error"))
 	case "gemini":
@@ -156,7 +168,7 @@ func recordRateLimitDeniedPolicyLog(c *gin.Context, dimension string, limit, cur
 
 func writeRateLimitUnavailableError(c *gin.Context, dimension, reason string) {
 	recordRateLimitUnavailablePolicyLog(c, dimension, reason)
-	switch entryProtocol(c) {
+	switch rateLimitEntryProtocol(c) {
 	case "anthropic":
 		c.JSON(http.StatusServiceUnavailable, common.AnthropicError("rate limit unavailable", "server_error"))
 	case "gemini":
@@ -166,6 +178,13 @@ func writeRateLimitUnavailableError(c *gin.Context, dimension, reason string) {
 	default:
 		common.FailWithStatus(c, http.StatusServiceUnavailable, "限流依赖不可用")
 	}
+}
+
+func rateLimitEntryProtocol(c *gin.Context) string {
+	if c.Request == nil || c.Request.URL == nil || !strings.HasPrefix(c.Request.URL.Path, "/v1") {
+		return ""
+	}
+	return entryProtocol(c)
 }
 
 func recordRateLimitUnavailablePolicyLog(c *gin.Context, dimension, reason string) {

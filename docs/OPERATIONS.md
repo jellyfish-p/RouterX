@@ -384,7 +384,7 @@ Redis 失败处理：
 - 生产启用 HTTPS。
 - 管理端和用户端共用 User JWT，前端需要采用统一安全存储策略。
 - 限制请求体大小。
-- 对登录、注册、验证码、OAuth callback 添加限流。
+- 当前公开登录、注册、验证码生成、OAuth/OIDC 登录和回调入口已复用 Redis 分钟级 `rate_limit.global_per_min` 与 `rate_limit.per_ip_per_min` 限流；命中返回 429，外部数据库或集群模式下 Redis 限流依赖不可用时返回 503 fail-closed。
 
 ### 数据安全
 
