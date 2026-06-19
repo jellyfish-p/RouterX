@@ -5061,6 +5061,7 @@ components:
       properties:
         initialized:
           type: boolean
+          description: 是否已经完成首次初始化；false 时允许调用 /v0/setup/init。
     SetupInitRequest:
       type: object
       required: [username, password]
@@ -5286,26 +5287,52 @@ components:
           type: string
           description: User JWT。
         user:
-          $ref: "#/components/schemas/UserBrief"
+          description: 登录成功后的脱敏用户摘要。
+          allOf:
+            - $ref: "#/components/schemas/UserBrief"
     UserBrief:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
-        username: { type: string }
-        display_name: { type: string }
-        email: { type: string }
-        phone: { type: string }
+        id:
+          type: integer
+          format: uint64
+          description: 用户 ID。
+        username:
+          type: string
+          description: 本地用户名；也是 username/local 主身份标识。
+        display_name:
+          type: string
+          description: 展示名；为空时前端可回退显示 username。
+        email:
+          type: string
+          description: 当前主邮箱；没有绑定 email/local 身份时为空。
+        phone:
+          type: string
+          description: 当前主手机号；没有绑定 phone/local 身份时为空。
         role: { type: integer, description: "1=user, 10=admin, 100=super admin" }
-        quota: { type: integer, format: int64 }
-        status: { type: integer }
-        group_id: { type: integer, format: uint64, nullable: true }
+        quota:
+          type: integer
+          format: int64
+          description: 用户当前可用额度余额。
+        status:
+          type: integer
+          description: 用户状态；0=禁用，1=启用。
+        group_id:
+          type: integer
+          format: uint64
+          nullable: true
+          description: 所属用户分组 ID；为空表示使用默认分组。
     UserIdentityBrief:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
+        id:
+          type: integer
+          format: uint64
+          description: 用户身份记录 ID。
         method:
           type: string
           enum: [username, email, phone, oauth, oidc]
+          description: 身份来源类型；local 身份使用 username/email/phone，第三方身份使用 oauth 或 oidc。
         provider:
           type: string
           description: local 或第三方 provider 别名。
@@ -5318,13 +5345,16 @@ components:
           type: string
           format: date-time
           nullable: true
+          description: 身份验证时间；未验证或不需要验证时为空。
         last_used_at:
           type: string
           format: date-time
           nullable: true
+          description: 最近一次使用该身份登录或绑定流程的时间；未使用时为空。
         created_at:
           type: string
           format: date-time
+          description: 身份记录创建时间。
     CreateUserRequest:
       type: object
       required: [username, password]
@@ -5388,7 +5418,10 @@ components:
     UserGroupInfo:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
+        id:
+          type: integer
+          format: uint64
+          description: 用户分组 ID。
         name:
           type: string
           description: 分组名。
@@ -5401,6 +5434,7 @@ components:
         created_at:
           type: string
           format: date-time
+          description: 用户分组创建时间。
     CreateUserGroupRequest:
       type: object
       required: [name]

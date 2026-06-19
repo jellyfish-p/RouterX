@@ -594,6 +594,22 @@ func TestApifoxCoreResponseSchemasHaveHumanReadablePropertyDescriptions(t *testi
 	}
 }
 
+func TestApifoxAccountResponseSchemasHaveHumanReadablePropertyDescriptions(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := apifoxSchemaPropertyDescriptionIssues(doc, []string{
+		"SetupStatus",
+		"LoginResponse",
+		"UserBrief",
+		"UserIdentityBrief",
+		"UserGroupInfo",
+	})
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml account response schemas need human-readable property descriptions:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
@@ -25570,6 +25586,38 @@ func apifoxSchemaDescription(root interface{}, schema map[string]interface{}) st
 	}
 	description, _ := resolved["description"].(string)
 	return description
+}
+
+func apifoxSchemaPropertyDescriptionIssues(root interface{}, schemaNames []string) []string {
+	issues := make([]string, 0)
+	for _, schemaName := range schemaNames {
+		rawSchema, ok := apifoxResolveInternalRef(root, "#/components/schemas/"+schemaName)
+		if !ok {
+			issues = append(issues, schemaName+" schema missing")
+			continue
+		}
+		schema, ok := rawSchema.(map[string]interface{})
+		if !ok {
+			issues = append(issues, schemaName+" schema is not an object")
+			continue
+		}
+		properties, ok := schema["properties"].(map[string]interface{})
+		if !ok || len(properties) == 0 {
+			issues = append(issues, schemaName+" schema missing properties")
+			continue
+		}
+		for propertyName, rawProperty := range properties {
+			property, ok := rawProperty.(map[string]interface{})
+			if !ok {
+				issues = append(issues, schemaName+"."+propertyName+" property is not an object")
+				continue
+			}
+			if strings.TrimSpace(apifoxSchemaDescription(root, property)) == "" {
+				issues = append(issues, schemaName+"."+propertyName+" missing description")
+			}
+		}
+	}
+	return issues
 }
 
 func resolveApifoxParameters(parameters []apifoxParameterDoc, components map[string]apifoxParameterDoc) []apifoxParameterDoc {
