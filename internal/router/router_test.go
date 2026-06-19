@@ -16949,6 +16949,9 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if err := json.Unmarshal([]byte(callLog.RouteSnapshot), &routeSnapshot); err != nil {
 		t.Fatalf("success log should store route snapshot JSON, got %q: %v", callLog.RouteSnapshot, err)
 	}
+	if routeSnapshot["request_id"] != callLog.RequestID {
+		t.Fatalf("route snapshot should include request id, snapshot=%+v log=%+v", routeSnapshot, callLog)
+	}
 	if routeSnapshot["requested_model"] != "gpt-test" || routeSnapshot["selected_channel_group"] != "paid" || routeSnapshot["candidate_count"] != float64(1) {
 		t.Fatalf("unexpected route snapshot: %+v", routeSnapshot)
 	}

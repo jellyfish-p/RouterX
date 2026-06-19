@@ -94,6 +94,7 @@ func (s *LogService) Record(log *model.Log) error {
 	log.UpstreamStatus = normalizeLogUpstreamStatus(log)
 	log.ErrorSnapshot = normalizeLogErrorSnapshot(log)
 	log.UsageSnapshot = normalizeLogUsageSnapshot(log)
+	log.RouteSnapshot = normalizeLogRouteSnapshot(log)
 	log.AccessRuleSnapshot = normalizeLogAccessRuleSnapshot(log)
 	log.BillingSnapshot = normalizeLogBillingSnapshot(log)
 	needsExternalReplication := s.usesExternalLogDB()
@@ -452,6 +453,33 @@ func logErrorSafeMessage(message string) string {
 		return string(runes[:256])
 	}
 	return message
+}
+
+func normalizeLogRouteSnapshot(log *model.Log) string {
+	if log == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(log.RouteSnapshot)
+	if raw == "" {
+		return ""
+	}
+	requestID := strings.TrimSpace(log.RequestID)
+	if requestID == "" {
+		return raw
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return raw
+	}
+	if logSnapshotString(snapshot["request_id"]) == requestID {
+		return raw
+	}
+	snapshot["request_id"] = requestID
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return raw
+	}
+	return string(encoded)
 }
 
 func normalizeLogAccessRuleSnapshot(log *model.Log) string {
