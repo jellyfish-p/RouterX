@@ -2674,7 +2674,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: OpenAI Responses API 转发
-      description: OpenAI-compatible Responses 基础实现；JSON 请求体可透传到 OpenAI-compatible 上游 /v1/responses，stream=true 且命中 OpenAI SSE 形态通道时透传 text/event-stream，Azure OpenAI 通道可转发 JSON 请求到 /openai/v1/responses?api-version=preview，Claude/Anthropic 通道支持基础非流式 Responses 转 /v1/messages 并将 input、instructions、max_output_tokens 和基础生成参数映射到 Messages。发出前剥离 routerx 私有字段，并将非流式 usage.input_tokens/output_tokens/total_tokens、Claude usage.input_tokens/output_tokens 或流式 response.completed.response.usage 映射到 RouterX 日志与扣费。完整 Responses 原生事件矩阵以 docs/PROTOCOLS.md 为准。
+      description: OpenAI-compatible Responses 基础实现；JSON 请求体可透传到 OpenAI-compatible 上游 /v1/responses，stream=true 且命中 OpenAI SSE 形态通道时透传 text/event-stream，Azure OpenAI 通道可转发 JSON 请求到 /openai/v1/responses?api-version=preview，Claude/Anthropic 通道支持基础非流式 Responses 转 /v1/messages，Gemini 通道支持基础非流式 Responses 转 /v1beta/models/{model}:generateContent，并将 input、instructions、max_output_tokens 和基础生成参数映射到对应上游。发出前剥离 routerx 私有字段，并将非流式 usage.input_tokens/output_tokens/total_tokens、Claude usage.input_tokens/output_tokens、Gemini usageMetadata 或流式 response.completed.response.usage 映射到 RouterX 日志与扣费。完整 Responses 原生事件矩阵以 docs/PROTOCOLS.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:

@@ -15624,6 +15624,128 @@ func TestResponsesToClaudeUpstreamConvertsMessagesAndDeductsUsage(t *testing.T) 
 	}
 }
 
+func TestResponsesToGeminiUpstreamConvertsGenerateContentAndDeductsUsage(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamAPIKey := ""
+	upstreamBody := map[string]interface{}{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		upstreamAPIKey = req.URL.Query().Get("key")
+		raw := new(bytes.Buffer)
+		_, _ = raw.ReadFrom(req.Body)
+		if err := json.Unmarshal(raw.Bytes(), &upstreamBody); err != nil {
+			t.Errorf("Gemini upstream body should be JSON: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"gemini response"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":5,"totalTokenCount":9},"modelVersion":"gemini-responses"}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "responses-gemini",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeGemini,
+		"name":     "responses-gemini",
+		"models":   "gemini-responses",
+		"base_url": upstream.URL,
+		"api_key":  "gemini-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create Gemini channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/responses", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model":             "gemini-responses",
+		"instructions":      "Be concise.",
+		"input":             "hello responses",
+		"max_output_tokens": 128,
+		"temperature":       0.25,
+		"top_p":             0.9,
+	})
+	if resp.Code != http.StatusOK ||
+		!strings.Contains(resp.Body.String(), `"object":"response"`) ||
+		!strings.Contains(resp.Body.String(), `"type":"output_text"`) ||
+		!strings.Contains(resp.Body.String(), `"text":"gemini response"`) ||
+		!strings.Contains(resp.Body.String(), `"input_tokens":4`) ||
+		!strings.Contains(resp.Body.String(), `"output_tokens":5`) {
+		t.Fatalf("Responses to Gemini should return OpenAI Responses response, got %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamCalls != 1 || upstreamPath != "/v1beta/models/gemini-responses:generateContent" || upstreamAPIKey != "gemini-secret" {
+		t.Fatalf("Responses to Gemini should call generateContent once, calls=%d path=%q key=%q", upstreamCalls, upstreamPath, upstreamAPIKey)
+	}
+	for _, field := range []string{"input", "routerx", "max_output_tokens", "top_p"} {
+		if _, ok := upstreamBody[field]; ok {
+			t.Fatalf("OpenAI Responses field %s should not leak to Gemini upstream: %#v", field, upstreamBody)
+		}
+	}
+	if _, ok := upstreamBody["model"]; ok {
+		t.Fatalf("Gemini upstream should use path model instead of body model: %#v", upstreamBody)
+	}
+	contents, ok := upstreamBody["contents"].([]interface{})
+	if !ok || len(contents) != 1 || !strings.Contains(fmt.Sprint(contents[0]), "hello responses") {
+		t.Fatalf("Responses to Gemini should convert input string to Gemini contents: %#v", upstreamBody)
+	}
+	if !strings.Contains(fmt.Sprint(upstreamBody["systemInstruction"]), "Be concise.") {
+		t.Fatalf("Responses to Gemini should map instructions to systemInstruction: %#v", upstreamBody)
+	}
+	config, ok := upstreamBody["generationConfig"].(map[string]interface{})
+	if !ok || config["maxOutputTokens"] != float64(128) || config["temperature"] != 0.25 || config["topP"] != 0.9 {
+		t.Fatalf("Responses to Gemini should map generation config: %#v", upstreamBody)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 41 {
+		t.Fatalf("Responses to Gemini usage should deduct token budget by 9, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 91 {
+		t.Fatalf("Responses to Gemini usage should deduct user quota by 9, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 9 || callLog.TotalTokens != 9 || callLog.PromptTokens != 4 || callLog.CompletionTokens != 5 {
+		t.Fatalf("unexpected Responses to Gemini success log: %+v", callLog)
+	}
+}
+
 func TestResponsesStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
