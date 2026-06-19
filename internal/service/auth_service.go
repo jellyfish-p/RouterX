@@ -33,7 +33,7 @@ type RegisterResult struct {
 // Register 用户注册。
 // 1. 校验启用的账号身份唯一性
 // 2. bcrypt 哈希密码
-// 3. 创建用户记录和本地 UserIdentity，或恢复已注销的普通用户
+// 3. 创建用户记录和本地 UserIdentity，或恢复已注销的普通用户；密码只保存到 username/local 主身份
 // 4. 返回用户信息
 func (s *AuthService) Register(username, password, displayName, email string) (*RegisterResult, error) {
 	if err := registrationPolicyError(); err != nil {
@@ -113,12 +113,11 @@ func (s *AuthService) Register(username, password, displayName, email string) (*
 		}}
 		if email != "" {
 			identities = append(identities, model.UserIdentity{
-				UserID:       u.ID,
-				Method:       model.UserIdentityMethodEmail,
-				Provider:     model.UserIdentityProviderLocal,
-				Identifier:   email,
-				PasswordHash: hash,
-				VerifiedAt:   &now,
+				UserID:     u.ID,
+				Method:     model.UserIdentityMethodEmail,
+				Provider:   model.UserIdentityProviderLocal,
+				Identifier: email,
+				VerifiedAt: &now,
 			})
 		}
 		if err := tx.Create(&identities).Error; err != nil {
@@ -176,7 +175,12 @@ func recoverRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, 
 	}
 	now := time.Now()
 	if err := tx.Model(&model.UserIdentity{}).
-		Where("user_id = ? AND provider = ?", identity.UserID, model.UserIdentityProviderLocal).
+		Where(
+			"user_id = ? AND method = ? AND provider = ?",
+			identity.UserID,
+			model.UserIdentityMethodUsername,
+			model.UserIdentityProviderLocal,
+		).
 		Updates(map[string]interface{}{
 			"password_hash": hash,
 			"verified_at":   &now,

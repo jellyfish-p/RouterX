@@ -232,7 +232,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 用户注册
-      description: 当前基础实现为用户名密码注册；默认关闭公开注册。需要 auth.register.enabled=true、auth.register.username.enabled=true 且 auth.register.captcha.required=false 才接受当前无验证码请求。新账号注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id；同名 username/local identity 命中已注销普通用户时会恢复原 users.id、启用账号、更新本地密码身份和展示名，保留额度/分组/日志/历史流水，不自动启用旧 API Key，并写 user.recover 审计。
+      description: 当前基础实现为用户名密码注册；默认关闭公开注册。需要 auth.register.enabled=true、auth.register.username.enabled=true 且 auth.register.captcha.required=false 才接受当前无验证码请求。新账号注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id；请求提供 email 时会创建 email/local 登录标识，但密码哈希只保存到 username/local 主身份；同名 username/local identity 命中已注销普通用户时会恢复原 users.id、启用账号、更新本地密码身份和展示名，保留额度/分组/日志/历史流水，不自动启用旧 API Key，并写 user.recover 审计。
       requestBody:
         required: true
         content:

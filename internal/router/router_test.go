@@ -2064,6 +2064,7 @@ func TestUserRegisterRespectsRegistrationSettings(t *testing.T) {
 		"username":     "trial-user",
 		"password":     "password123",
 		"display_name": "Trial User",
+		"email":        "trial@example.com",
 	})
 	if openResp.Code != http.StatusOK {
 		t.Fatalf("enabled username registration should succeed, got %d %s", openResp.Code, openResp.Body.String())
@@ -2077,6 +2078,29 @@ func TestUserRegisterRespectsRegistrationSettings(t *testing.T) {
 	}
 	if registered.GroupID == nil || *registered.GroupID != trialGroup.ID {
 		t.Fatalf("registered user should receive trial group id %d, got %v", trialGroup.ID, registered.GroupID)
+	}
+	var emailIdentity model.UserIdentity
+	if err := internal.DB.Where(
+		"user_id = ? AND method = ? AND provider = ? AND identifier = ?",
+		registered.ID,
+		model.UserIdentityMethodEmail,
+		model.UserIdentityProviderLocal,
+		"trial@example.com",
+	).First(&emailIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
+	if emailIdentity.PasswordHash != "" {
+		t.Fatalf("email identity should not store duplicated password hash")
+	}
+	if err := settingSvc.Set("auth.login.email_password.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	emailLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "trial@example.com",
+		"password": "password123",
+	})
+	if emailLogin.Code != http.StatusOK {
+		t.Fatalf("email identity should reuse username password, got %d %s", emailLogin.Code, emailLogin.Body.String())
 	}
 }
 
@@ -2109,6 +2133,7 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 		"username":     "cancel-user",
 		"password":     "password123",
 		"display_name": "Cancel User",
+		"email":        "cancel@example.com",
 	}
 	registerResp := performJSON(r, http.MethodPost, "/v0/user/register", "", registerBody)
 	if registerResp.Code != http.StatusOK {
@@ -2199,6 +2224,16 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 	if identityCount != 1 {
 		t.Fatalf("self-cancel should preserve username identity, got count=%d", identityCount)
 	}
+	var cancelledEmailIdentity model.UserIdentity
+	if err := internal.DB.Where(
+		"user_id = ? AND method = ? AND provider = ? AND identifier = ?",
+		user.ID,
+		model.UserIdentityMethodEmail,
+		model.UserIdentityProviderLocal,
+		"cancel@example.com",
+	).First(&cancelledEmailIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
 	var auditCount int64
 	if err := internal.DB.Model(&model.AdminAuditLog{}).
 		Where("action = ? AND resource_type = ? AND resource_id = ?", "user.self_cancel", "user", fmt.Sprint(user.ID)).
@@ -2220,6 +2255,7 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 		"username":     "cancel-user",
 		"password":     "newpassword123",
 		"display_name": "Recovered User",
+		"email":        "cancel@example.com",
 	})
 	if recoverResp.Code != http.StatusOK {
 		t.Fatalf("preserved identity should recover cancelled account, got %d %s", recoverResp.Code, recoverResp.Body.String())
@@ -2248,6 +2284,12 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 	}
 	if storedToken.Status != common.TokenStatusDisabled {
 		t.Fatalf("recovery must not re-enable old API keys, got status=%d", storedToken.Status)
+	}
+	if err := internal.DB.First(&cancelledEmailIdentity, cancelledEmailIdentity.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if cancelledEmailIdentity.PasswordHash != "" {
+		t.Fatalf("recovery should not write duplicated password hash to email identity")
 	}
 	loginOldPasswordResp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
 		"account":  "cancel-user",
