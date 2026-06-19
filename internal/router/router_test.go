@@ -10577,6 +10577,66 @@ func TestAdminSettingUpdateWritesAuditLog(t *testing.T) {
 	}
 }
 
+func TestAdminSettingEncryptsOAuthOIDCClientSecrets(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	oauthSecret := "oauth-secret-value"
+	oidcSecret := "oidc-secret-value"
+	updateResp := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
+		"oauth.github.client_id":     "github-client",
+		"oauth.github.client_secret": oauthSecret,
+		"oidc.corp.client_id":        "corp-client",
+		"oidc.corp.client_secret":    oidcSecret,
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("setting update failed: %d %s", updateResp.Code, updateResp.Body.String())
+	}
+
+	for key, want := range map[string]string{
+		"oauth.github.client_secret": oauthSecret,
+		"oidc.corp.client_secret":    oidcSecret,
+	} {
+		var stored model.Setting
+		if err := internal.DB.Where("key = ?", key).First(&stored).Error; err != nil {
+			t.Fatal(err)
+		}
+		if stored.Value == want || !common.IsEncryptedSecret(stored.Value) {
+			t.Fatalf("%s should be stored encrypted, got %q", key, stored.Value)
+		}
+		got, err := service.NewSettingService().Get(key)
+		if err != nil || got != want {
+			t.Fatalf("%s should decrypt through SettingService, got %q err=%v", key, got, err)
+		}
+	}
+
+	listResp := performJSON(r, http.MethodGet, "/v0/admin/setting?category=oauth", rootJWT, nil)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("setting list failed: %d %s", listResp.Code, listResp.Body.String())
+	}
+	if strings.Contains(listResp.Body.String(), oauthSecret) || strings.Contains(listResp.Body.String(), oidcSecret) {
+		t.Fatalf("setting list leaked external provider secret: %s", listResp.Body.String())
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=setting", rootJWT, nil)
+	if auditResp.Code != http.StatusOK {
+		t.Fatalf("audit list failed: %d %s", auditResp.Code, auditResp.Body.String())
+	}
+	if strings.Contains(auditResp.Body.String(), oauthSecret) || strings.Contains(auditResp.Body.String(), oidcSecret) {
+		t.Fatalf("setting audit leaked external provider secret: %s", auditResp.Body.String())
+	}
+}
+
 func TestAdminSettingValidationFailureWritesDeniedAuditLog(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

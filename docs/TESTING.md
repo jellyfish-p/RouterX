@@ -119,6 +119,7 @@
 | `TestRecoveryUsesEntryProtocolErrorEnvelopeForV1Panics` | `/v1` panic 会按入口协议返回 Anthropic 或 Gemini 兼容 500，而不是固定 OpenAI 错误外形 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、request id header 名校验、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |
 | `TestAdminSettingUpdateWritesAuditLog` | 超级管理员批量更新 settings 后按 key 写 `setting.update` 审计，敏感 payment 配置值不完整泄露 |
+| `TestAdminSettingEncryptsOAuthOIDCClientSecrets` | 超级管理员写入 OAuth/OIDC `client_secret` 后数据库保存 `enc:v1:` 密文，设置服务读取会解密，管理响应和审计不泄露完整明文 |
 | `TestAdminSettingValidationFailureWritesDeniedAuditLog` | 超级管理员提交非法 settings 值时不落库，写 `setting.denied` 审计并脱敏敏感尝试值 |
 | `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |
 | `TestSettingCacheRefreshesStaleRedisValues` | settings 读取缓存、单项更新和批量更新后的 Redis 刷新边界 |

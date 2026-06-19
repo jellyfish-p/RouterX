@@ -66,7 +66,7 @@ RouterX 运行时
 | S9 | 失败调用误扣 | 本地请求错误、无通道、余额不足或上游未调用时仍计费。 | 预检拒绝发生在上游前；失败默认 `quota_used=0`；如启用失败成本需写 settings 和快照。 | `TestRelayPrecheckRejectsBeforeUpstream`、失败日志断言。 |
 | S10 | `/v1` 错误泄露内部细节 | 错误响应暴露 DSN、密钥、堆栈或原始上游敏感响应。 | 错误映射为入口协议兼容格式；内部错误只保存脱敏摘要。 | `TestChatCompletionUpstreamErrorMapping`、敏感词扫描。 |
 | S11 | 请求/响应体日志泄露 | prompt、响应、Authorization、Cookie 或密钥被完整记录。 | body 日志默认关闭；开启后截断和脱敏；敏感 header 不记录。 | `TestChatCompletionSuccessLogsAndDeductsQuota`、`TestRelayBodyLoggingRedactsAndTruncatesWhenEnabled`。 |
-| S12 | settings 被错误修改 | 配置类型错误、敏感值明文返回、关键配置误改后无审计。 | settings 注册表校验类型和敏感级别；变更先校验再写 DB；写审计摘要。 | `TestSettingsValidationAndReadiness`、配置修改审计测试。 |
+| S12 | settings 被错误修改 | 配置类型错误、敏感值明文返回、关键配置误改后无审计。 | settings 注册表校验类型和敏感级别；外部登录 client secret 加密存储；变更先校验再写 DB；写审计摘要。 | `TestSettingsValidationAndReadiness`、`TestAdminSettingEncryptsOAuthOIDCClientSecrets`、配置修改审计测试。 |
 | S13 | 支付伪造入账 | 客户端提交额度、伪造 webhook、金额不一致或重复通知。 | 服务端商品决定额度；校验签名、金额、货币、订单状态；幂等写事件。 | 支付签名和幂等测试、重复通知只入账一次。 |
 | S14 | OAuth/OIDC 账号接管 | 第三方 provider 返回相同 email 时自动绑定已有账号。 | 不因 email 自动接管；以 provider 稳定身份标识做 identity；绑定需已登录或明确恢复流程。 | 企业身份绑定和恢复测试。 |
 | S15 | 上游不可用扩大故障 | 401/403 被无限重试，或流式输出后切换通道造成协议混乱。 | 401/403 归因通道配置不重试；流式写出后不跨通道重试；熔断和错误计数可解释。 | 上游错误映射、重试和熔断测试。 |
@@ -85,7 +85,7 @@ RouterX 运行时
 
 - API Key 明文只在创建时返回一次。
 - API Key 数据库长期保存 SHA256 哈希，兼容早期明文存量时验证成功后迁移为哈希。
-- 上游密钥、OAuth/OIDC client secret 和支付敏感密钥使用 `ENCRYPTION_KEY`、KMS 或环境变量注入。
+- 上游密钥、OAuth/OIDC client secret 和支付敏感密钥使用 `ENCRYPTION_KEY`、KMS 或环境变量注入；当前 settings 中的 `oauth.*.client_secret` 和 `oidc.*.client_secret` 会在配置 `ENCRYPTION_KEY` 时加密落库。
 - 管理响应只返回脱敏摘要，不返回可直接调用的上游密钥。
 - 日志和错误响应不能包含 API Key、上游密钥、Cookie、数据库 DSN、支付密钥和内部堆栈。
 

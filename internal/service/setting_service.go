@@ -32,7 +32,7 @@ func (s *SettingService) Get(key string) (string, error) {
 		defer cancel()
 		v, err := internal.RDB.HGet(ctx, "settings", key).Result()
 		if err == nil {
-			return v, nil
+			return settingValueForUse(key, v)
 		}
 		if err != redis.Nil {
 			// Redis 是可降级依赖，继续回落 DB。
@@ -48,7 +48,7 @@ func (s *SettingService) Get(key string) (string, error) {
 		defer cancel()
 		_ = internal.RDB.HSet(ctx, "settings", key, setting.Value).Err()
 	}
-	return setting.Value, nil
+	return settingValueForUse(key, setting.Value)
 }
 
 // GetInt 读取整数配置。
@@ -124,17 +124,21 @@ func (s *SettingService) Set(key, value string) error {
 	if err := validateSettingValue(key, value); err != nil {
 		return err
 	}
-	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+	storedValue, err := settingValueForStorage(key, value)
+	if err != nil {
+		return err
+	}
+	err = internal.DB.Transaction(func(tx *gorm.DB) error {
 		var setting model.Setting
 		err := tx.Where("key = ?", key).First(&setting).Error
 		switch {
 		case errors.Is(err, gorm.ErrRecordNotFound):
-			return tx.Create(&model.Setting{Key: key, Value: value, Category: categoryFromKey(key)}).Error
+			return tx.Create(&model.Setting{Key: key, Value: storedValue, Category: categoryFromKey(key)}).Error
 		case err != nil:
 			return err
 		default:
 			return tx.Model(&setting).Updates(map[string]interface{}{
-				"value":    value,
+				"value":    storedValue,
 				"category": categoryFromKey(key),
 			}).Error
 		}
@@ -145,7 +149,7 @@ func (s *SettingService) Set(key, value string) error {
 	if internal.RDB != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
-		_ = internal.RDB.HSet(ctx, "settings", key, value).Err()
+		_ = internal.RDB.HSet(ctx, "settings", key, storedValue).Err()
 	}
 	applyRuntimeSetting(key, value)
 	return nil
@@ -154,6 +158,7 @@ func (s *SettingService) Set(key, value string) error {
 // BatchSet 批量更新配置项。
 func (s *SettingService) BatchSet(settings map[string]string) error {
 	normalized := make(map[string]string, len(settings))
+	storedValues := make(map[string]string, len(settings))
 	for key, value := range settings {
 		key = strings.TrimSpace(key)
 		if key == "" {
@@ -162,14 +167,20 @@ func (s *SettingService) BatchSet(settings map[string]string) error {
 		if err := validateSettingValue(key, value); err != nil {
 			return err
 		}
+		storedValue, err := settingValueForStorage(key, value)
+		if err != nil {
+			return err
+		}
 		normalized[key] = value
+		storedValues[key] = storedValue
 	}
 	err := internal.DB.Transaction(func(tx *gorm.DB) error {
-		for key, value := range normalized {
+		for key := range normalized {
+			storedValue := storedValues[key]
 			var setting model.Setting
 			err := tx.Where("key = ?", key).First(&setting).Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				if err := tx.Create(&model.Setting{Key: key, Value: value, Category: categoryFromKey(key)}).Error; err != nil {
+				if err := tx.Create(&model.Setting{Key: key, Value: storedValue, Category: categoryFromKey(key)}).Error; err != nil {
 					return err
 				}
 				continue
@@ -178,7 +189,7 @@ func (s *SettingService) BatchSet(settings map[string]string) error {
 				return err
 			}
 			if err := tx.Model(&setting).Updates(map[string]interface{}{
-				"value":    value,
+				"value":    storedValue,
 				"category": categoryFromKey(key),
 			}).Error; err != nil {
 				return err
@@ -187,7 +198,7 @@ func (s *SettingService) BatchSet(settings map[string]string) error {
 		if internal.RDB != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			for key, value := range normalized {
+			for key, value := range storedValues {
 				_ = internal.RDB.HSet(ctx, "settings", key, value).Err()
 			}
 		}
@@ -211,7 +222,11 @@ func (s *SettingService) LoadCache() error {
 	values := make(map[string]interface{}, len(settings))
 	for _, setting := range settings {
 		values[setting.Key] = setting.Value
-		applyRuntimeSetting(setting.Key, setting.Value)
+		value, err := settingValueForUse(setting.Key, setting.Value)
+		if err != nil {
+			return err
+		}
+		applyRuntimeSetting(setting.Key, value)
 	}
 	if internal.RDB == nil || len(values) == 0 {
 		return nil
@@ -225,6 +240,28 @@ func (s *SettingService) LoadCache() error {
 // readiness checks can detect config drift caused by direct database edits.
 func ValidateSettingValue(key, value string) error {
 	return validateSettingValue(key, value)
+}
+
+// OAuth/OIDC provider secrets live in settings but need the same at-rest
+// protection as upstream channel secrets.
+func encryptedSettingKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	return (strings.HasPrefix(key, "oauth.") && strings.HasSuffix(key, ".client_secret")) ||
+		(strings.HasPrefix(key, "oidc.") && strings.HasSuffix(key, ".client_secret"))
+}
+
+func settingValueForStorage(key, value string) (string, error) {
+	if !encryptedSettingKey(key) {
+		return value, nil
+	}
+	return common.EncryptSecret(value)
+}
+
+func settingValueForUse(key, value string) (string, error) {
+	if !encryptedSettingKey(key) {
+		return value, nil
+	}
+	return common.DecryptSecret(value)
 }
 
 func validateSettingValue(key, value string) error {

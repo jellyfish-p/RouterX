@@ -3098,7 +3098,7 @@ paths:
     get:
       tags: [Admin Logs]
       summary: 获取系统设置
-      description: 仅超级管理员；敏感值会脱敏。
+      description: 仅超级管理员；敏感值会脱敏，OAuth/OIDC client_secret 不返回明文。
       security:
         - UserJWT: []
       parameters:
@@ -3125,7 +3125,7 @@ paths:
     put:
       tags: [Admin Logs]
       summary: 批量更新系统设置
-      description: 仅超级管理员；成功后按 key 写入 setting.create 或 setting.update 管理审计，校验失败或高风险配置被拒绝时按 key 写入 setting.denied，敏感值只保存脱敏摘要。
+      description: 仅超级管理员；成功后按 key 写入 setting.create 或 setting.update 管理审计，校验失败或高风险配置被拒绝时按 key 写入 setting.denied，敏感值只保存脱敏摘要。`oauth.*.client_secret` 和 `oidc.*.client_secret` 在配置 ENCRYPTION_KEY 时加密落库，业务读取时透明解密。
       security:
         - UserJWT: []
       requestBody:
@@ -6630,7 +6630,9 @@ components:
       properties:
         id: { type: integer, format: uint64 }
         key: { type: string }
-        value: { type: string }
+        value:
+          type: string
+          description: 配置值；敏感 key 在管理响应中为脱敏摘要，OAuth/OIDC client_secret 在存储层使用 enc:v1 密文。
         type: { type: string }
         category: { type: string }
         description: { type: string }
