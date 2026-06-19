@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -882,6 +883,96 @@ func TestTraceabilityP2AdvancedAPIEvidenceIncludesConcreteEndpointTests(t *testi
 	sort.Strings(issues)
 	if len(issues) > 0 {
 		t.Fatalf("P2-C5 advanced API traceability evidence needs concrete endpoint tests:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
+func TestTraceabilityP2AdvancedAPIKeyEvidenceIncludesConcreteManagementTests(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TRACEABILITY.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var evidence string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "| P2-C6 ") {
+			continue
+		}
+		cells := strings.Split(line, "|")
+		if len(cells) < 7 {
+			t.Fatalf("malformed P2-C6 traceability row: %s", line)
+		}
+		evidence = strings.TrimSpace(cells[len(cells)-2])
+		break
+	}
+	if evidence == "" {
+		t.Fatal("missing P2-C6 traceability row")
+	}
+
+	issues := make([]string, 0)
+	testRoot := ".."
+	if info, statErr := os.Stat("internal"); statErr == nil && info.IsDir() {
+		testRoot = "internal"
+	}
+	var testCorpus strings.Builder
+	// P2-C6 is backed by both router endpoint tests and service-level auth cache tests.
+	if err := filepath.WalkDir(testRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		testCorpus.Write(raw)
+		testCorpus.WriteByte('\n')
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for rest := evidence; ; {
+		start := strings.Index(rest, "`Test")
+		if start < 0 {
+			break
+		}
+		rest = rest[start+1:]
+		end := strings.Index(rest, "`")
+		if end < 0 {
+			break
+		}
+		testName := rest[:end]
+		if !strings.Contains(testCorpus.String(), testName+"(") {
+			issues = append(issues, "unknown test reference "+testName)
+		}
+		rest = rest[end+1:]
+	}
+
+	requiredTests := []string{
+		"TestUserAPIKeyAdvancedManagement",
+		"TestAPIKeyMetadataFiltersAndSanitizedExport",
+		"TestAPIKeyServiceAccountPrincipalFiltersAndExport",
+		"TestAdminAPIKeyQueryAndBatchDisable",
+		"TestAdminAPIKeyBatchExpire",
+		"TestAdminAPIKeyRiskViewSummarizesRiskyKeys",
+		"TestAPIKeyLeakWindowSummarizesRecentUse",
+		"TestAPIKeyEventWindowSummarizesErrorsAndRateLimits",
+		"TestAPIKeyLeakReportCreatesAdminAlert",
+		"TestAPIKeyLeakAlertWebhookDeliveryReplay",
+		"TestAPIKeyLeakAlertEmailAndIMDeliveryReplay",
+		"TestMetricsEndpointIncludesAPIKeyLifecycleAndRiskSignals",
+	}
+	for _, testName := range requiredTests {
+		if !strings.Contains(evidence, testName) {
+			issues = append(issues, "missing "+testName)
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("P2-C6 advanced API key traceability evidence needs concrete management tests:\n%s", strings.Join(issues, "\n"))
 	}
 }
 
