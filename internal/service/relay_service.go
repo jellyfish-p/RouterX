@@ -2101,6 +2101,10 @@ func anthropicMessagesToOpenAI(body []byte) ([]byte, error) {
 }
 
 func geminiGenerateToOpenAI(modelName string, body []byte, stream bool) ([]byte, error) {
+	var rawPayload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &rawPayload); err != nil {
+		return nil, errInvalidJSONBody
+	}
 	var input struct {
 		Contents []struct {
 			Role  string            `json:"role"`
@@ -2162,7 +2166,48 @@ func geminiGenerateToOpenAI(modelName string, body []byte, stream bool) ([]byte,
 			output["stop"] = value
 		}
 	}
+	if native := geminiNativeProviderBody(rawPayload); len(native) > 0 {
+		// 保留 Gemini 原生请求字段，只有最终选中 Gemini 通道时才会合并到上游 body。
+		output["routerx"] = map[string]interface{}{
+			"provider": map[string]interface{}{
+				"gemini": native,
+			},
+		}
+	}
 	return json.Marshal(output)
+}
+
+func geminiNativeProviderBody(payload map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(payload) == 0 {
+		return nil
+	}
+	fields := []string{
+		"contents",
+		"systemInstruction",
+		"generationConfig",
+		"safetySettings",
+		"tools",
+		"toolConfig",
+		"cachedContent",
+	}
+	native := make(map[string]json.RawMessage, len(fields))
+	for _, field := range fields {
+		raw, ok := payload[field]
+		if !ok || !rawJSONFieldPresent(raw) {
+			continue
+		}
+		native[field] = append(json.RawMessage(nil), raw...)
+	}
+	if len(native) == 0 {
+		return nil
+	}
+	native["_routerx_source_protocol"] = json.RawMessage(`"gemini"`)
+	return native
+}
+
+func rawJSONFieldPresent(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.EqualFold(trimmed, []byte("null"))
 }
 
 func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {

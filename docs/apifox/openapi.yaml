@@ -3150,9 +3150,9 @@ paths:
       summary: Gemini generateContent
       description: |
         Gin 当前注册为 /v1/models/:model，可匹配 gemini-pro:generateContent 这一类单段路径。
-        当前实现会转换到 OpenAI-compatible Chat 主链路，再返回 Gemini-compatible response。
-        contents/systemInstruction 中的 text part 保留；非文本 parts 会以 compact JSON 文本降级。
-        generationConfig.maxOutputTokens、temperature、topP、stopSequences 会映射到 OpenAI-compatible 字段；其他有值子字段会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。
+        命中 OpenAI-compatible 上游时会转换到 Chat 主链路，再返回 Gemini-compatible response；contents/systemInstruction 中的 text part 保留，非文本 parts 会以 compact JSON 文本降级。
+        OpenAI-compatible 上游路径中，generationConfig.maxOutputTokens、temperature、topP、stopSequences 会映射到 OpenAI-compatible 字段；其他有值子字段会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。
+        命中 Gemini 上游时，会以原生 Gemini body 保留 contents、systemInstruction、generationConfig、safetySettings、tools、toolConfig 和 cachedContent，不发送 OpenAI messages/max_tokens。
         API Key、配额、本地限流、路由和基础下游错误均返回 Gemini-compatible error envelope；本地限流 status 为 RESOURCE_EXHAUSTED。
       security:
         - ApiKeyBearer: []
@@ -3166,7 +3166,7 @@ paths:
           schema: { type: string }
           description: Gemini 模型名，例如 gemini-pro。
       requestBody:
-        $ref: "#/components/requestBodies/GenericJSON"
+        $ref: "#/components/requestBodies/GeminiGenerateContentJSON"
       responses:
         "200":
           description: Gemini-compatible response.
@@ -3477,6 +3477,101 @@ components:
                 items:
                   type: object
                   additionalProperties: true
+    GeminiGenerateContentJSON:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [contents]
+            description: Gemini-compatible generateContent 请求；命中 Gemini 上游时保留列出的原生字段，命中 OpenAI-compatible 上游时按 Chat 形态转换并记录不可映射字段降级。
+            properties:
+              contents:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  required: [parts]
+                  properties:
+                    role:
+                      type: string
+                      enum: [user, model]
+                    parts:
+                      type: array
+                      minItems: 1
+                      items:
+                        type: object
+                        additionalProperties: true
+                        properties:
+                          text:
+                            type: string
+                      example:
+                        - text: hello
+                example:
+                  - role: user
+                    parts:
+                      - text: hello
+              systemInstruction:
+                type: object
+                properties:
+                  parts:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      properties:
+                        text:
+                          type: string
+                description: 命中 Gemini 上游时按原生字段保留；命中 OpenAI-compatible 上游时 text part 会合并为 system message。
+              generationConfig:
+                type: object
+                additionalProperties: true
+                description: 命中 Gemini 上游时完整保留；命中 OpenAI-compatible 上游时仅 maxOutputTokens、temperature、topP、stopSequences 显式映射，其余有值子字段记录 dropped 降级摘要。
+                properties:
+                  maxOutputTokens:
+                    type: integer
+                    minimum: 1
+                  temperature:
+                    type: number
+                    format: double
+                  topP:
+                    type: number
+                    format: double
+                  stopSequences:
+                    type: array
+                    items: { type: string }
+                  responseMimeType:
+                    type: string
+                    example: application/json
+                  responseSchema:
+                    type: object
+                    additionalProperties: true
+              safetySettings:
+                type: array
+                description: Gemini 原生安全设置；命中 Gemini 上游时透传。
+                items:
+                  type: object
+                  additionalProperties: true
+                  properties:
+                    category:
+                      type: string
+                      example: HARM_CATEGORY_DANGEROUS_CONTENT
+                    threshold:
+                      type: string
+                      example: BLOCK_ONLY_HIGH
+              tools:
+                type: array
+                description: Gemini 原生 tools/functionDeclarations；命中 Gemini 上游时透传，命中 OpenAI-compatible 上游时当前不映射并记录降级。
+                items:
+                  type: object
+                  additionalProperties: true
+              toolConfig:
+                type: object
+                additionalProperties: true
+                description: Gemini 原生 toolConfig；命中 Gemini 上游时透传。
+              cachedContent:
+                type: string
+                description: Gemini 原生 cachedContent 引用；命中 Gemini 上游时透传。
     GeminiEmbedContentJSON:
       required: true
       content:
@@ -5687,7 +5782,7 @@ components:
         user: { type: string }
         routerx:
           type: object
-          description: RouterX 私有扩展字段；普通 OpenAI-compatible 上游不会透传。命中 Gemini 上游时，可通过 provider.gemini.safetySettings 传递 Gemini 原生安全设置。
+          description: RouterX 私有扩展字段；普通 OpenAI-compatible 上游不会透传。OpenAI-compatible Chat 命中 Gemini 上游时，可通过 provider.gemini.safetySettings 传递 Gemini 原生安全设置。
           properties:
             route:
               $ref: "#/components/schemas/RouterXRoutePreference"
@@ -5741,7 +5836,7 @@ components:
       additionalProperties: true
     RouterXProviderOptions:
       type: object
-      description: provider 专属 JSON body 补充参数；仅在最终选中的上游 provider 匹配时合并，provider 专属补充值优先于通用 upstream.body，但仍不覆盖原请求已有字段、model、routerx 或 stream。OpenAI-compatible Chat 命中 Gemini 上游时，gemini.safetySettings 会映射到 Gemini 原生 safetySettings。
+      description: provider 专属 JSON body 补充参数；仅在最终选中的上游 provider 匹配时合并，provider 专属补充值优先于通用 upstream.body，但仍不覆盖原请求已有字段、model、routerx 或 stream。OpenAI-compatible Chat 命中 Gemini 上游时，gemini.safetySettings 会映射到 Gemini 原生 safetySettings；Gemini generateContent 原生入口命中 Gemini 上游时也会只向 Gemini 上游保留原生生成字段。
       properties:
         openai:
           $ref: "#/components/schemas/RouterXProviderBody"
@@ -5750,7 +5845,7 @@ components:
         gemini:
           allOf:
             - $ref: "#/components/schemas/RouterXProviderBody"
-          description: Gemini 上游专属补充；OpenAI-compatible Chat 会把 safetySettings 映射为 Gemini 原生 safetySettings。
+          description: Gemini 上游专属补充；OpenAI-compatible Chat 会把 safetySettings 映射为 Gemini 原生 safetySettings。Gemini generateContent 原生入口命中 Gemini 上游时会保留 contents、systemInstruction、generationConfig、safetySettings、tools、toolConfig 和 cachedContent。
           example:
             safetySettings:
               - category: HARM_CATEGORY_DANGEROUS_CONTENT

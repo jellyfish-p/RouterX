@@ -172,7 +172,7 @@ Gemini-compatible 错误示例：
 - 下游非流式响应超过 `relay.max_response_body_bytes` 时返回 502 `upstream_response_too_large`，不反射完整下游响应体且不扣费。
 - OpenAI-compatible Images/Audio multipart 单个文件字段超过 `relay.max_multipart_file_bytes` 时返回 413 `request_file_too_large`，不调用上游且不扣费。
 - OpenAI-compatible Images/Audio multipart 文件名或内容命中危险文件基础扫描时返回 400 `unsafe_multipart_file`，不调用上游且不扣费。
-- `/v1` API Key 鉴权、用户禁用、配额预检查、本地解析错误、未知 `/v1` 路径、`/v1/models/{model}` 的 `model_not_found` 和基础下游错误会按入口协议返回 OpenAI-compatible、Anthropic 或 Gemini 错误外形；本地解析错误语义统一使用 `invalid_json`、`model_required` 等稳定 code，未知 `/v1` 路径在通过 API Key 鉴权后返回 OpenAI-compatible 404 `unsupported_api`。Anthropic/Gemini 基础非流式成功、Anthropic Messages Stream、Gemini streamGenerateContent 基础 SSE、字段降级和基础下游错误外形已有测试，更深层的原生字段保真和 SDK 行为继续按 P1 测试矩阵收敛。
+- `/v1` API Key 鉴权、用户禁用、配额预检查、本地解析错误、未知 `/v1` 路径、`/v1/models/{model}` 的 `model_not_found` 和基础下游错误会按入口协议返回 OpenAI-compatible、Anthropic 或 Gemini 错误外形；本地解析错误语义统一使用 `invalid_json`、`model_required` 等稳定 code，未知 `/v1` 路径在通过 API Key 鉴权后返回 OpenAI-compatible 404 `unsupported_api`。Anthropic/Gemini 基础非流式成功、Gemini generateContent 命中 Gemini 上游的非流式原生字段保真、Anthropic Messages Stream、Gemini streamGenerateContent 基础 SSE、字段降级和基础下游错误外形已有测试，更深层的原生流式字段保真和 SDK 行为继续按 P1 测试矩阵收敛。
 
 ## 公共接口
 
@@ -976,7 +976,7 @@ P0 明确失败：
 |------|------|------|
 | GET | `/v1/models` | 基础实现，模型列表 |
 | GET | `/v1/models/{model}` | 基础实现，模型详情；支持协议选择器返回 Gemini 或 Anthropic 外形 |
-| POST | `/v1/models/{model}:generateContent` | 基础实现，内容生成；当前转 OpenAI-compatible Chat，非文本 parts 降级为 compact JSON 文本；`generationConfig.maxOutputTokens/temperature/topP/stopSequences` 会映射，其他有值子字段会进入 `request_snapshot.adapter_degradations` |
+| POST | `/v1/models/{model}:generateContent` | 基础实现，内容生成；命中 OpenAI-compatible 上游时转 OpenAI Chat，非文本 parts 降级为 compact JSON 文本，`generationConfig.maxOutputTokens/temperature/topP/stopSequences` 会映射，其他有值子字段会进入 `request_snapshot.adapter_degradations`；命中 Gemini 上游时会以原生 Gemini body 发送 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent` |
 | POST | `/v1/models/{model}:streamGenerateContent` | 基础实现，流式内容生成；当前将 Gemini 请求转 OpenAI-compatible Chat SSE，再输出 Gemini SSE 事件 |
 | POST | `/v1/models/{model}:countTokens` | 基础实现，本地近似 Token 计数；优先统计 `contents[].parts[]`、`systemInstruction.parts[]` 或 `generateContentRequest` 内的文本内容，`generateContentRequest` 存在时忽略顶层 `contents` |
 | POST | `/v1/models/{model}:embedContent` | 基础实现，Gemini embedContent 当前转 OpenAI-compatible Embeddings 上游并返回 Gemini embedding 外形；`outputDimensionality` 会映射为 OpenAI `dimensions`，`taskType/title` 暂不转发但会进入 `request_snapshot.adapter_degradations` |
@@ -1027,7 +1027,7 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 - `routerx.upstream` 用于安全补充上游 header、query 和 JSON body 参数；当前实现会把允许的 header/query 加到真实上游请求，并把 `routerx.upstream.body` 中不存在于原请求的字段合并进 JSON 请求体。
 - 敏感鉴权 header/query 必须来自通道配置，不能由用户请求覆盖；已有请求字段、`model`、`routerx` 和 `stream` 不会被 `routerx.upstream.body` 改写。
 - `routerx.provider.<provider>` 仅在选中对应上游 provider 时生效；当前基础实现会把匹配 provider 下的 JSON 字段作为 body 缺省补充，优先级高于通用 `routerx.upstream.body`，但仍不能覆盖调用方原请求字段、`model`、`routerx` 或 `stream`。
-- OpenAI-compatible Chat 命中 Gemini 上游时，`routerx.provider.gemini.safetySettings` 会映射到 Gemini 原生 `safetySettings`；其他未显式支持的 Gemini provider 字段不会透传到真实厂商请求。
+- OpenAI-compatible Chat 命中 Gemini 上游时，`routerx.provider.gemini.safetySettings` 会映射到 Gemini 原生 `safetySettings`；其他未显式支持的 Gemini provider 字段不会透传到真实厂商请求。Gemini `generateContent` 原生入口命中 Gemini 上游时，会保留 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent` 到真实上游请求体。
 - multipart 或非 JSON 请求当前可通过 `routerx` 表单字段或 `X-RouterX-Options` header 传递 JSON 字符串；body/form 中的 `routerx` 优先于 header，multipart 当前只应用路由偏好和安全 header/query 补充，不重写文件表单 body。
 - 对 `GET /v1/models` 这类无 JSON body 的冲突路径，当前按 `format`、`routerx_protocol`、`X-RouterX-Protocol`、`anthropic-version`、OpenAI 默认值的顺序选择返回外形；`format` 继续保持最高优先级以兼容已有调用方。
 

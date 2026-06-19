@@ -9857,6 +9857,136 @@ func TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings(t *testing.T)
 	}
 }
 
+func TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamAPIKey := ""
+	var upstreamBody map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		upstreamAPIKey = req.URL.Query().Get("key")
+		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
+			t.Errorf("Gemini upstream received invalid json: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"native ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5},"modelVersion":"gemini-native"}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "gemini-native",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeGemini,
+		"name":     "gemini-native",
+		"models":   "gemini-native",
+		"base_url": upstream.URL,
+		"api_key":  "gemini-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create Gemini channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	geminiResp := performJSON(r, http.MethodPost, "/v1/models/gemini-native:generateContent", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{
+				"role": "user",
+				"parts": []map[string]string{
+					{"text": "hello"},
+				},
+			},
+		},
+		"systemInstruction": map[string]interface{}{
+			"parts": []map[string]string{{"text": "be native"}},
+		},
+		"generationConfig": map[string]interface{}{
+			"maxOutputTokens":  9,
+			"temperature":      0.2,
+			"responseMimeType": "application/json",
+		},
+		"safetySettings": []map[string]string{
+			{
+				"category":  "HARM_CATEGORY_DANGEROUS_CONTENT",
+				"threshold": "BLOCK_ONLY_HIGH",
+			},
+		},
+		"tools": []map[string]interface{}{
+			{
+				"functionDeclarations": []map[string]interface{}{
+					{"name": "lookup", "description": "Lookup facts"},
+				},
+			},
+		},
+		"cachedContent": "cachedContents/demo",
+	})
+	if geminiResp.Code != http.StatusOK || !strings.Contains(geminiResp.Body.String(), `"candidates"`) || !strings.Contains(geminiResp.Body.String(), `"text":"native ok"`) || !strings.Contains(geminiResp.Body.String(), `"totalTokenCount":5`) {
+		t.Fatalf("Gemini native entry should return Gemini response shape, got %d %s", geminiResp.Code, geminiResp.Body.String())
+	}
+	if upstreamCalls != 1 || upstreamPath != "/v1beta/models/gemini-native:generateContent" || upstreamAPIKey != "gemini-secret" {
+		t.Fatalf("Gemini upstream should be called once with native endpoint and key, calls=%d path=%q key=%q", upstreamCalls, upstreamPath, upstreamAPIKey)
+	}
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx private field leaked to Gemini upstream: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["_routerx_source_protocol"]; ok {
+		t.Fatalf("RouterX source marker leaked to Gemini upstream: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["messages"]; ok {
+		t.Fatalf("OpenAI messages should not be sent to Gemini native upstream: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["max_tokens"]; ok {
+		t.Fatalf("OpenAI max_tokens should not be sent to Gemini native upstream: %#v", upstreamBody)
+	}
+	config, ok := upstreamBody["generationConfig"].(map[string]interface{})
+	if !ok || config["maxOutputTokens"] != float64(9) || config["temperature"] != float64(0.2) || config["responseMimeType"] != "application/json" {
+		t.Fatalf("Gemini generationConfig should be preserved natively: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["contents"].([]interface{}); !ok {
+		t.Fatalf("Gemini contents should be preserved natively: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["systemInstruction"].(map[string]interface{}); !ok {
+		t.Fatalf("Gemini systemInstruction should be preserved natively: %#v", upstreamBody)
+	}
+	settings, ok := upstreamBody["safetySettings"].([]interface{})
+	if !ok || len(settings) != 1 {
+		t.Fatalf("Gemini safetySettings should be preserved natively: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["tools"].([]interface{}); !ok {
+		t.Fatalf("Gemini tools should be preserved natively: %#v", upstreamBody)
+	}
+	if upstreamBody["cachedContent"] != "cachedContents/demo" {
+		t.Fatalf("Gemini cachedContent should be preserved natively: %#v", upstreamBody)
+	}
+}
+
 func TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

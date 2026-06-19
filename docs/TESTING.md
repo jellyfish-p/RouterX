@@ -183,6 +183,7 @@
 | `TestRouterXUpstreamOptionsSupplementRequest` | `routerx.upstream` 安全补充上游 header/query/JSON body，敏感鉴权字段、`model`、`stream` 和原请求已存在字段不会被覆盖，`routerx` 私有字段不会泄露 |
 | `TestRouterXProviderOptionsApplyOnlyToSelectedProvider` | `routerx.provider.<provider>` 只在选中 provider 匹配时补充 JSON body 字段，provider 专属补充值优先于通用 upstream 补充值，非选中 provider 参数不泄露 |
 | `TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings` | OpenAI-compatible Chat 命中 Gemini 上游时，`routerx.provider.gemini.safetySettings` 显式映射为 Gemini 原生 `safetySettings`，OpenAI 生成参数映射到 `generationConfig`，未支持的 Gemini provider 字段和其他 provider 字段不泄露 |
+| `TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields` | Gemini `generateContent` 入口命中 Gemini 上游时，真实上游 body 保留 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent`，不泄露 `routerx`，也不发送 OpenAI `messages/max_tokens` |
 | `TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop` | RouterX-Compatible 上游保留 `routerx` 私有字段，转发递增后的 `X-RouterX-Hop`，并追加 `X-RouterX-Chain` 链路摘要 |
 | `TestRouterXCompatibleUpstreamRejectsHopLimit` | RouterX-Compatible 上游在 `X-RouterX-Hop` 达到默认上限时本地拒绝且不调用上游 |
 | `TestRouterXCompatibleUpstreamUsesConfiguredHopLimit` | `relay.routerx_max_hops` 可收紧 RouterX-Compatible 循环保护上限，达到配置值时本地拒绝、不调用上游且不扣费 |
@@ -528,7 +529,7 @@ Gemini-compatible 最小断言：
 | P0 | 开发者最小接入 | base URL + RouterX API Key、`/v1/models`、非流式 Chat、OpenAI Chat/Completions 基础 SSE、日志和扣费 |
 | P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 和 Legacy Completions 基础 chunk 转发、Anthropic Messages Stream/Gemini streamGenerateContent 到 OpenAI-compatible SSE、usage 扣费和客户端断开取消；继续补 Anthropic/Gemini 原生上游流式、usage fallback 和已输出后不切换通道的更多故障注入 |
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
-| P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Anthropic/Gemini 基础流式、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为、原生字段保真和 Anthropic/Gemini 原生流式路径 |
+| P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Gemini generateContent 到 Gemini 上游的非流式原生字段保真、Anthropic/Gemini 基础流式、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为和 Anthropic/Gemini 原生流式路径 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
 | P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝、Redis 全局/IP/Token/User/Model/Channel 限流拒绝和 `rate_limit_snapshot`、usage 缺失拒绝和扣费失败分支 policy/billing 事实，基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/规则版本/倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |

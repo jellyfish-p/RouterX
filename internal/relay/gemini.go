@@ -30,6 +30,9 @@ func (a *GeminiAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, er
 	if apiType != APIChatCompletions && apiType != APIGeminiGenerateContent && apiType != APIGeminiStreamGenerateContent {
 		return nil, errors.New("unsupported api type")
 	}
+	if native, ok := geminiNativeGenerateRequest(apiType, body); ok {
+		return json.Marshal(native)
+	}
 	var input openAIChatRequest
 	if err := json.Unmarshal(body, &input); err != nil {
 		return nil, err
@@ -91,6 +94,50 @@ func (a *GeminiAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, er
 		output.SafetySettings = append(json.RawMessage(nil), raw...)
 	}
 	return json.Marshal(output)
+}
+
+func geminiNativeGenerateRequest(apiType APIType, body []byte) (map[string]json.RawMessage, bool) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, false
+	}
+	if apiType == APIChatCompletions && !geminiNativeSourceProtocol(payload) {
+		return nil, false
+	}
+	if !geminiRawFieldPresent(payload["contents"]) {
+		return nil, false
+	}
+	fields := []string{
+		"contents",
+		"systemInstruction",
+		"generationConfig",
+		"safetySettings",
+		"tools",
+		"toolConfig",
+		"cachedContent",
+	}
+	output := make(map[string]json.RawMessage, len(fields))
+	for _, field := range fields {
+		raw, ok := payload[field]
+		if !ok || !geminiRawFieldPresent(raw) {
+			continue
+		}
+		output[field] = append(json.RawMessage(nil), raw...)
+	}
+	return output, true
+}
+
+func geminiNativeSourceProtocol(payload map[string]json.RawMessage) bool {
+	var source string
+	if err := json.Unmarshal(payload["_routerx_source_protocol"], &source); err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(source), "gemini")
+}
+
+func geminiRawFieldPresent(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.EqualFold(trimmed, []byte("null"))
 }
 
 func (a *GeminiAdapter) GetAPIEndpoint(apiType APIType, model string) string {
