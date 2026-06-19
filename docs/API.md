@@ -480,6 +480,7 @@ Provider 退款请求：
 | `payment_order.create` | `POST /v0/user/payment/orders` |
 | `payment_order.cancel` | `POST /v0/user/payment/orders/:order_no/cancel` |
 | `payment_webhook.processed` | `POST /v0/payment/stripe/webhook`、`POST /v0/payment/epay/notify` |
+| `payment_webhook.failed` | Stripe `checkout.session.async_payment_failed` 或易支付明确失败通知将 pending 订单置为 `failed` |
 | `payment_order.paid` | 支付 provider 成功回调入账 |
 | `payment_refund.requested` | `POST /v0/admin/payment/refund-requests` 向 Stripe 或易支付发起退款请求 |
 | `payment_refund.processed` | `POST /v0/payment/stripe/webhook` 处理全额或部分退款事件 |
@@ -759,7 +760,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、取消未支付订单、订单列表和详情；Stripe secret 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议生命周期记录和可选 API Key 禁用；易支付异步通知已支持 MD5 签名、金额校验、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回、人工退款落账以及 Stripe/易支付 provider 退款请求并写流水与审计。更多 provider 自动发起退款流程仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、取消未支付订单、订单列表和详情；Stripe secret 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、异步支付失败事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议生命周期记录和可选 API Key 禁用；易支付异步通知已支持 MD5 签名、金额校验、成功/明确失败状态处理、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回、人工退款落账以及 Stripe/易支付 provider 退款请求并写流水与审计。更多 provider 自动发起退款流程仍属于后续能力。
 
 用户鉴权接口：
 
@@ -775,8 +776,8 @@ Provider 回调接口：
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
-| POST | `/v0/payment/stripe/webhook` | Stripe 签名 | 基础实现；Stripe Checkout webhook，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，全额或部分退款时写 `payment_refund.*` 审计，争议 created/updated/closed/funds_* 事件会更新 `payment_disputes` 并写 `payment_dispute.*` 审计，created 可按 settings 禁用 API Key，返回纯文本 `success` |
-| POST | `/v0/payment/epay/notify` | 易支付签名 | 基础实现；易支付异步通知，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，返回纯文本 `success` |
+| POST | `/v0/payment/stripe/webhook` | Stripe 签名 | 基础实现；Stripe Checkout webhook，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，`checkout.session.async_payment_failed` 会将 pending 订单置为 `failed` 并写 `payment_webhook.failed`，全额或部分退款时写 `payment_refund.*` 审计，争议 created/updated/closed/funds_* 事件会更新 `payment_disputes` 并写 `payment_dispute.*` 审计，created 可按 settings 禁用 API Key，返回纯文本 `success` |
+| POST | `/v0/payment/epay/notify` | 易支付签名 | 基础实现；易支付异步通知，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，明确失败状态会将 pending 订单置为 `failed` 并写 `payment_webhook.failed`，返回纯文本 `success` |
 | GET | `/v0/payment/epay/return` | 无，仅读状态 | 基础实现；易支付同步返回页，只读取本地订单状态，不入账 |
 
 创建支付订单请求：
@@ -843,7 +844,7 @@ Provider 回调接口：
 |------|------|
 | `pending` | 已创建，等待支付 |
 | `paid` | 支付成功，额度已入账 |
-| `failed` | 支付失败或通知校验失败 |
+| `failed` | provider 明确支付失败；签名、金额或订单快照校验失败只拒绝入账，不直接改订单 |
 | `closed` | 超时关闭或用户取消 |
 | `refunded` | 已全额退款，是否扣回额度由退款策略决定 |
 | `partially_refunded` | 已部分退款，自动扣回开启时按退款金额比例扣回额度 |
@@ -860,10 +861,10 @@ Stripe Webhook 要求：
 易支付通知要求：
 
 - 校验易支付签名，排除 `sign`、`sign_type` 和空值字段后按网关规则生成签名。
-- 校验 `pid`、`out_trade_no`、`money` 和成功状态。
+- 校验 `pid`、`out_trade_no`、`money` 和状态；成功状态入账，明确失败状态只把 pending 订单置为 `failed`。
 - 入账只依赖异步通知；同步返回页只展示本地订单状态。
 - 通知处理成功后返回网关要求的纯文本，例如 `success`。
-- 当前实现从 `PAYMENT_EPAY_KEY` 读取签名密钥，金额匹配且订单为 `pending` 时才把订单置为 `paid`、写 `payment_events`、写 `quota_transactions` 并增加用户额度；重复通知不会重复入账。
+- 当前实现从 `PAYMENT_EPAY_KEY` 读取签名密钥，金额匹配且订单为 `pending` 时才把订单置为 `paid`、写 `payment_events`、写 `quota_transactions` 并增加用户额度；明确失败状态会把 pending 订单置为 `failed`，写 `payment_webhook.failed` 审计且不增加额度；重复通知不会重复入账。
 
 安全要求：
 

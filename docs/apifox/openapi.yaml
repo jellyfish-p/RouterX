@@ -9,7 +9,7 @@ info:
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态/危险扩展名或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
-    - 充值码、额度流水查询、API Key 生命周期审计、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、日志库健康、日志补写 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单与未支付订单取消、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、额度流水查询、API Key 生命周期审计、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、日志库健康、日志补写 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -843,7 +843,7 @@ paths:
     post:
       tags: [Payment Webhook]
       summary: Stripe Webhook 异步通知
-      description: 基础实现；使用 PAYMENT_STRIPE_WEBHOOK_SECRET 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计。charge.refunded 全额或部分退款事件会校验金额和币种，将 paid 订单置为 refunded 或 partially_refunded，写 payment_refund.processed；payment.refund.auto_deduct=true 且扣回成功时写 refund_deduct 流水和 payment_refund.deducted 审计，部分退款按退款金额比例扣回。charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated 争议生命周期事件会校验金额和币种，按 provider_dispute_id 更新 payment_disputes 当前事实，并写 payment_dispute.created、payment_dispute.updated、payment_dispute.closed 或 payment_dispute.funds_changed 审计；payment.dispute.auto_disable_tokens=true 时仅在 created 阶段禁用该用户已启用 API Key，revoked_reason=payment_dispute，且不直接修改额度或订单状态。重复事件幂等返回 success。
+      description: 基础实现；使用 PAYMENT_STRIPE_WEBHOOK_SECRET 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计。checkout.session.async_payment_failed 会在同样校验订单快照后将 pending 订单置为 failed，写 payment_webhook.failed 审计且不增加额度。charge.refunded 全额或部分退款事件会校验金额和币种，将 paid 订单置为 refunded 或 partially_refunded，写 payment_refund.processed；payment.refund.auto_deduct=true 且扣回成功时写 refund_deduct 流水和 payment_refund.deducted 审计，部分退款按退款金额比例扣回。charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated 争议生命周期事件会校验金额和币种，按 provider_dispute_id 更新 payment_disputes 当前事实，并写 payment_dispute.created、payment_dispute.updated、payment_dispute.closed 或 payment_dispute.funds_changed 审计；payment.dispute.auto_disable_tokens=true 时仅在 created 阶段禁用该用户已启用 API Key，revoked_reason=payment_dispute，且不直接修改额度或订单状态。重复事件幂等返回 success。
       parameters:
         - name: Stripe-Signature
           in: header
@@ -875,7 +875,7 @@ paths:
     post:
       tags: [Payment Webhook]
       summary: 易支付异步通知
-      description: 基础实现；使用 PAYMENT_EPAY_KEY 校验 MD5 签名，校验 out_trade_no、money 和成功状态。成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计；重复通知幂等返回 success。
+      description: 基础实现；使用 PAYMENT_EPAY_KEY 校验 MD5 签名，校验 out_trade_no、money 和状态。成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计；明确失败状态会将 pending 订单置为 failed，写 payment_webhook.failed 审计且不增加额度；重复通知幂等返回 success。
       requestBody:
         required: true
         content:
@@ -1411,7 +1411,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖成功登录，API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、自助注销、基础恢复、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖成功登录，API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、自助注销、基础恢复、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、provider 明确失败通知、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
       security:
         - UserJWT: []
       parameters:
@@ -1421,7 +1421,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 api_key.created、api_key.batch_disable_denied、api_key.batch_expire_denied、api_key.quota_limit_denied、user.create、user_group.create、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_webhook.processed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.batch_disable_denied、api_key.batch_expire_denied、api_key.quota_limit_denied、user.create、user_group.create、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_webhook.processed、payment_webhook.failed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
         - name: resource_type
           in: query
           required: false

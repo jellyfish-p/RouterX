@@ -4164,6 +4164,82 @@ func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 	}
 }
 
+func TestEpayFailedNotifyMarksOrderFailedAndAudits(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_EPAY_KEY", "epay-test-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_failed_epay",
+		Name:      "Failed epay credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "epay",
+		"product_id": "quota_failed_epay",
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create payment order failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("user_id = ? AND provider = ?", root.ID, common.PaymentProviderEpay).First(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	failedNotify := epayNotifyValues(order.OrderNo, "TRADE-FAILED", "9.99", "epay-test-secret")
+	failedNotify.Set("trade_status", "TRADE_CLOSED")
+	failedNotify.Set("sign", epaySign(failedNotify, "epay-test-secret"))
+	resp := performForm(r, http.MethodPost, "/v0/payment/epay/notify", failedNotify)
+	if resp.Code != http.StatusOK || strings.TrimSpace(resp.Body.String()) != "success" {
+		t.Fatalf("signed failed epay notify should be acknowledged, got %d %s", resp.Code, resp.Body.String())
+	}
+	if err := internal.DB.First(&order, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != common.PaymentOrderStatusFailed || order.PaidAt != nil {
+		t.Fatalf("failed epay notify should mark order failed without paid_at: %+v", order)
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 0 {
+		t.Fatalf("failed epay notify must not grant quota, got %d", root.Quota)
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_event&resource_id=TRADE-FAILED", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_webhook.failed"`) ||
+		!strings.Contains(auditBody, `"result":"failed"`) ||
+		!strings.Contains(auditBody, order.OrderNo) {
+		t.Fatalf("failed epay notify should write failure audit, got %d %s", auditResp.Code, auditBody)
+	}
+}
+
 func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -4272,6 +4348,80 @@ func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 	}
 	if quotaTxCount != 1 {
 		t.Fatalf("duplicate stripe webhook must not write duplicate quota transactions, got %d", quotaTxCount)
+	}
+}
+
+func TestStripeAsyncPaymentFailedMarksOrderFailedAndAudits(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_failed_stripe",
+		Name:      "Failed stripe credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "stripe",
+		"product_id": "quota_failed_stripe",
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create payment order failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("user_id = ? AND provider = ?", root.ID, common.PaymentProviderStripe).First(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := stripeCheckoutAsyncPaymentFailedPayload("evt_stripe_failed", &order, root.ID, 999, "pi_failed")
+	resp := performStripeWebhook(r, body, "whsec_test_secret")
+	if resp.Code != http.StatusOK || strings.TrimSpace(resp.Body.String()) != "success" {
+		t.Fatalf("signed failed stripe event should be acknowledged, got %d %s", resp.Code, resp.Body.String())
+	}
+	if err := internal.DB.First(&order, order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != common.PaymentOrderStatusFailed || order.PaidAt != nil {
+		t.Fatalf("failed stripe event should mark order failed without paid_at: %+v", order)
+	}
+	if err := internal.DB.First(&root, root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 0 {
+		t.Fatalf("failed stripe event must not grant quota, got %d", root.Quota)
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_event&resource_id=evt_stripe_failed", rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"payment_webhook.failed"`) ||
+		!strings.Contains(auditBody, `"result":"failed"`) ||
+		!strings.Contains(auditBody, order.OrderNo) {
+		t.Fatalf("failed stripe event should write failure audit, got %d %s", auditResp.Code, auditBody)
 	}
 }
 
@@ -16351,19 +16501,27 @@ func stripeSignature(body, secret string) string {
 }
 
 func stripeCheckoutCompletedPayload(eventID string, order *model.PaymentOrder, userID uint, amountTotal int64, paymentIntent string) string {
+	return stripeCheckoutSessionPayload(eventID, "checkout.session.completed", "paid", order, userID, amountTotal, paymentIntent)
+}
+
+func stripeCheckoutAsyncPaymentFailedPayload(eventID string, order *model.PaymentOrder, userID uint, amountTotal int64, paymentIntent string) string {
+	return stripeCheckoutSessionPayload(eventID, "checkout.session.async_payment_failed", "unpaid", order, userID, amountTotal, paymentIntent)
+}
+
+func stripeCheckoutSessionPayload(eventID, eventType, paymentStatus string, order *model.PaymentOrder, userID uint, amountTotal int64, paymentIntent string) string {
 	providerOrderID := ""
 	if order.ProviderOrderID != nil {
 		providerOrderID = *order.ProviderOrderID
 	}
 	raw, _ := json.Marshal(map[string]interface{}{
 		"id":   eventID,
-		"type": "checkout.session.completed",
+		"type": eventType,
 		"data": map[string]interface{}{
 			"object": map[string]interface{}{
 				"id":             providerOrderID,
 				"amount_total":   amountTotal,
 				"currency":       order.Currency,
-				"payment_status": "paid",
+				"payment_status": paymentStatus,
 				"payment_intent": paymentIntent,
 				"metadata": map[string]string{
 					"order_no":   order.OrderNo,

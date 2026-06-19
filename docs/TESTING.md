@@ -71,7 +71,9 @@
 | `TestStripeOrderCreatesCheckoutSessionWhenConfigured` | Stripe secret、测试 API base 和绝对 return_url 齐全时创建 Checkout Session，表单 metadata/金额/货币可复核，并保存 session id/url |
 | `TestEpayOrderBuildsSignedCheckoutURL` | 易支付网关配置齐全时创建订单返回签名收银台 URL，参数和签名可复核 |
 | `TestEpayNotifyPaysOrderIdempotently` | 易支付同步返回只读展示本地状态；异步通知校验签名和金额，成功通知订单 paid、入账并写 webhook/入账审计，重复通知不重复增加额度或流水 |
+| `TestEpayFailedNotifyMarksOrderFailedAndAudits` | 易支付签名有效、金额匹配且明确失败的通知会把 pending 订单置为 failed，不入账并写 `payment_webhook.failed` 审计 |
 | `TestStripeWebhookPaysOrderIdempotently` | Stripe webhook 校验原始 body 签名、Checkout Session 金额和 metadata，成功事件 paid 入账并写 webhook/入账审计，重复事件不重复流水 |
+| `TestStripeAsyncPaymentFailedMarksOrderFailedAndAudits` | Stripe `checkout.session.async_payment_failed` 校验签名、金额和 metadata 后把 pending 订单置为 failed，不入账并写 `payment_webhook.failed` 审计 |
 | `TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota` | Stripe 全额退款 webhook 幂等记录订单退款状态；默认不扣额度，开启自动扣回后写 refund_deduct 流水和退款/扣回审计且不重复扣 |
 | `TestStripePartialRefundWebhookRecordsAndDeductsProportionally` | Stripe 部分退款 webhook 记录 `partially_refunded` 状态；开启自动扣回后按退款金额比例写 refund_deduct 流水和退款/扣回审计 |
 | `TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy` | Stripe 争议 webhook 幂等记录争议事件和 `payment_dispute.created` 审计；开启自动禁用策略后禁用用户已启用 API Key，且不直接改用户额度 |
@@ -522,7 +524,7 @@ Gemini-compatible 最小断言：
 | P1 | 独立日志数据库 | 已覆盖 `LOG_SQL_DSN` 初始化、日志库副本写入、运行期写入失败时主库事实可恢复、主库 outbox 异步补写、管理日志列表读取日志库、查询失败回退主库、日志库健康指标和 outbox 积压指标；继续补冷热归档策略 |
 | P2 | 企业账号 | 本地密码成功登录审计已覆盖；OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管待补 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、批量操作无筛选拒绝审计、基础风险视图、泄露风险基础轮换建议、单 Key 泄露窗口分析、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝、RPM/TPM 拒绝、基础 Redis 鉴权 lookup cache 命中/预热/禁用失效和 router Redis 兼容已覆盖；主动告警通知待补 |
-| P2 | 支付充值 | 充值码批次/备注/过期策略、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回审计、支付人工退款落账审计；更多 provider 自动退款适配待补 |
+| P2 | 支付充值 | 充值码批次/备注/过期策略、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账和明确失败审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回审计、支付人工退款落账审计；更多 provider 自动退款适配待补 |
 | P2 | 观测审计 | 成功登录、API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status 和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis/日志库/outbox 指标测试已覆盖；继续补更完整结构化日志、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定

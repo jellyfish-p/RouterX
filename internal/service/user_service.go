@@ -103,6 +103,7 @@ const (
 	paymentWebhookAuditActorUserID = 1
 
 	adminAuditActionPaymentWebhookProcessed = "payment_webhook.processed"
+	adminAuditActionPaymentWebhookFailed    = "payment_webhook.failed"
 	adminAuditActionPaymentOrderPaid        = "payment_order.paid"
 	adminAuditActionPaymentRefundRequested  = "payment_refund.requested"
 	adminAuditActionPaymentRefundProcessed  = "payment_refund.processed"
@@ -129,6 +130,10 @@ var allowedChannelModelPriceOverrideModes = map[string]struct{}{
 }
 
 func recordPaymentEventAudit(tx *gorm.DB, requestID, action string, event model.PaymentEvent, order *model.PaymentOrder, extra map[string]interface{}) error {
+	return recordPaymentEventAuditResult(tx, requestID, action, event, order, extra, "success", "")
+}
+
+func recordPaymentEventAuditResult(tx *gorm.DB, requestID, action string, event model.PaymentEvent, order *model.PaymentOrder, extra map[string]interface{}, result, errorCode string) error {
 	summary := map[string]interface{}{
 		"provider":        event.Provider,
 		"event_id":        event.ProviderEventID,
@@ -163,7 +168,8 @@ func recordPaymentEventAudit(tx *gorm.DB, requestID, action string, event model.
 		ResourceType: common.QuotaSourceTypePaymentEvent,
 		ResourceID:   event.ProviderEventID,
 		AfterSummary: string(afterSummary),
-		Result:       "success",
+		Result:       result,
+		ErrorCode:    errorCode,
 	})
 }
 
@@ -2268,7 +2274,7 @@ func (s *UserService) ProcessEpayNotify(values map[string]string, requestID stri
 	tradeNo := strings.TrimSpace(values["trade_no"])
 	money := strings.TrimSpace(values["money"])
 	status := strings.TrimSpace(values["trade_status"])
-	if orderNo == "" || money == "" || !epayTradeSucceeded(status) {
+	if orderNo == "" || money == "" || status == "" {
 		return errors.New("invalid epay notify")
 	}
 	eventID := tradeNo
@@ -2305,6 +2311,15 @@ func (s *UserService) ProcessEpayNotify(values map[string]string, requestID stri
 		}
 		if strings.TrimSpace(order.Amount) != money {
 			return errors.New("epay notify amount mismatch")
+		}
+		if epayTradeFailed(status) {
+			if order.Status != common.PaymentOrderStatusPending {
+				return errors.New("payment order is not pending")
+			}
+			return failPendingPaymentOrderFromEvent(tx, &event, &order, requestID, status)
+		}
+		if !epayTradeSucceeded(status) {
+			return errors.New("invalid epay notify")
 		}
 		if order.Status == common.PaymentOrderStatusPaid {
 			now := time.Now()
@@ -2429,6 +2444,9 @@ func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestI
 		}
 		if isStripeDisputeEvent(event.Type) {
 			return processStripeDispute(tx, &paymentEvent, session, requestID)
+		}
+		if event.Type == "checkout.session.async_payment_failed" {
+			return processStripeCheckoutFailure(tx, &paymentEvent, session, requestID)
 		}
 		if event.Type != "checkout.session.completed" || !stripeCheckoutSucceeded(session) {
 			now := time.Now()
@@ -2628,6 +2646,44 @@ func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeC
 		return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentRefundDeducted, *event, &order, refundSummary)
 	}
 	return nil
+}
+
+func processStripeCheckoutFailure(tx *gorm.DB, event *model.PaymentEvent, session stripeCheckoutSession, requestID string) error {
+	orderNo := strings.TrimSpace(session.Metadata["order_no"])
+	if orderNo == "" {
+		return errors.New("stripe event missing order_no")
+	}
+	var order model.PaymentOrder
+	if err := tx.Where("order_no = ? AND provider = ?", orderNo, common.PaymentProviderStripe).First(&order).Error; err != nil {
+		return err
+	}
+	if err := verifyStripeOrderSnapshot(order, session); err != nil {
+		return err
+	}
+	if order.Status != common.PaymentOrderStatusPending {
+		return errors.New("payment order is not pending")
+	}
+	return failPendingPaymentOrderFromEvent(tx, event, &order, requestID, event.EventType)
+}
+
+func failPendingPaymentOrderFromEvent(tx *gorm.DB, event *model.PaymentEvent, order *model.PaymentOrder, requestID, reason string) error {
+	now := time.Now()
+	if err := tx.Model(order).Updates(map[string]interface{}{
+		"status":     common.PaymentOrderStatusFailed,
+		"updated_at": now,
+	}).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(event).Updates(map[string]interface{}{"processed": true, "processed_at": &now}).Error; err != nil {
+		return err
+	}
+	order.Status = common.PaymentOrderStatusFailed
+	order.UpdatedAt = now
+	event.Processed = true
+	event.ProcessedAt = &now
+	return recordPaymentEventAuditResult(tx, requestID, adminAuditActionPaymentWebhookFailed, *event, order, map[string]interface{}{
+		"failure_reason": reason,
+	}, "failed", "payment_failed")
 }
 
 // processStripeDispute 记录争议生命周期事实，并在 created 阶段执行可选风控动作。
@@ -3233,6 +3289,15 @@ func redactedEpayPayload(values map[string]string) map[string]string {
 
 func epayTradeSucceeded(status string) bool {
 	return status == "TRADE_SUCCESS" || status == "TRADE_FINISHED"
+}
+
+func epayTradeFailed(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "TRADE_CLOSED", "TRADE_FAILED", "TRADE_CANCELLED", "TRADE_CANCELED":
+		return true
+	default:
+		return false
+	}
 }
 
 func filterUpdates(updates map[string]interface{}, keys ...string) map[string]interface{} {

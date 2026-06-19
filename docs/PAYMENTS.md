@@ -116,7 +116,7 @@ pending
 |------|------|----------|
 | `pending` | 已创建，等待支付 | 否 |
 | `paid` | provider 成功且已入账 | 是 |
-| `failed` | provider 失败或校验失败 | 否 |
+| `failed` | provider 明确失败；签名、金额或订单快照校验失败只拒绝入账，不直接改订单 | 否 |
 | `closed` | 用户取消、过期或管理员关闭 | 否 |
 | `refunded` | 全额退款已记录 | 按退款策略处理 |
 | `partially_refunded` | 部分退款已记录 | 按退款策略处理 |
@@ -250,6 +250,8 @@ Stripe 要求：
 
 当前基础实现已支持创建 Stripe Checkout Session：当 `PAYMENT_STRIPE_SECRET_KEY` 和绝对 `return_url` 齐全时，用户创建订单会向 Stripe 写入 Checkout Session，metadata 包含 `order_no`、`user_id`、`product_id`，本地订单保存 `provider_order_id=session.id` 和 `checkout_url=session.url`；配置不足时仍返回本地安全 checkout 占位链接，便于开发演示但不适合作为生产收银台。`POST /v0/payment/stripe/webhook` 支持 `checkout.session.completed` 成功事件、`Stripe-Signature` 校验、订单 metadata 校验、金额/币种快照校验、`payment_events` 幂等、`quota_transactions` 入账，并写入 `payment_webhook.processed` 和 `payment_order.paid` 审计摘要。`charge.refunded` 全额或部分退款事件会记录 `payment_refund.processed`，自动扣回成功时额外记录 `payment_refund.deducted`；`charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated` 会更新 `payment_disputes` 并记录 `payment_dispute.*` 生命周期审计，created 阶段可按 settings 禁用该用户已启用的 API Key。
 
+Stripe `checkout.session.async_payment_failed` 当前也会在签名、金额、币种和 metadata 校验通过且本地订单仍为 `pending` 时，把订单置为 `failed`，写 `payment_webhook.failed` 审计且不增加额度。
+
 ## 6. 易支付契约
 
 易支付适配器用于跳转收银台和异步通知。
@@ -323,8 +325,8 @@ user submits code
 - 管理员可通过 `/v0/admin/redem` 生成随机充值码或导入指定充值码，可写入 `batch_no`、`note` 和未来 `expired_at`，并可作废未使用充值码；这些管理操作会写入 `redem_code.*` 管理审计，完整兑换码只进入脱敏摘要。
 - 管理员可通过 `/v0/admin/payment/products` 创建、更新、启用和禁用支付商品；用户侧只展示启用商品，禁用商品不能创建新订单；支付商品管理成功操作会写入 `admin_audit_logs`。
 - 用户侧支付商品列表和本地 `pending` 订单创建/查询已具备基础实现；创建订单要求对应 provider 已在 settings 启用，并会写 `payment_order.create` 管理审计，摘要不保存 checkout URL。Stripe secret 和绝对 `return_url` 齐全时会创建 Stripe Checkout Session；易支付网关、商户号、回调 URL 和 `PAYMENT_EPAY_KEY` 配置齐全时会返回签名收银台 URL；pending 订单不会入账。
-- Stripe webhook 已支持 `checkout.session.completed` 签名校验、金额/币种/metadata 校验、`payment_events` 幂等、入账审计和入账；`charge.refunded` 全额或部分退款事件可幂等记录订单退款状态，写入退款审计，并可按 settings 全额或比例扣回额度；`charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated` 可幂等更新 `payment_disputes` 争议事实，写入争议生命周期审计，并可在 created 阶段按 settings 禁用用户已启用 API Key。
-- 易支付异步通知已支持 MD5 签名校验、金额校验、`payment_events` 幂等记录、订单置为 `paid`、`quota_transactions` 入账、用户额度增加和基础 webhook/入账审计；重复通知不重复入账。
+- Stripe webhook 已支持 `checkout.session.completed` 签名校验、金额/币种/metadata 校验、`payment_events` 幂等、入账审计和入账；`checkout.session.async_payment_failed` 会在快照校验通过且订单仍为 pending 时置为 `failed`，写 `payment_webhook.failed` 审计且不入账；`charge.refunded` 全额或部分退款事件可幂等记录订单退款状态，写入退款审计，并可按 settings 全额或比例扣回额度；`charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated` 可幂等更新 `payment_disputes` 争议事实，写入争议生命周期审计，并可在 created 阶段按 settings 禁用用户已启用 API Key。
+- 易支付异步通知已支持 MD5 签名校验、金额校验、`payment_events` 幂等记录、成功订单置为 `paid`、明确失败订单置为 `failed`、`quota_transactions` 入账、用户额度增加和基础 webhook/入账/失败审计；重复通知不重复入账。
 - 易支付同步返回页已支持本地订单状态只读展示，不作为入账依据。
 - 支付相关人工补账/扣回已支持 `POST /v0/admin/payment/adjustments`，会写 `manual_credit` 或 `manual_debit` 额度流水，并在同一事务中写 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 审计。
 - 管理员确认后的人工退款已支持 `POST /v0/admin/payment/refunds`，会校验 `paid` 订单，按退款额度写 `refund_deduct` 额度流水，将订单置为 `refunded` 或 `partially_refunded`，并写 `payment_refund.manual` 审计。
@@ -530,7 +532,7 @@ receive webhook
 - 人工补账、扣回、人工退款落账、Stripe/易支付 provider 退款请求和争议生命周期。
 - 支付 settings 和密钥引用变更。
 
-当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建，Stripe/易支付 webhook 入账，Stripe 全额/部分退款和扣回，Stripe 争议生命周期记录和可选 API Key 禁用，支付相关人工补账/扣回、人工退款落账、Stripe/易支付 provider 退款请求，以及充值码生成、导入、批次/备注/过期策略、作废、兑换的成功审计；更多 provider 自动退款适配和更多失败分支审计仍需继续补齐。
+当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建，Stripe/易支付 webhook 入账，Stripe async payment failed 与易支付明确失败通知审计，Stripe 全额/部分退款和扣回，Stripe 争议生命周期记录和可选 API Key 禁用，支付相关人工补账/扣回、人工退款落账、Stripe/易支付 provider 退款请求，以及充值码生成、导入、批次/备注/过期策略、作废、兑换的成功审计；更多 provider 自动退款适配和更多失败分支审计仍需继续补齐。
 
 审计字段：
 
@@ -567,7 +569,9 @@ receive webhook
 |------|------|
 | 创建订单 | 保存商品快照，返回安全 checkout 信息 |
 | Stripe 成功 webhook | 签名正确、金额一致、订单 paid、额度增加、流水写入 |
+| Stripe 失败 webhook | 签名正确、金额一致、订单 failed、额度不增加、写失败审计 |
 | 易支付成功通知 | 签名正确、金额一致、返回 success、额度只入账一次 |
+| 易支付失败通知 | 签名正确、金额一致、返回 success、订单 failed、额度不增加、写失败审计 |
 | 重复 webhook | payment_event 幂等，用户额度不重复增加 |
 | 签名失败 | 拒绝入账，记录脱敏事件 |
 | 金额不匹配 | 拒绝入账，订单不变，触发失败指标 |
