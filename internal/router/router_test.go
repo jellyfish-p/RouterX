@@ -16859,6 +16859,9 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if err := json.Unmarshal([]byte(callLog.UsageSnapshot), &usageSnapshot); err != nil {
 		t.Fatalf("success log should store usage snapshot JSON, got %q: %v", callLog.UsageSnapshot, err)
 	}
+	if _, err := time.Parse(time.RFC3339Nano, fmt.Sprint(usageSnapshot["created_at"])); err != nil {
+		t.Fatalf("usage snapshot should include RFC3339 created_at, snapshot=%+v err=%v", usageSnapshot, err)
+	}
 	rawUsageSummary, ok := usageSnapshot["raw_usage_summary"].(map[string]interface{})
 	if !ok ||
 		usageSnapshot["schema"] != "routerx.snapshot.v1" ||
@@ -16952,6 +16955,9 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	}
 	if routeSnapshot["request_id"] != callLog.RequestID {
 		t.Fatalf("route snapshot should include request id, snapshot=%+v log=%+v", routeSnapshot, callLog)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, fmt.Sprint(routeSnapshot["created_at"])); err != nil {
+		t.Fatalf("route snapshot should include RFC3339 created_at, snapshot=%+v err=%v", routeSnapshot, err)
 	}
 	if routeSnapshot["requested_model"] != "gpt-test" || routeSnapshot["selected_channel_group"] != "paid" || routeSnapshot["candidate_count"] != float64(1) {
 		t.Fatalf("unexpected route snapshot: %+v", routeSnapshot)

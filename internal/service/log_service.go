@@ -463,18 +463,13 @@ func normalizeLogRouteSnapshot(log *model.Log) string {
 	if raw == "" {
 		return ""
 	}
-	requestID := strings.TrimSpace(log.RequestID)
-	if requestID == "" {
-		return raw
-	}
 	var snapshot map[string]interface{}
 	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
 		return raw
 	}
-	if logSnapshotString(snapshot["request_id"]) == requestID {
+	if !enrichLogSnapshotEnvelope(snapshot, log) {
 		return raw
 	}
-	snapshot["request_id"] = requestID
 	encoded, err := json.Marshal(snapshot)
 	if err != nil {
 		return raw
@@ -590,23 +585,41 @@ func firstNonEmptyLogSnapshotValue(values ...string) string {
 	return ""
 }
 
+func enrichLogSnapshotEnvelope(snapshot map[string]interface{}, log *model.Log) bool {
+	if len(snapshot) == 0 || log == nil {
+		return false
+	}
+	changed := false
+	if requestID := strings.TrimSpace(log.RequestID); requestID != "" && logSnapshotString(snapshot["request_id"]) != requestID {
+		snapshot["request_id"] = requestID
+		changed = true
+	}
+	if createdAt := logSnapshotCreatedAt(log); createdAt != "" && logSnapshotString(snapshot["created_at"]) != createdAt {
+		snapshot["created_at"] = createdAt
+		changed = true
+	}
+	return changed
+}
+
+func logSnapshotCreatedAt(log *model.Log) string {
+	if log == nil || log.CreatedAt.IsZero() {
+		return ""
+	}
+	return log.CreatedAt.UTC().Format(time.RFC3339Nano)
+}
+
 func normalizeLogUsageSnapshot(log *model.Log) string {
 	if log == nil {
 		return ""
 	}
-	requestID := strings.TrimSpace(log.RequestID)
 	if snapshot := strings.TrimSpace(log.UsageSnapshot); snapshot != "" {
-		if requestID == "" {
-			return snapshot
-		}
 		var existing map[string]interface{}
 		if err := json.Unmarshal([]byte(snapshot), &existing); err != nil {
 			return snapshot
 		}
-		if logSnapshotString(existing["request_id"]) == requestID {
+		if !enrichLogSnapshotEnvelope(existing, log) {
 			return snapshot
 		}
-		existing["request_id"] = requestID
 		encoded, err := json.Marshal(existing)
 		if err != nil {
 			return snapshot
@@ -643,9 +656,7 @@ func normalizeLogUsageSnapshot(log *model.Log) string {
 		"total_tokens":      log.TotalTokens,
 		"raw_usage_summary": rawUsageSummary,
 	}
-	if requestID != "" {
-		snapshot["request_id"] = requestID
-	}
+	enrichLogSnapshotEnvelope(snapshot, log)
 	if usageSource == common.LogUsageSourceMinimum {
 		snapshot["minimum_reason"] = "missing_upstream_usage"
 	}
