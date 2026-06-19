@@ -53,6 +53,7 @@ type relayRouterXHopContextKey struct{}
 type relayRouterXChainContextKey struct{}
 type relayRequestSnapshotContextKey struct{}
 type relayAdapterDegradationsContextKey struct{}
+type relayAnthropicNativeBodyContextKey struct{}
 type relayPolicySnapshotContextKey struct{}
 type relayRouteSnapshotContextKey struct{}
 type relayBillingSnapshotContextKey struct{}
@@ -185,6 +186,16 @@ func contextWithRelayAdapterDegradations(ctx context.Context, degradations []rel
 	return context.WithValue(ctx, relayAdapterDegradationsContextKey{}, append([]relayAdapterDegradation(nil), degradations...))
 }
 
+func contextWithRelayAnthropicNativeBody(ctx context.Context, body []byte) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, relayAnthropicNativeBodyContextKey{}, append([]byte(nil), body...))
+}
+
 func ContextWithRelayPolicySnapshot(ctx context.Context, snapshot string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -289,6 +300,17 @@ func relayAdapterDegradationsFromContext(ctx context.Context) []relayAdapterDegr
 		return nil
 	}
 	return append([]relayAdapterDegradation(nil), values...)
+}
+
+func relayAnthropicNativeBodyFromContext(ctx context.Context) []byte {
+	if ctx == nil {
+		return nil
+	}
+	value, _ := ctx.Value(relayAnthropicNativeBodyContextKey{}).([]byte)
+	if len(value) == 0 {
+		return nil
+	}
+	return append([]byte(nil), value...)
 }
 
 func relayPolicySnapshotFromContext(ctx context.Context) string {
@@ -429,6 +451,7 @@ func (s *RelayService) RelayAnthropicMessages(ctx context.Context, token *model.
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
 	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolAnthropic)
+	ctx = contextWithRelayAnthropicNativeBody(ctx, body)
 	ctx = contextWithRelayAdapterDegradations(ctx, anthropicAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -447,6 +470,7 @@ func (s *RelayService) RelayAnthropicMessagesStream(ctx context.Context, token *
 		return nil, relayInvalidRequestHTTPError(err)
 	}
 	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolAnthropic)
+	ctx = contextWithRelayAnthropicNativeBody(ctx, body)
 	ctx = contextWithRelayAdapterDegradations(ctx, anthropicAdapterDegradations(body))
 	result, err := s.RelayStream(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -811,15 +835,12 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 			return nil, nil, false, relayInvalidRequestHTTPError(err)
 		}
 	} else {
-		outInputBody, err := mergeRelayUpstreamBody(body, relayUpstreamBodyForChannel(reqInfo.Upstream, channel.Type))
+		outInputBody, err := relayUpstreamInputBody(ctx, apiType, body, reqInfo, channel.Type, upstreamModel)
 		if err != nil {
 			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 		}
-		outInputBody, err = replaceRequestModel(outInputBody, upstreamModel)
-		if err != nil {
-			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
-		}
-		outBody, err = adapter.ConvertRequest(apiType, outInputBody)
+		convertAPIType := relayRequestConvertAPIType(ctx, apiType, channel.Type)
+		outBody, err = adapter.ConvertRequest(convertAPIType, outInputBody)
 		if err != nil {
 			if isUnsupportedAPITypeError(err) {
 				_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "unsupported api type", clientIP)
@@ -1020,15 +1041,12 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		return nil, &HTTPError{Status: 502, Message: "upstream channel secret is not available", Type: "upstream_error", Code: "upstream_secret_error"}
 	}
 	upstreamModel := s.channelService.ApplyModelRewrite(channel, reqInfo.Model)
-	outInputBody, err := mergeRelayUpstreamBody(body, relayUpstreamBodyForChannel(reqInfo.Upstream, channel.Type))
+	outInputBody, err := relayUpstreamInputBody(ctx, apiType, body, reqInfo, channel.Type, upstreamModel)
 	if err != nil {
 		return nil, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 	}
-	outInputBody, err = replaceRequestModel(outInputBody, upstreamModel)
-	if err != nil {
-		return nil, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
-	}
-	outBody, err := adapter.ConvertRequest(apiType, outInputBody)
+	convertAPIType := relayRequestConvertAPIType(ctx, apiType, channel.Type)
+	outBody, err := adapter.ConvertRequest(convertAPIType, outInputBody)
 	if err != nil {
 		if isUnsupportedAPITypeError(err) {
 			_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "unsupported api type", clientIP)
@@ -1779,6 +1797,62 @@ func mergeRelayUpstreamBody(body []byte, extra map[string]json.RawMessage) ([]by
 		payload[key] = append(json.RawMessage(nil), value...)
 	}
 	return json.Marshal(payload)
+}
+
+func relayUpstreamInputBody(ctx context.Context, apiType relay.APIType, body []byte, reqInfo relayRequestInfo, channelType int, upstreamModel string) ([]byte, error) {
+	out := body
+	var err error
+	if supportsAnthropicNativeRequest(ctx, apiType, channelType) {
+		// Anthropic native fields are applied only after route selection so OpenAI-compatible upstreams keep the canonical Chat body.
+		out, err = anthropicNativeMessagesUpstreamBody(relayAnthropicNativeBodyFromContext(ctx))
+		if err != nil {
+			return nil, err
+		}
+	}
+	out, err = mergeRelayUpstreamBody(out, relayUpstreamBodyForChannel(reqInfo.Upstream, channelType))
+	if err != nil {
+		return nil, err
+	}
+	return replaceRequestModel(out, upstreamModel)
+}
+
+func anthropicNativeMessagesUpstreamBody(body []byte) ([]byte, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	// Keep this whitelist explicit: it prevents RouterX private fields from leaking while preserving Anthropic Messages semantics.
+	fields := []string{
+		"model",
+		"messages",
+		"system",
+		"max_tokens",
+		"metadata",
+		"stop_sequences",
+		"stream",
+		"temperature",
+		"top_p",
+		"top_k",
+		"tools",
+		"tool_choice",
+		"thinking",
+		"container",
+		"context_management",
+		"mcp_servers",
+		"service_tier",
+	}
+	output := make(map[string]json.RawMessage, len(fields))
+	for _, field := range fields {
+		raw, ok := payload[field]
+		if !ok || !rawJSONFieldPresent(raw) {
+			continue
+		}
+		output[field] = append(json.RawMessage(nil), raw...)
+	}
+	if _, ok := output["max_tokens"]; !ok {
+		output["max_tokens"] = json.RawMessage(`1024`)
+	}
+	return json.Marshal(output)
 }
 
 func relayUpstreamBodyForChannel(options relayUpstreamOptions, channelType int) map[string]json.RawMessage {
@@ -3672,6 +3746,16 @@ func relayAdapterDegradationsForSnapshot(ctx context.Context, apiType relay.APIT
 		}
 		return filtered
 	}
+	if supportsAnthropicNativeRequest(ctx, apiType, channel.Type) {
+		filtered := make([]relayAdapterDegradation, 0, len(degradations))
+		for _, degradation := range degradations {
+			if strings.EqualFold(degradation.Protocol, inputProtocolAnthropic) {
+				continue
+			}
+			filtered = append(filtered, degradation)
+		}
+		return filtered
+	}
 	return degradations
 }
 
@@ -4445,9 +4529,20 @@ func supportsGeminiNativeStream(ctx context.Context, apiType relay.APIType, chan
 }
 
 func supportsAnthropicNativeStream(ctx context.Context, apiType relay.APIType, channelType int) bool {
+	return supportsAnthropicNativeRequest(ctx, apiType, channelType)
+}
+
+func supportsAnthropicNativeRequest(ctx context.Context, apiType relay.APIType, channelType int) bool {
 	return apiType == relay.APIChatCompletions &&
 		channelType == common.ChannelTypeClaude &&
 		strings.EqualFold(relayIngressProtocolFromContext(ctx), inputProtocolAnthropic)
+}
+
+func relayRequestConvertAPIType(ctx context.Context, apiType relay.APIType, channelType int) relay.APIType {
+	if supportsAnthropicNativeRequest(ctx, apiType, channelType) {
+		return relay.APIAnthropicMessages
+	}
+	return apiType
 }
 
 func relayStreamUpstreamAPIType(ctx context.Context, apiType relay.APIType, channelType int) relay.APIType {

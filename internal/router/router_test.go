@@ -7713,6 +7713,174 @@ func TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields(t *testing.
 	}
 }
 
+func TestAnthropicMessagesToAnthropicUpstreamPreservesNativeRequestFieldsAndDeductsUsage(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamAPIKey := ""
+	var upstreamBody map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		upstreamAPIKey = req.Header.Get("x-api-key")
+		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
+			t.Errorf("Anthropic upstream received invalid JSON: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_native_fields","type":"message","role":"assistant","model":"claude-native-fields","content":[{"type":"text","text":"native ok"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":4}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "anthropic-native-fields",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeClaude,
+		"name":     "anthropic-native-fields",
+		"models":   "claude-native-fields",
+		"base_url": upstream.URL,
+		"api_key":  "anthropic-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create Anthropic channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/messages", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model":      "claude-native-fields",
+		"max_tokens": 64,
+		"system": []map[string]interface{}{
+			{"type": "text", "text": "be precise"},
+		},
+		"messages": []map[string]interface{}{
+			{
+				"role": "user",
+				"content": []map[string]interface{}{
+					{"type": "text", "text": "hello"},
+					{"type": "tool_result", "tool_use_id": "toolu_1", "content": "cached result"},
+				},
+			},
+			{
+				"role": "assistant",
+				"content": []map[string]interface{}{
+					{"type": "text", "text": "checking"},
+					{"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": map[string]string{"q": "routerx"}},
+				},
+			},
+		},
+		"tools": []map[string]interface{}{
+			{
+				"name":        "lookup",
+				"description": "Lookup facts",
+				"input_schema": map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{"q": map[string]string{"type": "string"}},
+				},
+			},
+		},
+		"tool_choice":    map[string]string{"type": "tool", "name": "lookup"},
+		"thinking":       map[string]interface{}{"type": "enabled", "budget_tokens": 1024},
+		"metadata":       map[string]string{"user_id": "user_123"},
+		"temperature":    0.2,
+		"top_p":          0.8,
+		"stop_sequences": []string{"END"},
+	})
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"type":"message"`) || !strings.Contains(resp.Body.String(), `"text":"native ok"`) || !strings.Contains(resp.Body.String(), `"input_tokens":3`) || !strings.Contains(resp.Body.String(), `"output_tokens":4`) {
+		t.Fatalf("Anthropic native field call should return Anthropic shape and usage, got %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamCalls != 1 || upstreamPath != "/v1/messages" || upstreamAPIKey != "anthropic-secret" {
+		t.Fatalf("Anthropic native field call should hit Messages endpoint once, calls=%d path=%q key=%q", upstreamCalls, upstreamPath, upstreamAPIKey)
+	}
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx private field leaked to Anthropic upstream: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["_routerx_source_protocol"]; ok {
+		t.Fatalf("RouterX source marker leaked to Anthropic upstream: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["stop"]; ok {
+		t.Fatalf("OpenAI stop field should not be sent to Anthropic native upstream: %#v", upstreamBody)
+	}
+	systemBlocks, ok := upstreamBody["system"].([]interface{})
+	if !ok || len(systemBlocks) != 1 || !strings.Contains(fmt.Sprint(systemBlocks[0]), "be precise") {
+		t.Fatalf("Anthropic system content blocks should be preserved natively: %#v", upstreamBody)
+	}
+	messages, ok := upstreamBody["messages"].([]interface{})
+	if !ok || len(messages) != 2 || !strings.Contains(fmt.Sprint(messages[0]), "tool_result") || !strings.Contains(fmt.Sprint(messages[1]), "tool_use") {
+		t.Fatalf("Anthropic content blocks should be preserved natively: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["tools"].([]interface{}); !ok {
+		t.Fatalf("Anthropic tools should be preserved natively: %#v", upstreamBody)
+	}
+	if toolChoice, ok := upstreamBody["tool_choice"].(map[string]interface{}); !ok || toolChoice["name"] != "lookup" {
+		t.Fatalf("Anthropic tool_choice should be preserved natively: %#v", upstreamBody)
+	}
+	if thinking, ok := upstreamBody["thinking"].(map[string]interface{}); !ok || thinking["budget_tokens"] != float64(1024) {
+		t.Fatalf("Anthropic thinking should be preserved natively: %#v", upstreamBody)
+	}
+	if metadata, ok := upstreamBody["metadata"].(map[string]interface{}); !ok || metadata["user_id"] != "user_123" {
+		t.Fatalf("Anthropic metadata should be preserved natively: %#v", upstreamBody)
+	}
+	if stops, ok := upstreamBody["stop_sequences"].([]interface{}); !ok || len(stops) != 1 || stops[0] != "END" {
+		t.Fatalf("Anthropic stop_sequences should be preserved natively: %#v", upstreamBody)
+	}
+	if upstreamBody["max_tokens"] != float64(64) || upstreamBody["temperature"] != float64(0.2) || upstreamBody["top_p"] != float64(0.8) {
+		t.Fatalf("Anthropic scalar generation fields should be preserved natively: %#v", upstreamBody)
+	}
+
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 43 {
+		t.Fatalf("Anthropic native fields usage should deduct token budget by 7, got %d", storedToken.RemainQuota)
+	}
+	var callLog model.Log
+	if err := internal.DB.Where("token_id = ? AND status = ?", tokenPayload.Data.ID, common.LogStatusSuccess).First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.QuotaUsed != 7 || callLog.TotalTokens != 7 || callLog.PromptTokens != 3 || callLog.CompletionTokens != 4 {
+		t.Fatalf("unexpected Anthropic native field success log: %+v", callLog)
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RequestSnapshot), &snapshot); err != nil {
+		t.Fatalf("Anthropic native field request snapshot should be JSON, got %q: %v", callLog.RequestSnapshot, err)
+	}
+	if snapshot["ingress_protocol"] != "anthropic" {
+		t.Fatalf("Anthropic native field request snapshot should keep Anthropic ingress protocol: %+v", snapshot)
+	}
+	for _, field := range []string{"messages.content.tool_result", "messages.content.tool_use", "tools", "tool_choice", "thinking", "metadata"} {
+		if snapshotHasAdapterDegradation(snapshot, "anthropic", field, "dropped") || snapshotHasAdapterDegradation(snapshot, "anthropic", field, "serialized_as_text") {
+			t.Fatalf("Anthropic native-preserved field %s should not be logged as degraded: %+v", field, snapshot)
+		}
+	}
+}
+
 func snapshotHasAdapterDegradation(snapshot map[string]interface{}, protocol, field, action string) bool {
 	values, ok := snapshot["adapter_degradations"].([]interface{})
 	if !ok {

@@ -26,7 +26,10 @@ func (a *ClaudeAdapter) GetChannelType() int {
 }
 
 func (a *ClaudeAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
-	if apiType != APIChatCompletions && apiType != APIAnthropicMessages {
+	if apiType == APIAnthropicMessages {
+		return claudeNativeMessagesRequest(body)
+	}
+	if apiType != APIChatCompletions {
 		return nil, errors.New("unsupported api type")
 	}
 	var input openAIChatRequest
@@ -75,6 +78,49 @@ func (a *ClaudeAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, er
 	}
 	output.System = strings.Join(systemParts, "\n")
 	return json.Marshal(output)
+}
+
+func claudeNativeMessagesRequest(body []byte) ([]byte, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	fields := []string{
+		"model",
+		"messages",
+		"system",
+		"max_tokens",
+		"metadata",
+		"stop_sequences",
+		"stream",
+		"temperature",
+		"top_p",
+		"top_k",
+		"tools",
+		"tool_choice",
+		"thinking",
+		"container",
+		"context_management",
+		"mcp_servers",
+		"service_tier",
+	}
+	output := make(map[string]json.RawMessage, len(fields))
+	for _, field := range fields {
+		raw, ok := payload[field]
+		if !ok || !claudeRawFieldPresent(raw) {
+			continue
+		}
+		output[field] = append(json.RawMessage(nil), raw...)
+	}
+	if _, ok := output["max_tokens"]; !ok {
+		output["max_tokens"] = json.RawMessage(`1024`)
+	}
+	return json.Marshal(output)
+}
+
+func claudeRawFieldPresent(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.EqualFold(trimmed, []byte("null"))
 }
 
 func (a *ClaudeAdapter) GetAPIEndpoint(apiType APIType, model string) string {
