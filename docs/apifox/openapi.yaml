@@ -2883,7 +2883,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 语音转文字转发
-      description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，Azure OpenAI 通道转发到 /openai/v1/audio/transcriptions?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非音频扩展名、非音频文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，Azure OpenAI 通道转发到 /openai/v1/audio/transcriptions?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。response_format 省略或空字符串时交给上游默认策略，显式值只允许 json、text、srt、verbose_json、vtt，非法返回 invalid_audio_response_format 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非音频扩展名、非音频文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2903,7 +2903,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 语音翻译转发
-      description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，Azure OpenAI 通道转发到 /openai/v1/audio/translations?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非音频扩展名、非音频文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，Azure OpenAI 通道转发到 /openai/v1/audio/translations?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。response_format 省略或空字符串时交给上游默认策略，显式值只允许 json、text、srt、verbose_json、vtt，非法返回 invalid_audio_response_format 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非音频扩展名、非音频文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -3893,7 +3893,8 @@ components:
                 description: 可选上下文提示词。
               response_format:
                 type: string
-                enum: [json, text, srt, verbose_json, vtt]
+                enum: ["", json, text, srt, verbose_json, vtt]
+                description: 省略或空字符串时使用上游默认策略；显式值只允许列出的文本结果格式。非法值返回 invalid_audio_response_format，且不调用上游、不扣费。
               language:
                 type: string
                 description: 转写语言；翻译接口可忽略。
@@ -3977,7 +3978,7 @@ components:
           schema:
             $ref: "#/components/schemas/StandardResponse"
     OpenAIError:
-      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；Image Generations size 超出基础边界时返回 400 invalid_image_size；Audio Speech input/voice/response_format 超出基础契约时返回 400 invalid_audio_speech_input、invalid_audio_speech_voice 或 invalid_audio_response_format；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
+      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；Image Generations size 超出基础边界时返回 400 invalid_image_size；Audio Speech input/voice/response_format 超出基础契约时返回 400 invalid_audio_speech_input、invalid_audio_speech_voice 或 invalid_audio_response_format；Audio Transcriptions/Translations response_format 超出基础枚举时返回 400 invalid_audio_response_format；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
       content:
         application/json:
           schema:

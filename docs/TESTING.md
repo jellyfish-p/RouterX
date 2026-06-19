@@ -188,6 +188,7 @@
 | `TestAudioSpeechRejectsInvalidResponseFormatBeforeUpstream` | Audio Speech 在上游前拒绝非法 `response_format`，返回 `invalid_audio_response_format`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestAudioSpeechRejectsInvalidRequestFieldsBeforeUpstream` | Audio Speech 在上游前拒绝空输入、超长输入和空 voice，返回稳定错误码，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge` | Audio Transcriptions multipart 表单透传、`routerx` 表单字段剥离与路由偏好、文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestAudioMultipartRejectsInvalidResponseFormatBeforeUpstream` | Audio Transcriptions/Translations 在上游前拒绝非法 `response_format`，返回 `invalid_audio_response_format`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestRouterXOptionsHeaderRoutesMultipartRequest` | `X-RouterX-Options` header 为 multipart 请求提供路由偏好，且不向真实上游泄露 `routerx` 私有字段 |
 | `TestRouterXUpstreamOptionsSupplementRequest` | `routerx.upstream` 安全补充上游 header/query/JSON body，敏感鉴权字段、`model`、`stream` 和原请求已存在字段不会被覆盖，`routerx` 私有字段不会泄露 |
 | `TestRouterXProviderOptionsApplyOnlyToSelectedProvider` | `routerx.provider.<provider>` 只在选中 provider 匹配时补充 JSON body 字段，provider 专属补充值优先于通用 upstream 补充值，非选中 provider 参数不泄露 |

@@ -17378,6 +17378,106 @@ func TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge(t *tes
 	}
 }
 
+func TestAudioMultipartRejectsInvalidResponseFormatBeforeUpstream(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"should not happen"}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "audio-multipart-format",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "audio-multipart-format",
+		"models":   "whisper-format-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	for _, path := range []string{"/v1/audio/transcriptions", "/v1/audio/translations"} {
+		var reqBody bytes.Buffer
+		writer := multipart.NewWriter(&reqBody)
+		if err := writer.WriteField("model", "whisper-format-test"); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.WriteField("response_format", "docx"); err != nil {
+			t.Fatal(err)
+		}
+		fileWriter, err := writer.CreateFormFile("file", "sample.wav")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fileWriter.Write(testWAVBytes("routerx-audio")); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, path, &reqBody)
+		req.Header.Set("Authorization", "Bearer "+tokenPayload.Data.Key)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		resp := httptest.NewRecorder()
+		r.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), `"code":"invalid_audio_response_format"`) {
+			t.Fatalf("%s invalid response_format should return invalid_audio_response_format, got %d %s", path, resp.Code, resp.Body.String())
+		}
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("invalid audio multipart response_format must not call upstream, got %d calls", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 50 {
+		t.Fatalf("invalid audio multipart response_format should not deduct token budget, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("invalid audio multipart response_format should not deduct user quota, got %d", root.Quota)
+	}
+}
+
 func TestRouterXOptionsHeaderRoutesMultipartRequest(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

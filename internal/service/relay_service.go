@@ -405,7 +405,7 @@ var (
 	errInvalidEmbeddingInput  = errors.New("embeddings input must be a non-empty string, string array, token array, or token array batch")
 	errEmbeddingBatchTooLarge = errors.New("embeddings input batch exceeds maximum size")
 	errInvalidImageSize       = errors.New("image size must be auto or WIDTHxHEIGHT within configured bounds")
-	errInvalidAudioFormat     = errors.New("audio response_format must be one of mp3, opus, aac, flac, wav, or pcm")
+	errInvalidAudioFormat     = errors.New("audio response_format is not supported for this API")
 	errInvalidAudioInput      = errors.New("audio speech input must be a non-empty string within configured bounds")
 	errInvalidAudioVoice      = errors.New("audio speech voice must be a non-empty string")
 )
@@ -1606,6 +1606,12 @@ func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType 
 			info.Model = strings.TrimSpace(string(raw))
 		case "stream":
 			info.Stream = multipartBoolValue(raw)
+		case "response_format":
+			if isAudioTextMultipartAPIType(apiType) {
+				if err := validateAudioMultipartResponseFormat(raw); err != nil {
+					return relayRequestInfo{}, err
+				}
+			}
 		case "routerx":
 			hasRouterXFormField = true
 			route, upstream, err := parseRouterXOptions(bytes.TrimSpace(raw))
@@ -1628,6 +1634,23 @@ func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType 
 		return relayRequestInfo{}, errModelRequired
 	}
 	return info, nil
+}
+
+func isAudioTextMultipartAPIType(apiType relay.APIType) bool {
+	return apiType == relay.APIAudioTranscriptions || apiType == relay.APIAudioTranslations
+}
+
+func validateAudioMultipartResponseFormat(raw []byte) error {
+	format := strings.TrimSpace(string(raw))
+	if format == "" {
+		return nil
+	}
+	switch format {
+	case "json", "text", "srt", "verbose_json", "vtt":
+		return nil
+	default:
+		return errInvalidAudioFormat
+	}
 }
 
 func relayRequestErrorCode(err error) string {
