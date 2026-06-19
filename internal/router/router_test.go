@@ -511,6 +511,116 @@ func TestApifoxOpenAPIOperationTagsAreDeclared(t *testing.T) {
 	}
 }
 
+func TestDocsRelativeReferencesResolve(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	files := []string{filepath.Join(repoRoot, "README.md")}
+	docFiles, err := filepath.Glob(filepath.Join(repoRoot, "docs", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, docFiles...)
+
+	markdownLinkPattern := regexp.MustCompile(`\[[^\]\n]+\]\(([^)\n]+)\)`)
+	docReferencePattern := regexp.MustCompile("`(docs/[A-Za-z0-9_./-]+\\.(?:md|yaml))`")
+	issues := make([]string, 0)
+	for _, file := range files {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(raw)
+		for _, match := range markdownLinkPattern.FindAllStringSubmatch(text, -1) {
+			target, ok := normalizeDocLinkTarget(match[1])
+			if !ok {
+				continue
+			}
+			resolved := filepath.Clean(filepath.Join(filepath.Dir(file), filepath.FromSlash(target)))
+			if _, err := os.Stat(resolved); err != nil {
+				issues = append(issues, fmt.Sprintf("%s links to missing %s", repoRelativePath(file), target))
+			}
+		}
+		for _, match := range docReferencePattern.FindAllStringSubmatch(text, -1) {
+			target := filepath.FromSlash(match[1])
+			resolved := filepath.Clean(filepath.Join(repoRoot, target))
+			if _, err := os.Stat(resolved); err != nil {
+				issues = append(issues, fmt.Sprintf("%s references missing %s", repoRelativePath(file), match[1]))
+			}
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("README.md and top-level docs must only reference existing local documents:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
+func TestAcceptanceG0EvidenceNamesDocLinkCheck(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "ACCEPTANCE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var evidence string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "| G0 ") {
+			continue
+		}
+		cells := strings.Split(line, "|")
+		if len(cells) < 5 {
+			t.Fatalf("malformed G0 acceptance row: %s", line)
+		}
+		evidence = strings.TrimSpace(cells[len(cells)-2])
+		break
+	}
+	if evidence == "" {
+		t.Fatal("missing G0 acceptance row")
+	}
+
+	issues := make([]string, 0)
+	if !strings.Contains(evidence, "TestDocsRelativeReferencesResolve") {
+		issues = append(issues, "G0 evidence must name TestDocsRelativeReferencesResolve")
+	}
+	if strings.Contains(evidence, "文档链接检查") {
+		issues = append(issues, "G0 evidence still uses manual 文档链接检查 wording")
+	}
+
+	if len(issues) > 0 {
+		t.Fatalf("G0 document-consistency evidence must name automated doc-link checks:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
+func normalizeDocLinkTarget(raw string) (string, bool) {
+	target := strings.TrimSpace(raw)
+	if target == "" || strings.HasPrefix(target, "#") {
+		return "", false
+	}
+	if strings.HasPrefix(target, "<") && strings.Contains(target, ">") {
+		target = strings.TrimPrefix(strings.SplitN(target, ">", 2)[0], "<")
+	}
+	if fields := strings.Fields(target); len(fields) > 0 {
+		target = fields[0]
+	}
+	if strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") || strings.HasPrefix(target, "//") {
+		return "", false
+	}
+	if fragment := strings.Index(target, "#"); fragment >= 0 {
+		target = target[:fragment]
+	}
+	if target == "" {
+		return "", false
+	}
+	return strings.ReplaceAll(target, "\\", "/"), true
+}
+
+func repoRelativePath(path string) string {
+	rel, err := filepath.Rel(filepath.Join("..", ".."), path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
+}
+
 func TestApifoxOpenAITextEndpointsUseTypedRequestBodies(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
