@@ -28,6 +28,7 @@
 | `TestApifoxOpenAPIInternalRefsResolve` | 递归检查 `docs/apifox/openapi.yaml` 内部 `$ref`，确保 requestBodies、responses、schemas、parameters 等组件引用都能解析，防止 Apifox 导入时出现断链 |
 | `TestApifoxOpenAPISecurityMatchesRouteGroups` | 检查 `/v1/*` operation 声明 `ApiKeyBearer`，`/v0/admin/*` 和除注册/登录/OAuth 公开入口及公开回调外的 `/v0/user/*` operation 声明 `UserJWT`，避免可导入文档遗漏鉴权要求 |
 | `TestApifoxOpenAPIOperationTagsAreDeclared` | 检查每个公开 operation 都带有非空 tags，且对应 tag 已在 OpenAPI 顶层声明并带说明，避免 Apifox 导入后接口分组缺失或漂移 |
+| `TestApifoxOpenAPIOperationIDsAreStableAndUnique` | 检查每个公开 operation 都有 lowerCamel 且全局唯一的 `operationId`，避免 Apifox 导入后接口标识依赖工具临时生成 |
 | `TestDocsRelativeReferencesResolve` | 扫描 README 和顶层 docs 的 Markdown 相对链接及反引号中的 `docs/*.md`/`docs/apifox/openapi.yaml` 引用，确保设计稿和导入说明不指向缺失文件 |
 | `TestDocsAvoidLegacyTerminology` | 扫描 README 和顶层 docs 中由 `docs/GLOSSARY.md` 定义的不推荐术语，防止模型通道、上游厂商、settings、API Key 哈希存储等概念在设计稿中漂移 |
 | `TestApifoxOpenAITextEndpointsUseTypedRequestBodies` | 检查 OpenAI Responses 和 Legacy Completions 不再使用通用 JSON 占位 requestBody，确保 Apifox 导入后能展示字段级请求说明 |

@@ -59,6 +59,7 @@ tags:
 paths:
   /health:
     get:
+      operationId: getHealth
       tags: [Health]
       summary: 进程健康检查
       description: 不要求系统初始化或鉴权，只证明 HTTP 进程存活。
@@ -71,6 +72,7 @@ paths:
                 $ref: "#/components/schemas/HealthResponse"
   /ready:
     get:
+      operationId: getReady
       tags: [Health]
       summary: 服务就绪检查
       description: '检查数据库可用性、schema_migrations dirty 状态；SQL_DSN 指向 PostgreSQL/MySQL 等外部数据库时还要求 Redis 可用；初始化后还会检查 JWT 配置、关键 auth/relay/rate-limit settings 注册表校验、已启用支付 provider 的必需环境密钥，以及存在 enc:v1: 通道密钥或外部登录 client_secret 时的 ENCRYPTION_KEY 和逐条解密结果。迁移 dirty 时返回 not_ready 并在 migration 字段返回 dirty；关键 settings 因直接改库或迁移漂移变成非法值时会返回 not_ready 并在 setting 字段指出问题 key；已有通道密文或外部登录 client_secret 缺少主密钥或无法解密时会返回 setting=ENCRYPTION_KEY。配置 LOG_SQL_DSN 时，独立日志库在启动期初始化，初始化失败会阻止服务启动；运行期日志库写入失败会保留主库调用事实并写应用告警。'
@@ -89,6 +91,7 @@ paths:
                 $ref: "#/components/schemas/ReadyResponse"
   /metrics:
     get:
+      operationId: getMetrics
       tags: [Health]
       summary: Prometheus 指标
       description: 默认由 observability.metrics_enabled=false 关闭；启用后返回 Prometheus text/plain，包含实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、日志补写 outbox 状态、支付、审计和 DB/Redis/日志库基础指标。routerx_db_errors_total/routerx_redis_errors_total 使用 operation 标签标记 ping、log_ping、migration_status、rate_limit_required、rate_limit_incr 或 rate_limit_expire 等低基数失败点。routerx_api_key_quota_remaining 只统计当前可用且未过期的有限额度 API Key，避免把无限额度 Key 的 -1 混入剩余额度告警。
@@ -190,6 +193,7 @@ paths:
           description: 指标接口未启用。
   /v0/setup/status:
     get:
+      operationId: getV0SetupStatus
       tags: [Setup]
       summary: 查询初始化状态
       description: 公共初始化探测接口；返回系统是否已完成首次初始化，以及是否允许进入 /v0/setup/init。该接口不要求鉴权，也不受 SetupCheck 限制。
@@ -207,6 +211,7 @@ paths:
                         $ref: "#/components/schemas/SetupStatus"
   /v0/setup/init:
     post:
+      operationId: postV0SetupInit
       tags: [Setup]
       summary: 首次初始化超级管理员
       description: 仅未初始化时可调用；会创建超级管理员、本地身份和默认 settings。
@@ -233,6 +238,7 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
   /v0/user/register/captcha:
     post:
+      operationId: postV0UserRegisterCaptcha
       tags: [User Auth]
       summary: 生成注册图片验证码
       description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。生成 6 位注册图片验证码，写入 Redis key auth:register_captcha:<captcha_id>，value 包含 SHA256(captcha_code)、attempts 和 max_attempts，并按 auth.captcha.ttl_seconds 设置 TTL。响应返回 captcha_id、可展示的 captcha_image_svg 和 ttl_seconds；Redis 不可用或公开注册/用户名注册关闭时 fail-closed。该验证码是注册防刷验证码，不等同于邮箱或手机号归属验证。
@@ -264,6 +270,7 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
   /v0/user/register:
     post:
+      operationId: postV0UserRegister
       tags: [User Auth]
       summary: 用户注册
       description: 统一自助注册入口；公开入口先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。默认关闭公开注册。register_method 省略时按 username 处理，也支持 email 和 phone；三种方法都必须提交 username/password，并分别要求 auth.register.username.enabled、auth.register.email.enabled 或 auth.register.phone.enabled 为 true。auth.register.captcha.required=true 时必须提交 captcha_id/captcha_code，服务端读取 auth:register_captcha:<captcha_id> Redis 记录并比对 SHA256(captcha_code)，成功后一次性删除验证码；验证码缺失、过期、错误、超过尝试次数或 Redis 不可用会拒绝注册。新账号注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id；请求提供 email/phone 时会创建 email/local 或 phone/local 登录标识，但密码哈希只保存到 username/local 主身份；同名、同邮箱或同手机号 identity 命中已注销普通用户时会恢复原 users.id、启用账号、更新本地密码身份和展示名，补齐同用户本地登录标识，保留额度/分组/日志/历史流水，不自动启用旧 API Key，并写 user.recover 审计。
@@ -299,6 +306,7 @@ paths:
           $ref: "#/components/responses/StandardServiceUnavailable"
   /v0/user/login/code:
     post:
+      operationId: postV0UserLoginCode
       tags: [User Auth]
       summary: 生成邮箱或手机号登录验证码
       description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。根据 account 识别 email 或 phone，检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled，确认本地身份、用户状态和 username/local 主密码存在后，生成 6 位验证码并写入 Redis key auth:login_code:<captcha_id>，value 包含 method、account、SHA256(captcha_code)、attempts 和 max_attempts，并按 auth.captcha.ttl_seconds 设置 TTL。当前基础实现尚未接入真实邮件/短信网关，默认不返回验证码明文；只有显式开启 auth.captcha.debug_response.enabled=true 时，响应才会返回 debug_code 供自部署前端和 Apifox 调试。Redis 不可用时返回 503 fail-closed，不生成不可消费验证码。
@@ -344,6 +352,7 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
   /v0/user/login:
     post:
+      operationId: postV0UserLogin
       tags: [User Auth]
       summary: 用户统一登录
       description: 管理后台也使用本接口获取 User JWT，不提供独立 /v0/admin/login；公开入口先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。credential_type 省略时按 password 处理；用户名密码登录始终可用；email/phone 密码登录仅对已有本地身份生效，并分别受 auth.login.email_password.enabled 与 auth.login.phone_password.enabled 控制，默认关闭；本地 email/phone 身份复用同一用户的 username/local 主密码，不要求各自保存独立密码哈希。credential_type=code 当前只识别邮箱或手机号账号并检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled；随后读取 auth:login_code:<captcha_id> Redis 记录，校验 method、account 和 SHA256(captcha_code)，成功后一次性删除验证码并签发 JWT；验证码缺失、过期、错误或超过尝试次数返回 401，账号类型不支持、开关关闭或 Redis 校验器不可用返回 403，不会回退为密码登录。成功登录会写入 user.login 管理审计，审计摘要不包含密码或 JWT。
@@ -381,6 +390,7 @@ paths:
           $ref: "#/components/responses/StandardServiceUnavailable"
   /v0/user/oauth/{provider}/login:
     get:
+      operationId: getV0UserOauthProviderLogin
       tags: [User Auth]
       summary: 发起 OAuth 登录
       description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。检查全局 auth.login.oauth.enabled 和 oauth.{provider}.enabled 后生成一次性 state，写入 HttpOnly Cookie，并 302 跳转到 provider 授权地址。当前基础实现使用 oauth.{provider}.auth_url/client_id/client_secret/token_url/userinfo_url/scopes 等 settings；禁用或配置不完整时返回 403。
@@ -408,6 +418,7 @@ paths:
           $ref: "#/components/responses/StandardServiceUnavailable"
   /v0/user/oauth/{provider}/callback:
     get:
+      operationId: getV0UserOauthProviderCallback
       tags: [User Auth]
       summary: OAuth 回调登录或返回注册票据
       description: 公开回调；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。校验 state Cookie 后使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。userinfo 的稳定 id/sub 已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定或已绑定到注销保留普通用户时不会按 email 自动绑定或接管其他已有账号。只有全局注册、用户名注册、OAuth 注册和 oauth.{provider}.register_enabled 均启用时，才返回 registration_required=true 和短期 registration_ticket；验证码不在回调阶段提交，用于后续补齐用户名密码账号或恢复原账号。
@@ -461,6 +472,7 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
   /v0/user/oauth/{provider}/register:
     post:
+      operationId: postV0UserOauthProviderRegister
       tags: [User Auth]
       summary: OAuth 首次登录补齐注册或恢复
       description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。使用 OAuth callback 返回的短期 registration_ticket 创建本地有密码账号并绑定 user_identities(method=oauth, provider, identifier)，或在票据中的 provider subject 命中已注销普通用户时恢复原 users.id。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重、密码要求，并在 auth.register.captcha.required=true 时校验并一次性消费 captcha_id/captcha_code 对应的 Redis 注册验证码；全新绑定成功后写 user.identity_bound 与 user.login 审计，恢复成功后写 user.recover 与 user.login 审计，都会返回 User JWT。恢复会更新本地密码、展示名和 OAuth identity 最近使用时间，不创建第二个账号，不自动启用旧 API Key，也不会根据 provider email 自动绑定已有账号。
@@ -508,6 +520,7 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
   /v0/user/oidc/{provider}/login:
     get:
+      operationId: getV0UserOidcProviderLogin
       tags: [User Auth]
       summary: 发起 OIDC 登录
       description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。检查全局 auth.login.oidc.enabled 和 oidc.{provider}.enabled 后读取 issuer 的 Discovery 文档，生成一次性 state 和 nonce，写入 HttpOnly Cookie，并 302 跳转到 authorization_endpoint。当前实现支持已绑定 OIDC subject 登录、登录用户绑定、首次补齐注册和注销账号恢复。
@@ -535,6 +548,7 @@ paths:
           $ref: "#/components/responses/StandardServiceUnavailable"
   /v0/user/oidc/{provider}/callback:
     get:
+      operationId: getV0UserOidcProviderCallback
       tags: [User Auth]
       summary: OIDC 回调登录或返回注册票据
       description: 公开回调；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。校验 state Cookie 和 nonce Cookie 后使用 code 请求 token_endpoint，校验 ID Token 的 RS256 签名、iss、aud、exp、nonce 和 sub，并以 sub 查询 user_identities(method=oidc, provider, identifier)。已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定或已绑定到注销保留普通用户时，不会按 email 自动绑定或接管其他已有账号。只有全局注册、用户名注册、OIDC 注册和 oidc.{provider}.register_enabled 均启用时，才返回 registration_required=true 和短期 registration_ticket；验证码不在回调阶段提交，用于后续补齐用户名密码账号或恢复原账号。
@@ -588,6 +602,7 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
   /v0/user/oidc/{provider}/register:
     post:
+      operationId: postV0UserOidcProviderRegister
       tags: [User Auth]
       summary: OIDC 首次登录补齐注册或恢复
       description: 公开入口；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。使用 OIDC callback 返回的短期 registration_ticket 创建本地有密码账号并绑定 user_identities(method=oidc, provider, sub)，或在票据中的 provider subject 命中已注销普通用户时恢复原 users.id。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重、密码要求，并在 auth.register.captcha.required=true 时校验并一次性消费 captcha_id/captcha_code 对应的 Redis 注册验证码；全新绑定成功后写 user.identity_bound 与 user.login 审计，恢复成功后写 user.recover 与 user.login 审计，都会返回 User JWT。恢复会更新本地密码、展示名和 OIDC identity 最近使用时间，不创建第二个账号，不自动启用旧 API Key，也不会根据 ID Token email 自动绑定已有账号。
@@ -635,6 +650,7 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
   /v0/user/oidc/{provider}/bind:
     get:
+      operationId: getV0UserOidcProviderBind
       tags: [User Auth]
       summary: 发起 OIDC 身份绑定
       description: 登录用户绑定企业 OIDC identity 的起点；需要 User JWT。服务端通过 Discovery 构造授权地址，生成一次性 state、nonce 和签名 bind Cookie，bind Cookie 记录发起绑定的本地用户并由 JWT secret 签名，然后 302 跳转 authorization_endpoint，redirect_uri 指向 bind/callback。
@@ -662,6 +678,7 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
   /v0/user/oidc/{provider}/bind/callback:
     get:
+      operationId: getV0UserOidcProviderBindCallback
       tags: [User Auth]
       summary: OIDC 回调绑定当前用户
       description: 公开回调；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。校验 state Cookie、nonce Cookie 和签名 bind Cookie 后，使用 code 请求 token_endpoint，校验 ID Token 的 RS256 签名、iss、aud、exp、nonce 和 sub。服务端只使用 sub 创建 `user_identities(method=oidc, provider, identifier)`，不使用 email 自动绑定。若同一 provider subject 已绑定其他用户，返回 409；若已绑定当前用户，则更新 verified_at/last_used_at 并幂等成功。
@@ -717,6 +734,7 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
   /v0/user/oauth/{provider}/bind:
     get:
+      operationId: getV0UserOauthProviderBind
       tags: [User Auth]
       summary: 发起 OAuth 身份绑定
       description: 登录用户绑定第三方 OAuth identity 的起点；需要 User JWT。服务端生成一次性 state Cookie 和签名 bind Cookie，bind Cookie 记录发起绑定的本地用户并由 JWT secret 签名，然后 302 跳转 provider 授权地址，redirect_uri 指向 bind/callback。禁用 OAuth 或 provider 配置不完整时返回 403。
@@ -744,6 +762,7 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
   /v0/user/oauth/{provider}/bind/callback:
     get:
+      operationId: getV0UserOauthProviderBindCallback
       tags: [User Auth]
       summary: OAuth 回调绑定当前用户
       description: 公开回调；先经过 rate_limit.global_per_min 与 rate_limit.per_ip_per_min 的 Redis 分钟级限流。校验 state Cookie 和签名 bind Cookie 后，使用 code 请求 provider token_url，再用 access_token 请求 userinfo_url。服务端只使用 userinfo 的稳定 id/sub 创建 `user_identities(method=oauth, provider, identifier)`，不使用 email 自动绑定。若同一 provider subject 已绑定其他用户，返回 409；若已绑定当前用户，则更新 verified_at/last_used_at 并幂等成功。
@@ -799,6 +818,7 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
   /v0/user/self:
     get:
+      operationId: getV0UserSelf
       tags: [User Auth]
       summary: 获取个人信息
       description: 返回当前 User JWT 对应的用户基础信息；不会返回密码、API Key 明文或其他敏感凭据。
@@ -819,6 +839,7 @@ paths:
         "401":
           $ref: "#/components/responses/StandardUnauthorized"
     put:
+      operationId: putV0UserSelf
       tags: [User Auth]
       summary: 修改个人信息
       description: 当前用户修改自己的展示名、email 和 phone 等个人资料；不能通过该接口提升角色、修改余额、切换分组或绕过管理员权限。提交 email 或 phone 时服务端会规范化并同步同用户 email/local 或 phone/local 登录标识，这些身份不保存重复密码哈希，邮箱或手机号密码登录开启后复用 username/local 主密码；目标 email 或 phone 已被其他账号身份占用时返回 400，资料和 identity 都不会部分落库。
@@ -838,6 +859,7 @@ paths:
         "401":
           $ref: "#/components/responses/StandardUnauthorized"
     delete:
+      operationId: deleteV0UserSelf
       tags: [User Auth]
       summary: 注销当前账号
       description: 当前普通用户注销自己的账号；请求体必须提供当前本地密码做二次确认，缺少或错误密码不会修改账号和 API Key 状态，会写 user.self_cancel_denied 拒绝审计，error_code 为 self_cancel_password_required 或 self_cancel_password_invalid，摘要不保存密码。确认通过后服务端将 users.status 置为 disabled，清空 users.display_name、users.email 和 users.phone，禁用该用户已启用 API Key 并写 user.self_cancel 审计。该操作保留 users、user_identities、tokens、logs、quota 和历史流水；username/local、email/local、phone/local、OAuth 和 OIDC identity 继续用于后续去重和恢复。注销后不能再次登录，同名 username/local、同邮箱 email/local、同手机号 phone/local、同一 OAuth identity 补齐注册或同一 OIDC subject 补齐注册会恢复原账号并写 user.recover 审计，旧 API Key 不会自动恢复。
@@ -858,6 +880,7 @@ paths:
           $ref: "#/components/responses/StandardUnauthorized"
   /v0/user/self/password:
     post:
+      operationId: postV0UserSelfPassword
       tags: [User Auth]
       summary: 修改登录密码
       description: 当前用户在登录态下修改本地密码；服务端校验旧密码后只更新 username/local 主身份的 password_hash，email/phone 本地身份仍不保存重复密码哈希。成功后写 user.password_changed 审计，摘要不包含旧密码、新密码、JWT 或其他认证秘密。
@@ -878,6 +901,7 @@ paths:
           $ref: "#/components/responses/StandardUnauthorized"
   /v0/user/identities:
     get:
+      operationId: getV0UserIdentities
       tags: [User Auth]
       summary: 当前用户身份列表
       description: 返回当前登录用户已绑定且未解绑的登录身份，包括 username/local、email/local、phone/local、oauth/provider 和 oidc/provider 等。响应只包含身份元数据，不返回 password_hash、JWT、API Key 或其他凭据。
@@ -901,6 +925,7 @@ paths:
           $ref: "#/components/responses/StandardUnauthorized"
   /v0/user/identities/{id}:
     delete:
+      operationId: deleteV0UserIdentitiesId
       tags: [User Auth]
       summary: 解绑当前用户身份
       description: 软删除当前登录用户名下的非主登录身份。username/local 主身份不能解绑，避免账号失去基础登录方式；解绑 OAuth/OIDC 等身份后，该身份不再出现在列表中，也不能继续用于登录。成功后写 user.identity_unbound 审计。
@@ -932,6 +957,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/user/token:
     get:
+      operationId: getV0UserToken
       tags: [User API Key]
       summary: 当前用户 API Key 列表
       description: 返回当前用户自己的 API Key 分页列表；仅包含脱敏前缀、状态、过期时间、额度、非安全元数据和最近使用摘要，不返回完整 sk- 明文或哈希。
@@ -953,6 +979,7 @@ paths:
                       data:
                         $ref: "#/components/schemas/TokenPage"
     post:
+      operationId: postV0UserToken
       tags: [User API Key]
       summary: 创建 API Key
       description: 返回一次性 sk- 明文；可写入 environment/team/app/tags/external_id/note 和 principal_type/principal_id/principal_name 非安全元数据；有限额度 Key 创建时只设置预算上限，不扣用户余额，调用成功时再扣费。成功后写入 api_key.created 管理审计，审计摘要不包含完整明文 Key 或哈希。
@@ -980,6 +1007,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/user/token/{id}:
     put:
+      operationId: putV0UserTokenId
       tags: [User API Key]
       summary: 编辑 API Key
       description: 普通用户只能编辑名称、状态、过期时间和非安全元数据，不能通过本接口修改额度或无限标记。普通编辑成功后写 api_key.updated 并清理 Redis 鉴权 lookup cache；将状态改为禁用写 api_key.disabled；尝试修改 remain_quota 或 unlimited 会返回 403 并写 api_key.quota_limit_denied。
@@ -1001,6 +1029,7 @@ paths:
         "404":
           $ref: "#/components/responses/StandardNotFound"
     delete:
+      operationId: deleteV0UserTokenId
       tags: [User API Key]
       summary: 删除 API Key
       description: 软删除当前用户自己的 API Key；成功后写 api_key.deleted 管理审计并清理 Redis 鉴权 lookup cache，历史调用日志保留 token_id 引用。
@@ -1015,6 +1044,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/user/token/{id}/disable:
     post:
+      operationId: postV0UserTokenIdDisable
       tags: [User API Key]
       summary: 禁用 API Key
       description: 显式禁用当前用户自己的 API Key，可选记录禁用原因；成功后写 api_key.disabled 管理审计并清理 Redis 鉴权 lookup cache。
@@ -1044,6 +1074,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/user/token/{id}/rotate:
     post:
+      operationId: postV0UserTokenIdRotate
       tags: [User API Key]
       summary: 轮换 API Key
       description: 创建替换 Key，复制名称、过期时间、预算语义和 scope，写入 rotated_from_id，禁用旧 Key 并清理旧 Key 的 Redis 鉴权 lookup cache；新 key 明文只在本次响应展示，成功后写 api_key.rotated 管理审计。
@@ -1069,6 +1100,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/user/token/{id}/report-leak:
     post:
+      operationId: postV0UserTokenIdReportLeak
       tags: [User API Key]
       summary: 上报 API Key 泄露
       description: 立即禁用当前用户自己的 API Key，记录 revoked_reason，清理 Redis 鉴权 lookup cache，并返回替换建议；成功后写 api_key.leak_reported 管理审计，审计不包含明文 Key。
@@ -1098,6 +1130,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/user/token/{id}/scope:
     put:
+      operationId: putV0UserTokenIdScope
       tags: [User API Key]
       summary: 更新 API Key scope
       description: 更新当前用户自己的 API Key 收窄策略；当前支持 allow_models 模型 allow-list、api_types APIType allow-list、channel_groups 通道分组 allow-list、entry_protocols 入口协议 allow-list、ip_cidrs IP/CIDR allow-list、methods 方法路径 allow-list、daily_quota 日预算、monthly_quota 月预算、max_concurrency 并发上限、rpm 和 tpm。列表为空表示继承用户和系统策略；模型未命中返回 model_not_allowed，APIType、入口协议、IP 或方法路径未命中返回 token_forbidden，通道分组未命中返回 route_forbidden，日/月预算达到上限返回 insufficient_quota，并发上限或 RPM/TPM 命中返回 rate_limit_exceeded，且都不会调用上游。entry_protocols=gemini 覆盖 generateContent、streamGenerateContent、countTokens、embedContent 和 batchEmbedContents。成功后写 api_key.scope_updated 管理审计并清理 Redis 鉴权 lookup cache，审计摘要不包含明文 Key 或哈希。
@@ -1129,6 +1162,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/user/token/{id}/usage:
     get:
+      operationId: getV0UserTokenIdUsage
       tags: [User API Key]
       summary: API Key 用量摘要
       description: 返回当前用户指定 Key 的调用数、成功/失败数、额度消耗、总 tokens 和最近调用摘要。
@@ -1152,6 +1186,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/user/token/{id}/leak-window:
     get:
+      operationId: getV0UserTokenIdLeakWindow
       tags: [User API Key]
       summary: API Key 泄露窗口摘要
       description: 当前用户查询自己的单 Key 最近调用窗口；window_hours 默认 24，最大 720。响应基于调用日志聚合调用数、成功/失败数、额度、tokens、模型、错误 code 和来源 IP 哈希计数，不返回完整明文 Key、Key 哈希或原始 IP。
@@ -1184,6 +1219,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/user/token/{id}/events:
     get:
+      operationId: getV0UserTokenIdEvents
       tags: [User API Key]
       summary: API Key 错误和限流事件摘要
       description: 当前用户查询自己的单 Key 最近错误/限流事件窗口；window_hours 默认 24，最大 720。响应只基于失败调用日志聚合错误 code、错误来源、上游 HTTP 状态、限流维度和模型计数，不返回原始 IP、错误正文、完整明文 Key 或 Key 哈希。
@@ -1216,6 +1252,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/user/log:
     get:
+      operationId: getV0UserLog
       tags: [User Usage]
       summary: 当前用户调用日志
       description: 查询当前用户自己的模型调用日志，支持按 API Key、通道、模型、状态、稳定 error_code、失败来源 error_source、上游 HTTP 状态 upstream_status 和时间窗口过滤；响应中的请求/响应体、IP、错误原文和快照字段按服务端脱敏策略返回。
@@ -1247,6 +1284,7 @@ paths:
                         $ref: "#/components/schemas/LogPage"
   /v0/user/billing:
     get:
+      operationId: getV0UserBilling
       tags: [User Usage]
       summary: 当前用户账单统计
       description: 聚合当前用户成功调用日志中的 call_count、total_quota 和 total_tokens；可通过 token_id 只查看指定 API Key 的账单聚合，不会跨用户读取其他 Key。
@@ -1270,6 +1308,7 @@ paths:
                         $ref: "#/components/schemas/BillingStats"
   /v0/user/quota-transactions:
     get:
+      operationId: getV0UserQuotaTransactions
       tags: [User Usage]
       summary: 当前用户额度流水
       description: 查询当前用户自己的余额变更流水。该接口只返回支付入账、充值码兑换、退款扣回、人工补账和人工扣回等 quota_transactions；模型调用消费仍查询 /v0/user/log 或 /v0/user/billing。即使传入 user_id，服务端也会强制使用当前登录用户。
@@ -1308,6 +1347,7 @@ paths:
           $ref: "#/components/responses/StandardUnauthorized"
   /v0/user/redem:
     post:
+      operationId: postV0UserRedem
       tags: [User Usage]
       summary: 使用充值码
       description: 基础实现；兑换未使用且未过期的充值码，事务内标记 redem_codes used/used_by/used_at、增加当前用户 quota，并写入 quota_transactions 幂等流水和 redem_code.redeem 管理审计。审计摘要只保存脱敏兑换码、额度、使用人和兑换后余额；已使用、已作废、已过期、不存在或参数无效的充值码不会入账，会写 redem_code.redeem_denied 拒绝审计，error_code 包含 redem_code_invalid_or_used、redem_code_expired 或 redem_code_required。
@@ -1337,6 +1377,7 @@ paths:
           $ref: "#/components/responses/StandardUnauthorized"
   /v0/user/models:
     get:
+      operationId: getV0UserModels
       tags: [User Usage]
       summary: 当前用户可用模型
       description: 基础实现；返回启用通道暴露且未被 channel_model_prices.user_enabled=false 隐藏的去重模型列表。默认可见通道命中启用 channel_model_prices 时，price_rule 返回 channel_model_price:<price_mode>:v<rule_version>；否则命中启用 model_prices 时返回 model_price:<price_mode>:v<rule_version>；都未命中时回退 minimum_usage。
@@ -1358,6 +1399,7 @@ paths:
           $ref: "#/components/responses/StandardUnauthorized"
   /v0/user/payment/products:
     get:
+      operationId: getV0UserPaymentProducts
       tags: [User Payment]
       summary: 充值商品列表
       description: 返回当前启用的服务端充值商品。quota 为 base_quota + bonus_quota，客户端不能直接指定入账额度。
@@ -1379,6 +1421,7 @@ paths:
                           $ref: "#/components/schemas/PaymentProductInfo"
   /v0/user/payment/orders:
     post:
+      operationId: postV0UserPaymentOrders
       tags: [User Payment]
       summary: 创建支付订单
       description: 基础实现；provider 必须已通过 payment.stripe.enabled 或 payment.epay.enabled 启用。创建本地 pending 订单并保存商品快照，按 payment.order_expire_minutes 生成 expires_at，成功后写 payment_order.create 管理审计；审计摘要不保存 checkout_url。本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 payment_order.create_denied，error_code 包含 payment_order_provider_disabled、payment_order_product_unavailable 或 payment_order_provider_checkout_failed。Stripe 在 PAYMENT_STRIPE_SECRET_KEY 和绝对 return_url 齐全时创建 Checkout Session 并保存 session.id/session.url；易支付网关、商户号、回调 URL 和 PAYMENT_EPAY_KEY 配置齐全时返回签名收银台 URL；配置不足时返回安全 checkout 占位链接。
@@ -1405,6 +1448,7 @@ paths:
         "400":
           $ref: "#/components/responses/StandardBadRequest"
     get:
+      operationId: getV0UserPaymentOrders
       tags: [User Payment]
       summary: 当前用户支付订单列表
       description: 查询当前用户自己的支付订单分页列表；只返回本用户订单和服务端保存的订单快照，不允许通过筛选读取其他用户订单。
@@ -1427,6 +1471,7 @@ paths:
                         $ref: "#/components/schemas/PaymentOrderPage"
   /v0/user/payment/orders/{order_no}:
     get:
+      operationId: getV0UserPaymentOrdersOrderNo
       tags: [User Payment]
       summary: 当前用户支付订单详情
       description: 查询当前用户自己的单个支付订单详情；订单不存在或不属于当前用户时返回 404，不泄露其他用户订单状态。
@@ -1453,6 +1498,7 @@ paths:
           description: 订单不存在或不属于当前用户。
   /v0/user/payment/orders/{order_no}/cancel:
     post:
+      operationId: postV0UserPaymentOrdersOrderNoCancel
       tags: [User Payment]
       summary: 取消未支付订单
       description: 当前用户取消自己的 pending 支付订单，订单置为 closed 并写 payment_order.cancel 审计；已 closed 订单幂等返回当前状态，已支付、退款中或已退款订单拒绝取消并写 payment_order.cancel_denied，error_code 包含 payment_order_cancel_not_pending 或 payment_order_cancel_not_found，不会增加用户额度。
@@ -1481,6 +1527,7 @@ paths:
           description: 订单不存在或不属于当前用户。
   /v0/payment/stripe/webhook:
     post:
+      operationId: postV0PaymentStripeWebhook
       tags: [Payment Webhook]
       summary: Stripe Webhook 异步通知
       description: 基础实现；使用 PAYMENT_STRIPE_WEBHOOK_SECRET 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计。checkout.session.async_payment_failed 会在同样校验订单快照后将 pending 订单置为 failed，写 payment_webhook.failed 审计且不增加额度。charge.refunded 全额或部分退款事件会校验金额和币种，将 paid 订单置为 refunded 或 partially_refunded，写 payment_refund.processed；payment.refund.auto_deduct=true 且扣回成功时写 refund_deduct 流水和 payment_refund.deducted 审计，部分退款按退款金额比例扣回。charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated 争议生命周期事件会校验金额和币种，按 provider_dispute_id 更新 payment_disputes 当前事实，并写 payment_dispute.created、payment_dispute.updated、payment_dispute.closed 或 payment_dispute.funds_changed 审计；payment.dispute.auto_disable_tokens=true 时仅在 created 阶段禁用该用户已启用 API Key，revoked_reason=payment_dispute，且不直接修改额度或订单状态。重复事件幂等返回 success。
@@ -1513,6 +1560,7 @@ paths:
                 example: fail
   /v0/payment/epay/notify:
     post:
+      operationId: postV0PaymentEpayNotify
       tags: [Payment Webhook]
       summary: 易支付异步通知
       description: 基础实现；使用 PAYMENT_EPAY_KEY 校验 MD5 签名，校验 out_trade_no、money 和状态。成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计；明确失败状态会将 pending 订单置为 failed，写 payment_webhook.failed 审计且不增加额度；重复通知幂等返回 success。
@@ -1539,6 +1587,7 @@ paths:
                 example: fail
   /v0/payment/epay/return:
     get:
+      operationId: getV0PaymentEpayReturn
       tags: [Payment Webhook]
       summary: 易支付同步返回只读状态
       description: 基础实现；同步返回只读取 RouterX 本地订单状态，不校验为支付成功依据，不写 payment_events，不增加用户额度。入账只依赖易支付异步通知。
@@ -1569,6 +1618,7 @@ paths:
           description: 订单不存在或不是易支付订单。
   /v0/admin/user:
     get:
+      operationId: getV0AdminUser
       tags: [Admin Users]
       summary: 用户列表
       description: 管理员分页查询用户列表，支持关键词、角色、状态和分组过滤；关键词会匹配用户名、展示名、邮箱和手机号；响应不包含密码摘要、API Key 明文或下游密钥。
@@ -1594,6 +1644,7 @@ paths:
                       data:
                         $ref: "#/components/schemas/UserPage"
     post:
+      operationId: postV0AdminUser
       tags: [Admin Users]
       summary: 创建普通用户
       description: 仅创建普通用户；可提交 email/phone 作为主资料，phone 会同步创建 phone/local 登录标识且不保存重复密码哈希，手机号密码登录开启后复用 username/local 主密码。成功后写入 user.create 管理审计，密码不会写入审计摘要。
@@ -1621,6 +1672,7 @@ paths:
           $ref: "#/components/responses/StandardForbidden"
   /v0/admin/user/{id}:
     put:
+      operationId: putV0AdminUserId
       tags: [Admin Users]
       summary: 编辑普通用户
       description: 可编辑显示名、邮箱、手机号、状态和分组；phone 会同步维护 phone/local 登录标识，目标手机号已被其他账号占用时返回 400，资料和 identity 都不会部分落库。成功后写入 user.update，禁用用户写入 user.disable，拒绝角色变更写入 user.denied。
@@ -1640,6 +1692,7 @@ paths:
         "403":
           $ref: "#/components/responses/StandardForbidden"
     delete:
+      operationId: deleteV0AdminUserId
       tags: [Admin Users]
       summary: 删除普通用户
       description: 软删除普通用户并禁用其 API Key；成功后写入 user.delete 管理审计。
@@ -1654,6 +1707,7 @@ paths:
           $ref: "#/components/responses/StandardForbidden"
   /v0/admin/user/{id}/quota:
     patch:
+      operationId: patchV0AdminUserIdQuota
       tags: [Admin Users]
       summary: 调整用户额度
       description: quota 为增量；负数表示扣减，扣减时要求余额足够。成功后写入 quota_transactions 和 user.quota_update 管理审计，reason 会作为人工调整原因保存。
@@ -1674,6 +1728,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/quota-transactions:
     get:
+      operationId: getV0AdminQuotaTransactions
       tags: [Admin Users]
       summary: 管理端额度流水
       description: 管理员查询所有用户的余额变更流水；支持按用户、流水类型、来源类型、来源 ID 和创建时间过滤。模型调用消费不进入 quota_transactions，应通过 /v0/admin/log 或账单统计查询。
@@ -1713,6 +1768,7 @@ paths:
           $ref: "#/components/responses/StandardForbidden"
   /v0/admin/groups:
     get:
+      operationId: getV0AdminGroups
       tags: [Admin Users]
       summary: 用户分组列表
       description: 管理员查看用户分组；支持 page、page_size 和 keyword。groups.ratio 当前作为分组元数据/兼容展示倍率，实际扣费倍率以 billing.* settings 为准。
@@ -1735,6 +1791,7 @@ paths:
                       data:
                         $ref: "#/components/schemas/UserGroupPage"
     post:
+      operationId: postV0AdminGroups
       tags: [Admin Users]
       summary: 创建用户分组
       description: 创建用户分组；名称必须唯一，ratio 小于等于 0 时按 1 保存。成功后写入 user_group.create 管理审计。
@@ -1762,6 +1819,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/groups/{id}:
     put:
+      operationId: putV0AdminGroupsId
       tags: [Admin Users]
       summary: 更新用户分组
       description: 更新用户分组名称或展示倍率；名称必须唯一，显式 ratio 小于等于 0 会被拒绝。成功后写入 user_group.update 管理审计。
@@ -1790,6 +1848,7 @@ paths:
         "400":
           $ref: "#/components/responses/StandardBadRequest"
     delete:
+      operationId: deleteV0AdminGroupsId
       tags: [Admin Users]
       summary: 删除用户分组
       description: 删除未使用的用户分组；default 分组或仍有用户引用的分组会被拒绝。成功后写入 user_group.delete 管理审计。
@@ -1804,6 +1863,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/token:
     get:
+      operationId: getV0AdminToken
       tags: [Admin API Key]
       summary: 管理员 API Key 列表
       description: 管理员跨用户查询脱敏 API Key 摘要；不会返回完整明文 Key 或哈希。支持按 user_id、status、environment、team、app、tag、principal_type 和 principal_id 过滤。
@@ -1876,6 +1936,7 @@ paths:
                         $ref: "#/components/schemas/TokenPage"
   /v0/admin/token/export:
     get:
+      operationId: getV0AdminTokenExport
       tags: [Admin API Key]
       summary: 导出 API Key 脱敏摘要
       description: 管理员按 user_id、status、environment、team、app、tag、principal_type 和 principal_id 过滤导出 CSV；导出内容不包含完整明文 Key、key_hash 或来源 IP/User-Agent 明文，并写入 api_key.export 管理审计。
@@ -1953,6 +2014,7 @@ paths:
                 12,1,prod-router,1,prod,platform,router,service_account,svc-checkout-prod,Checkout Worker,gateway|rotated,svc-router-prod,owned by platform,,,gpt-4o-mini,,2026-06-19T10:00:00Z
   /v0/admin/token/risk:
     get:
+      operationId: getV0AdminTokenRisk
       tags: [Admin API Key]
       summary: API Key 风险视图
       description: 管理员按时间窗口查看异常 API Key；聚合调用数、成功/失败数、额度消耗、最近调用和风险原因。泄露上报 Key 会返回 rotation_recommended=true、rotation_reason=leak_reported 和 rotate_key 建议。响应只返回脱敏 API Key 摘要，不返回明文 Key 或哈希。
@@ -2007,6 +2069,7 @@ paths:
                         $ref: "#/components/schemas/TokenRiskPage"
   /v0/admin/token/{id}/leak-window:
     get:
+      operationId: getV0AdminTokenIdLeakWindow
       tags: [Admin API Key]
       summary: 管理员 API Key 泄露窗口摘要
       description: 管理员跨用户查询单 Key 最近调用窗口；window_hours 默认 24，最大 720。响应基于调用日志聚合调用数、成功/失败数、额度、tokens、模型、错误 code 和来源 IP 哈希计数，不返回完整明文 Key、Key 哈希或原始 IP。
@@ -2039,6 +2102,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/admin/token/{id}/events:
     get:
+      operationId: getV0AdminTokenIdEvents
       tags: [Admin API Key]
       summary: 管理员 API Key 错误和限流事件摘要
       description: 管理员跨用户查询单 Key 最近错误/限流事件窗口；window_hours 默认 24，最大 720。响应只基于失败调用日志聚合错误 code、错误来源、上游 HTTP 状态、限流维度和模型计数，不返回原始 IP、错误正文、完整明文 Key 或 Key 哈希。
@@ -2071,6 +2135,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/admin/token/batch-disable:
     post:
+      operationId: postV0AdminTokenBatchDisable
       tags: [Admin API Key]
       summary: 批量禁用 API Key
       description: 管理员按 token_ids 或 user_id 批量禁用 API Key；必须至少提供一个筛选条件。成功后写 api_key.batch_disabled 管理审计并清理命中 Key 的 Redis 鉴权 lookup cache；缺少筛选条件时返回 400，写 api_key.batch_disable_denied，result=denied，error_code=api_key_batch_filter_required。
@@ -2098,6 +2163,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/token/batch-expire:
     post:
+      operationId: postV0AdminTokenBatchExpire
       tags: [Admin API Key]
       summary: 批量过期 API Key
       description: 管理员按 token_ids 或 user_id 立即过期 API Key；必须至少提供一个筛选条件。成功后写 api_key.batch_expired 管理审计并清理命中 Key 的 Redis 鉴权 lookup cache；缺少筛选条件时返回 400，写 api_key.batch_expire_denied，result=denied，error_code=api_key_batch_filter_required。该操作只设置 expired_at，不改 status。
@@ -2125,6 +2191,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/alerts:
     get:
+      operationId: getV0AdminAlerts
       tags: [Admin Alerts]
       summary: 管理员告警列表
       description: 管理员查看主动告警收件箱；当前 API Key 泄露上报会创建 critical/open 告警。响应只包含脱敏资源 ID、用户 ID、Token ID 和处理状态，不返回完整 API Key、Key 哈希或用户提交的可疑原文。
@@ -2188,6 +2255,7 @@ paths:
                         $ref: "#/components/schemas/AlertEventPage"
   /v0/admin/alerts/deliveries:
     get:
+      operationId: getV0AdminAlertsDeliveries
       tags: [Admin Alerts]
       summary: 告警投递列表
       description: 管理员查看告警外部投递 outbox；当前 target 支持 webhook、email 和 im。投递记录只保存状态、重试时间和错误摘要，外部 payload 会从脱敏告警事实重建，不保存完整 API Key、Key 哈希或用户提交的可疑原文。
@@ -2229,6 +2297,7 @@ paths:
                         $ref: "#/components/schemas/AlertDeliveryOutboxPage"
   /v0/admin/alerts/deliveries/replay:
     post:
+      operationId: postV0AdminAlertsDeliveriesReplay
       tags: [Admin Alerts]
       summary: 重放告警投递
       description: 手动重放到期的 pending 告警投递。limit 默认为 20，服务端最大按 100 截断；可选 target=webhook/email/im 仅重放单一目标。对应 alert.<target>.enabled 未启用或 alert.<target>.url 未配置时返回 replayed=0。
@@ -2265,6 +2334,7 @@ paths:
                         $ref: "#/components/schemas/AlertDeliveryReplayResult"
   /v0/admin/alerts/{id}/ack:
     post:
+      operationId: postV0AdminAlertsIdAck
       tags: [Admin Alerts]
       summary: 确认告警
       description: 管理员将告警标记为 acknowledged，并记录确认时间和确认人。重复确认保持幂等返回当前告警事实。
@@ -2288,6 +2358,7 @@ paths:
           $ref: "#/components/responses/StandardNotFound"
   /v0/admin/redem:
     get:
+      operationId: getV0AdminRedem
       tags: [Admin Redemption]
       summary: 充值码列表
       description: 管理员查看充值码，可按状态、code/batch/note 关键字和 batch_no 过滤。状态：0 未使用，1 已使用，2 已作废。
@@ -2316,6 +2387,7 @@ paths:
                       data:
                         $ref: "#/components/schemas/RedemCodePage"
     post:
+      operationId: postV0AdminRedem
       tags: [Admin Redemption]
       summary: 生成或导入充值码
       description: codes 为空时按 count 生成随机充值码；codes 非空时导入指定充值码。count 默认 1，单次最多 100。可写入 batch_no、note 和未来 expired_at；成功后按每个充值码写入 redem_code.create 管理审计；过期时间非法、额度非法、数量超限、重复码等本地拒绝会写 redem_code.create_denied，error_code 包含 redem_code_expired_at_not_future、redem_code_quota_invalid、redem_code_count_exceeds_limit 或 redem_code_already_exists，摘要只保存脱敏 codes。
@@ -2345,6 +2417,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/redem/{id}/disable:
     patch:
+      operationId: patchV0AdminRedemIdDisable
       tags: [Admin Redemption]
       summary: 作废充值码
       description: 仅未使用充值码可以作废；作废后用户兑换会失败。成功后写入 redem_code.disable 管理审计。
@@ -2359,6 +2432,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/audit:
     get:
+      operationId: getV0AdminAudit
       tags: [Admin Audit]
       summary: 管理审计日志列表
       description: 超级管理员查询管理审计日志；当前基础实现已覆盖成功登录，API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、自助注销、自助注销二次确认拒绝、基础恢复、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建、创建拒绝和取消拒绝，支付 webhook 入账、provider 明确失败通知、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理、创建拒绝和兑换拒绝，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
@@ -2425,6 +2499,7 @@ paths:
           $ref: "#/components/responses/StandardForbidden"
   /v0/admin/payment/products:
     get:
+      operationId: getV0AdminPaymentProducts
       tags: [Admin Payment]
       summary: 支付商品列表
       description: 管理员查看所有支付商品，包含已禁用商品；可按 product_id/name 关键字和 enabled 状态过滤。
@@ -2452,6 +2527,7 @@ paths:
                       data:
                         $ref: "#/components/schemas/PaymentProductAdminPage"
     post:
+      operationId: postV0AdminPaymentProducts
       tags: [Admin Payment]
       summary: 创建支付商品
       description: 创建服务端充值商品；客户端下单只能选择 product_id，金额、币种和额度以服务端商品为准。成功后写入 payment_product.create 管理审计。
@@ -2479,6 +2555,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/payment/products/{id}:
     put:
+      operationId: putV0AdminPaymentProductsId
       tags: [Admin Payment]
       summary: 更新支付商品
       description: 更新商品配置；已创建订单继续使用订单快照，不受后续商品修改影响。成功后写入 payment_product.update 管理审计。
@@ -2508,6 +2585,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/payment/products/{id}/disable:
     patch:
+      operationId: patchV0AdminPaymentProductsIdDisable
       tags: [Admin Payment]
       summary: 禁用支付商品
       description: 禁用后用户侧商品列表不可见，且不能创建新订单；历史订单仍可查询和处理可信回调。成功后写入 payment_product.disable 管理审计。
@@ -2522,6 +2600,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/payment/products/{id}/enable:
     patch:
+      operationId: patchV0AdminPaymentProductsIdEnable
       tags: [Admin Payment]
       summary: 启用支付商品
       description: 成功后写入 payment_product.enable 管理审计。
@@ -2536,6 +2615,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/model-prices:
     get:
+      operationId: getV0AdminModelPrices
       tags: [Admin Billing]
       summary: 系统模型价格列表
       description: 管理员查看系统模型价格；可按模型名/价格模式关键字和 enabled 状态过滤。启用规则用于用户侧模型价格就绪状态展示，并在成功调用后作为通道覆盖缺失时的计费表达式来源。
@@ -2563,6 +2643,7 @@ paths:
                       data:
                         $ref: "#/components/schemas/ModelPriceAdminPage"
     post:
+      operationId: postV0AdminModelPrices
       tags: [Admin Billing]
       summary: 创建系统模型价格
       description: 创建模型级默认价格表达式；model 唯一，创建后 rule_version=1。成功后写入 model_price.create 管理审计，resource_id 为模型名。
@@ -2590,6 +2671,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/model-prices/{id}:
     put:
+      operationId: putV0AdminModelPricesId
       tags: [Admin Billing]
       summary: 更新系统模型价格
       description: 更新模型级默认价格表达式；每次更新 rule_version 递增。成功后写入 model_price.update 管理审计，resource_id 为模型名。
@@ -2619,6 +2701,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/model-prices/{id}/disable:
     patch:
+      operationId: patchV0AdminModelPricesIdDisable
       tags: [Admin Billing]
       summary: 禁用系统模型价格
       description: 禁用后用户侧 /v0/user/models 对应模型回退到 price_rule=minimum_usage、pricing_ready=false；rule_version 递增。成功后写入 model_price.disable 管理审计。
@@ -2633,6 +2716,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/model-prices/{id}/enable:
     patch:
+      operationId: patchV0AdminModelPricesIdEnable
       tags: [Admin Billing]
       summary: 启用系统模型价格
       description: 启用后用户侧 /v0/user/models 对应模型返回版本化 price_rule；rule_version 递增。成功后写入 model_price.enable 管理审计。
@@ -2647,6 +2731,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel-model-prices:
     get:
+      operationId: getV0AdminChannelModelPrices
       tags: [Admin Billing]
       summary: 通道模型价格覆盖列表
       description: 管理员查看通道级模型价格覆盖；可按模型名/价格模式关键字、channel_id、enabled 和 user_enabled 过滤。启用覆盖用于用户侧模型可见性和价格状态展示，并在选中通道存在覆盖时优先作为成功调用后的计费表达式来源；user_enabled=false 的通道模型不会进入普通用户调用候选。
@@ -2684,6 +2769,7 @@ paths:
                       data:
                         $ref: "#/components/schemas/ChannelModelPriceAdminPage"
     post:
+      operationId: postV0AdminChannelModelPrices
       tags: [Admin Billing]
       summary: 创建通道模型价格覆盖
       description: 创建通道级模型价格覆盖；channel_id + model 唯一，且模型必须属于该通道 models。成功后写入 channel_model_price.create 管理审计，resource_id 为 channel_id:model。
@@ -2711,6 +2797,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel-model-prices/{id}:
     put:
+      operationId: putV0AdminChannelModelPricesId
       tags: [Admin Billing]
       summary: 更新通道模型价格覆盖
       description: 更新通道级模型价格覆盖；每次更新 rule_version 递增。成功后写入 channel_model_price.update 管理审计，resource_id 为 channel_id:model。
@@ -2740,6 +2827,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel-model-prices/{id}/disable:
     patch:
+      operationId: patchV0AdminChannelModelPricesIdDisable
       tags: [Admin Billing]
       summary: 禁用通道模型价格覆盖
       description: 禁用后该通道模型的价格状态可回退到启用的系统模型价格或 minimum_usage，但不改变 user_enabled 可见性；rule_version 递增。成功后写入 channel_model_price.disable 管理审计。
@@ -2754,6 +2842,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel-model-prices/{id}/enable:
     patch:
+      operationId: patchV0AdminChannelModelPricesIdEnable
       tags: [Admin Billing]
       summary: 启用通道模型价格覆盖
       description: 启用后用户侧 /v0/user/models 可优先返回通道级版本化 price_rule；rule_version 递增。成功后写入 channel_model_price.enable 管理审计。
@@ -2768,6 +2857,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/payment/adjustments:
     post:
+      operationId: postV0AdminPaymentAdjustments
       tags: [Admin Payment]
       summary: 支付人工补账或扣回
       description: 管理员执行支付相关人工补账或扣回；amount 为正数时写 manual_credit，负数时写 manual_debit。默认要求 reason，idempotency_key 必填以防重复操作；传入 order_no 时校验订单属于目标用户，并把流水来源记为 payment_order。成功后写 payment_manual_adjust.credit 或 payment_manual_adjust.debit 管理审计；本地拒绝写 payment_manual_adjust.denied，error_code 区分缺少原因、重复幂等键、金额为 0、目标不存在或权限拒绝。
@@ -2795,6 +2885,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/payment/refunds:
     post:
+      operationId: postV0AdminPaymentRefunds
       tags: [Admin Payment]
       summary: 支付人工退款落账
       description: 管理员对已确认的支付退款事实做人工落账；仅接受 paid 订单，refund_quota 必须大于 0 且不超过订单额度。成功后扣回用户额度，写 quota_transactions(type=refund_deduct, source_type=refund, source_id=<order_no>)，订单置为 refunded 或 partially_refunded，并写 payment_refund.manual 管理审计。reason 默认必填，idempotency_key 必填以防重复扣回；本地拒绝写 payment_refund.manual_denied，error_code 区分缺少订单号、退款额度非法、缺少原因、重复幂等键、订单状态不允许或余额不足。
@@ -2822,6 +2913,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/payment/refund-requests:
     post:
+      operationId: postV0AdminPaymentRefundRequests
       tags: [Admin Payment]
       summary: 发起 provider 退款请求
       description: 管理员向 Stripe 或易支付发起 provider 退款请求；仅接受 paid 订单。Stripe 订单必须已保存 provider_payment_id，并调用 Stripe Refund API；易支付订单需要 payment.epay.pid、payment.epay.refund_url 和 PAYMENT_EPAY_KEY，并对退款表单做 MD5 签名。refund_amount 为空时按订单全额退款，非空时必须大于 0 且不超过订单金额。成功后写 payment_refund_requests、订单进入 refund_pending，并写 payment_refund.requested 管理审计；本地参数、订单状态或幂等键拒绝会写 payment_refund.request_denied 且 result=denied，provider 调用失败会写同动作但 result=failed，摘要不保存 provider secret；最终 refunded 或 partially_refunded 状态仍由可信 provider webhook 或后续人工收尾确认。
@@ -2849,6 +2941,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/admin:
     get:
+      operationId: getV0AdminAdmin
       tags: [Admin Accounts]
       summary: 管理员列表
       description: 管理员及以上可查看。
@@ -2870,6 +2963,7 @@ paths:
                       data:
                         $ref: "#/components/schemas/UserPage"
     post:
+      operationId: postV0AdminAdmin
       tags: [Admin Accounts]
       summary: 创建管理员
       description: 仅超级管理员可创建管理员账号；成功后写入 admin.create 管理审计，普通管理员越权访问会写 admin.denied。
@@ -2892,6 +2986,7 @@ paths:
           $ref: "#/components/responses/StandardForbidden"
   /v0/admin/admin/{id}:
     put:
+      operationId: putV0AdminAdminId
       tags: [Admin Accounts]
       summary: 编辑管理员
       description: 仅超级管理员；禁止越权编辑同级或破坏最后一个超级管理员。成功后写入 admin.update，禁用管理员时写入 admin.disable。
@@ -2911,6 +3006,7 @@ paths:
         "403":
           $ref: "#/components/responses/StandardForbidden"
     delete:
+      operationId: deleteV0AdminAdminId
       tags: [Admin Accounts]
       summary: 删除管理员
       description: 仅超级管理员；删除时保护最后一个超级管理员。成功后写入 admin.delete 管理审计。
@@ -2925,6 +3021,7 @@ paths:
           $ref: "#/components/responses/StandardForbidden"
   /v0/admin/channel:
     get:
+      operationId: getV0AdminChannel
       tags: [Admin Channels]
       summary: 通道列表
       description: 返回脱敏通道分页列表；每条通道包含计算型 health_status、health_reason 和 cooldown_remaining_seconds，用于区分正常、手工禁用、熔断中和冷却后待探测状态。
@@ -2951,6 +3048,7 @@ paths:
                       data:
                         $ref: "#/components/schemas/ChannelPage"
     post:
+      operationId: postV0AdminChannel
       tags: [Admin Channels]
       summary: 创建通道
       description: 创建成功后写入 channel.create 管理审计；审计摘要只记录脱敏通道信息和密钥数量。响应包含计算型 health_status、health_reason 和 cooldown_remaining_seconds。
@@ -2978,6 +3076,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel/{id}:
     put:
+      operationId: putV0AdminChannelId
       tags: [Admin Channels]
       summary: 编辑通道
       description: 编辑成功后写入 channel.update 管理审计；下游密钥不会写入审计摘要。
@@ -2997,6 +3096,7 @@ paths:
         "400":
           $ref: "#/components/responses/StandardBadRequest"
     delete:
+      operationId: deleteV0AdminChannelId
       tags: [Admin Channels]
       summary: 删除通道
       description: 历史日志保留，但解除 channel_id 引用；删除成功后写入 channel.delete 管理审计。
@@ -3011,6 +3111,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel/{id}/disable:
     patch:
+      operationId: patchV0AdminChannelIdDisable
       tags: [Admin Channels]
       summary: 禁用通道
       description: 禁用成功后写入 channel.disable 管理审计。
@@ -3025,6 +3126,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel/{id}/enable:
     patch:
+      operationId: patchV0AdminChannelIdEnable
       tags: [Admin Channels]
       summary: 启用通道
       description: 启用成功后写入 channel.enable 管理审计。
@@ -3039,6 +3141,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel/{id}/test:
     post:
+      operationId: postV0AdminChannelIdTest
       tags: [Admin Channels]
       summary: 测试通道连通性
       description: 调用上游模型列表探测通道健康，成功或失败都会写入 channel.test 管理审计。
@@ -3062,6 +3165,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/channel/{id}/models:
     get:
+      operationId: getV0AdminChannelIdModels
       tags: [Admin Channels]
       summary: 拉取上游模型列表
       description: 基础实现只支持单 base_url 通道；OpenAI-compatible 读取 /v1/models，Azure OpenAI 读取 /openai/deployments 并返回 deployment id；成功或失败都会写入 channel.fetch_models 管理审计。
@@ -3085,6 +3189,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/security/rotate-secrets:
     post:
+      operationId: postV0AdminSecurityRotateSecrets
       tags: [Admin Security]
       summary: 轮换数据库密文主密钥
       description: 仅超级管理员；使用 previous_encryption_key 解密现有通道 api_key、api_keys、upstreams.api_key 和外部登录 oauth.*.client_secret/oidc.*.client_secret，再用当前 ENCRYPTION_KEY 重新加密。整批事务失败回滚；响应和 security.secret_rotate 审计只包含扫描/轮换计数，不返回任何主密钥、下游密钥或 provider client_secret 明文。
@@ -3114,6 +3219,7 @@ paths:
           $ref: "#/components/responses/StandardForbidden"
   /v0/admin/log:
     get:
+      operationId: getV0AdminLog
       tags: [Admin Logs]
       summary: 全局调用日志
       description: 超级管理员查询调用日志；支持按用户、API Key、通道、模型、状态、稳定 error_code、失败来源 error_source、上游 HTTP 状态 upstream_status 和时间窗口过滤。配置 LOG_SQL_DSN 时读取独立日志数据库，未配置时读取主业务数据库，日志库查询失败时回退读取主库事实。无论是否配置独立日志库，主库都会保留可恢复结算事实，避免日志库故障导致账单不可解释。
@@ -3145,6 +3251,7 @@ paths:
                       data:
                         $ref: "#/components/schemas/LogPage"
     delete:
+      operationId: deleteV0AdminLog
       tags: [Admin Logs]
       summary: 清理历史日志
       description: 需要 before 查询参数，删除该时间之前的日志；配置 LOG_SQL_DSN 时清理独立日志数据库，未配置时清理主库日志；成功后写入 log.clear 管理审计，摘要记录 before 截止时间。
@@ -3163,6 +3270,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/log/export:
     get:
+      operationId: getV0AdminLogExport
       tags: [Admin Logs]
       summary: 导出调用日志 CSV
       description: 管理员按日志查询条件导出脱敏 CSV；配置 LOG_SQL_DSN 时优先读取独立日志数据库，查询失败时回退主库事实。CSV 只包含安全运营字段，不包含请求体、响应体、IP、错误原文、request/policy/route/billing snapshot、API Key、上游密钥或支付密钥；成功后写入 log.export 管理审计，摘要记录过滤条件、规范化后的 limit 和 exported_count。
@@ -3202,6 +3310,7 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/dashboard:
     get:
+      operationId: getV0AdminDashboard
       tags: [Admin Logs]
       summary: 管理看板统计
       description: 返回用户、通道、API Key、今日调用、今日额度和 ready 状态统计；配置 LOG_SQL_DSN 时今日调用和今日额度优先来自独立日志数据库，基础用户/通道/API Key 数仍来自主业务数据库。dependencies 会暴露数据库、迁移、Redis、日志库和 settings 状态，供控制台解释当前可用性。
@@ -3221,6 +3330,7 @@ paths:
                         $ref: "#/components/schemas/DashboardStats"
   /v0/admin/setting:
     get:
+      operationId: getV0AdminSetting
       tags: [Admin Logs]
       summary: 获取系统设置
       description: 仅超级管理员；敏感值会脱敏，OAuth/OIDC client_secret 不返回明文。
@@ -3248,6 +3358,7 @@ paths:
         "403":
           $ref: "#/components/responses/StandardForbidden"
     put:
+      operationId: putV0AdminSetting
       tags: [Admin Logs]
       summary: 批量更新系统设置
       description: 仅超级管理员；成功后按 key 写入 setting.create 或 setting.update 管理审计，校验失败或高风险配置被拒绝时按 key 写入 setting.denied，敏感值只保存脱敏摘要。`oauth.*.client_secret` 和 `oidc.*.client_secret` 在配置 ENCRYPTION_KEY 时加密落库，业务读取时透明解密。
@@ -3268,6 +3379,7 @@ paths:
           $ref: "#/components/responses/StandardForbidden"
   /v1/responses:
     post:
+      operationId: postV1Responses
       tags: [OpenAI Compatible]
       summary: OpenAI Responses API 转发
       description: OpenAI-compatible Responses 基础实现；JSON 请求体可透传到 OpenAI-compatible 上游 /v1/responses，stream=true 且命中 OpenAI SSE 形态通道时透传 text/event-stream，Azure OpenAI 通道可转发 JSON 请求到 /openai/v1/responses?api-version=preview，Claude/Anthropic 通道支持基础非流式 Responses 转 /v1/messages，Gemini 通道支持基础非流式 Responses 转 /v1beta/models/{model}:generateContent，并将 input、instructions、max_output_tokens 和基础生成参数映射到对应上游。发出前剥离 routerx 私有字段，并将非流式 usage.input_tokens/output_tokens/total_tokens、Claude usage.input_tokens/output_tokens、Gemini usageMetadata 或流式 response.completed.response.usage 映射到 RouterX 日志与扣费。完整 Responses 原生事件矩阵以 docs/PROTOCOLS.md 为准。
@@ -3297,6 +3409,7 @@ paths:
           $ref: "#/components/responses/OpenAIError"
   /v1/chat/completions:
     post:
+      operationId: postV1ChatCompletions
       tags: [OpenAI Compatible]
       summary: OpenAI Chat Completions 转发
       description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。请求体必须包含非空数组 messages，缺少、null、空数组或非数组时返回 invalid_chat_messages 且不调用上游。本地限流读取 rate_limit.*，覆盖全局、IP、Token、用户、模型和通道分钟窗口；API Key max_concurrency 可限制同一 Key 同时在途请求，rpm/tpm 可限制同一 Key 每分钟请求和模型 token，命中时返回 rate_limit_exceeded 且不调用上游；外部数据库或集群模式下 Redis 限流依赖不可用时返回 503 rate_limit_unavailable 且不调用上游。通道候选读取 relay.error_auto_ban、relay.error_ban_threshold 和 relay.error_ban_cooldown_seconds，自动排除达到阈值且仍在冷却窗口内的故障通道，冷却后可重新进入候选作为半开探测。非流式在 relay.retry_count > 0 时会对 relay.retry_on_status 白名单状态码（默认 429/500/502/503/504）、网络错误、超时和响应读取失败换候选通道；400/401/403 默认不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
@@ -3369,6 +3482,7 @@ paths:
                 $ref: "#/components/schemas/OpenAIErrorEnvelope"
   /v1/completions:
     post:
+      operationId: postV1Completions
       tags: [OpenAI Compatible]
       summary: Legacy Completions 转发
       description: 支持 OpenAI-compatible JSON 响应；Azure OpenAI 通道会转发到 /openai/deployments/{deployment}/completions；stream=true 且命中 OpenAI SSE 形态通道时转发 text/event-stream，并按 SSE chunk 中的 usage 写日志和扣费。
@@ -3398,6 +3512,7 @@ paths:
           $ref: "#/components/responses/OpenAIError"
   /v1/embeddings:
     post:
+      operationId: postV1Embeddings
       tags: [OpenAI Compatible]
       summary: Embeddings 转发
       description: OpenAI-compatible Embeddings 基础实现；JSON 请求体透传到 OpenAI-compatible 上游 /v1/embeddings，Azure OpenAI 通道会转发到 /openai/deployments/{deployment}/embeddings；发出前剥离 routerx 私有字段，并将 usage.prompt_tokens/total_tokens 映射到 RouterX 日志与扣费。RouterX 会在上游前校验 input 为非空 string、非空 string 数组、token id 数组或 token id 数组批量；字符串批量和 token 数组批量上限为 2048，非法请求返回 invalid_embedding_input 或 embedding_batch_too_large 且不调用上游；模型能力策略以 docs/PROTOCOLS.md 为准。
@@ -3418,6 +3533,7 @@ paths:
           $ref: "#/components/responses/OpenAIError"
   /v1/images/generations:
     post:
+      operationId: postV1ImagesGenerations
       tags: [OpenAI Compatible]
       summary: 图像生成转发
       description: OpenAI-compatible 图像生成基础实现；JSON 请求体透传到上游 /v1/images/generations，Azure OpenAI 通道转发到 /openai/v1/images/generations?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 私有字段。缺少非空字符串 prompt 时返回 invalid_image_prompt 且不调用上游、不扣费；显式 n 不是大于等于 1 的整数时返回 invalid_image_count 且不调用上游、不扣费；size 缺省、空字符串或 auto 会透传，WIDTHxHEIGHT 会在上游前校验为正整数、单边不超过 4096 且总像素不超过 4194304，非法返回 invalid_image_size 且不调用上游、不扣费。图像生成响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整安全扫描、文件策略和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
@@ -3438,6 +3554,7 @@ paths:
           $ref: "#/components/responses/OpenAIError"
   /v1/images/edits:
     post:
+      operationId: postV1ImagesEdits
       tags: [OpenAI Compatible]
       summary: 图像编辑转发
       description: OpenAI-compatible Image Edits 基础实现；multipart/form-data 请求体可透传到 OpenAI-compatible 上游 /v1/images/edits，Azure OpenAI 通道可转发到 /openai/v1/images/edits?api-version=preview。发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。缺少 image 文件字段时返回 multipart_file_required 且不调用上游、不扣费。size 省略、空字符串或 auto 会透传，WIDTHxHEIGHT 会在上游前校验为正整数、单边不超过 4096 且总像素不超过 4194304，非法返回 invalid_image_size 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非图片扩展名、非图片文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
@@ -3458,6 +3575,7 @@ paths:
           $ref: "#/components/responses/OpenAIError"
   /v1/images/variations:
     post:
+      operationId: postV1ImagesVariations
       tags: [OpenAI Compatible]
       summary: 图像变体转发
       description: OpenAI-compatible Image Variations 基础实现；multipart/form-data 请求体透传到 OpenAI-compatible 上游 /v1/images/variations，Azure OpenAI 通道可转发到 /openai/v1/images/variations?api-version=preview。发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。缺少 image 文件字段时返回 multipart_file_required 且不调用上游、不扣费。size 省略、空字符串或 auto 会透传，WIDTHxHEIGHT 会在上游前校验为正整数、单边不超过 4096 且总像素不超过 4194304，非法返回 invalid_image_size 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非图片扩展名、非图片文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
@@ -3478,6 +3596,7 @@ paths:
           $ref: "#/components/responses/OpenAIError"
   /v1/audio/transcriptions:
     post:
+      operationId: postV1AudioTranscriptions
       tags: [OpenAI Compatible]
       summary: 语音转文字转发
       description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，Azure OpenAI 通道转发到 /openai/v1/audio/transcriptions?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。缺少 file 文件字段时返回 multipart_file_required 且不调用上游、不扣费。response_format 省略或空字符串时交给上游默认策略，显式值只允许 json、text、srt、verbose_json、vtt，非法返回 invalid_audio_response_format 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非音频扩展名、非音频文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
@@ -3498,6 +3617,7 @@ paths:
           $ref: "#/components/responses/OpenAIError"
   /v1/audio/translations:
     post:
+      operationId: postV1AudioTranslations
       tags: [OpenAI Compatible]
       summary: 语音翻译转发
       description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，Azure OpenAI 通道转发到 /openai/v1/audio/translations?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。缺少 file 文件字段时返回 multipart_file_required 且不调用上游、不扣费。response_format 省略或空字符串时交给上游默认策略，显式值只允许 json、text、srt、verbose_json、vtt，非法返回 invalid_audio_response_format 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非音频扩展名、非音频文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
@@ -3518,6 +3638,7 @@ paths:
           $ref: "#/components/responses/OpenAIError"
   /v1/audio/speech:
     post:
+      operationId: postV1AudioSpeech
       tags: [OpenAI Compatible]
       summary: 文本转语音转发
       description: OpenAI-compatible Audio Speech 基础实现；JSON 请求体透传到上游 /v1/audio/speech，Azure OpenAI 通道转发到 /openai/v1/audio/speech?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 私有字段。本地要求 input 为 1-4096 字符字符串、voice 为非空字符串；response_format 省略或空字符串时交给上游默认策略，显式值只允许 mp3、opus、aac、flac、wav、pcm。非法请求返回 invalid_audio_speech_input、invalid_audio_speech_voice 或 invalid_audio_response_format，且不调用上游、不扣费。上游音频字节流会保留 Content-Type 透传给客户端；OpenAI Audio Speech 响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算。完整价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
@@ -3547,6 +3668,7 @@ paths:
           $ref: "#/components/responses/OpenAIError"
   /v1/moderations:
     post:
+      operationId: postV1Moderations
       tags: [OpenAI Compatible]
       summary: 内容审核转发
       description: OpenAI-compatible Moderations 基础实现；JSON 请求体透传到支持该 APIType 的上游 /v1/moderations，发出前剥离 routerx 私有字段。本地要求 input 为非空字符串或非空字符串数组，非法返回 invalid_moderation_input 且不调用上游、不扣费；命中未实现 Moderations 的上游 adapter 时返回 502 unsupported_api_type，不调用上游且不扣费。OpenAI Moderations 响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整安全策略、分类字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
@@ -3567,6 +3689,7 @@ paths:
           $ref: "#/components/responses/OpenAIError"
   /v1/models:
     get:
+      operationId: getV1Models
       tags: [OpenAI Compatible]
       summary: 模型列表
       description: 默认返回 OpenAI models 外形；协议外形按 format、routerx_protocol、X-RouterX-Protocol、anthropic-version、OpenAI 默认值的顺序选择，format 保持最高优先级。
@@ -3629,6 +3752,7 @@ paths:
                   - $ref: "#/components/schemas/GeminiErrorEnvelope"
   /v1/models/{model}:
     get:
+      operationId: getV1ModelsModel
       tags: [OpenAI Compatible, Gemini Compatible, Anthropic Compatible]
       summary: 模型详情
       description: 默认返回 OpenAI model 外形；协议外形按 format、routerx_protocol、X-RouterX-Protocol、anthropic-version、OpenAI 默认值的顺序选择，和 /v1/models 列表保持一致。
@@ -3686,6 +3810,7 @@ paths:
                   - $ref: "#/components/schemas/GeminiErrorEnvelope"
   /v1/messages:
     post:
+      operationId: postV1Messages
       tags: [Anthropic Compatible]
       summary: Anthropic Messages
       description: |
@@ -3721,6 +3846,7 @@ paths:
           $ref: "#/components/responses/AnthropicError"
   /v1/messages/count_tokens:
     post:
+      operationId: postV1MessagesCountTokens
       tags: [Anthropic Compatible]
       summary: Anthropic Token 计数
       description: 本地近似 Token 计数；优先统计 system 和 messages[].content 的文本内容，不把 JSON 字段名当作 token。非法 JSON 返回 Anthropic 兼容 invalid_json。
@@ -3744,6 +3870,7 @@ paths:
           $ref: "#/components/responses/AnthropicError"
   /v1/models/{model}:generateContent:
     post:
+      operationId: postV1ModelsModelGenerateContent
       tags: [Gemini Compatible]
       summary: Gemini generateContent
       description: |
@@ -3779,6 +3906,7 @@ paths:
           $ref: "#/components/responses/GeminiError"
   /v1/models/{model}:streamGenerateContent:
     post:
+      operationId: postV1ModelsModelStreamGenerateContent
       tags: [Gemini Compatible]
       summary: Gemini streamGenerateContent
       description: 基础实现；命中 OpenAI-compatible 上游时，Gemini 请求会先转换为 Chat Completions stream 请求，并将 OpenAI data chunk 转为 Gemini SSE data 事件；命中 Gemini 上游时，会原生调用 /v1beta/models/{model}:streamGenerateContent 并透传 Gemini SSE。usage 会从 OpenAI SSE usage 或 Gemini usageMetadata 提取后写入 RouterX 日志并扣费；异常中断事件、完整 SDK 行为和 usage fallback 仍以 docs/PROTOCOLS.md 为准。
@@ -3807,6 +3935,7 @@ paths:
           $ref: "#/components/responses/GeminiError"
   /v1/models/{model}:embedContent:
     post:
+      operationId: postV1ModelsModelEmbedContent
       tags: [Gemini Compatible]
       summary: Gemini embedContent
       description: 基础实现；命中 OpenAI-compatible 上游时，Gemini content.parts 文本会转换为 Embeddings input，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings，上游响应会转换为 Gemini embedding.values，taskType/title 会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。命中 Gemini 上游时会原生调用 /v1beta/models/{model}:embedContent，保留 content、taskType、title 和 outputDimensionality，并从 usageMetadata 写入 RouterX 日志和扣费。缺少有效文本 content 或 outputDimensionality 非正数时返回 400 invalid_gemini_embedding_request，且不调用上游。
@@ -3844,6 +3973,7 @@ paths:
           $ref: "#/components/responses/GeminiError"
   /v1/models/{model}:batchEmbedContents:
     post:
+      operationId: postV1ModelsModelBatchEmbedContents
       tags: [Gemini Compatible]
       summary: Gemini batchEmbedContents
       description: 基础实现；命中 OpenAI-compatible 上游时，Gemini requests[].content.parts 文本会转换为 Embeddings input 数组，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings，上游 embedding list 会转换为 Gemini embeddings[].values；同批次已填写的 outputDimensionality 必须一致，批量请求继承 OpenAI Embeddings 2048 上限，上游返回 embedding 数量必须与请求数量一致，否则返回 Gemini 兼容 502/UNAVAILABLE，message 为 upstream response conversion failed，对应 RouterX 错误语义 upstream_conversion_failed，taskType/title 会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。命中 Gemini 上游时会原生调用 /v1beta/models/{model}:batchEmbedContents，保留 requests[].content、taskType、title 和 outputDimensionality，并从 usageMetadata 写入 RouterX 日志和扣费。缺少有效 requests/content、outputDimensionality 非正数或同批次维度不一致时返回 400 invalid_gemini_embedding_request，且不调用上游。
@@ -3883,6 +4013,7 @@ paths:
           $ref: "#/components/responses/GeminiError"
   /v1/models/{model}:countTokens:
     post:
+      operationId: postV1ModelsModelCountTokens
       tags: [Gemini Compatible]
       summary: Gemini countTokens
       description: 本地近似 Token 计数；优先统计 contents[].parts[]、systemInstruction.parts[] 或 generateContentRequest 内的实际 prompt 文本，不把 JSON 字段名计入 prompt。generateContentRequest 存在时按 Gemini 语义忽略顶层 contents；该结果不等同于真实 Gemini tokenizer。

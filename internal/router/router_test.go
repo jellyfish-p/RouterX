@@ -511,6 +511,34 @@ func TestApifoxOpenAPIOperationTagsAreDeclared(t *testing.T) {
 	}
 }
 
+func TestApifoxOpenAPIOperationIDsAreStableAndUnique(t *testing.T) {
+	operations := loadApifoxOperations(t)
+	operationIDPattern := regexp.MustCompile(`^[a-z][A-Za-z0-9]*$`)
+	seen := map[string]string{}
+	issues := make([]string, 0)
+
+	for _, operation := range operations {
+		operationID := strings.TrimSpace(operation.OperationID)
+		if operationID == "" {
+			issues = append(issues, operation.Key+" missing operationId")
+			continue
+		}
+		if !operationIDPattern.MatchString(operationID) {
+			issues = append(issues, operation.Key+" operationId "+operationID+" should be lowerCamel alphanumeric")
+		}
+		if previous, ok := seen[operationID]; ok {
+			issues = append(issues, operation.Key+" operationId "+operationID+" duplicates "+previous)
+			continue
+		}
+		seen[operationID] = operation.Key
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml operations need stable unique operationId values:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestDocsRelativeReferencesResolve(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 	files := []string{filepath.Join(repoRoot, "README.md")}
@@ -632,6 +660,9 @@ func TestAcceptanceG0EvidenceNamesDocLinkCheck(t *testing.T) {
 	}
 	if !strings.Contains(evidence, "TestDocsAvoidLegacyTerminology") {
 		issues = append(issues, "G0 evidence must name TestDocsAvoidLegacyTerminology")
+	}
+	if !strings.Contains(evidence, "TestApifoxOpenAPIOperationIDsAreStableAndUnique") {
+		issues = append(issues, "G0 evidence must name TestApifoxOpenAPIOperationIDsAreStableAndUnique")
 	}
 	if strings.Contains(evidence, "文档链接检查") {
 		issues = append(issues, "G0 evidence still uses manual 文档链接检查 wording")
@@ -24905,6 +24936,7 @@ func loadApifoxOperationSet(t *testing.T) map[string]struct{} {
 type apifoxOperationDoc struct {
 	Key          string
 	Path         string
+	OperationID  string
 	Tags         []string
 	Summary      string
 	Description  string
@@ -24948,6 +24980,7 @@ func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
 	raw := loadApifoxOpenAPIBytes(t)
 	var doc struct {
 		Paths map[string]map[string]struct {
+			OperationID string                 `yaml:"operationId"`
 			Tags        []string               `yaml:"tags"`
 			Summary     string                 `yaml:"summary"`
 			Description string                 `yaml:"description"`
@@ -24971,6 +25004,7 @@ func loadApifoxOperations(t *testing.T) []apifoxOperationDoc {
 			operations = append(operations, apifoxOperationDoc{
 				Key:          strings.ToUpper(method) + " " + path,
 				Path:         path,
+				OperationID:  operation.OperationID,
 				Tags:         operation.Tags,
 				Summary:      operation.Summary,
 				Description:  operation.Description,
