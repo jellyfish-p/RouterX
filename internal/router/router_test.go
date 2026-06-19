@@ -3703,6 +3703,188 @@ func TestOAuthCallbackRegistrationTicketCreatesPasswordAccount(t *testing.T) {
 	}
 }
 
+func TestOAuthRegistrationRestoresSelfCancelledProviderIdentity(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":          "true",
+		"auth.register.username.enabled": "true",
+		"auth.register.oauth.enabled":    "true",
+		"auth.register.captcha.required": "false",
+		"oauth.github.register_enabled":  "true",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "oauth-recover",
+		"password":     "oldpassword123",
+		"display_name": "OAuth Recover",
+		"email":        "oauth-recover@example.com",
+		"role":         common.RoleUser,
+		"quota":        77,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create oauth recovery user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "oauth-recover").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := internal.DB.Create(&model.UserIdentity{
+		UserID:     user.ID,
+		Method:     model.UserIdentityMethodOAuth,
+		Provider:   "github",
+		Identifier: "gh-recover",
+		VerifiedAt: &now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	userJWT := loginBearer(t, r, "oauth-recover", "oldpassword123")
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
+		"name":         "oauth-recover-key",
+		"remain_quota": 10,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 {
+		t.Fatalf("create oauth recovery token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	cancelResp := performJSON(r, http.MethodDelete, "/v0/user/self", userJWT, map[string]interface{}{"password": "oldpassword123"})
+	if cancelResp.Code != http.StatusOK {
+		t.Fatalf("self cancel should succeed before oauth recovery, got %d %s", cancelResp.Code, cancelResp.Body.String())
+	}
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"recover-token","token_type":"Bearer"}`))
+		case "/userinfo":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"gh-recover","email":"oauth-recover@example.com","login":"oauth-recover","name":"Recovered OAuth User"}`))
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer provider.Close()
+	configureOAuthProvider(t, "github", provider.URL)
+
+	loginResp := performJSON(r, http.MethodGet, "/v0/user/oauth/github/login", "", nil)
+	location, err := url.Parse(loginResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := location.Query().Get("state")
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oauth/github/callback?state="+url.QueryEscape(state)+"&code=recover-code", nil)
+	for _, cookie := range loginResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+	var callbackPayload struct {
+		Data struct {
+			RegistrationRequired bool   `json:"registration_required"`
+			RegistrationTicket   string `json:"registration_ticket"`
+			Provider             string `json:"provider"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(callbackResp.Body.Bytes(), &callbackPayload); err != nil {
+		t.Fatal(err)
+	}
+	if callbackResp.Code != http.StatusOK ||
+		!callbackPayload.Data.RegistrationRequired ||
+		callbackPayload.Data.RegistrationTicket == "" ||
+		callbackPayload.Data.Provider != "github" {
+		t.Fatalf("cancelled oauth identity should return recovery registration ticket, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+
+	registerResp := performJSON(r, http.MethodPost, "/v0/user/oauth/github/register", "", map[string]interface{}{
+		"registration_ticket": callbackPayload.Data.RegistrationTicket,
+		"username":            "oauth-recover",
+		"password":            "newpassword123",
+		"display_name":        "Recovered OAuth User",
+	})
+	var loginPayload struct {
+		Data struct {
+			Token string        `json:"token"`
+			User  dto.UserBrief `json:"user"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(registerResp.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatal(err)
+	}
+	if registerResp.Code != http.StatusOK || loginPayload.Data.Token == "" || loginPayload.Data.User.ID != user.ID {
+		t.Fatalf("oauth recovery should restore original account and login, got %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	if err := internal.DB.First(&user, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Status != common.UserStatusEnabled || user.DisplayName != "Recovered OAuth User" {
+		t.Fatalf("oauth recovery should enable original user with updated profile, got %+v", user)
+	}
+	var token model.Token
+	if err := internal.DB.First(&token, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if token.Status != common.TokenStatusDisabled {
+		t.Fatalf("oauth recovery must not re-enable old API keys, got status=%d", token.Status)
+	}
+	var oauthIdentities []model.UserIdentity
+	if err := internal.DB.Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOAuth, "github", "gh-recover").Find(&oauthIdentities).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(oauthIdentities) != 1 || oauthIdentities[0].UserID != user.ID || oauthIdentities[0].LastUsedAt == nil {
+		t.Fatalf("oauth recovery should preserve and mark original identity used, got %+v", oauthIdentities)
+	}
+	oldPasswordResp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "oauth-recover",
+		"password": "oldpassword123",
+	})
+	if oldPasswordResp.Code != http.StatusUnauthorized {
+		t.Fatalf("oauth recovery should replace old local password, got %d %s", oldPasswordResp.Code, oldPasswordResp.Body.String())
+	}
+	if loginBearer(t, r, "oauth-recover", "newpassword123") == "" {
+		t.Fatalf("oauth recovered account should login with new password")
+	}
+	var recoverAuditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "user.recover", "user", uintString(user.ID)).
+		Count(&recoverAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if recoverAuditCount != 1 {
+		t.Fatalf("oauth recovery should write one user.recover audit log, got %d", recoverAuditCount)
+	}
+	var userCount int64
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "oauth-recover").Count(&userCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if userCount != 1 {
+		t.Fatalf("oauth recovery must not create a second account, got count=%d", userCount)
+	}
+}
+
 func TestOAuthBindCallbackCreatesIdentityForLoggedInUser(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -4324,6 +4506,191 @@ func TestOIDCCallbackRegistrationTicketCreatesPasswordAccount(t *testing.T) {
 	}
 	if loginBearer(t, r, "fresh-oidc", "password123") == "" {
 		t.Fatalf("oidc registered user should be able to login with password")
+	}
+}
+
+func TestOIDCRegistrationRestoresSelfCancelledProviderIdentity(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":          "true",
+		"auth.register.username.enabled": "true",
+		"auth.register.oidc.enabled":     "true",
+		"auth.register.captcha.required": "false",
+		"oidc.corp.register_enabled":     "true",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "oidc-recover",
+		"password":     "oldpassword123",
+		"display_name": "OIDC Recover",
+		"email":        "oidc-recover@example.com",
+		"role":         common.RoleUser,
+		"quota":        88,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create oidc recovery user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "oidc-recover").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := internal.DB.Create(&model.UserIdentity{
+		UserID:     user.ID,
+		Method:     model.UserIdentityMethodOIDC,
+		Provider:   "corp",
+		Identifier: "oidc-recover-sub",
+		VerifiedAt: &now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	userJWT := loginBearer(t, r, "oidc-recover", "oldpassword123")
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
+		"name":         "oidc-recover-key",
+		"remain_quota": 10,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.ID == 0 {
+		t.Fatalf("create oidc recovery token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	cancelResp := performJSON(r, http.MethodDelete, "/v0/user/self", userJWT, map[string]interface{}{"password": "oldpassword123"})
+	if cancelResp.Code != http.StatusOK {
+		t.Fatalf("self cancel should succeed before oidc recovery, got %d %s", cancelResp.Code, cancelResp.Body.String())
+	}
+
+	key := newOIDCTestRSAKey(t)
+	var issuedNonce string
+	provider := newOIDCTestProvider(t, key, func(issuer string, req *http.Request) string {
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if req.Form.Get("code") != "recover-oidc-code" {
+			t.Fatalf("unexpected oidc recovery code: %s", req.Form.Get("code"))
+		}
+		return signedOIDCIDTokenWithClaims(t, key, oidcTestKeyID, issuer, "routerx-oidc-client", "oidc-recover-sub", issuedNonce, map[string]interface{}{
+			"email":              "oidc-recover@example.com",
+			"preferred_username": "oidc-recover",
+			"name":               "Recovered OIDC User",
+		})
+	})
+	defer provider.Close()
+	configureOIDCProvider(t, "corp", provider.URL)
+
+	loginResp := performJSON(r, http.MethodGet, "/v0/user/oidc/corp/login", "", nil)
+	location, err := url.Parse(loginResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := location.Query().Get("state")
+	issuedNonce = location.Query().Get("nonce")
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oidc/corp/callback?state="+url.QueryEscape(state)+"&code=recover-oidc-code", nil)
+	for _, cookie := range loginResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+	var callbackPayload struct {
+		Data struct {
+			RegistrationRequired bool   `json:"registration_required"`
+			RegistrationTicket   string `json:"registration_ticket"`
+			Provider             string `json:"provider"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(callbackResp.Body.Bytes(), &callbackPayload); err != nil {
+		t.Fatal(err)
+	}
+	if callbackResp.Code != http.StatusOK ||
+		!callbackPayload.Data.RegistrationRequired ||
+		callbackPayload.Data.RegistrationTicket == "" ||
+		callbackPayload.Data.Provider != "corp" {
+		t.Fatalf("cancelled oidc identity should return recovery registration ticket, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+
+	registerResp := performJSON(r, http.MethodPost, "/v0/user/oidc/corp/register", "", map[string]interface{}{
+		"registration_ticket": callbackPayload.Data.RegistrationTicket,
+		"username":            "oidc-recover",
+		"password":            "newpassword123",
+	})
+	var loginPayload struct {
+		Data struct {
+			Token string        `json:"token"`
+			User  dto.UserBrief `json:"user"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(registerResp.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatal(err)
+	}
+	if registerResp.Code != http.StatusOK || loginPayload.Data.Token == "" || loginPayload.Data.User.ID != user.ID {
+		t.Fatalf("oidc recovery should restore original account and login, got %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	if err := internal.DB.First(&user, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Status != common.UserStatusEnabled || user.DisplayName != "Recovered OIDC User" {
+		t.Fatalf("oidc recovery should enable original user with updated profile, got %+v", user)
+	}
+	var token model.Token
+	if err := internal.DB.First(&token, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if token.Status != common.TokenStatusDisabled {
+		t.Fatalf("oidc recovery must not re-enable old API keys, got status=%d", token.Status)
+	}
+	var oidcIdentities []model.UserIdentity
+	if err := internal.DB.Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOIDC, "corp", "oidc-recover-sub").Find(&oidcIdentities).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(oidcIdentities) != 1 || oidcIdentities[0].UserID != user.ID || oidcIdentities[0].LastUsedAt == nil {
+		t.Fatalf("oidc recovery should preserve and mark original identity used, got %+v", oidcIdentities)
+	}
+	oldPasswordResp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "oidc-recover",
+		"password": "oldpassword123",
+	})
+	if oldPasswordResp.Code != http.StatusUnauthorized {
+		t.Fatalf("oidc recovery should replace old local password, got %d %s", oldPasswordResp.Code, oldPasswordResp.Body.String())
+	}
+	if loginBearer(t, r, "oidc-recover", "newpassword123") == "" {
+		t.Fatalf("oidc recovered account should login with new password")
+	}
+	var recoverAuditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "user.recover", "user", uintString(user.ID)).
+		Count(&recoverAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if recoverAuditCount != 1 {
+		t.Fatalf("oidc recovery should write one user.recover audit log, got %d", recoverAuditCount)
+	}
+	var userCount int64
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "oidc-recover").Count(&userCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if userCount != 1 {
+		t.Fatalf("oidc recovery must not create a second account, got count=%d", userCount)
 	}
 }
 

@@ -140,7 +140,17 @@ func (s *AuthService) OIDCCallbackLogin(provider, code, redirectURI, expectedNon
 	if err != nil {
 		return nil, err
 	}
-	if identity.User == nil || identity.User.Status != common.UserStatusEnabled {
+	if identity.User == nil {
+		return nil, ErrOIDCIdentityNotBound
+	}
+	if identity.User.Status != common.UserStatusEnabled {
+		if isRecoverableRegistrationIdentity(&identity) {
+			challenge, challengeErr := s.oidcRegistrationChallenge(cfg, claims)
+			if challengeErr != nil {
+				return nil, challengeErr
+			}
+			return &OIDCCallbackResult{RegistrationRequired: challenge}, nil
+		}
 		return nil, ErrOIDCIdentityNotBound
 	}
 	now := time.Now()
@@ -224,14 +234,24 @@ func (s *AuthService) OIDCRegister(provider, ticket, username, password, display
 
 	var result *OIDCRegistrationResult
 	err = internal.DB.Transaction(func(tx *gorm.DB) error {
-		var existing model.UserIdentity
-		err := tx.Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOIDC, claims.Provider, claims.Identifier).First(&existing).Error
-		switch {
-		case err == nil:
-			return ErrOIDCIdentityAlreadyBound
-		case errors.Is(err, gorm.ErrRecordNotFound):
-		default:
+		existing, err := findIdentityForRecoveryByProvider(tx, model.UserIdentityMethodOIDC, claims.Provider, claims.Identifier)
+		if err != nil {
 			return err
+		}
+		if existing != nil {
+			if !isRecoverableRegistrationIdentity(existing) {
+				return ErrOIDCIdentityAlreadyBound
+			}
+			recovered, err := recoverExternalRegisteredUser(tx, existing, password, displayName, email)
+			if err != nil {
+				return err
+			}
+			result = &OIDCRegistrationResult{
+				User:      recovered,
+				Identity:  existing,
+				Recovered: true,
+			}
+			return nil
 		}
 
 		registered, err := registerPasswordUserTx(tx, username, password, displayName, email)

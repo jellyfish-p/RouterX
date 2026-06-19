@@ -49,18 +49,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 	if result.Recovered {
-		if err := service.NewUserService().RecordAdminAuditLog(service.AdminAuditRecordInput{
-			RequestID:    c.GetString("request_id"),
-			ActorUserID:  result.User.ID,
-			ActorRole:    result.User.Role,
-			Action:       "user.recover",
-			ResourceType: "user",
-			ResourceID:   strconv.FormatUint(uint64(result.User.ID), 10),
-			AfterSummary: auditSummary(dto.UserBriefFromModel(result.User)),
-			Result:       "success",
-			IP:           c.ClientIP(),
-			UserAgent:    c.GetHeader("User-Agent"),
-		}); err != nil {
+		if err := h.recordUserRecoverAudit(c, result.User); err != nil {
 			common.FailWithStatus(c, 500, "写入审计日志失败")
 			return
 		}
@@ -176,9 +165,16 @@ func (h *AuthHandler) OAuthRegister(c *gin.Context) {
 		common.FailWithStatus(c, http.StatusInternalServerError, "OAuth 注册结果无效")
 		return
 	}
-	if err := h.recordIdentityBoundAudit(c, result.User.ID, result.Identity); err != nil {
-		common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
-		return
+	if result.Recovered {
+		if err := h.recordUserRecoverAudit(c, result.User); err != nil {
+			common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
+			return
+		}
+	} else {
+		if err := h.recordIdentityBoundAudit(c, result.User.ID, result.Identity); err != nil {
+			common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
+			return
+		}
 	}
 	if err := h.recordLoginAudit(c, result.User); err != nil {
 		common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
@@ -287,9 +283,16 @@ func (h *AuthHandler) OIDCRegister(c *gin.Context) {
 		common.FailWithStatus(c, http.StatusInternalServerError, "OIDC 注册结果无效")
 		return
 	}
-	if err := h.recordIdentityBoundAudit(c, result.User.ID, result.Identity); err != nil {
-		common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
-		return
+	if result.Recovered {
+		if err := h.recordUserRecoverAudit(c, result.User); err != nil {
+			common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
+			return
+		}
+	} else {
+		if err := h.recordIdentityBoundAudit(c, result.User.ID, result.Identity); err != nil {
+			common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
+			return
+		}
 	}
 	if err := h.recordLoginAudit(c, result.User); err != nil {
 		common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
@@ -529,6 +532,24 @@ func (h *AuthHandler) recordLoginAudit(c *gin.Context, user *model.User) error {
 		ActorUserID:  user.ID,
 		ActorRole:    user.Role,
 		Action:       "user.login",
+		ResourceType: "user",
+		ResourceID:   strconv.FormatUint(uint64(user.ID), 10),
+		AfterSummary: auditSummary(dto.UserBriefFromModel(user)),
+		Result:       "success",
+		IP:           c.ClientIP(),
+		UserAgent:    c.GetHeader("User-Agent"),
+	})
+}
+
+func (h *AuthHandler) recordUserRecoverAudit(c *gin.Context, user *model.User) error {
+	if user == nil {
+		return nil
+	}
+	return service.NewUserService().RecordAdminAuditLog(service.AdminAuditRecordInput{
+		RequestID:    c.GetString("request_id"),
+		ActorUserID:  user.ID,
+		ActorRole:    user.Role,
+		Action:       "user.recover",
 		ResourceType: "user",
 		ResourceID:   strconv.FormatUint(uint64(user.ID), 10),
 		AfterSummary: auditSummary(dto.UserBriefFromModel(user)),

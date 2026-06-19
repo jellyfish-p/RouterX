@@ -525,7 +525,7 @@ Provider 退款请求：
 | `user.quota_update` | `PATCH /v0/admin/user/:id/quota` |
 | `user.self_cancel` | `DELETE /v0/user/self` |
 | `user.self_cancel_denied` | `DELETE /v0/user/self` 缺少或未通过本地密码二次确认 |
-| `user.recover` | `POST /v0/user/register` 命中已注销同名账号并恢复 |
+| `user.recover` | `POST /v0/user/register`、`POST /v0/user/oauth/:provider/register` 或 `POST /v0/user/oidc/:provider/register` 命中已注销保留身份并恢复 |
 | `user.identity_unbound` | `DELETE /v0/user/identities/:id` 用户解绑非主登录身份 |
 | `user_group.create` | `POST /v0/admin/groups` |
 | `user_group.update` | `PUT /v0/admin/groups/:id` |
@@ -734,7 +734,7 @@ Provider 退款请求：
 
 自助修改个人信息使用 `PUT /v0/user/self`。当前实现允许更新展示名和 email；email 会先规范化为小写去空格，再和同用户 `email/local` identity 在同一事务中保持一致。该 identity 不保存重复密码哈希，邮箱密码登录开启后仍复用同用户 `username/local` 主密码。目标 email 如果已绑定其他用户身份，接口返回 400，用户资料和 identity 都不会部分落库。
 
-自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号，请求体必须提交当前本地密码进行二次确认。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key；不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史。缺少密码或密码错误时不会修改账号和 API Key 状态，并写入 `user.self_cancel_denied` 拒绝审计，`error_code` 分别为 `self_cancel_password_required` 或 `self_cancel_password_invalid`，审计摘要不保存密码。注销后用户名密码登录返回统一认证失败，同名注册会走上述恢复流程；隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复会在 `docs/ACCOUNTS.md` 的规则基础上继续扩展。
+自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号，请求体必须提交当前本地密码进行二次确认。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key；不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史。缺少密码或密码错误时不会修改账号和 API Key 状态，并写入 `user.self_cancel_denied` 拒绝审计，`error_code` 分别为 `self_cancel_password_required` 或 `self_cancel_password_invalid`，审计摘要不保存密码。注销后用户名密码登录返回统一认证失败，同名注册、同一 OAuth identity 补齐注册或同一 OIDC subject 补齐注册会走上述恢复流程；隐私字段擦除和邮箱/手机号独立恢复会在 `docs/ACCOUNTS.md` 的规则基础上继续扩展。
 
 登录目标响应：
 
@@ -757,15 +757,15 @@ Provider 退款请求：
 }
 ```
 
-OAuth 基础登录当前用于第三方身份登录、首次补齐注册和绑定闭环。`GET /v0/user/oauth/:provider/login` 会读取 `oauth.{provider}.auth_url`、`client_id`、`client_secret`、`token_url`、`userinfo_url` 和 `scopes` 等 settings，生成 state 并写入 HttpOnly Cookie 后返回 302。`GET /v0/user/oauth/:provider/callback` 要求回调 state 与 Cookie 匹配，再用 code 换 token、拉取 userinfo，并以 userinfo 的稳定 `id` 或 `sub` 查询 `user_identities(method=oauth, provider, identifier)`。已绑定且用户启用时直接返回 User JWT；未绑定时不会按 email 自动绑定或接管已有账号。只有当 `auth.register.enabled=true`、`auth.register.username.enabled=true`、`auth.register.oauth.enabled=true`、`oauth.{provider}.register_enabled=true` 且当前验证码策略允许时，回调才返回 `registration_required=true` 和短期 `registration_ticket`。
+OAuth 基础登录当前用于第三方身份登录、首次补齐注册、注销账号恢复和绑定闭环。`GET /v0/user/oauth/:provider/login` 会读取 `oauth.{provider}.auth_url`、`client_id`、`client_secret`、`token_url`、`userinfo_url` 和 `scopes` 等 settings，生成 state 并写入 HttpOnly Cookie 后返回 302。`GET /v0/user/oauth/:provider/callback` 要求回调 state 与 Cookie 匹配，再用 code 换 token、拉取 userinfo，并以 userinfo 的稳定 `id` 或 `sub` 查询 `user_identities(method=oauth, provider, identifier)`。已绑定且用户启用时直接返回 User JWT；未绑定或已绑定到注销保留普通用户时，不会按 email 自动绑定或接管其他已有账号。只有当 `auth.register.enabled=true`、`auth.register.username.enabled=true`、`auth.register.oauth.enabled=true`、`oauth.{provider}.register_enabled=true` 且当前验证码策略允许时，回调才返回 `registration_required=true` 和短期 `registration_ticket`。`POST /v0/user/oauth/:provider/register` 使用该票据补齐用户名和密码：全新 subject 会创建本地有密码账号、可选 `email/local` 和 `oauth/provider/identifier`；命中已注销普通用户的同一 OAuth identity 时恢复原 `users.id`、更新本地密码和展示名、刷新该 OAuth identity 最近使用时间，不创建第二个账号且不自动启用旧 API Key。新绑定写 `user.identity_bound` 与 `user.login`，恢复写 `user.recover` 与 `user.login`。
 
 `POST /v0/user/oauth/:provider/register` 使用 `registration_ticket`、`username`、`password` 和可选 `display_name` 完成 OAuth 首次注册。服务端会重新校验票据签名、过期时间、provider 注册开关、用户名/邮箱去重和密码要求，在一个事务里创建本地有密码账号、`username/local`、可选 `email/local` 和 `oauth/provider/identifier` identity；成功后返回 User JWT 并写 `user.identity_bound`、`user.login` 审计。票据无效或过期返回 400，注册开关关闭或验证码策略阻断返回 403，provider subject 已被绑定返回 409。
 
-OAuth 绑定由已登录用户通过 `GET /v0/user/oauth/:provider/bind` 发起。该接口需要 User JWT，会同时写入 state Cookie 和签名 bind Cookie；bind Cookie 用 `jwt.secret` 对 provider、state 和 user_id 签名，只用于回调时确认本次绑定由哪个本地用户发起。`GET /v0/user/oauth/:provider/bind/callback` 校验 state 和签名后，仍只使用 userinfo 的稳定 `id` 或 `sub` 创建 `user_identities(method=oauth, provider, identifier)`，不会按 email 自动绑定；同一 provider subject 已属于其他用户时返回 409。OAuth/OIDC 注销账号恢复和更完整 OIDC 恢复流程仍按 `docs/ACCOUNTS.md` 后续扩展。
+OAuth 绑定由已登录用户通过 `GET /v0/user/oauth/:provider/bind` 发起。该接口需要 User JWT，会同时写入 state Cookie 和签名 bind Cookie；bind Cookie 用 `jwt.secret` 对 provider、state 和 user_id 签名，只用于回调时确认本次绑定由哪个本地用户发起。`GET /v0/user/oauth/:provider/bind/callback` 校验 state 和签名后，仍只使用 userinfo 的稳定 `id` 或 `sub` 创建 `user_identities(method=oauth, provider, identifier)`，不会按 email 自动绑定；同一 provider subject 已属于其他用户时返回 409。更完整的 provider 错误恢复和风控流程仍按 `docs/ACCOUNTS.md` 后续扩展。
 
 用户身份管理通过 `GET /v0/user/identities` 和 `DELETE /v0/user/identities/:id` 暴露。列表接口只返回当前用户未解绑的身份元数据；解绑接口只允许删除当前用户名下的非 `username/local` 主身份，采用软删除保留历史事实，成功后写入 `user.identity_unbound` 审计。解绑后的 OAuth/OIDC identity 不再可用于登录。
 
-OIDC 基础登录当前用于已绑定企业身份登录、首次补齐注册和绑定闭环。`GET /v0/user/oidc/:provider/login` 会读取 `oidc.{provider}.issuer/client_id/client_secret/scopes`，通过 issuer Discovery 获取 `authorization_endpoint`、`token_endpoint` 和 `jwks_uri`，生成 state 与 nonce 后返回 302。`GET /v0/user/oidc/:provider/callback` 要求 state 与 Cookie 匹配，并校验 ID Token 的 RS256 签名、`iss`、`aud`、`exp`、`nonce` 和 `sub`，只用 `sub` 查询 `user_identities(method=oidc, provider, identifier)`。已绑定且用户启用时直接返回 User JWT；未绑定时不会按 email 自动绑定或接管已有账号。只有当 `auth.register.enabled=true`、`auth.register.username.enabled=true`、`auth.register.oidc.enabled=true`、`oidc.{provider}.register_enabled=true` 且当前验证码策略允许时，回调才返回 `registration_required=true` 和短期 `registration_ticket`。`POST /v0/user/oidc/:provider/register` 使用该票据补齐用户名和密码，在一个事务里创建本地有密码账号、`username/local`、可选 `email/local` 和 `oidc/provider/sub` identity；成功后返回 User JWT 并写 `user.identity_bound`、`user.login` 审计。已登录用户可通过 `GET /v0/user/oidc/:provider/bind` 发起绑定；`GET /v0/user/oidc/:provider/bind/callback` 校验 state、nonce、签名 bind Cookie 和 ID Token 后创建或刷新当前用户的 `oidc/provider/sub` 身份。同一 subject 已属于其他用户时返回 409。OIDC 注销账号恢复仍按 `docs/ACCOUNTS.md` 后续扩展。
+OIDC 基础登录当前用于已绑定企业身份登录、首次补齐注册、注销账号恢复和绑定闭环。`GET /v0/user/oidc/:provider/login` 会读取 `oidc.{provider}.issuer/client_id/client_secret/scopes`，通过 issuer Discovery 获取 `authorization_endpoint`、`token_endpoint` 和 `jwks_uri`，生成 state 与 nonce 后返回 302。`GET /v0/user/oidc/:provider/callback` 要求 state 与 Cookie 匹配，并校验 ID Token 的 RS256 签名、`iss`、`aud`、`exp`、`nonce` 和 `sub`，只用 `sub` 查询 `user_identities(method=oidc, provider, identifier)`。已绑定且用户启用时直接返回 User JWT；未绑定或已绑定到注销保留普通用户时，不会按 email 自动绑定或接管其他已有账号。只有当 `auth.register.enabled=true`、`auth.register.username.enabled=true`、`auth.register.oidc.enabled=true`、`oidc.{provider}.register_enabled=true` 且当前验证码策略允许时，回调才返回 `registration_required=true` 和短期 `registration_ticket`。`POST /v0/user/oidc/:provider/register` 使用该票据补齐用户名和密码：全新 subject 会创建本地有密码账号、`username/local`、可选 `email/local` 和 `oidc/provider/sub` identity；命中已注销普通用户的同一 OIDC subject 时恢复原 `users.id`、更新本地密码和展示名、刷新 OIDC identity 最近使用时间，不创建第二个账号且不自动启用旧 API Key。新绑定写 `user.identity_bound` 与 `user.login`，恢复写 `user.recover` 与 `user.login`。已登录用户可通过 `GET /v0/user/oidc/:provider/bind` 发起绑定；`GET /v0/user/oidc/:provider/bind/callback` 校验 state、nonce、签名 bind Cookie 和 ID Token 后创建或刷新当前用户的 `oidc/provider/sub` 身份。同一 subject 已属于其他用户时返回 409。更完整 claim 映射仍按 `docs/ACCOUNTS.md` 后续扩展。
 
 ### API Key
 

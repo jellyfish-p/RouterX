@@ -192,9 +192,13 @@ func registerPasswordUserTx(tx *gorm.DB, username, password, displayName, email 
 }
 
 func findIdentityForRecovery(tx *gorm.DB, method, identifier string) (*model.UserIdentity, error) {
+	return findIdentityForRecoveryByProvider(tx, method, model.UserIdentityProviderLocal, identifier)
+}
+
+func findIdentityForRecoveryByProvider(tx *gorm.DB, method, provider, identifier string) (*model.UserIdentity, error) {
 	var identity model.UserIdentity
 	err := tx.Preload("User").
-		Where("method = ? AND provider = ? AND identifier = ?", method, model.UserIdentityProviderLocal, identifier).
+		Where("method = ? AND provider = ? AND identifier = ?", method, provider, identifier).
 		First(&identity).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -203,6 +207,13 @@ func findIdentityForRecovery(tx *gorm.DB, method, identifier string) (*model.Use
 		return nil, err
 	}
 	return &identity, nil
+}
+
+func isRecoverableRegistrationIdentity(identity *model.UserIdentity) bool {
+	return identity != nil &&
+		identity.User != nil &&
+		identity.User.Role == common.RoleUser &&
+		identity.User.Status == common.UserStatusDisabled
 }
 
 func recoverRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, displayName, email string) (*model.User, error) {
@@ -273,6 +284,30 @@ func recoverRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, 
 		return nil, err
 	}
 	return &recovered, nil
+}
+
+// recoverExternalRegisteredUser reactivates a self-cancelled account that kept
+// its OAuth/OIDC identity. Token/API-key state is intentionally left untouched.
+func recoverExternalRegisteredUser(tx *gorm.DB, identity *model.UserIdentity, password, displayName, email string) (*model.User, error) {
+	if !isRecoverableRegistrationIdentity(identity) {
+		return nil, errors.New("external identity is not recoverable")
+	}
+	recovered, err := recoverRegisteredUser(tx, identity, password, displayName, email)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	if err := tx.Model(&model.UserIdentity{}).Where("id = ?", identity.ID).Updates(map[string]interface{}{
+		"verified_at":   &now,
+		"last_used_at":  &now,
+		"password_hash": "",
+	}).Error; err != nil {
+		return nil, err
+	}
+	identity.VerifiedAt = &now
+	identity.LastUsedAt = &now
+	identity.PasswordHash = ""
+	return recovered, nil
 }
 
 func registrationPolicyError() error {
@@ -428,7 +463,17 @@ func (s *AuthService) OAuthCallbackLogin(provider, code, redirectURI string) (*O
 	if err != nil {
 		return nil, err
 	}
-	if identity.User == nil || identity.User.Status != common.UserStatusEnabled {
+	if identity.User == nil {
+		return nil, ErrOAuthIdentityNotBound
+	}
+	if identity.User.Status != common.UserStatusEnabled {
+		if isRecoverableRegistrationIdentity(&identity) {
+			challenge, challengeErr := s.oauthRegistrationChallenge(cfg, userInfo, identifier)
+			if challengeErr != nil {
+				return nil, challengeErr
+			}
+			return &OAuthCallbackResult{RegistrationRequired: challenge}, nil
+		}
 		return nil, ErrOAuthIdentityNotBound
 	}
 	now := time.Now()
@@ -510,14 +555,24 @@ func (s *AuthService) OAuthRegister(provider, ticket, username, password, displa
 
 	var result *OAuthRegistrationResult
 	err = internal.DB.Transaction(func(tx *gorm.DB) error {
-		var existing model.UserIdentity
-		err := tx.Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOAuth, claims.Provider, claims.Identifier).First(&existing).Error
-		switch {
-		case err == nil:
-			return ErrOAuthIdentityAlreadyBound
-		case errors.Is(err, gorm.ErrRecordNotFound):
-		default:
+		existing, err := findIdentityForRecoveryByProvider(tx, model.UserIdentityMethodOAuth, claims.Provider, claims.Identifier)
+		if err != nil {
 			return err
+		}
+		if existing != nil {
+			if !isRecoverableRegistrationIdentity(existing) {
+				return ErrOAuthIdentityAlreadyBound
+			}
+			recovered, err := recoverExternalRegisteredUser(tx, existing, password, displayName, email)
+			if err != nil {
+				return err
+			}
+			result = &OAuthRegistrationResult{
+				User:      recovered,
+				Identity:  existing,
+				Recovered: true,
+			}
+			return nil
 		}
 
 		registered, err := registerPasswordUserTx(tx, username, password, displayName, email)
@@ -1009,9 +1064,13 @@ func GetUserJWTExpireHours() int {
 }
 
 func identityExists(tx *gorm.DB, method, identifier string) (bool, error) {
+	return identityExistsWithProvider(tx, method, model.UserIdentityProviderLocal, identifier)
+}
+
+func identityExistsWithProvider(tx *gorm.DB, method, provider, identifier string) (bool, error) {
 	var count int64
 	if err := tx.Model(&model.UserIdentity{}).
-		Where("method = ? AND provider = ? AND identifier = ?", method, model.UserIdentityProviderLocal, identifier).
+		Where("method = ? AND provider = ? AND identifier = ?", method, provider, identifier).
 		Count(&count).Error; err != nil {
 		return false, err
 	}
