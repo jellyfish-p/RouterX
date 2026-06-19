@@ -3212,7 +3212,7 @@ paths:
     post:
       tags: [Gemini Compatible]
       summary: Gemini embedContent
-      description: 基础实现；命中 OpenAI-compatible 上游时，Gemini content.parts 文本会转换为 Embeddings input，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings，上游响应会转换为 Gemini embedding.values，taskType/title 会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。命中 Gemini 上游时会原生调用 /v1beta/models/{model}:embedContent，保留 content、taskType、title 和 outputDimensionality，并从 usageMetadata 写入 RouterX 日志和扣费。
+      description: 基础实现；命中 OpenAI-compatible 上游时，Gemini content.parts 文本会转换为 Embeddings input，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings，上游响应会转换为 Gemini embedding.values，taskType/title 会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。命中 Gemini 上游时会原生调用 /v1beta/models/{model}:embedContent，保留 content、taskType、title 和 outputDimensionality，并从 usageMetadata 写入 RouterX 日志和扣费。缺少有效文本 content 或 outputDimensionality 非正数时返回 400 invalid_gemini_embedding_request，且不调用上游。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -3249,7 +3249,7 @@ paths:
     post:
       tags: [Gemini Compatible]
       summary: Gemini batchEmbedContents
-      description: 基础实现；命中 OpenAI-compatible 上游时，Gemini requests[].content.parts 文本会转换为 Embeddings input 数组，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings，上游 embedding list 会转换为 Gemini embeddings[].values；同批次已填写的 outputDimensionality 必须一致，批量请求继承 OpenAI Embeddings 2048 上限，上游返回 embedding 数量必须与请求数量一致，否则返回 Gemini 兼容 502/UNAVAILABLE，message 为 upstream response conversion failed，对应 RouterX 错误语义 upstream_conversion_failed，taskType/title 会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。命中 Gemini 上游时会原生调用 /v1beta/models/{model}:batchEmbedContents，保留 requests[].content、taskType、title 和 outputDimensionality，并从 usageMetadata 写入 RouterX 日志和扣费。
+      description: 基础实现；命中 OpenAI-compatible 上游时，Gemini requests[].content.parts 文本会转换为 Embeddings input 数组，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings，上游 embedding list 会转换为 Gemini embeddings[].values；同批次已填写的 outputDimensionality 必须一致，批量请求继承 OpenAI Embeddings 2048 上限，上游返回 embedding 数量必须与请求数量一致，否则返回 Gemini 兼容 502/UNAVAILABLE，message 为 upstream response conversion failed，对应 RouterX 错误语义 upstream_conversion_failed，taskType/title 会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。命中 Gemini 上游时会原生调用 /v1beta/models/{model}:batchEmbedContents，保留 requests[].content、taskType、title 和 outputDimensionality，并从 usageMetadata 写入 RouterX 日志和扣费。缺少有效 requests/content、outputDimensionality 非正数或同批次维度不一致时返回 400 invalid_gemini_embedding_request，且不调用上游。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -4023,7 +4023,7 @@ components:
           schema:
             $ref: "#/components/schemas/AnthropicErrorEnvelope"
     GeminiError:
-      description: Gemini-compatible 错误。本地 JSON 解析失败语义为 invalid_json，缺少 model 语义为 model_required；本地限流返回 status=RESOURCE_EXHAUSTED；请求体超过 relay.max_request_body_bytes 时返回 413 RESOURCE_EXHAUSTED；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 UNAVAILABLE。
+      description: Gemini-compatible 错误。本地 JSON 解析失败语义为 invalid_json，缺少 model 语义为 model_required，embedding 请求结构错误语义为 invalid_gemini_embedding_request；本地限流返回 status=RESOURCE_EXHAUSTED；请求体超过 relay.max_request_body_bytes 时返回 413 RESOURCE_EXHAUSTED；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 UNAVAILABLE。
       content:
         application/json:
           schema:

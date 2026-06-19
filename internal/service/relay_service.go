@@ -404,6 +404,7 @@ var (
 	errInvalidRouterXOptions  = errors.New("invalid routerx options")
 	errInvalidRouterXRoute    = errors.New("invalid routerx route")
 	errInvalidChatMessages    = errors.New("chat messages must be a non-empty array")
+	errInvalidGeminiEmbedding = errors.New("invalid gemini embedding request")
 	errInvalidEmbeddingInput  = errors.New("embeddings input must be a non-empty string, string array, token array, or token array batch")
 	errEmbeddingBatchTooLarge = errors.New("embeddings input batch exceeds maximum size")
 	errInvalidImagePrompt     = errors.New("image generation prompt must be a non-empty string")
@@ -1812,6 +1813,8 @@ func relayRequestErrorCode(err error) string {
 		return "invalid_routerx_route"
 	case errors.Is(err, errInvalidChatMessages):
 		return "invalid_chat_messages"
+	case errors.Is(err, errInvalidGeminiEmbedding):
+		return "invalid_gemini_embedding_request"
 	case errors.Is(err, errInvalidEmbeddingInput):
 		return "invalid_embedding_input"
 	case errors.Is(err, errEmbeddingBatchTooLarge):
@@ -1833,6 +1836,10 @@ func relayRequestErrorCode(err error) string {
 	default:
 		return "invalid_request"
 	}
+}
+
+func invalidGeminiEmbeddingRequest(reason string) error {
+	return fmt.Errorf("%w: %s", errInvalidGeminiEmbedding, reason)
 }
 
 func parseRouterXRoute(raw json.RawMessage) (RoutePreference, error) {
@@ -2762,7 +2769,7 @@ func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {
 	}
 	text := geminiTextFromParts(input.Content.Parts)
 	if text == "" {
-		return nil, errors.New("content is required")
+		return nil, invalidGeminiEmbeddingRequest("content is required")
 	}
 	output := map[string]interface{}{
 		"model": modelName,
@@ -2770,7 +2777,7 @@ func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {
 	}
 	if input.OutputDimensionality != nil {
 		if *input.OutputDimensionality <= 0 {
-			return nil, errors.New("outputDimensionality must be positive")
+			return nil, invalidGeminiEmbeddingRequest("outputDimensionality must be positive")
 		}
 		output["dimensions"] = *input.OutputDimensionality
 	}
@@ -2831,7 +2838,7 @@ func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, in
 		return nil, 0, errModelRequired
 	}
 	if len(input.Requests) == 0 {
-		return nil, 0, errors.New("requests are required")
+		return nil, 0, invalidGeminiEmbeddingRequest("requests are required")
 	}
 	values := make([]string, 0, len(input.Requests))
 	// OpenAI-compatible embeddings accept one dimensions value for the whole batch.
@@ -2840,15 +2847,15 @@ func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, in
 	for _, request := range input.Requests {
 		text := geminiTextFromParts(request.Content.Parts)
 		if text == "" {
-			return nil, 0, errors.New("content is required")
+			return nil, 0, invalidGeminiEmbeddingRequest("content is required")
 		}
 		values = append(values, text)
 		if request.OutputDimensionality != nil {
 			if *request.OutputDimensionality <= 0 {
-				return nil, 0, errors.New("outputDimensionality must be positive")
+				return nil, 0, invalidGeminiEmbeddingRequest("outputDimensionality must be positive")
 			}
 			if hasDimensions && dimensions != *request.OutputDimensionality {
-				return nil, 0, errors.New("outputDimensionality must match for batch requests")
+				return nil, 0, invalidGeminiEmbeddingRequest("outputDimensionality must match for batch requests")
 			}
 			dimensions = *request.OutputDimensionality
 			hasDimensions = true

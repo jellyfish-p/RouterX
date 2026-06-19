@@ -153,7 +153,7 @@ Gemini-compatible 错误示例：
 
 | HTTP 状态 | 内部 code 示例 | type/status 示例 | 调用方含义 |
 |-----------|----------------|------------------|------------|
-| 400 | `invalid_json`、`invalid_multipart`、`invalid_chat_messages`、`invalid_image_prompt`、`invalid_image_count`、`multipart_file_required`、`unsafe_multipart_file`、`model_required`、`invalid_routerx_options`、`routerx_hop_exceeded` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数 |
+| 400 | `invalid_json`、`invalid_multipart`、`invalid_chat_messages`、`invalid_gemini_embedding_request`、`invalid_image_prompt`、`invalid_image_count`、`multipart_file_required`、`unsafe_multipart_file`、`model_required`、`invalid_routerx_options`、`routerx_hop_exceeded` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数 |
 | 401 | `invalid_api_key`、`expired_api_key` | `authentication_error` / `UNAUTHENTICATED` | 更换或重新创建 API Key |
 | 403 | `user_disabled`、`token_forbidden`、`model_not_allowed`、`route_forbidden` | `permission_error` / `PERMISSION_DENIED` | 联系管理员调整权限或通道分组 |
 | 404 | `model_not_found`、`unsupported_api`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名、接口路径或资源 ID |
@@ -171,6 +171,7 @@ Gemini-compatible 错误示例：
 - 选中通道 adapter 不支持当前 APIType 时返回 502 `unsupported_api_type`，不调用上游且不扣费。
 - 下游非流式响应超过 `relay.max_response_body_bytes` 时返回 502 `upstream_response_too_large`，不反射完整下游响应体且不扣费。
 - OpenAI-compatible Chat 缺少非空数组 `messages` 时返回 400 `invalid_chat_messages`，不调用上游且不扣费。
+- Gemini embedContent/batchEmbedContents 缺少 `content`/`requests`、文本 parts 为空、`outputDimensionality` 非正数或同批次维度不一致时返回 400 `invalid_gemini_embedding_request`，不调用上游且不扣费。
 - OpenAI-compatible Image Generations 缺少非空字符串 `prompt` 时返回 400 `invalid_image_prompt`，不调用上游且不扣费。
 - OpenAI-compatible Image Generations 显式传入的 `n` 不是大于等于 1 的整数时返回 400 `invalid_image_count`，不调用上游且不扣费。
 - OpenAI-compatible Images/Audio multipart 缺少必填 `image` 或 `file` 文件字段时返回 400 `multipart_file_required`，不调用上游且不扣费。
@@ -985,8 +986,8 @@ P0 明确失败：
 | POST | `/v1/models/{model}:generateContent` | 基础实现，内容生成；命中 OpenAI-compatible 上游时转 OpenAI Chat，非文本 parts 降级为 compact JSON 文本，`generationConfig.maxOutputTokens/temperature/topP/stopSequences` 会映射，其他有值子字段会进入 `request_snapshot.adapter_degradations`；命中 Gemini 上游时会以原生 Gemini body 发送 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent`，且这些已保真字段不会被成功日志误记为 dropped |
 | POST | `/v1/models/{model}:streamGenerateContent` | 基础实现，流式内容生成；命中 OpenAI-compatible 上游时将 Gemini 请求转 Chat SSE 再输出 Gemini SSE 事件，命中 Gemini 上游时原生调用 `:streamGenerateContent` 并透传 Gemini SSE，同时从 `usageMetadata` 提取 usage 扣费 |
 | POST | `/v1/models/{model}:countTokens` | 基础实现，本地近似 Token 计数；优先统计 `contents[].parts[]`、`systemInstruction.parts[]` 或 `generateContentRequest` 内的文本内容，`generateContentRequest` 存在时忽略顶层 `contents` |
-| POST | `/v1/models/{model}:embedContent` | 基础实现，Gemini embedContent 命中 OpenAI-compatible 上游时转 Embeddings 并返回 Gemini embedding 外形；命中 Gemini 上游时原生调用 `:embedContent`，保留 `content/taskType/title/outputDimensionality` 并从 `usageMetadata` 扣费 |
-| POST | `/v1/models/{model}:batchEmbedContents` | 基础实现，Gemini batchEmbedContents 命中 OpenAI-compatible 上游时转 Embeddings 批量 input 并返回 Gemini embeddings 外形，`outputDimensionality` 映射为 OpenAI `dimensions` 且同批次已填写的值必须一致，`taskType/title` 会进入 `request_snapshot.adapter_degradations`；命中 Gemini 上游时原生调用 `:batchEmbedContents`，保留 `requests[].content/taskType/title/outputDimensionality`，从 `usageMetadata` 扣费；OpenAI-compatible 上游返回 embedding 数量必须和请求数一致 |
+| POST | `/v1/models/{model}:embedContent` | 基础实现，Gemini embedContent 命中 OpenAI-compatible 上游时转 Embeddings 并返回 Gemini embedding 外形；命中 Gemini 上游时原生调用 `:embedContent`，保留 `content/taskType/title/outputDimensionality` 并从 `usageMetadata` 扣费；请求结构非法时返回 `invalid_gemini_embedding_request` 且不上游、不扣费 |
+| POST | `/v1/models/{model}:batchEmbedContents` | 基础实现，Gemini batchEmbedContents 命中 OpenAI-compatible 上游时转 Embeddings 批量 input 并返回 Gemini embeddings 外形，`outputDimensionality` 映射为 OpenAI `dimensions` 且同批次已填写的值必须一致，`taskType/title` 会进入 `request_snapshot.adapter_degradations`；命中 Gemini 上游时原生调用 `:batchEmbedContents`，保留 `requests[].content/taskType/title/outputDimensionality`，从 `usageMetadata` 扣费；OpenAI-compatible 上游返回 embedding 数量必须和请求数一致；请求结构非法时返回 `invalid_gemini_embedding_request` 且不上游、不扣费 |
 
 ### Anthropic 格式
 

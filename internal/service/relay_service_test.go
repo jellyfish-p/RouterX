@@ -64,6 +64,38 @@ func TestProtocolWrapperRequestErrorsUseStableCodes(t *testing.T) {
 			},
 			code: "model_required",
 		},
+		{
+			name: "gemini embed missing content",
+			call: func() error {
+				_, _, err := svc.RelayGeminiEmbedContent(ctx, nil, "text-embedding-test", []byte(`{}`), "192.0.2.1")
+				return err
+			},
+			code: "invalid_gemini_embedding_request",
+		},
+		{
+			name: "gemini embed invalid dimensions",
+			call: func() error {
+				_, _, err := svc.RelayGeminiEmbedContent(ctx, nil, "text-embedding-test", []byte(`{"content":{"parts":[{"text":"hello"}]},"outputDimensionality":0}`), "192.0.2.1")
+				return err
+			},
+			code: "invalid_gemini_embedding_request",
+		},
+		{
+			name: "gemini batch embed missing requests",
+			call: func() error {
+				_, _, err := svc.RelayGeminiBatchEmbedContents(ctx, nil, "text-embedding-test", []byte(`{}`), "192.0.2.1")
+				return err
+			},
+			code: "invalid_gemini_embedding_request",
+		},
+		{
+			name: "gemini batch embed mismatched dimensions",
+			call: func() error {
+				_, _, err := svc.RelayGeminiBatchEmbedContents(ctx, nil, "text-embedding-test", []byte(`{"requests":[{"content":{"parts":[{"text":"hello"}]},"outputDimensionality":128},{"content":{"parts":[{"text":"world"}]},"outputDimensionality":256}]}`), "192.0.2.1")
+				return err
+			},
+			code: "invalid_gemini_embedding_request",
+		},
 	}
 
 	for _, tt := range tests {
