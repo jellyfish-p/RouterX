@@ -1020,6 +1020,43 @@ func TestTraceabilityP1StreamEvidenceIncludesNativeUpstreamTests(t *testing.T) {
 	}
 }
 
+func TestRoadmapP1ProtocolRowsUseCurrentNativeUpstreamEvidence(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "ROADMAP.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(raw)
+
+	requiredEvidence := []string{
+		"TestAnthropicMessagesStreamToAnthropicUpstreamPreservesNativeSSEAndDeductsUsage",
+		"TestGeminiStreamGenerateContentToGeminiUpstreamPreservesNativeSSEAndDeductsUsage",
+		"TestAnthropicMessagesToAnthropicUpstreamPreservesNativeRequestFieldsAndDeductsUsage",
+		"TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields",
+	}
+	staleMarkers := []string{
+		"Anthropic/Gemini 原生上游流式仍需补齐",
+		"仍需 Anthropic/Gemini 原生上游流式",
+		"仍需原生字段保真",
+	}
+
+	issues := make([]string, 0)
+	for _, testName := range requiredEvidence {
+		if !strings.Contains(content, testName) {
+			issues = append(issues, "ROADMAP.md missing current native upstream evidence "+testName)
+		}
+	}
+	for _, marker := range staleMarkers {
+		if strings.Contains(content, marker) {
+			issues = append(issues, "ROADMAP.md contains stale native upstream gap marker "+marker)
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("ROADMAP.md P1 protocol rows should match current native upstream coverage:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestTraceabilityP1EntryProtocolEvidenceIncludesConcreteMatrixTests(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TRACEABILITY.md"))
 	if err != nil {

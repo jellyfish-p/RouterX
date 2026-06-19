@@ -39,6 +39,7 @@
 | `TestApifoxV1OperationsUseTypedRequestBodies` | 检查所有 `/v1` operation 的 requestBody 都使用专用 schema，避免新增模型入口时退回通用 JSON 占位 |
 | `TestTraceabilityP0RowsUseConcreteEvidence` | 检查 `docs/TRACEABILITY.md` 的 P0 行证据必须落到具体测试名，避免使用泛化占位描述替代可回归证据 |
 | `TestTraceabilityP1StreamEvidenceIncludesNativeUpstreamTests` | 检查 `P1-C1` 流式转发证据必须包含 Anthropic/Gemini 原生上游流式测试，并防止追踪表继续保留已过期的原生流式待补说明 |
+| `TestRoadmapP1ProtocolRowsUseCurrentNativeUpstreamEvidence` | 检查 `docs/ROADMAP.md` 的 P1 流式和多协议行必须列出当前 Anthropic/Gemini 原生上游流式与字段保真测试，防止路线图继续保留已完成事项的旧缺口描述 |
 | `TestTraceabilityP1EntryProtocolEvidenceIncludesConcreteMatrixTests` | 检查 `P1-C2` 多入口协议证据必须列出模型协议选择、Anthropic/Gemini 成功与降级、countTokens、Gemini Embeddings 和入口协议错误外形测试 |
 | `TestTraceabilityP1RouterXExtensionEvidenceIncludesProviderSpecificTests` | 检查 `P1-C4` 的 `routerx` 扩展参数证据必须列出 provider-specific body 补充、Gemini safetySettings 和 Anthropic/Gemini 原生字段保真测试 |
 | `TestTraceabilityP1AccessControlEvidenceIncludesErrorSnapshotTests` | 检查 `P1-C6` 访问控制证据必须列出 API Key scope 和无候选拒绝的具体错误快照测试，避免追踪表继续保留泛化待补说明 |
