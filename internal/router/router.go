@@ -1726,6 +1726,9 @@ func readinessEncryptionKeyProblem() string {
 	if encryptedChannelSecretsDecryptProblem() {
 		return "ENCRYPTION_KEY"
 	}
+	if encryptedProviderSettingSecretsDecryptProblem() {
+		return "ENCRYPTION_KEY"
+	}
 	return ""
 }
 
@@ -1742,6 +1745,25 @@ func encryptedChannelSecretsDecryptProblem() bool {
 			if _, err := common.DecryptSecret(secret); err != nil {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func encryptedProviderSettingSecretsDecryptProblem() bool {
+	var settings []model.Setting
+	if err := internal.DB.
+		Model(&model.Setting{}).
+		Select("key, value").
+		Find(&settings).Error; err != nil {
+		return false
+	}
+	for _, setting := range settings {
+		if !service.SettingKeyRequiresSecretEncryption(setting.Key) || !common.IsEncryptedSecret(setting.Value) {
+			continue
+		}
+		if _, err := common.DecryptSecret(setting.Value); err != nil {
+			return true
 		}
 	}
 	return false

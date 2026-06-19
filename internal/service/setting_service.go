@@ -242,6 +242,12 @@ func ValidateSettingValue(key, value string) error {
 	return validateSettingValue(key, value)
 }
 
+// SettingKeyRequiresSecretEncryption reports settings whose stored value should
+// be encrypted at rest when ENCRYPTION_KEY is configured.
+func SettingKeyRequiresSecretEncryption(key string) bool {
+	return encryptedSettingKey(key)
+}
+
 // OAuth/OIDC provider secrets live in settings but need the same at-rest
 // protection as upstream channel secrets.
 func encryptedSettingKey(key string) bool {

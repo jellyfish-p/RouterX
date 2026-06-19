@@ -298,7 +298,7 @@ validate key exists
 - `auth.login.username_password.enabled=false`。
 - `auth.register.default_quota < 0`。
 - `auth.register.default_group_id` 为空。
-- `ENCRYPTION_KEY` 或 KMS 不可用，且数据库存在 `enc:v1:` 下游密钥。
+- `ENCRYPTION_KEY` 或 KMS 不可用，且数据库存在 `enc:v1:` 下游密钥或外部登录 `client_secret`。
 - `SQL_DSN` 指向 PostgreSQL/MySQL 等外部数据库但 Redis 不可用。
 - `relay.timeout <= 0`。
 - `relay.max_request_body_bytes < 0`。

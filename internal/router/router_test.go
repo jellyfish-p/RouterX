@@ -10408,6 +10408,34 @@ func TestReadinessDecryptsEncryptedChannelSecrets(t *testing.T) {
 	}
 }
 
+func TestReadinessDecryptsEncryptedExternalProviderSecrets(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "correct-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.BatchSet(map[string]string{
+		"oauth.github.client_secret": "oauth-secret",
+		"oidc.corp.client_secret":    "oidc-secret",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("ENCRYPTION_KEY", "wrong-encryption-key")
+	readyResp := performJSON(r, http.MethodGet, "/ready", "", nil)
+	if readyResp.Code != http.StatusServiceUnavailable || !strings.Contains(readyResp.Body.String(), "ENCRYPTION_KEY") {
+		t.Fatalf("undecryptable provider secrets should make ready fail, got %d %s", readyResp.Code, readyResp.Body.String())
+	}
+}
+
 func TestAdminRotateChannelSecretsReencryptsWithCurrentKey(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "old-channel-secret-key")
