@@ -21,7 +21,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备受 settings 控制的用户名、邮箱、手机号自助注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认、注销隐私字段擦除、基础用户名/邮箱/手机号恢复账号，以及 OAuth 已绑定身份登录、OAuth 首次补齐注册、OAuth 注销账号恢复、登录用户绑定 OAuth identity、OIDC 已绑定身份登录、OIDC 首次补齐注册、OIDC 注销账号恢复、登录用户绑定 OIDC identity 和自助列出/解绑非主 identity 所需的账号能力。自助注册默认关闭；开启基础注册时，服务端会检查 `auth.register.enabled`、对应 `auth.register.{method}.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名、同邮箱或同手机号身份时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，并统一校验同一用户的 `username/local` 主密码；当前本地 email/phone identity 不保存重复密码哈希。OAuth 当前支持授权跳转、state Cookie 校验、code 换 token、userinfo 稳定 id/sub 登录、恢复或绑定 `oauth/provider/identifier` 身份；当 `auth.register.oauth.enabled=true` 且 `oauth.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的身份会返回短期注册票据，用户提交用户名和密码后创建本地有密码账号并绑定 OAuth identity，或恢复原账号并刷新该 OAuth identity 最近使用时间，同时明确禁止因相同 email 自动绑定或接管已有账号。OIDC 当前支持 Discovery、state/nonce、RS256 ID Token 签名、`iss/aud/exp/sub` 校验，并只用已验证 `sub` 登录、恢复、绑定或生成短期注册票据；当 `auth.register.oidc.enabled=true` 且 `oidc.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的 subject 可补齐用户名和密码后创建本地有密码账号并绑定 OIDC identity，或恢复原账号并刷新 OIDC identity 最近使用时间。本文档中的完整验证码校验、邮箱/手机号验证码登录、绑定归属验证和更完整企业风控属于目标设计，需要按阶段继续实现。
+当前代码已经具备受 settings 控制的用户名、邮箱、手机号自助注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认、注销隐私字段擦除、基础用户名/邮箱/手机号恢复账号、Redis-backed 邮箱/手机号验证码登录，以及 OAuth 已绑定身份登录、OAuth 首次补齐注册、OAuth 注销账号恢复、登录用户绑定 OAuth identity、OIDC 已绑定身份登录、OIDC 首次补齐注册、OIDC 注销账号恢复、登录用户绑定 OIDC identity 和自助列出/解绑非主 identity 所需的账号能力。自助注册默认关闭；开启基础注册时，服务端会检查 `auth.register.enabled`、对应 `auth.register.{method}.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名、同邮箱或同手机号身份时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，密码登录统一校验同一用户的 `username/local` 主密码，验证码登录会校验并一次性消费 Redis 中的短期验证码记录；当前本地 email/phone identity 不保存重复密码哈希。OAuth 当前支持授权跳转、state Cookie 校验、code 换 token、userinfo 稳定 id/sub 登录、恢复或绑定 `oauth/provider/identifier` 身份；当 `auth.register.oauth.enabled=true` 且 `oauth.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的身份会返回短期注册票据，用户提交用户名和密码后创建本地有密码账号并绑定 OAuth identity，或恢复原账号并刷新该 OAuth identity 最近使用时间，同时明确禁止因相同 email 自动绑定或接管已有账号。OIDC 当前支持 Discovery、state/nonce、RS256 ID Token 签名、`iss/aud/exp/sub` 校验，并只用已验证 `sub` 登录、恢复、绑定或生成短期注册票据；当 `auth.register.oidc.enabled=true` 且 `oidc.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的 subject 可补齐用户名和密码后创建本地有密码账号并绑定 OIDC identity，或恢复原账号并刷新 OIDC identity 最近使用时间。本文档中的完整注册验证码校验、验证码发送接口、绑定归属验证和更完整企业风控属于目标设计，需要按阶段继续实现。
 
 阶段边界：
 
@@ -125,8 +125,8 @@ password_hash = bcrypt hash
 | `auth.login.username_password.enabled` | `true` | 当前已落地；强制为 true，不允许关闭 |
 | `auth.login.email_password.enabled` | `false` | 当前已落地；是否允许已有本地邮箱身份使用邮箱 + 密码登录 |
 | `auth.login.phone_password.enabled` | `false` | 当前已落地；是否允许已有本地手机号身份使用手机号 + 密码登录 |
-| `auth.login.email_code.enabled` | `false` | 当前已校验；邮箱验证码登录仍属后续增强 |
-| `auth.login.phone_code.enabled` | `false` | 当前已校验；手机号验证码登录仍属后续增强 |
+| `auth.login.email_code.enabled` | `false` | 当前已落地；开启后允许已有本地邮箱身份使用 Redis 验证码登录 |
+| `auth.login.phone_code.enabled` | `false` | 当前已落地；开启后允许已有本地手机号身份使用 Redis 验证码登录 |
 | `auth.login.oauth.enabled` | `false` | 当前已落地 OAuth 已绑定身份登录和登录用户绑定流程的总开关 |
 | `auth.login.oidc.enabled` | `false` | 当前已落地；是否允许 OIDC 已绑定身份登录和登录用户绑定 OIDC identity |
 
@@ -347,7 +347,7 @@ POST /v0/user/login
 | `captcha_id` | 验证码登录时必填 |
 | `captcha_code` | 验证码登录时必填 |
 
-当前实现已经识别 `credential_type=password|code`。`credential_type` 为空时按密码登录处理；`credential_type=code` 只接受邮箱或手机号账号，会检查 `auth.login.email_code.enabled` 或 `auth.login.phone_code.enabled`，但验证码校验器未落地前会 fail-closed 返回 403，且不会回退到密码登录，即使请求体同时携带正确密码。
+当前实现已经识别 `credential_type=password|code`。`credential_type` 为空时按密码登录处理；`credential_type=code` 只接受邮箱或手机号账号，会检查 `auth.login.email_code.enabled` 或 `auth.login.phone_code.enabled`，再读取 Redis 中的 `auth:login_code:<captcha_id>` 验证码记录。Redis 缺失或不可用时返回 403 fail-closed；验证码缺失、过期、错误或超过尝试次数返回 401；成功后删除验证码并签发 JWT。验证码登录不会回退到密码登录，即使请求体同时携带正确密码。
 
 ### 账号识别
 
@@ -400,8 +400,8 @@ POST /v0/user/login
     -> 查询 user_identities(method, local, identifier)
     -> 关联 users
     -> 检查用户 status
-    -> 校验验证码
     -> 确认用户存在 username/local 主身份和密码
+    -> 校验并消费 Redis 验证码
     -> 更新 last_used_at
     -> 签发包含 role 的 User JWT
 ```
@@ -412,8 +412,10 @@ POST /v0/user/login
 - 手机号验证码登录需要 `auth.login.phone_code.enabled=true`。
 - 即使使用验证码登录，账户也必须已经设置密码。
 - 验证码只存 Redis，短 TTL，一次性消费。
-- 验证码发送和校验都需要限流。
-- 当前验证码校验器未落地，已开启对应 code 开关的请求仍 fail-closed，不会签发 JWT。
+- Redis key 约定为 `auth:login_code:<captcha_id>`，value 为 JSON：`method`、`account`、`code_hash`、`attempts` 和可选 `max_attempts`。
+- `code_hash` 使用 `SHA256(captcha_code)`；账号按邮箱小写去空格、手机号去首尾空格后匹配。
+- 错误尝试会递增 `attempts`，达到 `auth.captcha.max_attempts` 或记录自带 `max_attempts` 后删除验证码。
+- 验证码发送和校验都需要限流；当前已落地登录消费侧，发送接口仍按阶段继续实现。
 
 ## 邮箱规则
 

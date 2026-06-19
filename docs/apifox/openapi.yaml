@@ -266,7 +266,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 用户统一登录
-      description: 管理后台也使用本接口获取 User JWT，不提供独立 /v0/admin/login。credential_type 省略时按 password 处理；用户名密码登录始终可用；email/phone 密码登录仅对已有本地身份生效，并分别受 auth.login.email_password.enabled 与 auth.login.phone_password.enabled 控制，默认关闭；本地 email/phone 身份复用同一用户的 username/local 主密码，不要求各自保存独立密码哈希。credential_type=code 当前只识别邮箱或手机号账号并检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled；验证码校验器未落地前 fail-closed 返回 403，不会回退为密码登录。成功登录会写入 user.login 管理审计，审计摘要不包含密码或 JWT。
+      description: 管理后台也使用本接口获取 User JWT，不提供独立 /v0/admin/login。credential_type 省略时按 password 处理；用户名密码登录始终可用；email/phone 密码登录仅对已有本地身份生效，并分别受 auth.login.email_password.enabled 与 auth.login.phone_password.enabled 控制，默认关闭；本地 email/phone 身份复用同一用户的 username/local 主密码，不要求各自保存独立密码哈希。credential_type=code 当前只识别邮箱或手机号账号并检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled；随后读取 auth:login_code:<captcha_id> Redis 记录，校验 method、account 和 SHA256(captcha_code)，成功后一次性删除验证码并签发 JWT；验证码缺失、过期、错误或超过尝试次数返回 401，账号类型不支持、开关关闭或 Redis 校验器不可用返回 403，不会回退为密码登录。成功登录会写入 user.login 管理审计，审计摘要不包含密码或 JWT。
       requestBody:
         required: true
         content:
@@ -290,7 +290,7 @@ paths:
         "401":
           $ref: "#/components/responses/StandardUnauthorized"
         "403":
-          description: 验证码登录未开启、账号类型不支持或验证码校验器尚不可用。
+          description: 验证码登录未开启、账号类型不支持或 Redis 验证器不可用。
           content:
             application/json:
               schema:
@@ -4851,16 +4851,16 @@ components:
           type: string
           enum: [password, code]
           default: password
-          description: 凭据类型；省略时按 password 处理。code 当前 fail-closed，不会回退到密码登录。
+          description: 凭据类型；省略时按 password 处理。code 使用 Redis 验证码记录，不会回退到密码登录。
         password:
           type: string
           description: 密码登录时必填；email/phone 密码登录复用 username/local 主密码。
         captcha_id:
           type: string
-          description: 验证码登录时必填；当前校验器未落地，code 请求 fail-closed。
+          description: 验证码登录时必填；对应 Redis key 为 auth:login_code:<captcha_id>。
         captcha_code:
           type: string
-          description: 验证码登录时必填；当前校验器未落地，code 请求 fail-closed。
+          description: 验证码登录时必填；服务端使用 SHA256(captcha_code) 与 Redis 记录比对。
       example:
         account: alice@example.com
         credential_type: password

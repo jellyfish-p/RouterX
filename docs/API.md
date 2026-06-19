@@ -700,7 +700,7 @@ Provider 退款请求：
 鉴权：
 
 - 注册和登录不需要 User JWT，但需要系统已初始化。
-- 用户名密码登录是当前本地登录基线；email/phone 密码登录只对已有本地身份生效，并分别受 `auth.login.email_password.enabled` 与 `auth.login.phone_password.enabled` 控制，默认关闭；本地 email/phone 身份复用同一用户的 `username/local` 主密码，不要求各自保存独立密码哈希。统一登录接口已经识别 `credential_type=password|code`；验证码登录校验器未落地前，`credential_type=code` 会按对应开关检查后 fail-closed 返回 403，不会回退为密码登录。
+- 用户名密码登录是当前本地登录基线；email/phone 密码登录只对已有本地身份生效，并分别受 `auth.login.email_password.enabled` 与 `auth.login.phone_password.enabled` 控制，默认关闭；本地 email/phone 身份复用同一用户的 `username/local` 主密码，不要求各自保存独立密码哈希。统一登录接口已经识别 `credential_type=password|code`；验证码登录支持 Redis 中的短期验证码记录校验和一次性消费，Redis 缺失或不可用时 fail-closed 返回 403，不会回退为密码登录。
 - 自部署商业级默认关闭公开自助注册；`POST /v0/user/register` 当前支持 `register_method=username/email/phone`，分别需要 `auth.register.enabled=true`、对应注册方法开关为 true 且 `auth.register.captcha.required=false` 才可用。完整验证码注册属于后续增强。
 - 管理员创建用户不受自助注册开关影响。
 - 个人信息、日志和账单需要 User JWT。
@@ -710,7 +710,7 @@ Provider 退款请求：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | POST | `/v0/user/register` | 已实现 | 统一自助注册入口，支持 `register_method=username/email/phone`；所有方法仍要求用户名和密码，可创建或恢复补齐 email/phone 本地登录标识但不保存重复密码哈希；命中已注销同名、同邮箱或同手机号账号时恢复原账号 |
-| POST | `/v0/user/login` | 已实现 | 用户统一登录；用户名密码始终可用，email/phone 密码登录受 settings 控制并复用 `username/local` 主密码；`credential_type=code` 当前 fail-closed，不会误走密码登录；成功登录写 `user.login` 管理审计，摘要不包含密码或 JWT |
+| POST | `/v0/user/login` | 已实现 | 用户统一登录；用户名密码始终可用，email/phone 密码登录受 settings 控制并复用 `username/local` 主密码；`credential_type=code` 使用 Redis 验证码记录，成功后一次性消费且不会误走密码登录；成功登录写 `user.login` 管理审计，摘要不包含密码或 JWT |
 | GET | `/v0/user/oauth/:provider/login` | 基础实现 | OAuth 授权跳转；检查 `auth.login.oauth.enabled` 和 `oauth.{provider}.enabled`，生成一次性 state Cookie 后跳转 provider 授权地址 |
 | GET | `/v0/user/oauth/:provider/callback` | 基础实现 | OAuth 回调；校验 state Cookie，使用 provider token/userinfo 接口解析稳定 id/sub，只允许已绑定 `oauth/provider/identifier` 身份登录并写 `user.login` 审计；相同 email 不自动绑定 |
 | GET | `/v0/user/oauth/:provider/bind` | 基础实现 | 登录用户发起 OAuth identity 绑定；写入 state Cookie 和签名 bind Cookie 后跳转 provider，bind Cookie 只用于证明本次绑定由当前用户发起 |
@@ -759,7 +759,7 @@ Provider 退款请求：
 }
 ```
 
-`credential_type` 省略时按 `password` 处理，`account` 可为用户名、邮箱或手机号，旧客户端仍可用 `username` 字段。邮箱/手机号密码登录需要对应开关开启，并复用同一用户的 `username/local` 主密码。提交 `credential_type=code` 时必须提供 `account`、`captcha_id` 和 `captcha_code`；当前验证码校验器尚未落地，服务端会先检查邮箱或手机号验证码登录开关，再以 403 fail-closed 拒绝，不会因为请求同时带有正确密码而签发 JWT。
+`credential_type` 省略时按 `password` 处理，`account` 可为用户名、邮箱或手机号，旧客户端仍可用 `username` 字段。邮箱/手机号密码登录需要对应开关开启，并复用同一用户的 `username/local` 主密码。提交 `credential_type=code` 时必须提供 `account`、`captcha_id` 和 `captcha_code`；服务端会先检查邮箱或手机号验证码登录开关，再读取 `auth:login_code:<captcha_id>` Redis 记录校验 method、account 和 `SHA256(captcha_code)`。验证码正确时删除 Redis key 并签发 JWT；验证码缺失、过期、错误或超过尝试次数返回 401；账号类型不支持、登录开关关闭或 Redis 校验器不可用返回 403。即使请求体同时带有正确密码，验证码登录也不会回退到密码登录。
 
 登录目标响应：
 

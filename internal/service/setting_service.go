@@ -283,6 +283,7 @@ func validateSettingValue(key, value string) error {
 		return validateServerModeSetting(key, value)
 	case "jwt.admin_expire_hours", "jwt.user_expire_hours",
 		"relay.timeout", "relay.error_ban_threshold", "relay.error_probe_batch_size", "relay.routerx_max_hops", "routing.channel_cache.version", "payment.order_expire_minutes",
+		"auth.captcha.ttl_seconds", "auth.captcha.max_attempts",
 		"alert.webhook.timeout_seconds", "alert.webhook.max_attempts",
 		"alert.email.timeout_seconds", "alert.email.max_attempts",
 		"alert.im.timeout_seconds", "alert.im.max_attempts":

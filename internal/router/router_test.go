@@ -3828,6 +3828,204 @@ func TestUserLoginCodeCredentialFailsClosedWithoutVerifier(t *testing.T) {
 	}
 }
 
+func TestUserLoginCodeCredentialConsumesRedisCode(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createCodeLoginUser(t, r, rootJWT)
+	enableCodeLoginSettings(t)
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	oldRDB := internal.RDB
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = oldRDB
+	})
+
+	seedRouterLoginCode(t, rdb, "email-code-id", model.UserIdentityMethodEmail, "code-login@example.com", "123456")
+	emailCodeLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":         "CODE-LOGIN@example.com",
+		"credential_type": "code",
+		"password":        "wrong-password-is-ignored",
+		"captcha_id":      "email-code-id",
+		"captcha_code":    "123456",
+	})
+	if emailCodeLogin.Code != http.StatusOK || !strings.Contains(emailCodeLogin.Body.String(), `"token"`) {
+		t.Fatalf("email code login should succeed, got %d %s", emailCodeLogin.Code, emailCodeLogin.Body.String())
+	}
+	if _, err := rdb.Get(context.Background(), routerLoginCodeKey("email-code-id")).Result(); !errors.Is(err, redis.Nil) {
+		t.Fatalf("email code should be consumed after login, err=%v", err)
+	}
+	reusedEmailCode := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":         "code-login@example.com",
+		"credential_type": "code",
+		"captcha_id":      "email-code-id",
+		"captcha_code":    "123456",
+	})
+	if reusedEmailCode.Code != http.StatusUnauthorized || strings.Contains(reusedEmailCode.Body.String(), `"token"`) {
+		t.Fatalf("consumed email code should not be reusable, got %d %s", reusedEmailCode.Code, reusedEmailCode.Body.String())
+	}
+
+	seedRouterLoginCode(t, rdb, "phone-code-id", model.UserIdentityMethodPhone, "+15550002222", "654321")
+	phoneCodeLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":         "+15550002222",
+		"credential_type": "code",
+		"captcha_id":      "phone-code-id",
+		"captcha_code":    "654321",
+	})
+	if phoneCodeLogin.Code != http.StatusOK || !strings.Contains(phoneCodeLogin.Body.String(), `"token"`) {
+		t.Fatalf("phone code login should succeed, got %d %s", phoneCodeLogin.Code, phoneCodeLogin.Body.String())
+	}
+}
+
+func TestUserLoginCodeCredentialTracksAttemptsAndExpiresCode(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createCodeLoginUser(t, r, rootJWT)
+	enableCodeLoginSettings(t)
+	if err := service.NewSettingService().Set("auth.captcha.max_attempts", "2"); err != nil {
+		t.Fatal(err)
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	oldRDB := internal.RDB
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = oldRDB
+	})
+	seedRouterLoginCode(t, rdb, "attempt-code-id", model.UserIdentityMethodEmail, "code-login@example.com", "123456")
+
+	for i := 0; i < 2; i++ {
+		resp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+			"account":         "code-login@example.com",
+			"credential_type": "code",
+			"captcha_id":      "attempt-code-id",
+			"captcha_code":    "000000",
+		})
+		if resp.Code != http.StatusUnauthorized || strings.Contains(resp.Body.String(), `"token"`) {
+			t.Fatalf("wrong code attempt %d should fail, got %d %s", i+1, resp.Code, resp.Body.String())
+		}
+	}
+	if _, err := rdb.Get(context.Background(), routerLoginCodeKey("attempt-code-id")).Result(); !errors.Is(err, redis.Nil) {
+		t.Fatalf("code should be deleted after max attempts, err=%v", err)
+	}
+	expiredCodeLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":         "code-login@example.com",
+		"credential_type": "code",
+		"captcha_id":      "attempt-code-id",
+		"captcha_code":    "123456",
+	})
+	if expiredCodeLogin.Code != http.StatusUnauthorized || strings.Contains(expiredCodeLogin.Body.String(), `"token"`) {
+		t.Fatalf("expired code should not login, got %d %s", expiredCodeLogin.Code, expiredCodeLogin.Body.String())
+	}
+}
+
+func createCodeLoginUser(t *testing.T, r *gin.Engine, rootJWT string) {
+	t.Helper()
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "code-login-user",
+		"password":     "password123",
+		"display_name": "Code Login User",
+		"email":        "code-login@example.com",
+		"phone":        "+15550002222",
+		"role":         common.RoleUser,
+		"quota":        10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "code-login-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for _, identity := range []model.UserIdentity{
+		{
+			UserID:     user.ID,
+			Method:     model.UserIdentityMethodEmail,
+			Provider:   model.UserIdentityProviderLocal,
+			Identifier: "code-login@example.com",
+			VerifiedAt: &now,
+		},
+		{
+			UserID:     user.ID,
+			Method:     model.UserIdentityMethodPhone,
+			Provider:   model.UserIdentityProviderLocal,
+			Identifier: "+15550002222",
+			VerifiedAt: &now,
+		},
+	} {
+		var count int64
+		if err := internal.DB.Model(&model.UserIdentity{}).
+			Where("method = ? AND provider = ? AND identifier = ?", identity.Method, identity.Provider, identity.Identifier).
+			Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count == 0 {
+			if err := internal.DB.Create(&identity).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func enableCodeLoginSettings(t *testing.T) {
+	t.Helper()
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.login.email_code.enabled": "true",
+		"auth.login.phone_code.enabled": "true",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func seedRouterLoginCode(t *testing.T, rdb *redis.Client, id, method, account, code string) {
+	t.Helper()
+	record := map[string]interface{}{
+		"method":    method,
+		"account":   account,
+		"code_hash": common.SHA256Hex(strings.TrimSpace(code)),
+		"attempts":  0,
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rdb.Set(context.Background(), routerLoginCodeKey(id), string(raw), 5*time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func routerLoginCodeKey(id string) string {
+	return "auth:login_code:" + strings.TrimSpace(id)
+}
+
 func TestUserLoginWritesAuditLogWithoutSecrets(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -9423,6 +9621,8 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"auth.login.phone_code.enabled",
 		"auth.login.oauth.enabled",
 		"auth.login.oidc.enabled",
+		"auth.captcha.ttl_seconds",
+		"auth.captcha.max_attempts",
 		"auth.register.enabled",
 		"auth.register.username.enabled",
 		"auth.register.email.enabled",

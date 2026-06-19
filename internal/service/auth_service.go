@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -39,6 +41,16 @@ var (
 )
 
 type AuthService struct{}
+
+const loginCodeRedisKeyPrefix = "auth:login_code:"
+
+type loginCodeRecord struct {
+	Method      string `json:"method"`
+	Account     string `json:"account"`
+	CodeHash    string `json:"code_hash"`
+	Attempts    int    `json:"attempts"`
+	MaxAttempts int    `json:"max_attempts,omitempty"`
+}
 
 func NewAuthService() *AuthService {
 	return &AuthService{}
@@ -573,13 +585,13 @@ func (s *AuthService) UserLogin(username, password string) (*model.User, string,
 	return identity.User, token, nil
 }
 
-// UserCodeLogin reserves the email/phone verification-code login path.
-// The verifier service is not wired yet, so enabled code-login requests fail
-// closed here instead of falling through to password authentication.
+// UserCodeLogin consumes a Redis-backed email/phone login code and issues a
+// normal User JWT. Missing Redis still fails closed so code login never falls
+// back to password authentication.
 func (s *AuthService) UserCodeLogin(account, captchaID, captchaCode string) (*model.User, string, error) {
 	account = strings.TrimSpace(account)
 	if account == "" || strings.TrimSpace(captchaID) == "" || strings.TrimSpace(captchaCode) == "" {
-		return nil, "", errors.New("account or credential is invalid")
+		return nil, "", invalidLocalCredentialError()
 	}
 	method, ok := localCodeLoginMethod(account)
 	if !ok {
@@ -588,7 +600,31 @@ func (s *AuthService) UserCodeLogin(account, captchaID, captchaCode string) (*mo
 	if !localCodeLoginEnabled(method) {
 		return nil, "", ErrLoginCodeDisabled
 	}
-	return nil, "", ErrLoginCodeVerifierUnavailable
+	identity, err := findLocalIdentityByMethod(method, normalizeCodeLoginAccount(method, account))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, "", invalidLocalCredentialError()
+		}
+		return nil, "", err
+	}
+	if identity.User == nil || identity.User.Status != common.UserStatusEnabled {
+		return nil, "", invalidLocalCredentialError()
+	}
+	if _, err := localAccountPasswordHash(identity.UserID); err != nil {
+		return nil, "", invalidLocalCredentialError()
+	}
+	if err := verifyLoginCode(method, account, captchaID, captchaCode); err != nil {
+		return nil, "", err
+	}
+
+	now := time.Now()
+	_ = internal.DB.Model(identity).Update("last_used_at", &now).Error
+
+	token, err := signUserLoginToken(identity.User.ID, identity.User.Role)
+	if err != nil {
+		return nil, "", err
+	}
+	return identity.User, token, nil
 }
 
 // OAuthLoginURL builds the provider authorization URL and keeps the generated
@@ -1257,6 +1293,84 @@ func GetUserJWTExpireHours() int {
 	return common.ParsePositiveInt(setting.Value, 168)
 }
 
+func invalidLocalCredentialError() error {
+	return errors.New("account or credential is invalid")
+}
+
+func verifyLoginCode(method, account, captchaID, captchaCode string) error {
+	if internal.RDB == nil {
+		return ErrLoginCodeVerifierUnavailable
+	}
+	normalizedAccount := normalizeCodeLoginAccount(method, account)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	key := loginCodeRedisKey(captchaID)
+	raw, err := internal.RDB.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return invalidLocalCredentialError()
+	}
+	if err != nil {
+		return ErrLoginCodeVerifierUnavailable
+	}
+	var record loginCodeRecord
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		return ErrLoginCodeVerifierUnavailable
+	}
+	maxAttempts := record.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = loginCodeMaxAttempts()
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = 5
+	}
+
+	recordAccount := normalizeCodeLoginAccount(record.Method, record.Account)
+	codeHash := common.SHA256Hex(strings.TrimSpace(captchaCode))
+	codeMatches := strings.TrimSpace(record.CodeHash) != "" && hmac.Equal([]byte(record.CodeHash), []byte(codeHash))
+	if record.Method != method || recordAccount != normalizedAccount || !codeMatches {
+		return recordFailedLoginCodeAttempt(ctx, key, record, maxAttempts)
+	}
+	deleted, err := internal.RDB.Del(ctx, key).Result()
+	if err != nil {
+		return ErrLoginCodeVerifierUnavailable
+	}
+	if deleted == 0 {
+		return invalidLocalCredentialError()
+	}
+	return nil
+}
+
+func recordFailedLoginCodeAttempt(ctx context.Context, key string, record loginCodeRecord, maxAttempts int) error {
+	record.Attempts++
+	if record.Attempts >= maxAttempts {
+		if err := internal.RDB.Del(ctx, key).Err(); err != nil {
+			return ErrLoginCodeVerifierUnavailable
+		}
+		return invalidLocalCredentialError()
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return ErrLoginCodeVerifierUnavailable
+	}
+	if err := internal.RDB.Set(ctx, key, string(raw), redis.KeepTTL).Err(); err != nil {
+		return ErrLoginCodeVerifierUnavailable
+	}
+	return invalidLocalCredentialError()
+}
+
+func loginCodeRedisKey(captchaID string) string {
+	return loginCodeRedisKeyPrefix + strings.TrimSpace(captchaID)
+}
+
+func loginCodeMaxAttempts() int {
+	value, err := NewSettingService().Get("auth.captcha.max_attempts")
+	if err != nil {
+		return 5
+	}
+	return common.ParsePositiveInt(value, 5)
+}
+
 func identityExists(tx *gorm.DB, method, identifier string) (bool, error) {
 	return identityExistsWithProvider(tx, method, model.UserIdentityProviderLocal, identifier)
 }
@@ -1314,6 +1428,20 @@ func findLocalIdentity(account string) (*model.UserIdentity, error) {
 	return nil, lastErr
 }
 
+func findLocalIdentityByMethod(method, identifier string) (*model.UserIdentity, error) {
+	var identity model.UserIdentity
+	err := internal.DB.Preload("User").Where(
+		"method = ? AND provider = ? AND identifier = ?",
+		method,
+		model.UserIdentityProviderLocal,
+		identifier,
+	).First(&identity).Error
+	if err != nil {
+		return nil, err
+	}
+	return &identity, nil
+}
+
 func localPasswordLoginEnabled(method string) bool {
 	switch method {
 	case model.UserIdentityMethodUsername:
@@ -1346,6 +1474,17 @@ func localCodeLoginEnabled(method string) bool {
 		return loginBoolSettingDefault("auth.login.phone_code.enabled", false)
 	default:
 		return false
+	}
+}
+
+func normalizeCodeLoginAccount(method, account string) string {
+	switch method {
+	case model.UserIdentityMethodEmail:
+		return normalizeEmail(account)
+	case model.UserIdentityMethodPhone:
+		return normalizePhone(account)
+	default:
+		return strings.TrimSpace(account)
 	}
 }
 

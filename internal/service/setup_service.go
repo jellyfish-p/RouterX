@@ -169,6 +169,8 @@ func buildDefaultSettings() map[string]map[string]string {
 			"auth.login.phone_code.enabled":        "false",
 			"auth.login.oauth.enabled":             "false",
 			"auth.login.oidc.enabled":              "false",
+			"auth.captcha.ttl_seconds":             "300",
+			"auth.captcha.max_attempts":            "5",
 			"auth.register.enabled":                "false",
 			"auth.register.username.enabled":       "true",
 			"auth.register.email.enabled":          "false",
