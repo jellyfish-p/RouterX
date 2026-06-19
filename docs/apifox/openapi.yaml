@@ -3249,7 +3249,7 @@ paths:
     post:
       tags: [Gemini Compatible]
       summary: Gemini batchEmbedContents
-      description: 基础实现；Gemini requests[].content.parts 文本会转换为 OpenAI-compatible Embeddings input 数组，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings 上游，OpenAI embedding list 会转换为 Gemini embeddings[].values。usage 写入 RouterX 日志并扣费；同批次已填写的 outputDimensionality 必须一致；批量请求继承 OpenAI Embeddings 2048 上限，上游返回 embedding 数量必须与请求数量一致，否则返回 Gemini 兼容 502/UNAVAILABLE，message 为 upstream response conversion failed，对应 RouterX 错误语义 upstream_conversion_failed；taskType/title 暂不转发但会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要，Gemini 原生上游以 docs/PROTOCOLS.md 为准。
+      description: 基础实现；命中 OpenAI-compatible 上游时，Gemini requests[].content.parts 文本会转换为 Embeddings input 数组，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings，上游 embedding list 会转换为 Gemini embeddings[].values；同批次已填写的 outputDimensionality 必须一致，批量请求继承 OpenAI Embeddings 2048 上限，上游返回 embedding 数量必须与请求数量一致，否则返回 Gemini 兼容 502/UNAVAILABLE，message 为 upstream response conversion failed，对应 RouterX 错误语义 upstream_conversion_failed，taskType/title 会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。命中 Gemini 上游时会原生调用 /v1beta/models/{model}:batchEmbedContents，保留 requests[].content、taskType、title 和 outputDimensionality，并从 usageMetadata 写入 RouterX 日志和扣费。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -3619,7 +3619,7 @@ components:
                 type: array
                 minItems: 1
                 maxItems: 2048
-                description: 每个请求的文本 parts 会被合并为一个 OpenAI-compatible Embeddings input；上游返回 embedding 数量必须与 requests 数量一致。
+                description: 命中 Gemini 上游时 requests 会原生透传；命中 OpenAI-compatible 上游时，每个请求的文本 parts 会被合并为一个 Embeddings input，且上游返回 embedding 数量必须与 requests 数量一致。
                 items:
                   type: object
                   required: [content]
@@ -3639,14 +3639,14 @@ components:
                                 minLength: 1
                     taskType:
                       type: string
-                      description: 当前基础实现暂不转发；有值时会记录 dropped 降级摘要，后续按 docs/PROTOCOLS.md 补齐字段保真。
+                      description: 命中 Gemini 上游时作为原生 taskType 透传；命中 OpenAI-compatible 上游时暂不转发，并记录 dropped 降级摘要。
                     title:
                       type: string
-                      description: 当前基础实现暂不转发；有值时会记录 dropped 降级摘要，后续按 docs/PROTOCOLS.md 补齐字段保真。
+                      description: 命中 Gemini 上游时作为原生 title 透传；命中 OpenAI-compatible 上游时暂不转发，并记录 dropped 降级摘要。
                     outputDimensionality:
                       type: integer
                       minimum: 1
-                      description: 映射为 OpenAI-compatible Embeddings dimensions；同一批次中已填写的值必须一致。
+                      description: 命中 Gemini 上游时作为原生 outputDimensionality 透传；命中 OpenAI-compatible 上游时映射为 dimensions，同一批次中已填写的值必须一致。
                 example:
                   - content:
                       parts:

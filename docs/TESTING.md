@@ -138,6 +138,7 @@
 | `TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini embedContent 转 OpenAI-compatible Embeddings 上游，`outputDimensionality` 映射为 `dimensions`，返回 Gemini `embedding.values` 外形，usage 写日志和扣费；未映射的 `taskType/title` 会记录 dropped 降级 |
 | `TestGeminiEmbedContentToGeminiUpstreamPreservesNativeRequestFieldsAndDeductsUsage` | Gemini embedContent 命中 Gemini 上游时原生调用 `:embedContent`，保留 `content/taskType/title/outputDimensionality`，从 `usageMetadata` 写日志并扣费 |
 | `TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini batchEmbedContents 转 OpenAI-compatible Embeddings 批量 input，`outputDimensionality` 映射为 `dimensions`，上游 embedding list 返回 Gemini `embeddings[].values` 外形，usage 写日志和扣费；未映射的 `taskType/title` 会记录 dropped 降级 |
+| `TestGeminiBatchEmbedContentsToGeminiUpstreamPreservesNativeRequestsAndDeductsUsage` | Gemini batchEmbedContents 命中 Gemini 上游时原生调用 `:batchEmbedContents`，保留 `requests[].content/taskType/title/outputDimensionality`，从 `usageMetadata` 写日志并扣费 |
 | `TestGeminiEmbeddingOutputDimensionalityValidation` | Gemini embedding 请求拒绝非正数 `outputDimensionality`，batchEmbedContents 拒绝同批次维度不一致 |
 | `TestGeminiCountTokensUsesPromptTextInsteadOfJSONEnvelope` | Gemini countTokens 本地近似计数只统计 `contents` 和 `systemInstruction` 中的 prompt 文本，不把 JSON 字段名当作 token |
 | `TestGeminiCountTokensUsesGenerateContentRequestWhenPresent` | Gemini countTokens 在存在 `generateContentRequest` 时按 Gemini 语义忽略顶层 `contents`，只统计包裹请求内的 prompt 文本 |

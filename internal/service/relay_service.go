@@ -54,6 +54,7 @@ type relayRouterXChainContextKey struct{}
 type relayRequestSnapshotContextKey struct{}
 type relayAdapterDegradationsContextKey struct{}
 type relayAnthropicNativeBodyContextKey struct{}
+type relayGeminiNativeEmbeddingContextKey struct{}
 type relayPolicySnapshotContextKey struct{}
 type relayRouteSnapshotContextKey struct{}
 type relayBillingSnapshotContextKey struct{}
@@ -77,8 +78,10 @@ const (
 	inputProtocolAnthropic = "anthropic"
 	inputProtocolGemini    = "gemini"
 
-	usageMissingStrategyMinimum = "minimum"
-	usageMissingStrategyReject  = "reject"
+	relayGeminiNativeEmbedContentKind       = "embed_content"
+	relayGeminiNativeBatchEmbedContentsKind = "batch_embed_contents"
+	usageMissingStrategyMinimum             = "minimum"
+	usageMissingStrategyReject              = "reject"
 
 	defaultRelayMaxRequestBodyBytes   int64 = 20 << 20
 	defaultRelayMaxMultipartFileBytes int64 = 10 << 20
@@ -196,6 +199,17 @@ func contextWithRelayAnthropicNativeBody(ctx context.Context, body []byte) conte
 	return context.WithValue(ctx, relayAnthropicNativeBodyContextKey{}, append([]byte(nil), body...))
 }
 
+func contextWithRelayGeminiNativeEmbedding(ctx context.Context, kind string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, relayGeminiNativeEmbeddingContextKey{}, kind)
+}
+
 func ContextWithRelayPolicySnapshot(ctx context.Context, snapshot string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -311,6 +325,14 @@ func relayAnthropicNativeBodyFromContext(ctx context.Context) []byte {
 		return nil
 	}
 	return append([]byte(nil), value...)
+}
+
+func relayGeminiNativeEmbeddingFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(relayGeminiNativeEmbeddingContextKey{}).(string)
+	return strings.TrimSpace(value)
 }
 
 func relayPolicySnapshotFromContext(ctx context.Context) string {
@@ -519,6 +541,7 @@ func (s *RelayService) RelayGeminiEmbedContent(ctx context.Context, token *model
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
 	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolGemini)
+	ctx = contextWithRelayGeminiNativeEmbedding(ctx, relayGeminiNativeEmbedContentKind)
 	ctx = contextWithRelayAdapterDegradations(ctx, geminiEmbedContentAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
 	if err != nil {
@@ -537,6 +560,7 @@ func (s *RelayService) RelayGeminiBatchEmbedContents(ctx context.Context, token 
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
 	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolGemini)
+	ctx = contextWithRelayGeminiNativeEmbedding(ctx, relayGeminiNativeBatchEmbedContentsKind)
 	ctx = contextWithRelayAdapterDegradations(ctx, geminiBatchEmbedContentsAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
 	if err != nil {
@@ -854,7 +878,8 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, err.Error(), clientIP)
 		return nil, nil, false, routerXHopHTTPError(err)
 	}
-	endpoint := adapter.GetAPIEndpoint(apiType, upstreamModel)
+	upstreamAPIType := relayNonStreamUpstreamAPIType(ctx, apiType, channel.Type)
+	endpoint := adapter.GetAPIEndpoint(upstreamAPIType, upstreamModel)
 	timeout := s.relayTimeout()
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	reqCtx = relay.ContextWithUpstreamOptions(reqCtx, reqInfo.Upstream.Transport)
@@ -933,7 +958,8 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		return &RelayRawResult{Body: respBody, ContentType: contentType}, nil, false, nil
 	}
 
-	converted, usage, err := adapter.ConvertResponse(apiType, respBody)
+	responseAPIType := relayNonStreamResponseAPIType(ctx, apiType, channel.Type)
+	converted, usage, err := adapter.ConvertResponse(responseAPIType, respBody)
 	if err != nil {
 		_ = s.markChannelFailure(channel, latencyMs)
 		logCtx := s.contextWithRelayLogResponseBody(ctx, respBody, resp.Header.Get("Content-Type"))
@@ -2403,6 +2429,10 @@ func geminiEmbedContentNativeProviderBody(payload map[string]json.RawMessage) ma
 }
 
 func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, int, error) {
+	var rawPayload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &rawPayload); err != nil {
+		return nil, 0, errInvalidJSONBody
+	}
 	var input struct {
 		Requests []struct {
 			Content struct {
@@ -2449,11 +2479,33 @@ func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, in
 	if hasDimensions {
 		output["dimensions"] = dimensions
 	}
+	if native := geminiBatchEmbedContentsNativeProviderBody(rawPayload); len(native) > 0 {
+		// Preserve Gemini batchEmbedContents requests only when route selection lands on a Gemini upstream.
+		output["routerx"] = map[string]interface{}{
+			"provider": map[string]interface{}{
+				"gemini": native,
+			},
+		}
+	}
 	canonical, err := json.Marshal(output)
 	if err != nil {
 		return nil, 0, err
 	}
 	return canonical, len(values), nil
+}
+
+func geminiBatchEmbedContentsNativeProviderBody(payload map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(payload) == 0 {
+		return nil
+	}
+	raw, ok := payload["requests"]
+	if !ok || !rawJSONFieldPresent(raw) {
+		return nil
+	}
+	return map[string]json.RawMessage{
+		"requests":                 append(json.RawMessage(nil), raw...),
+		"_routerx_source_protocol": json.RawMessage(`"gemini_batch_embed_contents"`),
+	}
 }
 
 func geminiTextFromParts(parts []json.RawMessage) string {
@@ -4565,7 +4617,8 @@ func supportsGeminiNativeStream(ctx context.Context, apiType relay.APIType, chan
 
 func supportsGeminiNativeRequest(ctx context.Context, apiType relay.APIType, channelType int) bool {
 	return supportsGeminiNativeGenerateRequest(ctx, apiType, channelType) ||
-		supportsGeminiNativeEmbedContentRequest(ctx, apiType, channelType)
+		supportsGeminiNativeEmbedContentRequest(ctx, apiType, channelType) ||
+		supportsGeminiNativeBatchEmbedContentsRequest(ctx, apiType, channelType)
 }
 
 func supportsGeminiNativeGenerateRequest(ctx context.Context, apiType relay.APIType, channelType int) bool {
@@ -4577,7 +4630,15 @@ func supportsGeminiNativeGenerateRequest(ctx context.Context, apiType relay.APIT
 func supportsGeminiNativeEmbedContentRequest(ctx context.Context, apiType relay.APIType, channelType int) bool {
 	return apiType == relay.APIEmbeddings &&
 		channelType == common.ChannelTypeGemini &&
-		strings.EqualFold(relayIngressProtocolFromContext(ctx), inputProtocolGemini)
+		strings.EqualFold(relayIngressProtocolFromContext(ctx), inputProtocolGemini) &&
+		strings.EqualFold(relayGeminiNativeEmbeddingFromContext(ctx), relayGeminiNativeEmbedContentKind)
+}
+
+func supportsGeminiNativeBatchEmbedContentsRequest(ctx context.Context, apiType relay.APIType, channelType int) bool {
+	return apiType == relay.APIEmbeddings &&
+		channelType == common.ChannelTypeGemini &&
+		strings.EqualFold(relayIngressProtocolFromContext(ctx), inputProtocolGemini) &&
+		strings.EqualFold(relayGeminiNativeEmbeddingFromContext(ctx), relayGeminiNativeBatchEmbedContentsKind)
 }
 
 func supportsAnthropicNativeStream(ctx context.Context, apiType relay.APIType, channelType int) bool {
@@ -4591,8 +4652,25 @@ func supportsAnthropicNativeRequest(ctx context.Context, apiType relay.APIType, 
 }
 
 func relayRequestConvertAPIType(ctx context.Context, apiType relay.APIType, channelType int) relay.APIType {
+	if supportsGeminiNativeBatchEmbedContentsRequest(ctx, apiType, channelType) {
+		return relay.APIGeminiBatchEmbedContents
+	}
 	if supportsAnthropicNativeRequest(ctx, apiType, channelType) {
 		return relay.APIAnthropicMessages
+	}
+	return apiType
+}
+
+func relayNonStreamUpstreamAPIType(ctx context.Context, apiType relay.APIType, channelType int) relay.APIType {
+	if supportsGeminiNativeBatchEmbedContentsRequest(ctx, apiType, channelType) {
+		return relay.APIGeminiBatchEmbedContents
+	}
+	return apiType
+}
+
+func relayNonStreamResponseAPIType(ctx context.Context, apiType relay.APIType, channelType int) relay.APIType {
+	if supportsGeminiNativeBatchEmbedContentsRequest(ctx, apiType, channelType) {
+		return relay.APIGeminiBatchEmbedContents
 	}
 	return apiType
 }

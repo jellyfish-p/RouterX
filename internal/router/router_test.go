@@ -8132,6 +8132,140 @@ func TestGeminiEmbedContentToGeminiUpstreamPreservesNativeRequestFieldsAndDeduct
 	}
 }
 
+func TestGeminiBatchEmbedContentsToGeminiUpstreamPreservesNativeRequestsAndDeductsUsage(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamAPIKey := ""
+	upstreamBody := map[string]interface{}{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		upstreamAPIKey = req.URL.Query().Get("key")
+		raw := new(bytes.Buffer)
+		_, _ = raw.ReadFrom(req.Body)
+		if err := json.Unmarshal(raw.Bytes(), &upstreamBody); err != nil {
+			t.Errorf("Gemini upstream body should be JSON: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"embeddings":[{"values":[0.1,0.2]},{"values":[0.3,0.4]}],"usageMetadata":{"promptTokenCount":8,"totalTokenCount":8}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "gemini-native-batch-embed",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeGemini,
+		"name":     "gemini-native-batch-embed",
+		"models":   "text-embedding-native-batch",
+		"base_url": upstream.URL,
+		"api_key":  "gemini-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create Gemini channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	resp := performJSON(r, http.MethodPost, "/v1/models/text-embedding-native-batch:batchEmbedContents", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"requests": []map[string]interface{}{
+			{
+				"content": map[string]interface{}{
+					"parts": []map[string]interface{}{{"text": "hello"}},
+				},
+				"outputDimensionality": 256,
+				"taskType":             "RETRIEVAL_QUERY",
+				"title":                "Ignored query title",
+			},
+			{
+				"content": map[string]interface{}{
+					"parts": []map[string]interface{}{{"text": "world"}},
+				},
+				"outputDimensionality": 256,
+				"taskType":             "RETRIEVAL_DOCUMENT",
+				"title":                "RouterX handbook",
+			},
+		},
+	})
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"embeddings":[{"values":[0.1,0.2]},{"values":[0.3,0.4]}]`) {
+		t.Fatalf("Gemini native batchEmbedContents should return Gemini embeddings response, got %d %s", resp.Code, resp.Body.String())
+	}
+	if upstreamCalls != 1 || upstreamPath != "/v1beta/models/text-embedding-native-batch:batchEmbedContents" || upstreamAPIKey != "gemini-secret" {
+		t.Fatalf("Gemini native batchEmbedContents should call Gemini endpoint once, calls=%d path=%q key=%q", upstreamCalls, upstreamPath, upstreamAPIKey)
+	}
+	for _, field := range []string{"model", "input", "dimensions", "routerx", "_routerx_source_protocol"} {
+		if _, ok := upstreamBody[field]; ok {
+			t.Fatalf("Gemini native batchEmbedContents should not leak %s field: %#v", field, upstreamBody)
+		}
+	}
+	requests, ok := upstreamBody["requests"].([]interface{})
+	if !ok || len(requests) != 2 {
+		t.Fatalf("Gemini native batchEmbedContents should preserve requests array: %#v", upstreamBody)
+	}
+	firstRequest, ok := requests[0].(map[string]interface{})
+	if !ok || !strings.Contains(fmt.Sprint(firstRequest["content"]), "hello") ||
+		firstRequest["outputDimensionality"] != float64(256) ||
+		firstRequest["taskType"] != "RETRIEVAL_QUERY" ||
+		firstRequest["title"] != "Ignored query title" {
+		t.Fatalf("Gemini native batchEmbedContents should preserve first request fields: %#v", firstRequest)
+	}
+	secondRequest, ok := requests[1].(map[string]interface{})
+	if !ok || !strings.Contains(fmt.Sprint(secondRequest["content"]), "world") ||
+		secondRequest["outputDimensionality"] != float64(256) ||
+		secondRequest["taskType"] != "RETRIEVAL_DOCUMENT" ||
+		secondRequest["title"] != "RouterX handbook" {
+		t.Fatalf("Gemini native batchEmbedContents should preserve second request fields: %#v", secondRequest)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 42 {
+		t.Fatalf("Gemini native batchEmbedContents usage should deduct token budget by 8, got %d", storedToken.RemainQuota)
+	}
+	var callLog model.Log
+	if err := internal.DB.Where("token_id = ? AND status = ?", tokenPayload.Data.ID, common.LogStatusSuccess).First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.QuotaUsed != 8 || callLog.TotalTokens != 8 || callLog.PromptTokens != 8 || callLog.CompletionTokens != 0 {
+		t.Fatalf("unexpected Gemini native batchEmbedContents success log: %+v", callLog)
+	}
+	var requestSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RequestSnapshot), &requestSnapshot); err != nil {
+		t.Fatalf("Gemini native batchEmbedContents request snapshot should be JSON, got %q: %v", callLog.RequestSnapshot, err)
+	}
+	if snapshotHasAdapterDegradation(requestSnapshot, "gemini", "requests.taskType", "dropped") ||
+		snapshotHasAdapterDegradation(requestSnapshot, "gemini", "requests.title", "dropped") {
+		t.Fatalf("Gemini native batchEmbedContents should not log preserved fields as dropped: %+v", requestSnapshot)
+	}
+}
+
 func TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
