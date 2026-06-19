@@ -7823,12 +7823,23 @@ components:
     ChatCompletionResponse:
       type: object
       properties:
-        id: { type: string }
-        object: { type: string, example: chat.completion }
-        created: { type: integer, format: int64 }
-        model: { type: string }
+        id:
+          type: string
+          description: OpenAI-compatible 响应 ID。
+        object:
+          type: string
+          description: OpenAI-compatible 对象类型，Chat Completions 通常为 chat.completion。
+          example: chat.completion
+        created:
+          type: integer
+          format: int64
+          description: 响应创建时间戳，Unix 秒。
+        model:
+          type: string
+          description: 实际返回的模型名。
         choices:
           type: array
+          description: 模型生成候选列表。
           items:
             type: object
             properties:
@@ -7837,18 +7848,26 @@ components:
                 $ref: "#/components/schemas/ChatMessage"
               finish_reason: { type: string }
         usage:
+          description: 本次响应的 token 用量统计。
           $ref: "#/components/schemas/Usage"
     Usage:
       type: object
       properties:
-        prompt_tokens: { type: integer }
-        completion_tokens: { type: integer }
-        total_tokens: { type: integer }
+        prompt_tokens:
+          type: integer
+          description: 输入 token 数。
+        completion_tokens:
+          type: integer
+          description: 输出 token 数。
+        total_tokens:
+          type: integer
+          description: 输入和输出 token 总数。
     OpenAIErrorEnvelope:
       type: object
       properties:
         error:
           type: object
+          description: OpenAI-compatible 错误对象。
           properties:
             message: { type: string }
             type: { type: string }
@@ -7858,9 +7877,11 @@ components:
       properties:
         type:
           type: string
+          description: Anthropic 顶层响应类型；错误响应固定为 error。
           example: error
         error:
           type: object
+          description: Anthropic 错误详情对象。
           properties:
             type:
               type: string
@@ -7873,6 +7894,7 @@ components:
       properties:
         error:
           type: object
+          description: Gemini-compatible 错误对象。
           properties:
             code:
               type: integer
@@ -7888,33 +7910,54 @@ components:
       properties:
         object:
           type: string
+          description: OpenAI-compatible 列表对象类型。
           example: list
         data:
           type: array
+          description: OpenAI-compatible 模型对象列表。
           items:
             $ref: "#/components/schemas/OpenAIModel"
     OpenAIModel:
       type: object
       properties:
-        id: { type: string }
-        object: { type: string, example: model }
-        created: { type: integer }
-        owned_by: { type: string }
+        id:
+          type: string
+          description: 模型 ID。
+        object:
+          type: string
+          description: OpenAI-compatible 对象类型，模型对象通常为 model。
+          example: model
+        created:
+          type: integer
+          description: 模型创建时间戳；本地合成模型可能为 0。
+        owned_by:
+          type: string
+          description: 模型归属方；本地合成模型通常为 routerx。
     GeminiModelList:
       type: object
       properties:
         models:
           type: array
+          description: Gemini-compatible 模型列表。
           items:
             $ref: "#/components/schemas/GeminiModel"
     GeminiModel:
       type: object
       properties:
-        name: { type: string, example: models/gpt-4o-mini }
-        version: { type: string }
-        displayName: { type: string, example: gpt-4o-mini }
+        name:
+          type: string
+          description: Gemini-compatible 模型资源名，通常带 models/ 前缀。
+          example: models/gpt-4o-mini
+        version:
+          type: string
+          description: 模型版本；未知时可为空字符串。
+        displayName:
+          type: string
+          description: 模型展示名称。
+          example: gpt-4o-mini
         supportedGenerationMethods:
           type: array
+          description: 该模型在 Gemini-compatible 接口中支持的方法列表。
           items:
             type: string
             enum:
@@ -7929,15 +7972,27 @@ components:
       properties:
         data:
           type: array
+          description: Anthropic-compatible 模型对象列表。
           items:
             $ref: "#/components/schemas/AnthropicModel"
-        has_more: { type: boolean }
+        has_more:
+          type: boolean
+          description: 是否还有下一页模型结果；当前本地列表通常为 false。
     AnthropicModel:
       type: object
       properties:
-        id: { type: string, example: claude-3-5-sonnet }
-        type: { type: string, example: model }
-        display_name: { type: string, example: claude-3-5-sonnet }
+        id:
+          type: string
+          description: Anthropic-compatible 模型 ID。
+          example: claude-3-5-sonnet
+        type:
+          type: string
+          description: Anthropic 对象类型，模型对象通常为 model。
+          example: model
+        display_name:
+          type: string
+          description: 模型展示名称。
+          example: claude-3-5-sonnet
     AnthropicMessageRequest:
       type: object
       required: [model, messages]
@@ -7997,20 +8052,35 @@ components:
     AnthropicMessageResponse:
       type: object
       properties:
-        id: { type: string }
-        type: { type: string, example: message }
-        role: { type: string, example: assistant }
-        model: { type: string }
+        id:
+          type: string
+          description: Anthropic-compatible 消息响应 ID。
+        type:
+          type: string
+          description: Anthropic 顶层对象类型，消息响应通常为 message。
+          example: message
+        role:
+          type: string
+          description: 消息角色，模型响应通常为 assistant。
+          example: assistant
+        model:
+          type: string
+          description: 实际返回的模型名。
         content:
           type: array
+          description: Anthropic content block 数组。
           items:
             type: object
             additionalProperties: true
-        stop_reason: { type: string }
+        stop_reason:
+          type: string
+          description: 生成停止原因。
         stop_sequence:
           nullable: true
+          description: 命中的停止序列；未命中时为 null。
         usage:
           type: object
+          description: Anthropic input/output token 用量统计。
           properties:
             input_tokens: { type: integer }
             output_tokens: { type: integer }

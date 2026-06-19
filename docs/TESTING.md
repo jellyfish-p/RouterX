@@ -36,6 +36,7 @@
 | `TestApifoxObservabilityResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查审计日志、告警事件、告警投递和 dashboard 响应字段都有可读说明，避免运维观测接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxPaymentResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查支付商品、支付订单、人工调整、退款请求、充值码和额度流水响应字段都有可读说明，避免支付与额度接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxModelPricingResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查用户模型目录、全局模型价格和通道模型价格响应字段都有可读说明，避免模型与价格配置接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxProtocolResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 OpenAI、Anthropic 和 Gemini 兼容响应、模型列表、错误封套和 usage 字段都有可读说明，避免协议兼容接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v0` 请求体顶层字段都有可读说明，避免管理端和用户端接口在 Apifox 中只有字段名而缺少用途、边界或安全语义 |
 | `TestApifoxV1RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v1` 模型入口请求体顶层字段都有可读说明，避免 OpenAI/Anthropic/Gemini 兼容接口在 Apifox 中缺少字段用途或转换语义 |
 | `TestApifoxOpenAPIInternalRefsResolve` | 递归检查 `docs/apifox/openapi.yaml` 内部 `$ref`，确保 requestBodies、responses、schemas、parameters 等组件引用都能解析，防止 Apifox 导入时出现断链 |
