@@ -79,6 +79,12 @@ func Logger() gin.HandlerFunc {
 			c.Set("request_id", requestID)
 			c.Header(requestIDHeader, requestID)
 		}
+		traceparent, traceID, ok := common.NormalizeTraceparent(c.GetHeader(common.TraceparentHeaderName))
+		if ok {
+			c.Set("traceparent", traceparent)
+			c.Set("trace_id", traceID)
+			c.Header(common.TraceparentHeaderName, traceparent)
+		}
 
 		c.Next()
 
@@ -91,7 +97,7 @@ func Logger() gin.HandlerFunc {
 			if pathGroup == "" {
 				pathGroup = "unmatched"
 			}
-			writeStructuredLog(map[string]interface{}{
+			entry := map[string]interface{}{
 				"event":      "http_request",
 				"request_id": requestID,
 				"method":     c.Request.Method,
@@ -100,7 +106,12 @@ func Logger() gin.HandlerFunc {
 				"status":     status,
 				"latency_ms": float64(latency.Microseconds()) / 1000,
 				"client_ip":  c.ClientIP(),
-			}, func() {
+			}
+			if traceID != "" {
+				entry["trace_id"] = traceID
+				entry["traceparent"] = traceparent
+			}
+			writeStructuredLog(entry, func() {
 				writeTextHTTPLog(c, status, latency, requestID)
 			})
 			return

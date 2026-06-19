@@ -350,7 +350,8 @@ func relayRequestContext(c *gin.Context) context.Context {
 	ctx = service.ContextWithRelayRouterXOptions(ctx, c.GetHeader("X-RouterX-Options"))
 	ctx = service.ContextWithRelayRouterXHop(ctx, c.GetHeader(relay.RouterXHopHeaderName))
 	ctx = service.ContextWithRelayRouterXChain(ctx, c.GetHeader(relay.RouterXChainHeaderName))
-	return service.ContextWithRelayRequestID(ctx, c.GetString("request_id"))
+	ctx = service.ContextWithRelayRequestID(ctx, c.GetString("request_id"))
+	return relay.ContextWithTraceparent(ctx, c.GetString("traceparent"))
 }
 
 func writeRelayError(c *gin.Context, err error) {

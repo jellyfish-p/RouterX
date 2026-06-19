@@ -10580,6 +10580,93 @@ func TestStructuredHTTPLogsUseJSONWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestTraceparentPropagatesToResponseStructuredLogAndUpstream(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	var logs bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+		_ = service.NewSettingService().Set("observability.structured_logs_enabled", "false")
+	})
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("observability.structured_logs_enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(1000)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "traceparent",
+		"remain_quota": 100,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+
+	upstreamTraceparent := ""
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamTraceparent = req.Header.Get("Traceparent")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-trace","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`))
+	}))
+	defer upstream.Close()
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "traceparent-upstream",
+		"models":   "gpt-trace",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	logs.Reset()
+	traceparent := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	resp := performRawWithHeaders(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, `{"model":"gpt-trace","messages":[{"role":"user","content":"hi"}]}`, map[string]string{
+		"Content-Type": "application/json",
+		"X-Request-Id": "req-traceparent",
+		"Traceparent":  traceparent,
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("traceparent chat should pass, got %d %s", resp.Code, resp.Body.String())
+	}
+	if got := resp.Header().Get("Traceparent"); got != traceparent {
+		t.Fatalf("response should echo valid traceparent, got %q", got)
+	}
+	if upstreamTraceparent != traceparent {
+		t.Fatalf("upstream should receive traceparent, got %q", upstreamTraceparent)
+	}
+
+	entry := findStructuredLogEntry(t, logs.String(), "http_request")
+	if entry["request_id"] != "req-traceparent" ||
+		entry["traceparent"] != traceparent ||
+		entry["trace_id"] != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("structured HTTP log should include request and trace identifiers, got %+v", entry)
+	}
+}
+
 func TestMetricsEndpointRequiresSettingAndExposesPrometheusText(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	r := newTestRouter(t)

@@ -10,6 +10,7 @@ import (
 )
 
 type requestIDContextKey struct{}
+type traceparentContextKey struct{}
 type upstreamOptionsContextKey struct{}
 type routerXHopContextKey struct{}
 type routerXChainContextKey struct{}
@@ -40,6 +41,28 @@ func RequestIDFromContext(ctx context.Context) string {
 		return ""
 	}
 	value, _ := ctx.Value(requestIDContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
+// ContextWithTraceparent stores a validated W3C traceparent for outbound calls.
+// Invalid values are dropped at the boundary instead of being forwarded.
+func ContextWithTraceparent(ctx context.Context, traceparent string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	normalized, _, ok := common.NormalizeTraceparent(traceparent)
+	if !ok {
+		normalized = ""
+	}
+	return context.WithValue(ctx, traceparentContextKey{}, normalized)
+}
+
+// TraceparentFromContext returns the outbound W3C trace context, if present.
+func TraceparentFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(traceparentContextKey{}).(string)
 	return strings.TrimSpace(value)
 }
 
@@ -97,13 +120,25 @@ func RouterXChainFromContext(ctx context.Context) string {
 
 // SetRequestIDHeader copies RouterX's request id into outbound upstream calls.
 // It deliberately uses the configured public header name, so deployments that
-// rename observability.request_id_header keep the same trace boundary.
+// rename observability.request_id_header keep the same lookup boundary.
 func SetRequestIDHeader(req *http.Request) {
 	if req == nil {
 		return
 	}
 	if requestID := RequestIDFromContext(req.Context()); requestID != "" {
 		req.Header.Set(common.RequestIDHeaderName(), requestID)
+	}
+	SetTraceparentHeader(req)
+}
+
+// SetTraceparentHeader forwards an existing W3C trace context without
+// inventing one. request_id remains the RouterX-local lookup handle.
+func SetTraceparentHeader(req *http.Request) {
+	if req == nil {
+		return
+	}
+	if traceparent := TraceparentFromContext(req.Context()); traceparent != "" {
+		req.Header.Set(common.TraceparentHeaderName, traceparent)
 	}
 }
 
