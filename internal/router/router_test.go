@@ -14827,6 +14827,10 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 	if !ok || filteredReasons["route_preference"] != float64(1) {
 		t.Fatalf("paid route snapshot should record route preference filtering: %+v", paidRouteSnapshot)
 	}
+	routePreference, ok := paidRouteSnapshot["route_preference"].(map[string]interface{})
+	if !ok || routePreference["decision"] != "accepted" || routePreference["channel_group"] != "paid" {
+		t.Fatalf("paid route snapshot should record accepted route preference: %+v", paidRouteSnapshot)
+	}
 
 	ignoredResp := chat(map[string]interface{}{"route": map[string]interface{}{"unknown": "keep-compatible"}})
 	if ignoredResp.Code != http.StatusOK || !strings.Contains(ignoredResp.Body.String(), "free") {

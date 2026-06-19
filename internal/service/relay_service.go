@@ -4885,6 +4885,9 @@ func routePreferenceSnapshot(route RoutePreference) map[string]interface{} {
 	if len(route.DisabledProvider) > 0 {
 		preference["disabled_providers"] = route.DisabledProvider
 	}
+	if len(preference) > 0 {
+		preference["decision"] = "accepted"
+	}
 	return preference
 }
 
