@@ -16880,6 +16880,25 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 		scopeResult["channel_group"] != "allow" {
 		t.Fatalf("unexpected policy snapshot: %+v", policySnapshot)
 	}
+	tokenStatus, ok := policySnapshot["token_status"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("policy snapshot should include token_status: %+v", policySnapshot)
+	}
+	expiredAt, hasExpiredAt := tokenStatus["expired_at"]
+	if tokenStatus["id"] != float64(tokenPayload.Data.ID) ||
+		tokenStatus["status"] != "enabled" ||
+		tokenStatus["unlimited"] != false ||
+		!hasExpiredAt ||
+		expiredAt != nil {
+		t.Fatalf("unexpected token status snapshot: %+v", tokenStatus)
+	}
+	userStatus, ok := policySnapshot["user_status"].(map[string]interface{})
+	if !ok ||
+		userStatus["id"] != float64(root.ID) ||
+		userStatus["status"] != "enabled" ||
+		userStatus["role"] != "super_admin" {
+		t.Fatalf("unexpected user status snapshot: %+v", userStatus)
+	}
 	var routeSnapshot map[string]interface{}
 	if err := json.Unmarshal([]byte(callLog.RouteSnapshot), &routeSnapshot); err != nil {
 		t.Fatalf("success log should store route snapshot JSON, got %q: %v", callLog.RouteSnapshot, err)

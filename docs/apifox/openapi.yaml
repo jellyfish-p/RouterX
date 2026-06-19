@@ -6779,10 +6779,10 @@ components:
           description: 上游 HTTP 状态；未调用上游或非上游错误时为 0/省略。
         request_snapshot:
           type: string
-          description: 脱敏请求快照 JSON 字符串；当前包含 request_id、入口协议、API 类型、请求模型、stream 标记和安全路由摘要。
+          description: 脱敏请求快照 JSON 字符串；当前包含 request_id、用户/Key 安全摘要、来源摘要、入口协议、API 类型、请求模型、stream 标记、合法 trace context 摘要和安全路由摘要。
         policy_snapshot:
           type: string
-          description: 脱敏策略快照 JSON 字符串；当前包含成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 no_available_channel 拒绝、breaker_snapshot，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝或依赖故障摘要和 rate_limit_snapshot。
+          description: 脱敏策略快照 JSON 字符串；当前包含用户/Key 状态摘要、成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 no_available_channel 拒绝、breaker_snapshot，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝或依赖故障摘要和 rate_limit_snapshot。
         route_snapshot:
           type: string
           description: 脱敏路由快照 JSON 字符串；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要。

@@ -4367,17 +4367,7 @@ func buildRelayPolicySnapshot(ctx context.Context, token *model.Token, reqInfo r
 		"policy_version": "p0_scope",
 	}
 	if token != nil {
-		snapshot["token_status"] = map[string]interface{}{
-			"id":        token.ID,
-			"status":    tokenStatusSnapshot(token.Status),
-			"unlimited": token.Unlimited || token.RemainQuota == common.QuotaUnlimited,
-		}
-		if token.User != nil {
-			snapshot["user_status"] = map[string]interface{}{
-				"id":     token.User.ID,
-				"status": userStatusSnapshot(token.User.Status),
-			}
-		}
+		addRelayPolicyActorStatusSnapshot(snapshot, token)
 	}
 	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
 		snapshot["route_preference"] = preference
@@ -4407,17 +4397,7 @@ func buildRelayPolicyDenySnapshot(ctx context.Context, token *model.Token, rejec
 		snapshot["quota_precheck"] = "not_evaluated"
 	}
 	if token != nil {
-		snapshot["token_status"] = map[string]interface{}{
-			"id":        token.ID,
-			"status":    tokenStatusSnapshot(token.Status),
-			"unlimited": token.Unlimited || token.RemainQuota == common.QuotaUnlimited,
-		}
-		if token.User != nil {
-			snapshot["user_status"] = map[string]interface{}{
-				"id":     token.User.ID,
-				"status": userStatusSnapshot(token.User.Status),
-			}
-		}
+		addRelayPolicyActorStatusSnapshot(snapshot, token)
 	}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
@@ -4522,12 +4502,48 @@ func buildRelayNoAvailableChannelPolicySnapshot(ctx context.Context, token *mode
 	return string(withBreaker)
 }
 
+func addRelayPolicyActorStatusSnapshot(snapshot map[string]interface{}, token *model.Token) {
+	if snapshot == nil || token == nil {
+		return
+	}
+	tokenStatus := map[string]interface{}{
+		"id":         token.ID,
+		"status":     tokenStatusSnapshot(token.Status),
+		"expired_at": nil,
+		"unlimited":  token.Unlimited || token.RemainQuota == common.QuotaUnlimited,
+	}
+	if token.ExpiredAt != nil {
+		tokenStatus["expired_at"] = token.ExpiredAt.UTC().Format(time.RFC3339Nano)
+	}
+	snapshot["token_status"] = tokenStatus
+	if token.User != nil {
+		snapshot["user_status"] = map[string]interface{}{
+			"id":     token.User.ID,
+			"status": userStatusSnapshot(token.User.Status),
+			"role":   userRoleSnapshot(token.User.Role),
+		}
+	}
+}
+
 func tokenStatusSnapshot(status int) string {
 	switch status {
 	case common.TokenStatusEnabled:
 		return "enabled"
 	case common.TokenStatusDisabled:
 		return "disabled"
+	default:
+		return "unknown"
+	}
+}
+
+func userRoleSnapshot(role int) string {
+	switch role {
+	case common.RoleUser:
+		return "user"
+	case common.RoleAdmin:
+		return "admin"
+	case common.RoleSuper:
+		return "super_admin"
 	default:
 		return "unknown"
 	}
