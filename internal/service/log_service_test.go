@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"testing"
 	"time"
 
@@ -63,6 +65,56 @@ func TestLogServiceWritesMainFactAndExternalLogDB(t *testing.T) {
 	}
 	if storedToken.LastUsedAt == nil || storedToken.LastModel != "gpt-log" || storedToken.LastUsedIPHash == "" || storedToken.LastUserAgentHash == "" {
 		t.Fatalf("main DB token usage summary should be updated, got %+v", storedToken)
+	}
+}
+
+func TestLogServiceCompletesExistingErrorSnapshotDiagnostics(t *testing.T) {
+	mainDB := newLogServiceTestDB(t, "existing-error-snapshot")
+	withMainDB(t, mainDB)
+
+	user, token := createLogServiceUserAndToken(t, mainDB)
+	tokenID := token.ID
+	loggedAt := time.Date(2026, 6, 20, 4, 10, 0, 0, time.UTC)
+
+	err := NewLogServiceWithLogDB(mainDB).Record(&model.Log{
+		UserID:        user.ID,
+		TokenID:       &tokenID,
+		Model:         "gpt-existing-error-snapshot",
+		Status:        common.LogStatusFailed,
+		ErrorCode:     "route_forbidden",
+		ErrorSource:   common.LogErrorSourceRoute,
+		ErrorMsg:      "channel group is not allowed by api key scope",
+		RequestID:     "req-existing-error-snapshot",
+		CreatedAt:     loggedAt,
+		ErrorSnapshot: `{"custom_note":"kept"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stored model.Log
+	if err := mainDB.Where("request_id = ?", "req-existing-error-snapshot").First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(stored.ErrorSnapshot), &snapshot); err != nil {
+		t.Fatalf("existing error snapshot should remain valid JSON, got %q: %v", stored.ErrorSnapshot, err)
+	}
+	if snapshot["custom_note"] != "kept" ||
+		snapshot["schema"] != "routerx.snapshot.v1" ||
+		snapshot["kind"] != "error" ||
+		snapshot["source"] != "relay" ||
+		snapshot["redacted"] != true ||
+		snapshot["request_id"] != "req-existing-error-snapshot" ||
+		snapshot["created_at"] != "2026-06-20T04:10:00Z" ||
+		snapshot["error_code"] != "route_forbidden" ||
+		snapshot["error_source"] != common.LogErrorSourceRoute ||
+		snapshot["called_upstream"] != false ||
+		snapshot["http_status"] != float64(http.StatusForbidden) ||
+		snapshot["retryable"] != false ||
+		snapshot["charged"] != false ||
+		snapshot["safe_message"] != "channel group is not allowed by api key scope" {
+		t.Fatalf("existing error snapshot should be completed without losing custom fields: %+v", snapshot)
 	}
 }
 

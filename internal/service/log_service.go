@@ -8,6 +8,7 @@ import (
 	"errors"
 	stdlog "log"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -398,7 +399,7 @@ func normalizeLogErrorSnapshot(log *model.Log) string {
 		if err := json.Unmarshal([]byte(snapshot), &existing); err != nil {
 			return snapshot
 		}
-		if !enrichLogSnapshotEnvelope(existing, log) {
+		if !enrichLogErrorSnapshot(existing, log) {
 			return snapshot
 		}
 		encoded, err := json.Marshal(existing)
@@ -447,6 +448,56 @@ func normalizeLogErrorSnapshot(log *model.Log) string {
 		return ""
 	}
 	return string(raw)
+}
+
+func enrichLogErrorSnapshot(snapshot map[string]interface{}, log *model.Log) bool {
+	if len(snapshot) == 0 {
+		return false
+	}
+	changed := enrichLogSnapshotEnvelope(snapshot, log)
+	changed = ensureLogSnapshotEnvelopeDefault(snapshot, "schema", "routerx.snapshot.v1") || changed
+	changed = ensureLogSnapshotEnvelopeDefault(snapshot, "kind", "error") || changed
+	changed = ensureLogSnapshotEnvelopeDefault(snapshot, "stage", "p1") || changed
+	changed = ensureLogSnapshotEnvelopeDefault(snapshot, "source", "relay") || changed
+	if snapshot["redacted"] != true {
+		snapshot["redacted"] = true
+		changed = true
+	}
+	if log == nil || log.Status != common.LogStatusFailed {
+		return changed
+	}
+
+	errorCode := normalizeLogErrorCode(log)
+	if errorCode == "" {
+		return changed
+	}
+	errorSource := normalizeLogErrorSource(log)
+	upstreamStatus := normalizeLogUpstreamStatus(log)
+	httpStatus := logErrorHTTPStatus(errorCode, errorSource, upstreamStatus)
+
+	changed = setLogSnapshotValue(snapshot, "error_code", errorCode) || changed
+	changed = setLogSnapshotValue(snapshot, "error_source", errorSource) || changed
+	changed = setLogSnapshotValue(snapshot, "called_upstream", logErrorCalledUpstream(errorSource, upstreamStatus)) || changed
+	changed = setLogSnapshotValue(snapshot, "retryable", logErrorRetryable(errorCode, upstreamStatus)) || changed
+	changed = setLogSnapshotValue(snapshot, "charged", log.QuotaUsed > 0) || changed
+	if httpStatus > 0 {
+		changed = setLogSnapshotValue(snapshot, "http_status", httpStatus) || changed
+	}
+	if upstreamStatus > 0 {
+		changed = setLogSnapshotValue(snapshot, "upstream_status", upstreamStatus) || changed
+	}
+	if safeMessage := logErrorSafeMessage(log.ErrorMsg); safeMessage != "" {
+		changed = ensureLogSnapshotEnvelopeDefault(snapshot, "safe_message", safeMessage) || changed
+	}
+	return changed
+}
+
+func setLogSnapshotValue(snapshot map[string]interface{}, key string, value interface{}) bool {
+	if reflect.DeepEqual(snapshot[key], value) {
+		return false
+	}
+	snapshot[key] = value
+	return true
 }
 
 func logErrorCalledUpstream(errorSource string, upstreamStatus int) bool {
