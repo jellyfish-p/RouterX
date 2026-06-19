@@ -296,7 +296,7 @@ Gemini-compatible 错误示例：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/v0/admin/redem` | 基础实现 | 充值码列表，支持 `page`、`page_size`、`status`、`keyword`、`batch_no` |
-| POST | `/v0/admin/redem` | 基础实现 | 生成随机充值码，或通过 `codes` 导入指定充值码；支持 `batch_no`、`note`、未来 `expired_at`，成功后按码写管理审计 |
+| POST | `/v0/admin/redem` | 基础实现 | 生成随机充值码，或通过 `codes` 导入指定充值码；支持 `batch_no`、`note`、未来 `expired_at`，成功后按码写管理审计；过期时间非法、额度非法、数量超限、重复码等本地拒绝会写 `redem_code.create_denied` |
 | PATCH | `/v0/admin/redem/:id/disable` | 基础实现 | 作废未使用充值码；作废后用户不可兑换，成功后写管理审计 |
 
 创建/导入充值码请求：
@@ -457,7 +457,7 @@ Provider 退款请求：
 | `resource_id` | string | 资源 ID 过滤 |
 | `actor_user_id` | uint | 操作人 ID 过滤 |
 | `result` | string | 结果过滤，例如 `success`、`failed`、`denied` |
-| `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden`、`redem_code_invalid_or_used`、`payment_order_provider_disabled` 或 `payment_order_cancel_not_pending` |
+| `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden`、`redem_code_expired_at_not_future`、`redem_code_invalid_or_used`、`payment_order_provider_disabled` 或 `payment_order_cancel_not_pending` |
 | `start_time` | int64 | 起始 Unix 秒，按 `created_at >= start_time` 过滤 |
 | `end_time` | int64 | 结束 Unix 秒，按 `created_at <= end_time` 过滤 |
 
@@ -525,6 +525,7 @@ Provider 退款请求：
 | `user_group.update` | `PUT /v0/admin/groups/:id` |
 | `user_group.delete` | `DELETE /v0/admin/groups/:id` |
 | `redem_code.create` | `POST /v0/admin/redem` |
+| `redem_code.create_denied` | `POST /v0/admin/redem` 本地拒绝生成或导入充值码 |
 | `redem_code.disable` | `PATCH /v0/admin/redem/:id/disable` |
 | `redem_code.redeem` | `POST /v0/user/redem` 成功兑换充值码 |
 | `redem_code.redeem_denied` | `POST /v0/user/redem` 兑换码已用、作废、过期、不存在或参数无效 |

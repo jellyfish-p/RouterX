@@ -9,7 +9,7 @@ info:
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态/危险扩展名或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
-    - 充值码、兑换拒绝审计、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook/邮件/IM 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、订单创建拒绝审计与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、充值码创建/兑换拒绝审计、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook/邮件/IM 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、订单创建拒绝审计与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -1751,7 +1751,7 @@ paths:
     post:
       tags: [Admin Redemption]
       summary: 生成或导入充值码
-      description: codes 为空时按 count 生成随机充值码；codes 非空时导入指定充值码。count 默认 1，单次最多 100。可写入 batch_no、note 和未来 expired_at；成功后按每个充值码写入 redem_code.create 管理审计。
+      description: codes 为空时按 count 生成随机充值码；codes 非空时导入指定充值码。count 默认 1，单次最多 100。可写入 batch_no、note 和未来 expired_at；成功后按每个充值码写入 redem_code.create 管理审计；过期时间非法、额度非法、数量超限、重复码等本地拒绝会写 redem_code.create_denied，error_code 包含 redem_code_expired_at_not_future、redem_code_quota_invalid、redem_code_count_exceeds_limit 或 redem_code_already_exists，摘要只保存脱敏 codes。
       security:
         - UserJWT: []
       requestBody:
@@ -1794,7 +1794,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖成功登录，API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、自助注销、自助注销二次确认拒绝、基础恢复、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建、创建拒绝和取消拒绝，支付 webhook 入账、provider 明确失败通知、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理和兑换拒绝，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖成功登录，API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、自助注销、自助注销二次确认拒绝、基础恢复、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建、创建拒绝和取消拒绝，支付 webhook 入账、provider 明确失败通知、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理、创建拒绝和兑换拒绝，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
       security:
         - UserJWT: []
       parameters:
@@ -1804,7 +1804,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 api_key.created、api_key.batch_disable_denied、api_key.batch_expire_denied、api_key.quota_limit_denied、user.create、user.self_cancel_denied、user_group.create、redem_code.redeem_denied、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_order.create_denied、payment_order.cancel_denied、payment_webhook.processed、payment_webhook.failed、payment_refund.requested、payment_refund.request_denied、payment_refund.deducted、payment_refund.manual、payment_refund.manual_denied、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、payment_manual_adjust.denied、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.batch_disable_denied、api_key.batch_expire_denied、api_key.quota_limit_denied、user.create、user.self_cancel_denied、user_group.create、redem_code.create_denied、redem_code.redeem_denied、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_order.create_denied、payment_order.cancel_denied、payment_webhook.processed、payment_webhook.failed、payment_refund.requested、payment_refund.request_denied、payment_refund.deducted、payment_refund.manual、payment_refund.manual_denied、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、payment_manual_adjust.denied、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
         - name: resource_type
           in: query
           required: false
@@ -1831,7 +1831,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 失败或拒绝 code 过滤，例如 api_key_quota_edit_forbidden、self_cancel_password_required、self_cancel_password_invalid、redem_code_invalid_or_used、redem_code_expired、payment_order_provider_disabled、payment_order_product_unavailable、payment_order_cancel_not_pending、payment_order_cancel_not_found、payment_refund_reason_required、payment_refund_idempotency_key_used、payment_manual_adjust_reason_required 或 payment_manual_refund_idempotency_key_used。
+          description: 失败或拒绝 code 过滤，例如 api_key_quota_edit_forbidden、self_cancel_password_required、self_cancel_password_invalid、redem_code_expired_at_not_future、redem_code_invalid_or_used、redem_code_expired、payment_order_provider_disabled、payment_order_product_unavailable、payment_order_cancel_not_pending、payment_order_cancel_not_found、payment_refund_reason_required、payment_refund_idempotency_key_used、payment_manual_adjust_reason_required 或 payment_manual_refund_idempotency_key_used。
         - name: start_time
           in: query
           required: false

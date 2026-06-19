@@ -59,7 +59,7 @@
 | `TestAdminUserManagementAuditLogs` | 管理员创建、编辑、禁用和删除普通用户写入 `user.*` 审计，用户接口拒绝角色变更写 `user.denied`，审计摘要不泄露密码 |
 | `TestAdminUserGroupManagement` | 管理员创建、查询、更新和删除用户分组；`default` 分组和仍被用户引用的分组不能删除，成功变更写 `user_group.*` 管理审计 |
 | `TestUserRedeemsRedemCodeOnce` | 用户兑换未使用充值码、额度增加、充值码标记 used/used_by/used_at，写入幂等额度流水和 `redem_code.redeem` 管理审计；重复兑换不再入账，并写 `redem_code.redeem_denied` 拒绝审计 |
-| `TestRedemCodeBatchNoteAndExpirationPolicy` | 充值码支持 batch_no、note 和未来 expired_at；管理端可按 batch_no 筛选，过期码不可兑换且不改变余额 |
+| `TestRedemCodeBatchNoteAndExpirationPolicy` | 充值码支持 batch_no、note 和未来 expired_at；管理端可按 batch_no 筛选，过去 expired_at 拒绝创建并写 `redem_code.create_denied`，过期码不可兑换且不改变余额 |
 | `TestAdminQuotaAdjustmentWritesTransaction` | 管理员调整用户额度时写入额度流水和 `user.quota_update` 管理审计，记录 actor、reason、变更前后余额和幂等键 |
 | `TestQuotaTransactionListAPIs` | 用户查询自己的额度流水且不能看见其他用户流水；管理员可按 `user_id`、`type` 和 `source_type` 过滤额度流水，余额变更字段保持可追溯 |
 | `TestAdminManagesRedemCodes` | 管理员生成随机充值码、导入指定充值码、列表查询、作废未使用码，作废码不可兑换，并写入 `redem_code.*` 管理审计 |
@@ -535,7 +535,7 @@ Gemini-compatible 最小断言：
 | P1 | 独立日志数据库 | 已覆盖 `LOG_SQL_DSN` 初始化、日志库副本写入、运行期写入失败时主库事实可恢复、主库 outbox 异步补写、管理日志列表读取日志库、查询失败回退主库、日志库健康指标和 outbox 积压指标；继续补冷热归档策略 |
 | P2 | 企业账号 | 本地密码成功登录审计已覆盖；OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管待补 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、按环境/团队/应用/标签/服务账号主体过滤、脱敏 CSV 导出、批量禁用、批量过期、批量操作无筛选拒绝审计、基础风险视图、泄露风险基础轮换建议、单 Key 泄露窗口分析、单 Key 错误/限流事件统一视图、泄露上报管理员告警收件箱、告警确认处理、Webhook/邮件/IM 告警投递 outbox、列表、手动重放和脱敏 payload、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝、RPM/TPM 拒绝、基础 Redis 鉴权 lookup cache 命中/预热/禁用失效和 router Redis 兼容已覆盖 |
-| P2 | 支付充值 | 充值码批次/备注/过期策略、充值码兑换成功与拒绝审计、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求及拒绝审计、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账和明确失败审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回及拒绝审计、支付人工退款落账及拒绝审计；更多 provider 自动退款适配待补 |
+| P2 | 支付充值 | 充值码批次/备注/过期策略、充值码创建拒绝、兑换成功与拒绝审计、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求及拒绝审计、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账和明确失败审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回及拒绝审计、支付人工退款落账及拒绝审计；更多 provider 自动退款适配待补 |
 | P2 | 观测审计 | 成功登录、API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status、可配置 HTTP/Panic JSON line 结构化日志和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis up 与错误计数/日志库/outbox 指标测试已覆盖；继续补更完整结构化失败事实、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定

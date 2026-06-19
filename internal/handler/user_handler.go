@@ -625,11 +625,13 @@ func (h *UserHandler) CreateRedemCodes(c *gin.Context) {
 	}
 	var req dto.CreateRedemCodesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		h.recordRedemCodeCreateDenied(c, operator, req, "redem_code_invalid_request")
 		common.FailWithStatus(c, 400, "充值码参数无效")
 		return
 	}
 	codes, err := h.svc.CreateRedemCodes(operator.Role, req.Quota, req.Count, req.Codes, req.BatchNo, req.Note, req.ExpiredAt)
 	if err != nil {
+		h.recordRedemCodeCreateDenied(c, operator, req, redemCodeCreateErrorCode(err))
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
@@ -640,6 +642,62 @@ func (h *UserHandler) CreateRedemCodes(c *gin.Context) {
 		}
 	}
 	common.Success(c, dto.RedemCodeInfosFromModels(codes))
+}
+
+func (h *UserHandler) recordRedemCodeCreateDenied(c *gin.Context, operator *model.User, req dto.CreateRedemCodesRequest, errorCode string) {
+	if operator == nil {
+		return
+	}
+	summary := map[string]interface{}{
+		"quota":      req.Quota,
+		"count":      req.Count,
+		"code_count": len(req.Codes),
+		"codes":      redactedRedemCodes(req.Codes),
+		"batch_no":   strings.TrimSpace(req.BatchNo),
+		"note":       strings.TrimSpace(req.Note),
+		"expired_at": req.ExpiredAt,
+		"error_code": errorCode,
+	}
+	_ = h.recordAdminAuditStringResult(c, operator, "redem_code.create_denied", "redem_code", "redem_code_create", nil, summary, "denied", errorCode)
+}
+
+func redactedRedemCodes(codes []string) []string {
+	items := make([]string, 0, len(codes))
+	for _, code := range codes {
+		items = append(items, common.RedactSecret(strings.TrimSpace(code)))
+	}
+	return items
+}
+
+func redemCodeCreateErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(msg, "admin role required"):
+		return "redem_code_admin_required"
+	case strings.Contains(msg, "quota must be positive"):
+		return "redem_code_quota_invalid"
+	case strings.Contains(msg, "count must be at most"):
+		return "redem_code_count_exceeds_limit"
+	case strings.Contains(msg, "batch_no length"):
+		return "redem_code_batch_no_too_long"
+	case strings.Contains(msg, "note length"):
+		return "redem_code_note_too_long"
+	case strings.Contains(msg, "expired_at must be in the future"):
+		return "redem_code_expired_at_not_future"
+	case strings.Contains(msg, "length must be between"):
+		return "redem_code_length_invalid"
+	case strings.Contains(msg, "duplicated in request"):
+		return "redem_code_duplicate_in_request"
+	case strings.Contains(msg, "already exists"):
+		return "redem_code_already_exists"
+	case strings.Contains(msg, "failed to generate"):
+		return "redem_code_generate_failed"
+	default:
+		return "redem_code_create_rejected"
+	}
 }
 
 // PATCH /v0/admin/redem/:id/disable — 作废未使用充值码

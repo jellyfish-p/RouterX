@@ -3981,6 +3981,18 @@ func TestRedemCodeBatchNoteAndExpirationPolicy(t *testing.T) {
 	if pastCreate.Code != http.StatusBadRequest {
 		t.Fatalf("redem code creation should reject past expired_at, got %d %s", pastCreate.Code, pastCreate.Body.String())
 	}
+	deniedCreateAudit := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=redem_code&resource_id=redem_code_create&result=denied&error_code=redem_code_expired_at_not_future", rootJWT, nil)
+	deniedCreateBody := deniedCreateAudit.Body.String()
+	if deniedCreateAudit.Code != http.StatusOK ||
+		!strings.Contains(deniedCreateBody, `"action":"redem_code.create_denied"`) ||
+		!strings.Contains(deniedCreateBody, `"error_code":"redem_code_expired_at_not_future"`) ||
+		!strings.Contains(deniedCreateBody, `\"code_count\":1`) ||
+		!strings.Contains(deniedCreateBody, `\"codes\":[\"PAST...DE-1\"]`) {
+		t.Fatalf("rejected redem code creation should write denied audit, got %d %s", deniedCreateAudit.Code, deniedCreateBody)
+	}
+	if strings.Contains(deniedCreateBody, "PAST-CODE-1") {
+		t.Fatalf("redem code create denied audit should not expose full code: %s", deniedCreateBody)
+	}
 
 	expiredAt := time.Now().Add(-time.Hour)
 	if err := internal.DB.Exec(
