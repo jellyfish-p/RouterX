@@ -66,6 +66,8 @@ func setupAdminRoutes(
 			authRequired.POST("/token/batch-disable", tokenH.BatchDisable)
 			authRequired.POST("/token/batch-expire", tokenH.BatchExpire)
 			authRequired.GET("/alerts", alertH.List)
+			authRequired.GET("/alerts/deliveries", alertH.ListDeliveries)
+			authRequired.POST("/alerts/deliveries/replay", alertH.ReplayDeliveries)
 			authRequired.POST("/alerts/:id/ack", alertH.Ack)
 
 			// 管理员账户查看 (Admin+)；写操作仅 SuperAdmin。

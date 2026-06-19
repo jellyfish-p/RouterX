@@ -44,6 +44,7 @@ func main() {
 		log.Printf("[WARN] channel candidate cache preload failed: %v", err)
 	}
 	logSvc.StartLogReplicationWorker(context.Background(), time.Minute, 100)
+	alertSvc.StartWebhookDeliveryWorker(context.Background())
 	channelSvc.StartBreakerProbeWorker(context.Background())
 	channelSvc.StartCandidateCacheInvalidationSubscriber(context.Background())
 

@@ -167,6 +167,7 @@ func metricsHandler(c *gin.Context) {
 	writeGauge(&b, "routerx_log_db_configured", "Independent log database configuration status.", extended.LogDBConfigured)
 	writeGauge(&b, "routerx_log_db_up", "Log storage ping status.", extended.LogDBUp)
 	writeLabeledGauge(&b, "routerx_log_replication_outbox_items", "Current log replication outbox items by status.", extended.LogReplicationOutbox)
+	writeLabeledGauge(&b, "routerx_alert_delivery_outbox_items", "Current alert delivery outbox items by status.", extended.AlertDeliveryOutbox)
 	writeLabeledCounter(&b, "routerx_http_requests_total", "HTTP requests by method, path group and status.", extended.HTTPRequests)
 	writeLabeledHistogram(&b, "routerx_http_request_duration_seconds", "HTTP request duration in seconds by method and path group.", extended.HTTPRequestDurations)
 	writeLabeledHistogram(&b, "routerx_relay_duration_seconds", "Relay duration in seconds by protocol, API type and provider.", extended.RelayDurations)
@@ -223,6 +224,7 @@ type extendedMetrics struct {
 	LogDBConfigured      int64
 	LogDBUp              int64
 	LogReplicationOutbox []metricSample
+	AlertDeliveryOutbox  []metricSample
 	HTTPRequests         []metricSample
 	HTTPRequestDurations []metricHistogramSample
 	RelayDurations       []metricHistogramSample
@@ -266,6 +268,11 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		return extendedMetrics{}, err
 	}
 	metrics.LogReplicationOutbox = logReplicationOutbox
+	alertDeliveryOutbox, err := collectAlertDeliveryOutboxMetrics()
+	if err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.AlertDeliveryOutbox = alertDeliveryOutbox
 	relayDurations, upstreamDurations := collectRelayDurationMetrics()
 	metrics.RelayDurations = relayDurations
 	metrics.UpstreamDurations = upstreamDurations
@@ -466,6 +473,41 @@ func logReplicationOutboxStatusLabel(status string) string {
 		return model.LogReplicationStatusCompleted
 	case model.LogReplicationStatusFailed:
 		return model.LogReplicationStatusFailed
+	default:
+		return "unknown"
+	}
+}
+
+func collectAlertDeliveryOutboxMetrics() ([]metricSample, error) {
+	var rows []struct {
+		Status string
+		Count  int64
+	}
+	if err := internal.DB.Model(&model.AlertDeliveryOutbox{}).
+		Select("status, COUNT(*) AS count").
+		Group("status").
+		Order("status ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	samples := make([]metricSample, 0, len(rows))
+	for _, row := range rows {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{{Name: "status", Value: alertDeliveryOutboxStatusLabel(row.Status)}},
+			Value:  row.Count,
+		})
+	}
+	return samples, nil
+}
+
+func alertDeliveryOutboxStatusLabel(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case model.AlertDeliveryStatusPending:
+		return model.AlertDeliveryStatusPending
+	case model.AlertDeliveryStatusCompleted:
+		return model.AlertDeliveryStatusCompleted
+	case model.AlertDeliveryStatusFailed:
+		return model.AlertDeliveryStatusFailed
 	default:
 		return "unknown"
 	}

@@ -51,6 +51,7 @@ func main() {
 		&model.PaymentDispute{},
 		&model.AdminAuditLog{},
 		&model.AlertEvent{},
+		&model.AlertDeliveryOutbox{},
 		&model.Setting{},
 	)
 	if err != nil {

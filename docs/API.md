@@ -728,6 +728,8 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | POST | `/v0/admin/token/batch-disable` | 已实现 | 管理员按 `token_ids` 或 `user_id` 批量禁用 Key，必须提供筛选条件；成功后写 `api_key.batch_disabled` 审计，缺少筛选条件时返回 400 并写 `api_key.batch_disable_denied` |
 | POST | `/v0/admin/token/batch-expire` | 已实现 | 管理员按 `token_ids` 或 `user_id` 立即过期 Key，必须提供筛选条件；成功后写 `api_key.batch_expired` 审计，缺少筛选条件时返回 400 并写 `api_key.batch_expire_denied` |
 | GET | `/v0/admin/alerts` | 基础实现 | 管理员查询主动告警收件箱，可按 `type`、`severity`、`status`、资源、用户和 API Key 过滤；当前泄露上报会创建 `api_key.leak_reported` critical 告警 |
+| GET | `/v0/admin/alerts/deliveries` | 基础实现 | 管理员查询告警外部投递 outbox，可按 `alert_id`、`target` 和 `status` 过滤；当前 target 为 `webhook` |
+| POST | `/v0/admin/alerts/deliveries/replay` | 基础实现 | 手动重放到期的 pending Webhook 告警投递；`limit` 默认 20、最大 100，成功返回本次投递成功条数 |
 | POST | `/v0/admin/alerts/:id/ack` | 基础实现 | 管理员确认告警，写入确认时间和确认人；重复确认保持幂等 |
 
 用户端 API Key 不允许直接编辑最大消耗额度和无限额度标记，避免普通用户绕过预算策略；拒绝记录会写入管理审计，审计摘要不包含完整 API Key 明文或哈希。当前 scope 请求格式：

@@ -1078,6 +1078,151 @@ func TestAPIKeyLeakReportCreatesAdminAlert(t *testing.T) {
 	}
 }
 
+func TestAPIKeyLeakAlertWebhookDeliveryReplay(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	var webhookPayloads []map[string]interface{}
+	webhookServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost {
+			t.Errorf("expected POST webhook request, got %s", req.Method)
+		}
+		if got := req.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected application/json content type, got %q", got)
+		}
+
+		var payload map[string]interface{}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			t.Errorf("decode webhook payload: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		webhookPayloads = append(webhookPayloads, payload)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer webhookServer.Close()
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"alert.webhook.enabled":         "true",
+		"alert.webhook.url":             webhookServer.URL,
+		"alert.webhook.timeout_seconds": "5",
+		"alert.webhook.max_attempts":    "3",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "leak-webhook-key",
+		"remain_quota": int64(100),
+	})
+	var createPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createPayload); err != nil {
+		t.Fatal(err)
+	}
+	if createResp.Code != http.StatusOK || createPayload.Data.ID == 0 || createPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+
+	reportResp := performJSON(r, http.MethodPost, "/v0/user/token/"+uintString(createPayload.Data.ID)+"/report-leak", rootJWT, map[string]interface{}{
+		"reason": "public_repo",
+	})
+	if reportResp.Code != http.StatusOK {
+		t.Fatalf("report leak failed: %d %s", reportResp.Code, reportResp.Body.String())
+	}
+
+	pendingResp := performJSON(r, http.MethodGet, "/v0/admin/alerts/deliveries?status=pending", rootJWT, nil)
+	var pendingPayload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				AlertID uint   `json:"alert_id"`
+				Target  string `json:"target"`
+				Status  string `json:"status"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(pendingResp.Body.Bytes(), &pendingPayload); err != nil {
+		t.Fatalf("pending delivery list should be json: %v", err)
+	}
+	if pendingResp.Code != http.StatusOK || pendingPayload.Data.Total != 1 || len(pendingPayload.Data.Data) != 1 {
+		t.Fatalf("expected one pending delivery, got %d %s", pendingResp.Code, pendingResp.Body.String())
+	}
+	if pendingPayload.Data.Data[0].Target != "webhook" || pendingPayload.Data.Data[0].Status != "pending" {
+		t.Fatalf("unexpected pending delivery: %+v", pendingPayload.Data.Data[0])
+	}
+
+	replayResp := performJSON(r, http.MethodPost, "/v0/admin/alerts/deliveries/replay?limit=10", rootJWT, nil)
+	var replayPayload struct {
+		Data struct {
+			Replayed int `json:"replayed"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(replayResp.Body.Bytes(), &replayPayload); err != nil {
+		t.Fatalf("replay response should be json: %v", err)
+	}
+	if replayResp.Code != http.StatusOK || replayPayload.Data.Replayed != 1 {
+		t.Fatalf("expected one replayed delivery, got %d %s", replayResp.Code, replayResp.Body.String())
+	}
+	if len(webhookPayloads) != 1 {
+		t.Fatalf("expected one webhook payload, got %d", len(webhookPayloads))
+	}
+
+	payload := webhookPayloads[0]
+	if payload["event"] != "routerx.alert" || payload["type"] != model.AlertTypeAPIKeyLeakReported {
+		t.Fatalf("unexpected webhook payload event/type: %#v", payload)
+	}
+	if payload["severity"] != model.AlertSeverityCritical || payload["resource_type"] != "api_key" {
+		t.Fatalf("unexpected webhook alert metadata: %#v", payload)
+	}
+	if got := uint(payload["token_id"].(float64)); got != createPayload.Data.ID {
+		t.Fatalf("expected token_id %d, got %d", createPayload.Data.ID, got)
+	}
+	rawPayload, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal webhook payload: %v", err)
+	}
+	if strings.Contains(string(rawPayload), createPayload.Data.Key) || strings.Contains(string(rawPayload), "sk-") {
+		t.Fatalf("webhook payload leaked token secret: %s", string(rawPayload))
+	}
+
+	completedResp := performJSON(r, http.MethodGet, "/v0/admin/alerts/deliveries?status=completed", rootJWT, nil)
+	var completedPayload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				Status      string     `json:"status"`
+				CompletedAt *time.Time `json:"completed_at"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(completedResp.Body.Bytes(), &completedPayload); err != nil {
+		t.Fatalf("completed delivery list should be json: %v", err)
+	}
+	if completedResp.Code != http.StatusOK || completedPayload.Data.Total != 1 || len(completedPayload.Data.Data) != 1 {
+		t.Fatalf("expected one completed delivery, got %d %s", completedResp.Code, completedResp.Body.String())
+	}
+	if completedPayload.Data.Data[0].Status != "completed" || completedPayload.Data.Data[0].CompletedAt == nil {
+		t.Fatalf("expected completed delivery timestamp, got %+v", completedPayload.Data.Data[0])
+	}
+}
+
 func TestAPIKeyLeakWindowSummarizesRecentUse(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	r := newTestRouter(t)
@@ -16454,6 +16599,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		&model.PaymentDispute{},
 		&model.AdminAuditLog{},
 		&model.AlertEvent{},
+		&model.AlertDeliveryOutbox{},
 		&model.Setting{},
 	); err != nil {
 		t.Fatal(err)

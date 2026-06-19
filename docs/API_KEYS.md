@@ -42,7 +42,7 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 - 有限 API Key 创建不扣用户余额，`remain_quota` 或目标字段只表示 Key 剩余预算上限；成功调用同时扣用户余额和 Key 预算。
 - `unlimited=true` 或 `remain_quota=-1` 表示 API Key 自身不限额；成功调用仍扣用户额度。
 - API Key 支持用户轮换、泄露上报、单 Key 用量摘要、按 Key 过滤用户日志和账单聚合、显式禁用、管理员跨用户脱敏查询，以及按 `token_ids`/`user_id` 批量禁用和批量过期。
-- 泄露上报会创建管理员告警收件箱记录，管理员可通过 `/v0/admin/alerts` 查询并通过 `/v0/admin/alerts/:id/ack` 确认处理。
+- 泄露上报会创建管理员告警收件箱记录，管理员可通过 `/v0/admin/alerts` 查询、通过 `/v0/admin/alerts/:id/ack` 确认处理；启用 `alert.webhook.*` 后会写入 Webhook 投递 outbox，并可通过 `/v0/admin/alerts/deliveries` 查看和重放。
 - 管理员 API Key 风险视图已支持按时间窗口聚合失败数、成功数、额度消耗、低剩余额度、泄露上报、禁用、过期和最近错误风险；泄露风险会返回基础轮换建议，响应只返回脱敏 Key 摘要。
 - `tokens.rotated_from_id` 保存轮换来源，`tokens.revoked_reason` 保存禁用原因；轮换会创建替换 Key、返回新明文一次并禁用旧 Key。
 - API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计，审计摘要不包含完整明文 Key 或哈希。
@@ -263,7 +263,7 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 | 批量过期 | `POST /v0/admin/token/batch-expire` | 管理员 | 按 `token_ids` 或 `user_id` 立即设置过期时间，必须带筛选条件；缺少筛选条件时返回 400 并写 `api_key.batch_expire_denied`。 |
 | 管理查询 | `GET /v0/admin/token` | 管理员 | 跨用户按状态、最近使用、错误、额度和标签检索脱敏摘要。 |
 | 风险视图 | `GET /v0/admin/token/risk` | 管理员 | 按窗口聚合异常 Key，返回风险等级、原因、建议动作和基础轮换建议，不暴露明文 Key 或哈希。 |
-| 告警收件箱 | `GET /v0/admin/alerts`、`POST /v0/admin/alerts/:id/ack` | 管理员 | 查询 API Key 泄露等主动告警并确认处理；告警正文只保存脱敏上下文，不暴露明文 Key 或哈希。 |
+| 告警收件箱 | `GET /v0/admin/alerts`、`POST /v0/admin/alerts/:id/ack`、`GET /v0/admin/alerts/deliveries`、`POST /v0/admin/alerts/deliveries/replay` | 管理员 | 查询 API Key 泄露等主动告警、确认处理并查看/重放 Webhook 投递；告警正文和 Webhook payload 只保存脱敏上下文，不暴露明文 Key 或哈希。 |
 
 ## 12. 缓存和一致性
 
@@ -374,10 +374,10 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 
 ### P2 验收
 
-- 管理员已支持跨用户查询、批量禁用、批量过期、基础异常 Key 风险视图、泄露风险基础轮换建议、单 Key 泄露窗口分析和基础主动告警收件箱；基础鉴权映射缓存失效已覆盖，邮件、IM 或 Webhook 外部推送渠道仍待补。
+- 管理员已支持跨用户查询、批量禁用、批量过期、基础异常 Key 风险视图、泄露风险基础轮换建议、单 Key 泄露窗口分析、基础主动告警收件箱和 Webhook 外部投递 outbox；基础鉴权映射缓存失效已覆盖，邮件和 IM 推送渠道仍待补。
 - 支持企业团队、服务账号、标签、环境和导出脱敏摘要。
 - 已支持入口协议 allow-list、IP/CIDR allow-list、日预算、月预算、并发上限和 RPM/TPM；更完整策略快照仍待补。
-- 已支持泄露上报、替换建议、风险视图基础轮换建议、基于调用日志的窗口分析和管理员告警确认；外部告警推送渠道仍待补。
+- 已支持泄露上报、替换建议、风险视图基础轮换建议、基于调用日志的窗口分析、管理员告警确认和 Webhook 告警投递；邮件和 IM 外部告警推送渠道仍待补。
 - API Key 预算调整、支付入账、退款、充值码和人工补账统一走对应审计或额度流水。
 
 ## 16. 测试矩阵

@@ -9,7 +9,7 @@ info:
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态/危险扩展名或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
-    - 充值码、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
+    - 充值码、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -37,7 +37,7 @@ tags:
   - name: Admin Audit
     description: 超级管理员管理审计查询。
   - name: Admin Alerts
-    description: 管理员主动告警收件箱和确认处理。
+    description: 管理员主动告警收件箱、确认处理和 Webhook 投递。
   - name: Admin Payment
     description: 管理员支付商品管理。
   - name: Admin Billing
@@ -180,6 +180,9 @@ paths:
                   # HELP routerx_log_replication_outbox_items Current log replication outbox items by status.
                   # TYPE routerx_log_replication_outbox_items gauge
                   routerx_log_replication_outbox_items{status="pending"} 2
+                  # HELP routerx_alert_delivery_outbox_items Current alert delivery outbox items by status.
+                  # TYPE routerx_alert_delivery_outbox_items gauge
+                  routerx_alert_delivery_outbox_items{status="failed"} 1
         "404":
           description: 指标接口未启用。
   /v0/setup/status:
@@ -1431,6 +1434,76 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/AlertEventPage"
+  /v0/admin/alerts/deliveries:
+    get:
+      tags: [Admin Alerts]
+      summary: 告警投递列表
+      description: 管理员查看告警外部投递 outbox；当前 target 为 webhook。投递记录只保存状态、重试时间和错误摘要，Webhook payload 会从脱敏告警事实重建，不保存完整 API Key、Key 哈希或用户提交的可疑原文。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: alert_id
+          in: query
+          required: false
+          schema: { type: integer, format: uint64 }
+          description: 按告警 ID 过滤。
+        - name: target
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [webhook]
+          description: 按投递目标过滤。
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, completed, failed]
+          description: 按投递状态过滤。
+      responses:
+        "200":
+          description: 告警投递分页列表。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AlertDeliveryOutboxPage"
+  /v0/admin/alerts/deliveries/replay:
+    post:
+      tags: [Admin Alerts]
+      summary: 重放告警投递
+      description: 手动重放到期的 pending Webhook 告警投递。limit 默认为 20，服务端最大按 100 截断；未启用 alert.webhook.enabled 或未配置 alert.webhook.url 时返回 replayed=0。
+      security:
+        - UserJWT: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+            minimum: 1
+          description: 本次最多重放的 pending 投递数。
+      responses:
+        "200":
+          description: 本次成功投递数量。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AlertDeliveryReplayResult"
   /v0/admin/alerts/{id}/ack:
     post:
       tags: [Admin Alerts]
@@ -4197,6 +4270,50 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/AlertEventInfo"
+    AlertDeliveryOutboxInfo:
+      type: object
+      properties:
+        id: { type: integer, format: uint64 }
+        alert_id:
+          type: integer
+          format: uint64
+          description: 关联告警 ID。
+        target:
+          type: string
+          enum: [webhook]
+        status:
+          type: string
+          enum: [pending, completed, failed]
+        attempts:
+          type: integer
+          description: 已尝试投递次数。
+        last_error:
+          type: string
+          description: 最近一次失败摘要；不会包含 API Key 明文或外部密钥。
+        next_attempt_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AlertDeliveryOutboxPage:
+      allOf:
+        - $ref: "#/components/schemas/PaginatedResult"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/AlertDeliveryOutboxInfo"
+    AlertDeliveryReplayResult:
+      type: object
+      properties:
+        replayed:
+          type: integer
+          description: 本次成功投递的 outbox 数量。
     CreatePaymentOrderRequest:
       type: object
       required: [provider, product_id]

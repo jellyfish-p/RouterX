@@ -246,6 +246,12 @@ func buildDefaultSettings() map[string]map[string]string {
 			"observability.request_id_header":       "X-Request-Id",
 			"observability.structured_logs_enabled": "false",
 		},
+		"alert": {
+			"alert.webhook.enabled":         "false",
+			"alert.webhook.url":             "",
+			"alert.webhook.timeout_seconds": "5",
+			"alert.webhook.max_attempts":    "3",
+		},
 		"ready": {
 			"ready.production_strict": "true",
 		},

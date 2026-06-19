@@ -87,7 +87,7 @@
 - 配置 `LOG_SQL_DSN` 后，启动时初始化独立日志数据库的 `logs` schema；模型调用日志、调用事实快照和历史诊断数据会经由主库 `log_replication_outboxes` 补写到独立日志数据库，管理端日志列表、日志清理和看板今日调用/额度优先读取日志库，列表与看板查询失败时回退读取主库事实。
 - 扣费所需的最小结算事实必须保留在主库或主库 outbox，不能只存在独立日志库。
 - 当前实现会先在主库事务内保存调用事实、更新 API Key 最近使用摘要并创建日志补写 outbox，再写独立日志库副本；运行期日志库写入失败会保留 pending outbox、主库事实并写应用告警，后台 worker 会在恢复后重放。
-- `/metrics` 暴露 `routerx_log_db_configured`、`routerx_log_db_up` 和 `routerx_log_replication_outbox_items{status}`；未配置独立日志库时 `routerx_log_db_configured=0`，日志存储健康随主库状态判断。
+- `/metrics` 暴露 `routerx_log_db_configured`、`routerx_log_db_up`、`routerx_log_replication_outbox_items{status}` 和 `routerx_alert_delivery_outbox_items{status}`；未配置独立日志库时 `routerx_log_db_configured=0`，日志存储健康随主库状态判断。
 - 独立日志库主要服务查询、归档、清理和备份，不替代用户余额与 Key 预算的事务事实。
 
 当前 `logs` 字段：
@@ -210,6 +210,7 @@
 | `routerx_log_db_configured` | gauge | 无 | 独立日志库配置状态；配置 `LOG_SQL_DSN` 且与主库不同为 1 |
 | `routerx_log_db_up` | gauge | 无 | 日志存储 ping 状态；未配置独立日志库时跟随主库状态 |
 | `routerx_log_replication_outbox_items` | gauge | status | 主库日志补写 outbox 当前条数；status 归一为 `pending`、`completed`、`failed` 或 `unknown` |
+| `routerx_alert_delivery_outbox_items` | gauge | status | 告警外部投递 outbox 当前条数；status 归一为 `pending`、`completed`、`failed` 或 `unknown` |
 | `routerx_redis_errors_total` | counter | operation | 当前已落地的 Redis 错误数；`operation=ping` 表示健康探测失败 |
 | `routerx_db_errors_total` | counter | operation | 当前已落地的 DB 错误数；`operation=ping`、`log_ping`、`migration_status` 分别表示主库 ping、日志库 ping 和迁移状态读取失败 |
 | `routerx_ready` | gauge | reason | 就绪状态，1 为 ready，0 为 not ready |
@@ -231,9 +232,10 @@
 | 上游 429 | provider 或通道限流持续出现 | 降低并发、调整路由、增加通道 |
 | 计费失败 | `routerx_billing_failures_total` 增长 | 停止相关调用，核对日志和余额事务 |
 | API Key 轮换建议 | `/v0/admin/token/risk` 返回 `rotation_recommended=true` | 轮换对应 Key，排查泄露来源并保留工单证据 |
-| API Key 泄露告警 | 用户调用 `/v0/user/token/:id/report-leak` 后产生 `api_key.leak_reported` 告警 | 在 `/v0/admin/alerts` 查看并通过 `/v0/admin/alerts/:id/ack` 确认处理 |
+| API Key 泄露告警 | 用户调用 `/v0/user/token/:id/report-leak` 后产生 `api_key.leak_reported` 告警 | 在 `/v0/admin/alerts` 查看并通过 `/v0/admin/alerts/:id/ack` 确认处理；启用 Webhook 时检查 `/v0/admin/alerts/deliveries` 投递状态 |
 | 日志写入失败 | 调用成功但日志写入失败 | 保护账单事实，检查 DB 和事务 |
 | 日志补写积压 | `routerx_log_replication_outbox_items{status="pending"}` 持续增长，或 `status="failed"` 大于 0 | 检查 `LOG_SQL_DSN`、日志库连接、迁移状态和后台 worker |
+| 告警投递积压 | `routerx_alert_delivery_outbox_items{status="pending"}` 持续增长，或 `status="failed"` 大于 0 | 检查 `alert.webhook.url`、外部 Webhook 服务和后台 worker，可通过 `/v0/admin/alerts/deliveries/replay` 手动重放 |
 | 支付回调失败 | 支付签名、金额或状态校验失败增长 | 检查 provider 配置和恶意回调 |
 | 审计写入失败 | 管理操作成功但审计失败 | 暂停高风险管理操作或进入降级 |
 
