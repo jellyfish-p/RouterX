@@ -1383,8 +1383,11 @@ func (h *UserHandler) CancelPaymentOrder(c *gin.Context) {
 		common.FailWithStatus(c, 401, "未登录或登录已过期")
 		return
 	}
-	order, changed, err := h.svc.CancelPaymentOrder(user.ID, c.Param("order_no"))
+	orderNo := c.Param("order_no")
+	order, changed, err := h.svc.CancelPaymentOrder(user.ID, orderNo)
 	if err != nil {
+		errorCode := paymentOrderCancelErrorCode(err)
+		h.recordPaymentOrderCancelDenied(c, user, order, orderNo, errorCode)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			common.FailWithStatus(c, 404, "支付订单不存在")
 			return
@@ -1399,6 +1402,45 @@ func (h *UserHandler) CancelPaymentOrder(c *gin.Context) {
 		}
 	}
 	common.Success(c, dto.PaymentOrderInfoFromModel(order))
+}
+
+func (h *UserHandler) recordPaymentOrderCancelDenied(c *gin.Context, operator *model.User, order *model.PaymentOrder, orderNo, errorCode string) {
+	if operator == nil {
+		return
+	}
+	resourceID := strings.TrimSpace(orderNo)
+	summary := map[string]interface{}{
+		"order_no":   resourceID,
+		"user_id":    operator.ID,
+		"error_code": errorCode,
+	}
+	if order != nil {
+		resourceID = strconv.FormatUint(uint64(order.ID), 10)
+		summary = paymentOrderAuditSummary(order)
+		summary["error_code"] = errorCode
+	}
+	if resourceID == "" {
+		resourceID = "payment_order_cancel"
+	}
+	_ = h.recordAdminAuditStringResult(c, operator, "payment_order.cancel_denied", common.QuotaSourceTypePaymentOrder, resourceID, nil, summary, "denied", errorCode)
+}
+
+func paymentOrderCancelErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "payment_order_cancel_not_found"
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(msg, "payment order is required"):
+		return "payment_order_cancel_order_required"
+	case strings.Contains(msg, "not pending"):
+		return "payment_order_cancel_not_pending"
+	default:
+		return "payment_order_cancel_rejected"
+	}
 }
 
 // POST /v0/payment/stripe/webhook — Stripe 异步通知

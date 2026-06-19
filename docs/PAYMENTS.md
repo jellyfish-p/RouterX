@@ -321,7 +321,7 @@ user submits code
 - 同一个充值码只能成功兑换一次；已使用、已作废、已过期或不存在的充值码不会写入额度流水，重复兑换不会重复入账。
 - 兑换成功会写入 `redem_code.redeem` 管理审计，摘要记录脱敏兑换码、额度、使用人和兑换后余额，不保存完整兑换码。
 - 管理员额度调整已写入 `quota_transactions`，记录 `actor_user_id`、`reason`、变更前后余额和幂等键。
-- 用户可通过 `POST /v0/user/payment/orders/:order_no/cancel` 取消自己的 `pending` 订单，订单置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付、退款中或已退款订单不能取消。
+- 用户可通过 `POST /v0/user/payment/orders/:order_no/cancel` 取消自己的 `pending` 订单，订单置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付、退款中或已退款订单不能取消，并写 `payment_order.cancel_denied` 拒绝审计，`error_code` 可用于区分非 pending、订单不存在或不属于当前用户。
 - 管理员可通过 `/v0/admin/redem` 生成随机充值码或导入指定充值码，可写入 `batch_no`、`note` 和未来 `expired_at`，并可作废未使用充值码；这些管理操作会写入 `redem_code.*` 管理审计，完整兑换码只进入脱敏摘要。
 - 管理员可通过 `/v0/admin/payment/products` 创建、更新、启用和禁用支付商品；用户侧只展示启用商品，禁用商品不能创建新订单；支付商品管理成功操作会写入 `admin_audit_logs`。
 - 用户侧支付商品列表和本地 `pending` 订单创建/查询已具备基础实现；创建订单要求对应 provider 已在 settings 启用，并会写 `payment_order.create` 管理审计，摘要不保存 checkout URL。Stripe secret 和绝对 `return_url` 齐全时会创建 Stripe Checkout Session；易支付网关、商户号、回调 URL 和 `PAYMENT_EPAY_KEY` 配置齐全时会返回签名收银台 URL；pending 订单不会入账。

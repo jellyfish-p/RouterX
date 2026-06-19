@@ -457,7 +457,7 @@ Provider 退款请求：
 | `resource_id` | string | 资源 ID 过滤 |
 | `actor_user_id` | uint | 操作人 ID 过滤 |
 | `result` | string | 结果过滤，例如 `success`、`failed`、`denied` |
-| `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden` |
+| `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden` 或 `payment_order_cancel_not_pending` |
 | `start_time` | int64 | 起始 Unix 秒，按 `created_at >= start_time` 过滤 |
 | `end_time` | int64 | 结束 Unix 秒，按 `created_at <= end_time` 过滤 |
 
@@ -479,6 +479,7 @@ Provider 退款请求：
 | `channel_model_price.enable` | `PATCH /v0/admin/channel-model-prices/:id/enable` |
 | `payment_order.create` | `POST /v0/user/payment/orders` |
 | `payment_order.cancel` | `POST /v0/user/payment/orders/:order_no/cancel` |
+| `payment_order.cancel_denied` | `POST /v0/user/payment/orders/:order_no/cancel` 拒绝取消非 `pending`、不存在或不属于当前用户的订单 |
 | `payment_webhook.processed` | `POST /v0/payment/stripe/webhook`、`POST /v0/payment/epay/notify` |
 | `payment_webhook.failed` | Stripe `checkout.session.async_payment_failed` 或易支付明确失败通知将 pending 订单置为 `failed` |
 | `payment_order.paid` | 支付 provider 成功回调入账 |
@@ -781,7 +782,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并写 `payment_order.create` 管理审计；provider 必须已在 settings 启用，Stripe secret + 绝对 `return_url` 齐全时创建 Stripe Checkout Session，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；`expires_at` 来自 `payment.order_expire_minutes` |
 | GET | `/v0/user/payment/orders` | 查询当前用户支付订单列表 |
 | GET | `/v0/user/payment/orders/:order_no` | 查询当前用户支付订单详情 |
-| POST | `/v0/user/payment/orders/:order_no/cancel` | 取消当前用户自己的 `pending` 订单，置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付/退款中/已退款订单拒绝取消，不会入账 |
+| POST | `/v0/user/payment/orders/:order_no/cancel` | 取消当前用户自己的 `pending` 订单，置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付/退款中/已退款订单拒绝取消并写 `payment_order.cancel_denied`，稳定 `error_code` 包含 `payment_order_cancel_not_pending` 或 `payment_order_cancel_not_found`，不会入账 |
 
 Provider 回调接口：
 

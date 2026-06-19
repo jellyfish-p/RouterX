@@ -2219,6 +2219,7 @@ func (s *UserService) CancelPaymentOrder(userID uint, orderNo string) (*model.Pa
 			return nil
 		case common.PaymentOrderStatusPending:
 		default:
+			result = &order
 			return errors.New("payment order is not pending")
 		}
 
@@ -2241,6 +2242,7 @@ func (s *UserService) CancelPaymentOrder(userID uint, orderNo string) (*model.Pa
 				result = &order
 				return nil
 			}
+			result = &order
 			return errors.New("payment order is not pending")
 		}
 		order.Status = common.PaymentOrderStatusClosed

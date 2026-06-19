@@ -4590,6 +4590,18 @@ func TestUserCancelsPendingPaymentOrder(t *testing.T) {
 	if paidOrder.Status != common.PaymentOrderStatusPaid {
 		t.Fatalf("paid payment order must remain paid after cancellation attempt, got %+v", paidOrder)
 	}
+	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+fmt.Sprint(paidOrder.ID)+"&result=denied&error_code=payment_order_cancel_not_pending", rootJWT, nil)
+	deniedAuditBody := deniedAuditResp.Body.String()
+	if deniedAuditResp.Code != http.StatusOK ||
+		!strings.Contains(deniedAuditBody, `"action":"payment_order.cancel_denied"`) ||
+		!strings.Contains(deniedAuditBody, `"error_code":"payment_order_cancel_not_pending"`) ||
+		!strings.Contains(deniedAuditBody, paidOrderNo) ||
+		!strings.Contains(deniedAuditBody, `\"status\":\"paid\"`) {
+		t.Fatalf("paid payment order cancellation denial should write audit log, got %d %s", deniedAuditResp.Code, deniedAuditBody)
+	}
+	if strings.Contains(deniedAuditBody, "checkout_url") {
+		t.Fatalf("payment order cancellation denial audit should not store checkout URL: %s", deniedAuditBody)
+	}
 }
 
 func TestStripeOrderCreatesCheckoutSessionWhenConfigured(t *testing.T) {
