@@ -459,7 +459,7 @@ func TestApifoxOpenAPISecurityMatchesRouteGroups(t *testing.T) {
 
 func isPublicUserOperation(path string) bool {
 	switch path {
-	case "/v0/user/register", "/v0/user/login", "/v0/user/oauth/{provider}/login", "/v0/user/oauth/{provider}/callback":
+	case "/v0/user/register", "/v0/user/login", "/v0/user/oauth/{provider}/login", "/v0/user/oauth/{provider}/callback", "/v0/user/oauth/{provider}/bind/callback":
 		return true
 	default:
 		return false
@@ -787,6 +787,8 @@ func TestTraceabilityP2EnterpriseIdentityEvidenceIncludesConcreteOAuthTests(t *t
 		"TestUserLoginWritesAuditLogWithoutSecrets",
 		"TestOAuthCallbackLogsInBoundIdentityWithState",
 		"TestOAuthCallbackDoesNotAutoBindExistingEmail",
+		"TestOAuthBindCallbackCreatesIdentityForLoggedInUser",
+		"TestOAuthBindCallbackRejectsIdentityBoundToAnotherUser",
 	}
 	issues := make([]string, 0)
 	for _, testName := range requiredTests {
@@ -3532,6 +3534,196 @@ func TestOAuthCallbackDoesNotAutoBindExistingEmail(t *testing.T) {
 	}
 	if identityCount != 0 {
 		t.Fatalf("oauth callback must not create identity for matching email, got %d", identityCount)
+	}
+}
+
+func TestOAuthBindCallbackCreatesIdentityForLoggedInUser(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "oauth-bind-user",
+		"password":     "password123",
+		"display_name": "OAuth Bind User",
+		"email":        "oauth-bind@example.com",
+		"role":         common.RoleUser,
+		"quota":        10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "oauth-bind-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	userJWT := loginBearer(t, r, "oauth-bind-user", "password123")
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/token":
+			if err := req.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if req.Form.Get("code") != "bind-code" {
+				t.Fatalf("unexpected bind code: %s", req.Form.Get("code"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"bind-token","token_type":"Bearer"}`))
+		case "/userinfo":
+			if req.Header.Get("Authorization") != "Bearer bind-token" {
+				t.Fatalf("userinfo should receive bind token, got %q", req.Header.Get("Authorization"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"gh-bind","email":"oauth-bind@example.com","login":"bind-user"}`))
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer provider.Close()
+	configureOAuthProvider(t, "github", provider.URL)
+
+	bindResp := performJSON(r, http.MethodGet, "/v0/user/oauth/github/bind", userJWT, nil)
+	if bindResp.Code != http.StatusFound {
+		t.Fatalf("oauth bind should redirect to provider, got %d %s", bindResp.Code, bindResp.Body.String())
+	}
+	location, err := url.Parse(bindResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := location.Query().Get("state")
+	if state == "" || !strings.Contains(location.Query().Get("redirect_uri"), "/v0/user/oauth/github/bind/callback") {
+		t.Fatalf("bind redirect should include bind callback and state, got %s", bindResp.Header().Get("Location"))
+	}
+
+	badStateReq := httptest.NewRequest(http.MethodGet, "/v0/user/oauth/github/bind/callback?state=wrong-state&code=bind-code", nil)
+	for _, cookie := range bindResp.Result().Cookies() {
+		badStateReq.AddCookie(cookie)
+	}
+	badStateResp := httptest.NewRecorder()
+	r.ServeHTTP(badStateResp, badStateReq)
+	if badStateResp.Code != http.StatusBadRequest {
+		t.Fatalf("oauth bind callback should reject mismatched state, got %d %s", badStateResp.Code, badStateResp.Body.String())
+	}
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oauth/github/bind/callback?state="+url.QueryEscape(state)+"&code=bind-code", nil)
+	for _, cookie := range bindResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+	if callbackResp.Code != http.StatusOK {
+		t.Fatalf("oauth bind callback should create identity, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+	var identity model.UserIdentity
+	if err := internal.DB.Where("user_id = ? AND method = ? AND provider = ? AND identifier = ?", user.ID, model.UserIdentityMethodOAuth, "github", "gh-bind").First(&identity).Error; err != nil {
+		t.Fatal(err)
+	}
+	if identity.PasswordHash != "" || identity.VerifiedAt == nil || identity.LastUsedAt == nil {
+		t.Fatalf("bound oauth identity should be verified, passwordless and recently used: %+v", identity)
+	}
+	var auditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "user.identity_bound", "user_identity", "github:gh-bind").
+		Count(&auditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if auditCount == 0 {
+		t.Fatalf("oauth bind should write user.identity_bound audit log")
+	}
+}
+
+func TestOAuthBindCallbackRejectsIdentityBoundToAnotherUser(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	for _, username := range []string{"oauth-owner", "oauth-second"} {
+		createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+			"username":     username,
+			"password":     "password123",
+			"display_name": username,
+			"email":        username + "@example.com",
+			"role":         common.RoleUser,
+			"quota":        10,
+		})
+		if createResp.Code != http.StatusOK {
+			t.Fatalf("create %s failed: %d %s", username, createResp.Code, createResp.Body.String())
+		}
+	}
+	var owner, second model.User
+	if err := internal.DB.Where("username = ?", "oauth-owner").First(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Where("username = ?", "oauth-second").First(&second).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := internal.DB.Create(&model.UserIdentity{
+		UserID:     owner.ID,
+		Method:     model.UserIdentityMethodOAuth,
+		Provider:   "github",
+		Identifier: "gh-owned",
+		VerifiedAt: &now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	secondJWT := loginBearer(t, r, "oauth-second", "password123")
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"owned-token","token_type":"Bearer"}`))
+		case "/userinfo":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"gh-owned","email":"oauth-owner@example.com","login":"owned"}`))
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer provider.Close()
+	configureOAuthProvider(t, "github", provider.URL)
+
+	bindResp := performJSON(r, http.MethodGet, "/v0/user/oauth/github/bind", secondJWT, nil)
+	location, err := url.Parse(bindResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := location.Query().Get("state")
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oauth/github/bind/callback?state="+url.QueryEscape(state)+"&code=owned-code", nil)
+	for _, cookie := range bindResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+	if callbackResp.Code != http.StatusConflict {
+		t.Fatalf("oauth bind should reject identity bound to another user, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+	var secondIdentityCount int64
+	if err := internal.DB.Model(&model.UserIdentity{}).
+		Where("user_id = ? AND method = ? AND provider = ? AND identifier = ?", second.ID, model.UserIdentityMethodOAuth, "github", "gh-owned").
+		Count(&secondIdentityCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if secondIdentityCount != 0 {
+		t.Fatalf("second user must not receive already-bound oauth identity, got %d", secondIdentityCount)
 	}
 }
 

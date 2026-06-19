@@ -1,8 +1,12 @@
 package handler
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -131,6 +135,75 @@ func (h *AuthHandler) OAuthCallback(c *gin.Context) {
 	common.Success(c, dto.LoginResponse{Token: token, User: dto.UserBriefFromModel(user)})
 }
 
+// GET /v0/user/oauth/:provider/bind — 登录用户发起 OAuth 身份绑定。
+func (h *AuthHandler) OAuthBind(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, http.StatusUnauthorized, "未登录或登录已过期")
+		return
+	}
+	provider := c.Param("provider")
+	state, err := common.GenerateRandomString(24)
+	if err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "生成 OAuth state 失败")
+		return
+	}
+	redirectURI := oauthBindCallbackURL(c, provider)
+	location, err := h.svc.OAuthLoginURL(provider, state, redirectURI)
+	if err != nil {
+		common.FailWithStatus(c, http.StatusForbidden, err.Error())
+		return
+	}
+	setOAuthStateCookie(c, provider, state, 10*60)
+	if err := setOAuthBindCookie(c, provider, state, user.ID, 10*60); err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "生成 OAuth 绑定凭据失败")
+		return
+	}
+	c.Redirect(http.StatusFound, location)
+}
+
+// GET /v0/user/oauth/:provider/bind/callback — 处理 OAuth 绑定回调。
+func (h *AuthHandler) OAuthBindCallback(c *gin.Context) {
+	provider := c.Param("provider")
+	state := strings.TrimSpace(c.Query("state"))
+	code := strings.TrimSpace(c.Query("code"))
+	cookieState, err := c.Cookie(oauthStateCookieName(provider))
+	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(cookieState)) != 1 {
+		common.FailWithStatus(c, http.StatusBadRequest, "OAuth state 无效或已过期")
+		return
+	}
+	userID, err := oauthBindCookieUserID(c, provider, state)
+	if err != nil {
+		common.FailWithStatus(c, http.StatusBadRequest, "OAuth 绑定凭据无效或已过期")
+		return
+	}
+	setOAuthStateCookie(c, provider, "", -1)
+	setOAuthBindCookie(c, provider, "", 0, -1)
+
+	identity, err := h.svc.OAuthBindCallback(userID, provider, code, oauthBindCallbackURL(c, provider))
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, service.ErrOAuthIdentityAlreadyBound) {
+			status = http.StatusConflict
+		} else if errors.Is(err, service.ErrOAuthProviderDisabled) {
+			status = http.StatusForbidden
+		} else if errors.Is(err, service.ErrOAuthInvalidCallback) {
+			status = http.StatusBadRequest
+		}
+		common.FailWithStatus(c, status, err.Error())
+		return
+	}
+	if err := h.recordIdentityBoundAudit(c, userID, identity); err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
+		return
+	}
+	common.Success(c, gin.H{
+		"method":     identity.Method,
+		"provider":   identity.Provider,
+		"identifier": identity.Identifier,
+	})
+}
+
 // POST /v0/user/self/password — 修改密码
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	var req dto.ChangePasswordRequest
@@ -176,6 +249,28 @@ func (h *AuthHandler) recordLoginAudit(c *gin.Context, user *model.User) error {
 	})
 }
 
+func (h *AuthHandler) recordIdentityBoundAudit(c *gin.Context, userID uint, identity *model.UserIdentity) error {
+	if identity == nil {
+		return nil
+	}
+	return service.NewUserService().RecordAdminAuditLog(service.AdminAuditRecordInput{
+		RequestID:    c.GetString("request_id"),
+		ActorUserID:  userID,
+		ActorRole:    common.RoleUser,
+		Action:       "user.identity_bound",
+		ResourceType: "user_identity",
+		ResourceID:   identity.Provider + ":" + identity.Identifier,
+		AfterSummary: auditSummary(map[string]interface{}{
+			"method":     identity.Method,
+			"provider":   identity.Provider,
+			"identifier": identity.Identifier,
+		}),
+		Result:    "success",
+		IP:        c.ClientIP(),
+		UserAgent: c.GetHeader("User-Agent"),
+	})
+}
+
 func setJWTCookie(c *gin.Context, token string) {
 	c.SetSameSite(2)
 	c.SetCookie("jwt_token", token, 7*24*3600, "/", "", c.Request.TLS != nil, true)
@@ -186,8 +281,63 @@ func setOAuthStateCookie(c *gin.Context, provider, state string, maxAge int) {
 	c.SetCookie(oauthStateCookieName(provider), state, maxAge, "/v0/user/oauth/"+provider, "", c.Request.TLS != nil, true)
 }
 
+func setOAuthBindCookie(c *gin.Context, provider, state string, userID uint, maxAge int) error {
+	value := ""
+	if maxAge >= 0 {
+		signature, err := oauthBindSignature(provider, state, userID)
+		if err != nil {
+			return err
+		}
+		value = fmt.Sprintf("%d:%s", userID, signature)
+	}
+	c.SetSameSite(2)
+	c.SetCookie(oauthBindCookieName(provider), value, maxAge, "/v0/user/oauth/"+provider, "", c.Request.TLS != nil, true)
+	return nil
+}
+
+func oauthBindCookieUserID(c *gin.Context, provider, state string) (uint, error) {
+	raw, err := c.Cookie(oauthBindCookieName(provider))
+	if err != nil {
+		return 0, err
+	}
+	parts := strings.SplitN(raw, ":", 2)
+	if len(parts) != 2 {
+		return 0, errors.New("invalid oauth bind cookie")
+	}
+	parsed, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil || parsed == 0 {
+		return 0, errors.New("invalid oauth bind user")
+	}
+	expected, err := oauthBindSignature(provider, state, uint(parsed))
+	if err != nil {
+		return 0, err
+	}
+	if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) != 1 {
+		return 0, errors.New("invalid oauth bind signature")
+	}
+	return uint(parsed), nil
+}
+
 func oauthStateCookieName(provider string) string {
 	return "routerx_oauth_state_" + strings.ToLower(strings.TrimSpace(provider))
+}
+
+func oauthBindCookieName(provider string) string {
+	return "routerx_oauth_bind_" + strings.ToLower(strings.TrimSpace(provider))
+}
+
+func oauthBindSignature(provider, state string, userID uint) (string, error) {
+	secret, err := service.GetJWTSecret()
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(strings.ToLower(strings.TrimSpace(provider))))
+	mac.Write([]byte{0})
+	mac.Write([]byte(strings.TrimSpace(state)))
+	mac.Write([]byte{0})
+	mac.Write([]byte(strconv.FormatUint(uint64(userID), 10)))
+	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
 func oauthCallbackURL(c *gin.Context, provider string) string {
@@ -204,6 +354,22 @@ func oauthCallbackURL(c *gin.Context, provider string) string {
 		host = "localhost"
 	}
 	return scheme + "://" + host + "/v0/user/oauth/" + provider + "/callback"
+}
+
+func oauthBindCallbackURL(c *gin.Context, provider string) string {
+	scheme := c.GetHeader("X-Forwarded-Proto")
+	if scheme == "" {
+		if c.Request != nil && c.Request.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := c.Request.Host
+	if host == "" {
+		host = "localhost"
+	}
+	return scheme + "://" + host + "/v0/user/oauth/" + provider + "/bind/callback"
 }
 
 func currentUser(c *gin.Context) (*model.User, bool) {

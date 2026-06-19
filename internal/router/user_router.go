@@ -24,10 +24,12 @@ func setupUserRoutes(
 		api.POST("/login", authH.UserLogin)
 		api.GET("/oauth/:provider/login", authH.OAuthLogin)
 		api.GET("/oauth/:provider/callback", authH.OAuthCallback)
+		api.GET("/oauth/:provider/bind/callback", authH.OAuthBindCallback)
 
 		jwtRequired := api.Group("")
 		jwtRequired.Use(middleware.UserJwtAuthRequired())
 		{
+			jwtRequired.GET("/oauth/:provider/bind", authH.OAuthBind)
 			jwtRequired.GET("/self", userH.Self)
 			jwtRequired.PUT("/self", userH.UpdateSelf)
 			jwtRequired.DELETE("/self", userH.CancelSelf)

@@ -23,6 +23,7 @@ var (
 	ErrOAuthProviderDisabled        = errors.New("oauth provider is disabled")
 	ErrOAuthInvalidCallback         = errors.New("oauth callback is invalid")
 	ErrOAuthIdentityNotBound        = errors.New("oauth identity is not bound")
+	ErrOAuthIdentityAlreadyBound    = errors.New("oauth identity is already bound")
 )
 
 type AuthService struct{}
@@ -386,6 +387,82 @@ func (s *AuthService) OAuthCallbackLogin(provider, code, redirectURI string) (*m
 		return nil, "", err
 	}
 	return identity.User, token, nil
+}
+
+// OAuthBindCallback binds a provider subject to an existing logged-in user.
+// It never matches by email; the provider stable id/sub is the only identity key.
+func (s *AuthService) OAuthBindCallback(userID uint, provider, code, redirectURI string) (*model.UserIdentity, error) {
+	cfg, err := loadOAuthProviderConfig(provider)
+	if err != nil {
+		return nil, err
+	}
+	if userID == 0 || strings.TrimSpace(code) == "" {
+		return nil, ErrOAuthInvalidCallback
+	}
+	accessToken, err := exchangeOAuthCode(cfg, code, redirectURI)
+	if err != nil {
+		return nil, err
+	}
+	userInfo, err := fetchOAuthUserinfo(cfg, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	identifier := oauthStableIdentifier(userInfo)
+	if identifier == "" {
+		return nil, ErrOAuthInvalidCallback
+	}
+	var bound *model.UserIdentity
+	err = internal.DB.Transaction(func(tx *gorm.DB) error {
+		var user model.User
+		if err := tx.First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.Status != common.UserStatusEnabled {
+			return ErrOAuthInvalidCallback
+		}
+		var existing model.UserIdentity
+		err := tx.Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOAuth, cfg.Provider, identifier).First(&existing).Error
+		now := time.Now()
+		switch {
+		case err == nil:
+			if existing.UserID != userID {
+				return ErrOAuthIdentityAlreadyBound
+			}
+			if err := tx.Model(&existing).Updates(map[string]interface{}{
+				"verified_at":  &now,
+				"last_used_at": &now,
+			}).Error; err != nil {
+				return err
+			}
+			existing.VerifiedAt = &now
+			existing.LastUsedAt = &now
+			bound = &existing
+			return nil
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			identity := model.UserIdentity{
+				UserID:     userID,
+				Method:     model.UserIdentityMethodOAuth,
+				Provider:   cfg.Provider,
+				Identifier: identifier,
+				VerifiedAt: &now,
+				LastUsedAt: &now,
+			}
+			if err := tx.Create(&identity).Error; err != nil {
+				return err
+			}
+			bound = &identity
+			return nil
+		default:
+			return err
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if bound == nil {
+		return nil, ErrOAuthInvalidCallback
+	}
+	return bound, nil
 }
 
 func signUserLoginToken(userID uint, role int) (string, error) {
