@@ -7,7 +7,7 @@ info:
 
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
-    - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态或危险扩展名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
+    - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态/危险扩展名或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
     - 充值码、额度流水查询、API Key 生命周期审计、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、日志库健康、日志补写 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单与未支付订单取消、Stripe webhook、易支付异步通知和易支付同步返回基础接口已注册；OAuth/OIDC 等目标扩展尚未注册，未放入本文件 paths。
 servers:
@@ -2356,7 +2356,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/OpenAIErrorEnvelope"
         "413":
-          description: 请求体超过 relay.max_request_body_bytes 时本地拒绝且不调用上游，code 为 request_body_too_large；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时 code 为 request_file_too_large，路径形态或危险扩展名基础扫描命中时返回 400 unsafe_multipart_file。
+          description: 请求体超过 relay.max_request_body_bytes 时本地拒绝且不调用上游，code 为 request_body_too_large；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时 code 为 request_file_too_large，路径形态、危险扩展名或可执行/脚本内容签名基础扫描命中时返回 400 unsafe_multipart_file。
           content:
             application/json:
               schema:
@@ -2460,7 +2460,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 图像编辑转发
-      description: OpenAI-compatible Image Edits 基础实现；multipart/form-data 请求体可透传到 OpenAI-compatible 上游 /v1/images/edits，Azure OpenAI 通道可转发到 /openai/v1/images/edits?api-version=preview。发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态或危险扩展名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Image Edits 基础实现；multipart/form-data 请求体可透传到 OpenAI-compatible 上游 /v1/images/edits，Azure OpenAI 通道可转发到 /openai/v1/images/edits?api-version=preview。发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2480,7 +2480,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 图像变体转发
-      description: OpenAI-compatible Image Variations 基础实现；multipart/form-data 请求体透传到 OpenAI-compatible 上游 /v1/images/variations，Azure OpenAI 通道可转发到 /openai/v1/images/variations?api-version=preview。发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态或危险扩展名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Image Variations 基础实现；multipart/form-data 请求体透传到 OpenAI-compatible 上游 /v1/images/variations，Azure OpenAI 通道可转发到 /openai/v1/images/variations?api-version=preview。发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2500,7 +2500,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 语音转文字转发
-      description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，Azure OpenAI 通道转发到 /openai/v1/audio/transcriptions?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态或危险扩展名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，Azure OpenAI 通道转发到 /openai/v1/audio/transcriptions?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2520,7 +2520,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 语音翻译转发
-      description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，Azure OpenAI 通道转发到 /openai/v1/audio/translations?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态或危险扩展名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，Azure OpenAI 通道转发到 /openai/v1/audio/translations?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整音频格式、时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -3327,7 +3327,7 @@ components:
               file:
                 type: string
                 format: binary
-                description: 音频文件字段；单个文件超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态或危险扩展名会返回 400 unsafe_multipart_file。
+                description: 音频文件字段；单个文件超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名或可执行/脚本内容签名会返回 400 unsafe_multipart_file。
               prompt:
                 type: string
                 description: 可选上下文提示词。
@@ -3363,11 +3363,11 @@ components:
               image:
                 type: string
                 format: binary
-                description: 输入图像文件字段；单个文件超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态或危险扩展名会返回 400 unsafe_multipart_file。
+                description: 输入图像文件字段；单个文件超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名或可执行/脚本内容签名会返回 400 unsafe_multipart_file。
               mask:
                 type: string
                 format: binary
-                description: 图像编辑可选遮罩文件字段；变体接口可忽略；单个文件超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态或危险扩展名会返回 400 unsafe_multipart_file。
+                description: 图像编辑可选遮罩文件字段；变体接口可忽略；单个文件超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名或可执行/脚本内容签名会返回 400 unsafe_multipart_file。
               prompt:
                 type: string
                 description: 图像编辑提示词；变体接口可忽略。
@@ -3417,7 +3417,7 @@ components:
           schema:
             $ref: "#/components/schemas/StandardResponse"
     OpenAIError:
-      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态或危险扩展名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
+      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
       content:
         application/json:
           schema:

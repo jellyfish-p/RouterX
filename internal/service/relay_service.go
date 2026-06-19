@@ -1934,24 +1934,69 @@ func unsafeMultipartFileExtension(ext string) bool {
 	}
 }
 
+const multipartFileSignatureScanBytes = 512
+
+func unsafeMultipartFileContent(prefix []byte) bool {
+	if len(prefix) == 0 {
+		return false
+	}
+	// 这层只拦截明显的可执行或脚本签名，避免把完整杀毒/内容审核耦合进 Relay 热路径。
+	trimmed := bytes.TrimLeft(prefix, "\x00\t\r\n ")
+	lower := bytes.ToLower(trimmed)
+	switch {
+	case bytes.HasPrefix(prefix, []byte{'M', 'Z'}): // Windows PE
+		return true
+	case bytes.HasPrefix(prefix, []byte{0x7f, 'E', 'L', 'F'}): // Linux ELF
+		return true
+	case bytes.HasPrefix(trimmed, []byte("#!")):
+		return true
+	case bytes.HasPrefix(lower, []byte("<script")):
+		return true
+	case bytes.HasPrefix(lower, []byte("<?php")):
+		return true
+	case bytes.HasPrefix(lower, []byte("<!doctype html")):
+		return true
+	case bytes.HasPrefix(lower, []byte("<html")):
+		return true
+	default:
+		return false
+	}
+}
+
 func discardMultipartFileWithLimit(src io.Reader, maxBytes int64) error {
 	return copyMultipartFileWithLimit(io.Discard, src, maxBytes)
 }
 
 func copyMultipartFileWithLimit(dst io.Writer, src io.Reader, maxBytes int64) error {
-	if maxBytes <= 0 {
-		if _, err := io.Copy(dst, src); err != nil {
+	reader := src
+	if maxBytes > 0 {
+		reader = &io.LimitedReader{R: src, N: maxBytes + 1}
+	}
+	prefix := make([]byte, multipartFileSignatureScanBytes)
+	n, readErr := io.ReadFull(reader, prefix)
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return errInvalidMultipartBody
+	}
+	if unsafeMultipartFileContent(prefix[:n]) {
+		return errUnsafeMultipartFile
+	}
+	written := int64(n)
+	if maxBytes > 0 && written > maxBytes {
+		return errMultipartFileTooLarge
+	}
+	if n > 0 {
+		prefixWritten, err := dst.Write(prefix[:n])
+		if err != nil || prefixWritten != n {
 			return errInvalidMultipartBody
 		}
-		return nil
 	}
 	// 多读 1 字节即可判断是否超限，同时避免把整个文件先读入内存。
-	limited := &io.LimitedReader{R: src, N: maxBytes + 1}
-	written, err := io.Copy(dst, limited)
+	copied, err := io.Copy(dst, reader)
 	if err != nil {
 		return errInvalidMultipartBody
 	}
-	if written > maxBytes {
+	written += copied
+	if maxBytes > 0 && written > maxBytes {
 		return errMultipartFileTooLarge
 	}
 	return nil
