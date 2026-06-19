@@ -172,7 +172,7 @@ Gemini-compatible 错误示例：
 - 下游非流式响应超过 `relay.max_response_body_bytes` 时返回 502 `upstream_response_too_large`，不反射完整下游响应体且不扣费。
 - OpenAI-compatible Images/Audio multipart 单个文件字段超过 `relay.max_multipart_file_bytes` 时返回 413 `request_file_too_large`，不调用上游且不扣费。
 - OpenAI-compatible Images/Audio multipart 文件名或内容命中危险文件基础扫描时返回 400 `unsafe_multipart_file`，不调用上游且不扣费。
-- `/v1` API Key 鉴权、用户禁用、配额预检查、本地解析错误、未知 `/v1` 路径、`/v1/models/{model}` 的 `model_not_found` 和基础下游错误会按入口协议返回 OpenAI-compatible、Anthropic 或 Gemini 错误外形；本地解析错误语义统一使用 `invalid_json`、`model_required` 等稳定 code，未知 `/v1` 路径在通过 API Key 鉴权后返回 OpenAI-compatible 404 `unsupported_api`。Anthropic/Gemini 基础非流式成功、Gemini generateContent 命中 Gemini 上游的非流式原生字段保真、Anthropic Messages Stream、Gemini streamGenerateContent 到 OpenAI-compatible 与 Gemini 上游的基础 SSE、字段降级和基础下游错误外形已有测试，更深层的 Anthropic 原生流式字段保真和 SDK 行为继续按 P1 测试矩阵收敛。
+- `/v1` API Key 鉴权、用户禁用、配额预检查、本地解析错误、未知 `/v1` 路径、`/v1/models/{model}` 的 `model_not_found` 和基础下游错误会按入口协议返回 OpenAI-compatible、Anthropic 或 Gemini 错误外形；本地解析错误语义统一使用 `invalid_json`、`model_required` 等稳定 code，未知 `/v1` 路径在通过 API Key 鉴权后返回 OpenAI-compatible 404 `unsupported_api`。Anthropic/Gemini 基础非流式成功、Gemini generateContent 命中 Gemini 上游的非流式原生字段保真、Anthropic Messages Stream 到 OpenAI-compatible 与 Anthropic 上游的基础 SSE、Gemini streamGenerateContent 到 OpenAI-compatible 与 Gemini 上游的基础 SSE、字段降级和基础下游错误外形已有测试，更深层的 Anthropic 原生请求字段保真和 SDK 行为继续按 P1 测试矩阵收敛。
 
 ## 公共接口
 
@@ -986,7 +986,7 @@ P0 明确失败：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/v1/messages` | 基础实现，Messages；当前转 OpenAI-compatible Chat，非文本 content blocks 降级为 compact JSON 文本；`stream=true` 输出 Anthropic SSE 事件 |
+| POST | `/v1/messages` | 基础实现，Messages；非文本 content blocks 降级为 compact JSON 文本；`stream=true` 命中 OpenAI-compatible 上游时会转换为 Anthropic SSE，命中 Anthropic 上游时会透传原生 Anthropic SSE 并提取 usage |
 | POST | `/v1/messages/count_tokens` | 基础实现，本地近似 Token 计数；优先统计 `system` 和 `messages[].content` 的文本内容，不把 JSON 字段名当作 token；非法 JSON 返回 Anthropic 兼容 `invalid_json` |
 | GET | `/v1/models` | 基础实现，模型列表 |
 | GET | `/v1/models/:model` | 基础实现，模型详情；支持协议选择器返回 Anthropic 或 Gemini 外形 |

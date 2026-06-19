@@ -8392,6 +8392,127 @@ func TestAnthropicMessagesStreamConvertsOpenAISSEAndDeductsUsage(t *testing.T) {
 	}
 }
 
+func TestAnthropicMessagesStreamToAnthropicUpstreamPreservesNativeSSEAndDeductsUsage(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamAPIKey := ""
+	upstreamVersion := ""
+	var upstreamBody map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		upstreamAPIKey = req.Header.Get("x-api-key")
+		upstreamVersion = req.Header.Get("anthropic-version")
+		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
+			t.Errorf("Anthropic upstream received invalid JSON: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_native\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-native-stream\",\"usage\":{\"input_tokens\":2,\"output_tokens\":0}}}\n\n"))
+		_, _ = w.Write([]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"))
+		_, _ = w.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"na\"}}\n\n"))
+		_, _ = w.Write([]byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":4}}\n\n"))
+		_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "anthropic-native-stream",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeClaude,
+		"name":     "anthropic-native-stream",
+		"models":   "claude-native-stream",
+		"base_url": upstream.URL,
+		"api_key":  "anthropic-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create Anthropic channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	streamResp := performJSON(r, http.MethodPost, "/v1/messages", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model":      "claude-native-stream",
+		"max_tokens": 8,
+		"stream":     true,
+		"messages": []map[string]interface{}{
+			{
+				"role":    "user",
+				"content": "hello",
+			},
+		},
+	})
+	body := streamResp.Body.String()
+	if streamResp.Code != http.StatusOK || !strings.Contains(streamResp.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("Anthropic native stream should return SSE, got %d %s %s", streamResp.Code, streamResp.Header().Get("Content-Type"), body)
+	}
+	if !strings.Contains(body, "event: message_start") || !strings.Contains(body, `"id":"msg_native"`) || !strings.Contains(body, `"text":"na"`) || !strings.Contains(body, `"output_tokens":4`) || !strings.Contains(body, "event: message_stop") {
+		t.Fatalf("Anthropic native stream should preserve Anthropic SSE chunks, got %s", body)
+	}
+	if strings.Contains(body, `"choices"`) || strings.Contains(body, `[DONE]`) {
+		t.Fatalf("Anthropic native stream should not leak OpenAI stream shape, got %s", body)
+	}
+	if upstreamCalls != 1 || upstreamPath != "/v1/messages" || upstreamAPIKey != "anthropic-secret" || upstreamVersion == "" {
+		t.Fatalf("Anthropic native stream should call Messages endpoint once, calls=%d path=%q key=%q version=%q", upstreamCalls, upstreamPath, upstreamAPIKey, upstreamVersion)
+	}
+	if upstreamBody["model"] != "claude-native-stream" || upstreamBody["stream"] != true || upstreamBody["max_tokens"] != float64(8) {
+		t.Fatalf("Anthropic upstream stream request should use Messages body, got %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx private field leaked to Anthropic stream upstream: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["_routerx_source_protocol"]; ok {
+		t.Fatalf("RouterX source marker leaked to Anthropic stream upstream: %#v", upstreamBody)
+	}
+	messages, ok := upstreamBody["messages"].([]interface{})
+	if !ok || len(messages) != 1 || !strings.Contains(fmt.Sprint(messages[0]), "hello") {
+		t.Fatalf("Anthropic upstream stream request should preserve text content, got %#v", upstreamBody)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 44 {
+		t.Fatalf("Anthropic native stream usage should deduct token budget by 6, got %d", storedToken.RemainQuota)
+	}
+	var callLog model.Log
+	if err := internal.DB.Where("token_id = ? AND status = ?", tokenPayload.Data.ID, common.LogStatusSuccess).First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.QuotaUsed != 6 || callLog.TotalTokens != 6 || callLog.PromptTokens != 2 || callLog.CompletionTokens != 4 {
+		t.Fatalf("unexpected Anthropic native stream success log: %+v", callLog)
+	}
+}
+
 func TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

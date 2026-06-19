@@ -211,13 +211,14 @@
 | `TestAdminChannelListIncludesHealthStatus` | 管理端通道列表返回 `healthy`、`disabled`、`tripped` 和 `probing` 显式健康状态，并包含冷却剩余秒数 |
 | `TestNoAvailableChannelWritesBreakerSnapshot` | 所有候选都因 `health_blocked` 熔断过滤时不调用上游，返回 `no_available_channel`，失败日志 `policy_snapshot` 写 `breaker_snapshot` 的阈值、冷却窗口和被挡通道摘要 |
 | `TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol` | Anthropic/Gemini 入口下游错误按各自协议外形返回且不泄密、不扣费 |
+| `TestAnthropicMessagesStreamToAnthropicUpstreamPreservesNativeSSEAndDeductsUsage` | Anthropic Messages Stream 命中 Anthropic 上游时调用 `/v1/messages`，原样透传 Anthropic SSE，并从原生 usage 事件扣费 |
 | `TestRelayPrecheckRejectsBeforeUpstream` | 无效 Key、禁用 Key、额度不足、禁用通道不调用下游 |
 | `TestRouterXRoutePreferenceFiltersChannels` | `routerx.route` 被接受、未知字段忽略、非法结构拒绝和筛选后无候选；无候选返回 `no_available_channel` 且写拒绝分支 `policy_snapshot` |
 
 仍需优先补齐：
 
-- Anthropic/Gemini 原生上游流式和更完整的流式 usage fallback/估算策略。
-- Anthropic/Gemini 更完整 SDK 行为细节、原生字段保真和流式错误路径。
+- 更完整的流式 usage fallback/估算策略。
+- Anthropic/Gemini 更完整 SDK 行为细节、原生请求字段保真和流式错误路径。
 
 ## 测试原则
 
@@ -528,9 +529,9 @@ Gemini-compatible 最小断言：
 | 阶段 | 能力 | 测试重点 |
 |------|------|----------|
 | P0 | 开发者最小接入 | base URL + RouterX API Key、`/v1/models`、非流式 Chat、OpenAI Chat/Completions 基础 SSE、日志和扣费 |
-| P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 和 Legacy Completions 基础 chunk 转发、Anthropic Messages Stream/Gemini streamGenerateContent 到 OpenAI-compatible SSE、Gemini streamGenerateContent 到 Gemini 原生 SSE、usage 扣费和客户端断开取消；继续补 Anthropic 原生上游流式、usage fallback 和已输出后不切换通道的更多故障注入 |
+| P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 和 Legacy Completions 基础 chunk 转发、Anthropic Messages Stream/Gemini streamGenerateContent 到 OpenAI-compatible SSE、Anthropic Messages Stream 到 Anthropic 原生 SSE、Gemini streamGenerateContent 到 Gemini 原生 SSE、usage 扣费和客户端断开取消；继续补 usage fallback 和已输出后不切换通道的更多故障注入 |
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
-| P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Gemini generateContent 到 Gemini 上游的非流式原生字段保真、Anthropic/Gemini 基础流式、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为和 Anthropic/Gemini 原生流式路径 |
+| P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Gemini generateContent 到 Gemini 上游的非流式原生字段保真、Anthropic/Gemini 基础流式、Anthropic/Gemini 原生 SSE 路径、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为和原生请求字段保真 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
 | P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝、Redis 全局/IP/Token/User/Model/Channel 限流拒绝和 `rate_limit_snapshot`、usage 缺失拒绝和扣费失败分支 policy/billing 事实，基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/规则版本/倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |

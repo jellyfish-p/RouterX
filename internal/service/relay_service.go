@@ -452,6 +452,9 @@ func (s *RelayService) RelayAnthropicMessagesStream(ctx context.Context, token *
 	if err != nil {
 		return nil, err
 	}
+	if result.outputProtocol == inputProtocolAnthropic {
+		return result, nil
+	}
 	state := &anthropicStreamState{}
 	return &RelayStreamResult{
 		ContentType:    "text/event-stream",
@@ -1001,7 +1004,8 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		return nil, err
 	}
 	nativeGeminiStream := supportsGeminiNativeStream(ctx, apiType, channel.Type)
-	if !supportsOpenAICompatibleStream(channel.Type) && !nativeGeminiStream {
+	nativeAnthropicStream := supportsAnthropicNativeStream(ctx, apiType, channel.Type)
+	if !supportsOpenAICompatibleStream(channel.Type) && !nativeGeminiStream && !nativeAnthropicStream {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "streaming is not supported for selected upstream channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "streaming is not supported for selected upstream channel", Type: "upstream_error", Code: "unsupported_stream_channel"}
 	}
@@ -1097,9 +1101,12 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 			defer resp.Body.Close()
 			var usage *relay.Usage
 			var err error
-			if nativeGeminiStream {
+			switch {
+			case nativeGeminiStream:
 				usage, err = forwardGeminiStream(resp.Body, write, flush)
-			} else {
+			case nativeAnthropicStream:
+				usage, err = forwardAnthropicStream(resp.Body, write, flush)
+			default:
 				usage, err = forwardOpenAIStream(resp.Body, write, flush)
 			}
 			latencyMs := int(time.Since(start).Milliseconds())
@@ -4234,6 +4241,33 @@ func forwardGeminiStream(r io.Reader, write func([]byte) error, flush func()) (*
 	return usage, nil
 }
 
+func forwardAnthropicStream(r io.Reader, write func([]byte) error, flush func()) (*relay.Usage, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2<<20)
+	var usage *relay.Usage
+	accumulator := anthropicStreamUsageAccumulator{}
+	for scanner.Scan() {
+		line := append([]byte(nil), scanner.Bytes()...)
+		if parsed := accumulator.apply(line); parsed != nil {
+			usage = parsed
+		}
+		chunk := append(line, '\n')
+		if err := write(chunk); err != nil {
+			return usage, err
+		}
+		if len(bytes.TrimSpace(line)) == 0 && flush != nil {
+			flush()
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return usage, err
+	}
+	if flush != nil {
+		flush()
+	}
+	return usage, nil
+}
+
 func usageFromOpenAIStreamLine(line []byte) *relay.Usage {
 	line = bytes.TrimSpace(line)
 	if !bytes.HasPrefix(line, []byte("data:")) {
@@ -4288,6 +4322,78 @@ func usageFromGeminiStreamLine(line []byte) *relay.Usage {
 	return &usage
 }
 
+type anthropicStreamUsageAccumulator struct {
+	promptTokens     int
+	completionTokens int
+	totalTokens      int
+}
+
+func (a *anthropicStreamUsageAccumulator) apply(line []byte) *relay.Usage {
+	parsed := usageFromAnthropicStreamLine(line)
+	if parsed == nil {
+		return nil
+	}
+	if parsed.PromptTokens > 0 {
+		a.promptTokens = parsed.PromptTokens
+	}
+	if parsed.CompletionTokens > 0 {
+		a.completionTokens = parsed.CompletionTokens
+	}
+	if parsed.TotalTokens > 0 {
+		a.totalTokens = parsed.TotalTokens
+	}
+	totalTokens := a.promptTokens + a.completionTokens
+	if totalTokens == 0 || a.totalTokens > totalTokens {
+		totalTokens = a.totalTokens
+	}
+	if totalTokens == 0 {
+		return nil
+	}
+	return &relay.Usage{
+		PromptTokens:     a.promptTokens,
+		CompletionTokens: a.completionTokens,
+		TotalTokens:      totalTokens,
+	}
+}
+
+func usageFromAnthropicStreamLine(line []byte) *relay.Usage {
+	line = bytes.TrimSpace(line)
+	if !bytes.HasPrefix(line, []byte("data:")) {
+		return nil
+	}
+	payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+	if bytes.Equal(payload, []byte("[DONE]")) || !json.Valid(payload) {
+		return nil
+	}
+	var envelope struct {
+		Usage   anthropicUsageFields `json:"usage"`
+		Message struct {
+			Usage anthropicUsageFields `json:"usage"`
+		} `json:"message"`
+	}
+	_ = json.Unmarshal(payload, &envelope)
+	usage := relay.Usage{
+		PromptTokens:     envelope.Usage.InputTokens,
+		CompletionTokens: envelope.Usage.OutputTokens,
+	}
+	if usage.PromptTokens == 0 {
+		usage.PromptTokens = envelope.Message.Usage.InputTokens
+	}
+	if usage.CompletionTokens == 0 {
+		usage.CompletionTokens = envelope.Message.Usage.OutputTokens
+	}
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.TotalTokens == 0 {
+		return nil
+	}
+	return &usage
+}
+
+type anthropicUsageFields struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
 func usageFromOpenAIUsageRaw(raw json.RawMessage) *relay.Usage {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return nil
@@ -4338,6 +4444,12 @@ func supportsGeminiNativeStream(ctx context.Context, apiType relay.APIType, chan
 		strings.EqualFold(relayIngressProtocolFromContext(ctx), inputProtocolGemini)
 }
 
+func supportsAnthropicNativeStream(ctx context.Context, apiType relay.APIType, channelType int) bool {
+	return apiType == relay.APIChatCompletions &&
+		channelType == common.ChannelTypeClaude &&
+		strings.EqualFold(relayIngressProtocolFromContext(ctx), inputProtocolAnthropic)
+}
+
 func relayStreamUpstreamAPIType(ctx context.Context, apiType relay.APIType, channelType int) relay.APIType {
 	if supportsGeminiNativeStream(ctx, apiType, channelType) {
 		return relay.APIGeminiStreamGenerateContent
@@ -4348,6 +4460,9 @@ func relayStreamUpstreamAPIType(ctx context.Context, apiType relay.APIType, chan
 func relayStreamOutputProtocol(ctx context.Context, apiType relay.APIType, channelType int) string {
 	if supportsGeminiNativeStream(ctx, apiType, channelType) {
 		return inputProtocolGemini
+	}
+	if supportsAnthropicNativeStream(ctx, apiType, channelType) {
+		return inputProtocolAnthropic
 	}
 	return relayIngressProtocolFromAPIType(apiType)
 }
