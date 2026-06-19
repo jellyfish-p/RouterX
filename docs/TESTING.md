@@ -69,6 +69,7 @@
 | `TestAdminPrivilegeBoundaries` | 管理员和超级管理员权限边界、设置脱敏、管理员不能越权管理同级或自己 |
 | `TestAdminAccountManagementAuditLogs` | 超级管理员创建、编辑、禁用和删除管理员写入 `admin.*` 审计，普通管理员越权访问超级管理员接口写 `admin.denied`，审计摘要不泄露密码 |
 | `TestAdminUserManagementAuditLogs` | 管理员创建、编辑、禁用和删除普通用户写入 `user.*` 审计，用户接口拒绝角色变更写 `user.denied`，审计摘要不泄露密码 |
+| `TestAdminUserPhoneManagementMaintainsLocalIdentity` | 管理员创建/编辑普通用户 phone 时会规范化 `users.phone`、创建或更新 `phone/local` 登录标识且不保存重复密码哈希；用户列表支持手机号关键词搜索，目标手机号已被其他账号占用时资料和 identity 都不落库 |
 | `TestAdminUserGroupManagement` | 管理员创建、查询、更新和删除用户分组；`default` 分组和仍被用户引用的分组不能删除，成功变更写 `user_group.*` 管理审计 |
 | `TestUserRedeemsRedemCodeOnce` | 用户兑换未使用充值码、额度增加、充值码标记 used/used_by/used_at，写入幂等额度流水和 `redem_code.redeem` 管理审计；重复兑换不再入账，并写 `redem_code.redeem_denied` 拒绝审计 |
 | `TestRedemCodeBatchNoteAndExpirationPolicy` | 充值码支持 batch_no、note 和未来 expired_at；管理端可按 batch_no 筛选，过去 expired_at 拒绝创建并写 `redem_code.create_denied`，过期码不可兑换且不改变余额 |

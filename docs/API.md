@@ -239,8 +239,8 @@ Gemini-compatible 错误示例：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/v0/admin/user` | 已实现 | 用户列表 |
-| POST | `/v0/admin/user` | 已实现 | 创建普通用户，成功后写 `user.create` 管理审计 |
-| PUT | `/v0/admin/user/:id` | 已实现 | 编辑普通用户，成功后写 `user.update`；禁用写 `user.disable`；拒绝角色变更写 `user.denied` |
+| POST | `/v0/admin/user` | 已实现 | 创建普通用户；可提交 email/phone 作为主资料，phone 会同步创建 `phone/local` 登录标识且不保存重复密码哈希；成功后写 `user.create` 管理审计 |
+| PUT | `/v0/admin/user/:id` | 已实现 | 编辑普通用户；phone 会同步维护 `phone/local` 登录标识，目标手机号已被占用时整笔拒绝；成功后写 `user.update`；禁用写 `user.disable`；拒绝角色变更写 `user.denied` |
 | DELETE | `/v0/admin/user/:id` | 已实现 | 删除普通用户，成功后写 `user.delete` 管理审计 |
 | PATCH | `/v0/admin/user/:id/quota` | 已实现 | 调整用户额度并写入 `quota_transactions` 与管理审计，可选 `reason` |
 | GET | `/v0/admin/quota-transactions` | 已实现 | 管理员查询额度流水；支持按用户、类型、来源和时间过滤 |
@@ -290,11 +290,14 @@ Gemini-compatible 错误示例：
   "password": "password",
   "display_name": "Alice",
   "email": "alice@example.com",
+  "phone": "+8613800000000",
   "role": 0,
   "quota": 100000000,
   "group_id": null
 }
 ```
+
+管理员创建或编辑普通用户时，`phone` 会去除首尾空格并同步到该用户的 `phone/local` 登录身份；该身份不写重复密码哈希，手机号密码登录开启后复用用户的 `username/local` 主密码。目标手机号已经属于其他用户时，服务端返回 400，用户资料和 identity 都不会部分落库。
 
 ### 充值码管理
 

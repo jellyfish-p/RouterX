@@ -66,7 +66,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		common.FailWithStatus(c, 403, "用户管理接口只能创建普通用户")
 		return
 	}
-	user, err := h.svc.Create(operator.Role, req.Username, req.Password, req.DisplayName, req.Email, req.Role, req.Quota, req.GroupID)
+	user, err := h.svc.Create(operator.Role, req.Username, req.Password, req.DisplayName, req.Email, req.Phone, req.Role, req.Quota, req.GroupID)
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
@@ -105,6 +105,9 @@ func (h *UserHandler) Update(c *gin.Context) {
 	}
 	if req.Email != "" {
 		updates["email"] = req.Email
+	}
+	if req.Phone != "" {
+		updates["phone"] = req.Phone
 	}
 	if req.Role != nil {
 		_ = h.recordAdminAuditResult(c, operator, "user.denied", "user", id, userAuditSummary(before), map[string]interface{}{
@@ -1315,6 +1318,7 @@ func userAuditSummary(user *model.User) map[string]interface{} {
 		"username":     brief.Username,
 		"display_name": brief.DisplayName,
 		"email":        brief.Email,
+		"phone":        brief.Phone,
 		"role":         brief.Role,
 		"quota":        brief.Quota,
 		"status":       brief.Status,

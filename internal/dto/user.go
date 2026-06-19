@@ -67,6 +67,7 @@ type CreateUserRequest struct {
 	Password    string `json:"password" binding:"required,min=6,max=128"`
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email"`
+	Phone       string `json:"phone"`
 	Role        int    `json:"role"`
 	Quota       int64  `json:"quota"`
 	GroupID     *uint  `json:"group_id"`
@@ -76,6 +77,7 @@ type CreateUserRequest struct {
 type UpdateUserRequest struct {
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email"`
+	Phone       string `json:"phone"`
 	Role        *int   `json:"role"`
 	Status      *int   `json:"status"`
 	GroupID     *uint  `json:"group_id"`

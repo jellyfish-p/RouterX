@@ -1444,7 +1444,7 @@ paths:
     get:
       tags: [Admin Users]
       summary: 用户列表
-      description: 管理员分页查询用户列表，支持关键词、角色、状态和分组过滤；响应不包含密码摘要、API Key 明文或下游密钥。
+      description: 管理员分页查询用户列表，支持关键词、角色、状态和分组过滤；关键词会匹配用户名、展示名、邮箱和手机号；响应不包含密码摘要、API Key 明文或下游密钥。
       security:
         - UserJWT: []
       parameters:
@@ -1469,7 +1469,7 @@ paths:
     post:
       tags: [Admin Users]
       summary: 创建普通用户
-      description: 仅创建普通用户；成功后写入 user.create 管理审计，密码不会写入审计摘要。
+      description: 仅创建普通用户；可提交 email/phone 作为主资料，phone 会同步创建 phone/local 登录标识且不保存重复密码哈希，手机号密码登录开启后复用 username/local 主密码。成功后写入 user.create 管理审计，密码不会写入审计摘要。
       security:
         - UserJWT: []
       requestBody:
@@ -1496,7 +1496,7 @@ paths:
     put:
       tags: [Admin Users]
       summary: 编辑普通用户
-      description: 可编辑显示名、邮箱、状态和分组；成功后写入 user.update，禁用用户写入 user.disable，拒绝角色变更写入 user.denied。
+      description: 可编辑显示名、邮箱、手机号、状态和分组；phone 会同步维护 phone/local 登录标识，目标手机号已被其他账号占用时返回 400，资料和 identity 都不会部分落库。成功后写入 user.update，禁用用户写入 user.disable，拒绝角色变更写入 user.denied。
       security:
         - UserJWT: []
       parameters:
@@ -4858,6 +4858,7 @@ components:
         password: { type: string, minLength: 6, maxLength: 128 }
         display_name: { type: string }
         email: { type: string }
+        phone: { type: string }
         role: { type: integer }
         quota: { type: integer, format: int64 }
         group_id: { type: integer, format: uint64, nullable: true }
@@ -4866,6 +4867,7 @@ components:
       properties:
         display_name: { type: string }
         email: { type: string }
+        phone: { type: string }
         role: { type: integer, nullable: true }
         status: { type: integer, nullable: true }
         group_id: { type: integer, format: uint64, nullable: true }

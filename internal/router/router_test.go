@@ -5918,6 +5918,138 @@ func TestAdminUserManagementAuditLogs(t *testing.T) {
 	}
 }
 
+func TestAdminUserPhoneManagementMaintainsLocalIdentity(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("auth.login.phone_password.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "admin-phone-user",
+		"password":     "password123",
+		"display_name": "Admin Phone User",
+		"phone":        " +15550006001 ",
+		"role":         common.RoleUser,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create phone user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			ID    uint   `json:"id"`
+			Phone string `json:"phone"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data.ID == 0 || payload.Data.Phone != "+15550006001" {
+		t.Fatalf("created user should return normalized phone, got %+v", payload.Data)
+	}
+	listResp := performJSON(r, http.MethodGet, "/v0/admin/user?keyword=%2B15550006001", rootJWT, nil)
+	if listResp.Code != http.StatusOK || !strings.Contains(listResp.Body.String(), `"username":"admin-phone-user"`) {
+		t.Fatalf("admin user list should search by phone, got %d %s", listResp.Code, listResp.Body.String())
+	}
+	var phoneIdentity model.UserIdentity
+	if err := internal.DB.Where(
+		"user_id = ? AND method = ? AND provider = ? AND identifier = ?",
+		payload.Data.ID,
+		model.UserIdentityMethodPhone,
+		model.UserIdentityProviderLocal,
+		"+15550006001",
+	).First(&phoneIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
+	if phoneIdentity.PasswordHash != "" {
+		t.Fatalf("admin-created phone identity should not store duplicated password hash")
+	}
+	phoneLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "+15550006001",
+		"password": "password123",
+	})
+	if phoneLogin.Code != http.StatusOK {
+		t.Fatalf("admin-created phone identity should log in with primary password, got %d %s", phoneLogin.Code, phoneLogin.Body.String())
+	}
+
+	updateResp := performJSON(r, http.MethodPut, "/v0/admin/user/"+uintString(payload.Data.ID), rootJWT, map[string]interface{}{
+		"display_name": "Admin Phone Updated",
+		"phone":        "+15550006002",
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update phone user failed: %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	var updated model.User
+	if err := internal.DB.First(&updated, payload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if updated.Phone == nil || *updated.Phone != "+15550006002" || updated.DisplayName != "Admin Phone Updated" {
+		t.Fatalf("admin phone update should persist profile changes, got %+v", updated)
+	}
+	var oldPhoneCount int64
+	if err := internal.DB.Model(&model.UserIdentity{}).
+		Where("user_id = ? AND method = ? AND provider = ? AND identifier = ?", payload.Data.ID, model.UserIdentityMethodPhone, model.UserIdentityProviderLocal, "+15550006001").
+		Count(&oldPhoneCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if oldPhoneCount != 0 {
+		t.Fatalf("admin phone update should replace old phone identity, got count=%d", oldPhoneCount)
+	}
+	var updatedPhoneIdentity model.UserIdentity
+	if err := internal.DB.Where(
+		"user_id = ? AND method = ? AND provider = ? AND identifier = ?",
+		payload.Data.ID,
+		model.UserIdentityMethodPhone,
+		model.UserIdentityProviderLocal,
+		"+15550006002",
+	).First(&updatedPhoneIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	conflictCreateResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "admin-phone-conflict",
+		"password":     "password123",
+		"display_name": "Admin Phone Conflict",
+		"role":         common.RoleUser,
+	})
+	if conflictCreateResp.Code != http.StatusOK {
+		t.Fatalf("create conflict user failed: %d %s", conflictCreateResp.Code, conflictCreateResp.Body.String())
+	}
+	var conflictPayload struct {
+		Data struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(conflictCreateResp.Body.Bytes(), &conflictPayload); err != nil {
+		t.Fatal(err)
+	}
+	conflictResp := performJSON(r, http.MethodPut, "/v0/admin/user/"+uintString(conflictPayload.Data.ID), rootJWT, map[string]interface{}{
+		"display_name": "Should Not Persist",
+		"phone":        "+15550006002",
+	})
+	if conflictResp.Code != http.StatusBadRequest {
+		t.Fatalf("admin phone update should reject occupied phone identity, got %d %s", conflictResp.Code, conflictResp.Body.String())
+	}
+	var conflictUser model.User
+	if err := internal.DB.First(&conflictUser, conflictPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if conflictUser.Phone != nil || conflictUser.DisplayName == "Should Not Persist" {
+		t.Fatalf("conflicting admin phone update should roll back profile, got %+v", conflictUser)
+	}
+}
+
 func TestAdminLogClearWritesAuditLog(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

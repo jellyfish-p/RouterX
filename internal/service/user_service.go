@@ -298,7 +298,7 @@ func (s *UserService) List(operatorRole int, page, pageSize int, keyword string,
 	query := internal.DB.Model(&model.User{})
 	if keyword != "" {
 		like := "%" + strings.TrimSpace(keyword) + "%"
-		query = query.Where("username LIKE ? OR display_name LIKE ? OR email LIKE ?", like, like, like)
+		query = query.Where("username LIKE ? OR display_name LIKE ? OR email LIKE ? OR phone LIKE ?", like, like, like, like)
 	}
 	if role != nil {
 		query = query.Where("role = ?", *role)
@@ -480,12 +480,13 @@ func applyQuotaTransactionFilters(query *gorm.DB, filter QuotaTransactionFilter)
 }
 
 // Create 管理员创建用户。
-func (s *UserService) Create(operatorRole int, username, password, displayName, email string, role int, quota int64, groupID *uint) (*model.User, error) {
+func (s *UserService) Create(operatorRole int, username, password, displayName, email, phone string, role int, quota int64, groupID *uint) (*model.User, error) {
 	if operatorRole < common.RoleAdmin {
 		return nil, errors.New("admin role required")
 	}
 	username = strings.TrimSpace(username)
 	email = normalizeEmail(email)
+	phone = normalizePhone(phone)
 	if username == "" || password == "" {
 		return nil, errors.New("username and password are required")
 	}
@@ -514,10 +515,15 @@ func (s *UserService) Create(operatorRole int, username, password, displayName, 
 		if email != "" {
 			emailPtr = &email
 		}
+		var phonePtr *string
+		if phone != "" {
+			phonePtr = &phone
+		}
 		u := &model.User{
 			Username:    &usernamePtr,
 			DisplayName: displayName,
 			Email:       emailPtr,
+			Phone:       phonePtr,
 			Role:        role,
 			Quota:       quota,
 			Status:      common.UserStatusEnabled,
@@ -538,6 +544,11 @@ func (s *UserService) Create(operatorRole int, username, password, displayName, 
 		if err := tx.Create(&identity).Error; err != nil {
 			return err
 		}
+		if phone != "" {
+			if err := syncLocalContactIdentity(tx, u.ID, model.UserIdentityMethodPhone, phone, "phone already exists"); err != nil {
+				return err
+			}
+		}
 		user = u
 		return nil
 	})
@@ -550,8 +561,19 @@ func (s *UserService) UpdateByAdmin(operatorID uint, operatorRole int, targetID 
 		return err
 	}
 	allowed := filterUpdates(updates, "display_name", "email", "status", "group_id")
+	if phone, ok := updates["phone"].(string); ok && strings.TrimSpace(phone) != "" {
+		allowed["phone"] = normalizePhone(phone)
+	}
 	if len(allowed) == 0 {
 		return nil
+	}
+	if phone, ok := allowed["phone"].(string); ok && strings.TrimSpace(phone) != "" {
+		return internal.DB.Transaction(func(tx *gorm.DB) error {
+			if err := syncLocalContactIdentity(tx, targetID, model.UserIdentityMethodPhone, phone, "phone already exists"); err != nil {
+				return err
+			}
+			return tx.Model(&model.User{}).Where("id = ? AND role = ?", targetID, common.RoleUser).Updates(allowed).Error
+		})
 	}
 	return internal.DB.Model(&model.User{}).Where("id = ? AND role = ?", targetID, common.RoleUser).Updates(allowed).Error
 }
@@ -3110,16 +3132,16 @@ func (s *UserService) UpdateSelf(id uint, displayName, email, phone string) erro
 // syncSelfEmailIdentity keeps the profile email and the local email login identity aligned.
 // The email identity intentionally has no password hash; email/password login reuses username/local.
 func syncSelfEmailIdentity(tx *gorm.DB, userID uint, email string) error {
-	return syncSelfLocalContactIdentity(tx, userID, model.UserIdentityMethodEmail, email, "email already exists")
+	return syncLocalContactIdentity(tx, userID, model.UserIdentityMethodEmail, email, "email already exists")
 }
 
 // syncSelfPhoneIdentity keeps the profile phone and the local phone login identity aligned.
 // The phone identity intentionally has no password hash; phone/password login reuses username/local.
 func syncSelfPhoneIdentity(tx *gorm.DB, userID uint, phone string) error {
-	return syncSelfLocalContactIdentity(tx, userID, model.UserIdentityMethodPhone, phone, "phone already exists")
+	return syncLocalContactIdentity(tx, userID, model.UserIdentityMethodPhone, phone, "phone already exists")
 }
 
-func syncSelfLocalContactIdentity(tx *gorm.DB, userID uint, method, identifier, conflictMessage string) error {
+func syncLocalContactIdentity(tx *gorm.DB, userID uint, method, identifier, conflictMessage string) error {
 	now := time.Now()
 	var byIdentifier model.UserIdentity
 	err := tx.Where(
