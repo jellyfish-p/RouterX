@@ -16894,6 +16894,9 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if err := json.Unmarshal([]byte(requestSnapshotRaw), &requestSnapshot); err != nil {
 		t.Fatalf("success log should store request snapshot JSON, got %q: %v", requestSnapshotRaw, err)
 	}
+	if _, err := time.Parse(time.RFC3339Nano, fmt.Sprint(requestSnapshot["created_at"])); err != nil {
+		t.Fatalf("request snapshot should include RFC3339 created_at, snapshot=%+v err=%v", requestSnapshot, err)
+	}
 	if requestSnapshot["kind"] != "request" ||
 		requestSnapshot["ingress_protocol"] != "openai" ||
 		requestSnapshot["api_type"] != "openai.chat" ||
@@ -16921,6 +16924,9 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	var policySnapshot map[string]interface{}
 	if err := json.Unmarshal([]byte(policySnapshotRaw), &policySnapshot); err != nil {
 		t.Fatalf("success log should store policy snapshot JSON, got %q: %v", policySnapshotRaw, err)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, fmt.Sprint(policySnapshot["created_at"])); err != nil {
+		t.Fatalf("policy snapshot should include RFC3339 created_at, snapshot=%+v err=%v", policySnapshot, err)
 	}
 	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
 	if !ok ||

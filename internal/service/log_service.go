@@ -92,6 +92,8 @@ func (s *LogService) Record(log *model.Log) error {
 	log.ErrorCode = normalizeLogErrorCode(log)
 	log.ErrorSource = normalizeLogErrorSource(log)
 	log.UpstreamStatus = normalizeLogUpstreamStatus(log)
+	log.RequestSnapshot = normalizeLogEnvelopeSnapshot(log.RequestSnapshot, log)
+	log.PolicySnapshot = normalizeLogEnvelopeSnapshot(log.PolicySnapshot, log)
 	log.ErrorSnapshot = normalizeLogErrorSnapshot(log)
 	log.UsageSnapshot = normalizeLogUsageSnapshot(log)
 	log.RouteSnapshot = normalizeLogRouteSnapshot(log)
@@ -607,6 +609,25 @@ func firstNonEmptyLogSnapshotValue(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeLogEnvelopeSnapshot(raw string, log *model.Log) string {
+	snapshot := strings.TrimSpace(raw)
+	if snapshot == "" {
+		return ""
+	}
+	var existing map[string]interface{}
+	if err := json.Unmarshal([]byte(snapshot), &existing); err != nil {
+		return snapshot
+	}
+	if !enrichLogSnapshotEnvelope(existing, log) {
+		return snapshot
+	}
+	encoded, err := json.Marshal(existing)
+	if err != nil {
+		return snapshot
+	}
+	return string(encoded)
 }
 
 func enrichLogSnapshotEnvelope(snapshot map[string]interface{}, log *model.Log) bool {
