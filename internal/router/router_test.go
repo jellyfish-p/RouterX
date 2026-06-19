@@ -16766,9 +16766,12 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 		"type":     common.ChannelTypeOpenAICompat,
 		"name":     "compat",
 		"models":   "gpt-test",
-		"base_url": upstream.URL,
-		"api_key":  "upstream-secret",
-		"group":    "paid",
+		"base_url": "http://127.0.0.1:1",
+		"base_urls": []string{
+			upstream.URL,
+		},
+		"api_key": "upstream-secret",
+		"group":   "paid",
 	})
 	if channelResp.Code != http.StatusOK {
 		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
@@ -16908,6 +16911,10 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	}
 	if routeSnapshot["normalized_model"] != "gpt-test" {
 		t.Fatalf("route snapshot should include normalized model, got %+v", routeSnapshot)
+	}
+	baseURLIndex, ok := routeSnapshot["upstream_base_url_index"].(map[string]interface{})
+	if !ok || baseURLIndex["source"] != "base_urls" || baseURLIndex["index"] != float64(0) {
+		t.Fatalf("route snapshot should include safe upstream base URL index, got %+v", routeSnapshot)
 	}
 	if selectedChannelID, ok := routeSnapshot["selected_channel_id"].(float64); !ok || uint(selectedChannelID) != *callLog.ChannelID {
 		t.Fatalf("route snapshot should reference selected channel, snapshot=%+v log=%+v", routeSnapshot, callLog)

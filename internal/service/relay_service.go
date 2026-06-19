@@ -866,6 +866,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream secret decrypt failed", clientIP)
 		return nil, nil, false, &HTTPError{Status: 502, Message: "upstream channel secret is not available", Type: "upstream_error", Code: "upstream_secret_error"}
 	}
+	ctx = ContextWithRelayRouteSnapshot(ctx, addRelayRouteUpstreamTargetSnapshot(relayRouteSnapshotFromContext(ctx), target))
 	upstreamModel := s.channelService.ApplyModelRewrite(channel, reqInfo.Model)
 	outBody := body
 	outContentType := ""
@@ -1082,6 +1083,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "upstream secret decrypt failed", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "upstream channel secret is not available", Type: "upstream_error", Code: "upstream_secret_error"}
 	}
+	ctx = ContextWithRelayRouteSnapshot(ctx, addRelayRouteUpstreamTargetSnapshot(relayRouteSnapshotFromContext(ctx), target))
 	upstreamModel := s.channelService.ApplyModelRewrite(channel, reqInfo.Model)
 	outInputBody, err := relayUpstreamInputBody(ctx, apiType, body, reqInfo, channel.Type, upstreamModel)
 	if err != nil {
@@ -4602,6 +4604,32 @@ func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candida
 		return ""
 	}
 	return string(raw)
+}
+
+func addRelayRouteUpstreamTargetSnapshot(raw string, target *ChannelUpstreamTarget) string {
+	if target == nil || strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	source := strings.TrimSpace(target.BaseURLSource)
+	if source != "base_urls" && source != "upstreams" {
+		return raw
+	}
+	if target.BaseURLIndex < 0 {
+		return raw
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return raw
+	}
+	snapshot["upstream_base_url_index"] = map[string]interface{}{
+		"source": source,
+		"index":  target.BaseURLIndex,
+	}
+	withTarget, err := json.Marshal(snapshot)
+	if err != nil {
+		return raw
+	}
+	return string(withTarget)
 }
 
 func addRouteFilterReason(reasons map[string]int, reason string, count int) {

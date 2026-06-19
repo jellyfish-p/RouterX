@@ -98,8 +98,10 @@ type channelCandidateCacheInvalidationMessage struct {
 }
 
 type ChannelUpstreamTarget struct {
-	BaseURL string
-	APIKey  string
+	BaseURL       string
+	APIKey        string
+	BaseURLSource string
+	BaseURLIndex  int
 }
 
 type ChannelSecretRotationResult struct {
@@ -652,14 +654,17 @@ func (s *ChannelService) ResolveUpstream(channel *model.Channel) (*ChannelUpstre
 		return nil, errors.New("channel is required")
 	}
 	if upstreams := decodeUpstreamConfigs(channel.Upstreams); len(upstreams) > 0 {
-		upstream := upstreams[randomIndex(len(upstreams))]
+		upstreamIndex := randomIndex(len(upstreams))
+		upstream := upstreams[upstreamIndex]
 		apiKey, err := common.DecryptSecret(upstream.APIKey)
 		if err != nil {
 			return nil, err
 		}
 		return &ChannelUpstreamTarget{
-			BaseURL: normalizeBaseURL(upstream.BaseURL, channel.Type),
-			APIKey:  strings.TrimSpace(apiKey),
+			BaseURL:       normalizeBaseURL(upstream.BaseURL, channel.Type),
+			APIKey:        strings.TrimSpace(apiKey),
+			BaseURLSource: "upstreams",
+			BaseURLIndex:  upstreamIndex,
 		}, nil
 	}
 
@@ -677,12 +682,18 @@ func (s *ChannelService) ResolveUpstream(channel *model.Channel) (*ChannelUpstre
 	}
 	baseURLs := decodeStringSlice(channel.BaseURLs)
 	baseURL := channel.BaseURL
+	baseURLSource := "base_url"
+	baseURLIndex := -1
 	if len(baseURLs) > 0 {
-		baseURL = baseURLs[randomIndex(len(baseURLs))]
+		baseURLIndex = randomIndex(len(baseURLs))
+		baseURL = baseURLs[baseURLIndex]
+		baseURLSource = "base_urls"
 	}
 	return &ChannelUpstreamTarget{
-		BaseURL: normalizeBaseURL(baseURL, channel.Type),
-		APIKey:  strings.TrimSpace(apiKey),
+		BaseURL:       normalizeBaseURL(baseURL, channel.Type),
+		APIKey:        strings.TrimSpace(apiKey),
+		BaseURLSource: baseURLSource,
+		BaseURLIndex:  baseURLIndex,
 	}, nil
 }
 
