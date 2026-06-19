@@ -660,6 +660,49 @@ func TestTraceabilityP1RouterXExtensionEvidenceIncludesProviderSpecificTests(t *
 	}
 }
 
+func TestTraceabilityP1UpstreamConversionEvidenceIncludesConcreteMatrixTests(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TRACEABILITY.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var evidence string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "| P1-C3 ") {
+			continue
+		}
+		cells := strings.Split(line, "|")
+		if len(cells) < 7 {
+			t.Fatalf("malformed P1-C3 traceability row: %s", line)
+		}
+		evidence = strings.TrimSpace(cells[len(cells)-2])
+		break
+	}
+	if evidence == "" {
+		t.Fatal("missing P1-C3 traceability row")
+	}
+
+	requiredTests := []string{
+		"TestAzureChatCompletionUsesDeploymentPathAndAPIKey",
+		"TestAzureResponsesUsesV1EndpointAndUsage",
+		"TestAzureEmbeddingsUsesDeploymentPathAndAPIKey",
+		"TestResponsesToClaudeUpstreamConvertsMessagesAndDeductsUsage",
+		"TestResponsesToGeminiUpstreamConvertsGenerateContentAndDeductsUsage",
+	}
+	issues := make([]string, 0)
+	for _, testName := range requiredTests {
+		if !strings.Contains(evidence, testName) {
+			issues = append(issues, "missing "+testName)
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("P1-C3 upstream conversion traceability evidence needs concrete matrix tests:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

@@ -33,6 +33,7 @@
 | `TestTraceabilityP0RowsUseConcreteEvidence` | 检查 `docs/TRACEABILITY.md` 的 P0 行证据必须落到具体测试名，避免使用泛化占位描述替代可回归证据 |
 | `TestTraceabilityP1StreamEvidenceIncludesNativeUpstreamTests` | 检查 `P1-C1` 流式转发证据必须包含 Anthropic/Gemini 原生上游流式测试，并防止追踪表继续保留已过期的原生流式待补说明 |
 | `TestTraceabilityP1RouterXExtensionEvidenceIncludesProviderSpecificTests` | 检查 `P1-C4` 的 `routerx` 扩展参数证据必须列出 provider-specific body 补充、Gemini safetySettings 和 Anthropic/Gemini 原生字段保真测试 |
+| `TestTraceabilityP1UpstreamConversionEvidenceIncludesConcreteMatrixTests` | 检查 `P1-C3` 多上游转换证据必须列出 Azure deployment 路径和 Responses 到 Claude/Gemini 的具体转换测试 |
 | `TestModelListSupportsRouterXProtocolSelector` | `/v1/models` 和 `/v1/models/{model}` 支持 `routerx_protocol` query 和 `X-RouterX-Protocol` header 选择 OpenAI、Anthropic 或 Gemini 模型外形；Gemini 外形声明生成、计数和 Embeddings 方法；`format` 保持最高优先级，无效 API Key 和模型详情 `model_not_found` 错误也按所选入口协议返回 |
 | `TestUserAPIKeyManagementAuditLogs` | API Key 创建、编辑、用户端额度/无限标记编辑拒绝、禁用和删除写入 `api_key.*` 管理审计，审计摘要不泄露 `sk-` 明文，并覆盖审计 `result`/`error_code`/时间范围过滤 |
 | `TestUserAPIKeyAdvancedManagement` | 用户查看单 Key 用量摘要、轮换 Key、泄露上报禁用、轮换链路和禁用原因落库，相关审计不泄露明文 Key |
