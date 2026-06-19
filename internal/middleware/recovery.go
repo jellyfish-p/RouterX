@@ -22,7 +22,7 @@ func Recovery() gin.HandlerFunc {
 				panicType := fmt.Sprintf("%T", err)
 				stack := string(debug.Stack())
 				if common.StructuredLogsEnabled() {
-					writeStructuredLog(map[string]interface{}{
+					entry := map[string]interface{}{
 						"event":      "panic",
 						"request_id": requestID,
 						"method":     c.Request.Method,
@@ -30,7 +30,12 @@ func Recovery() gin.HandlerFunc {
 						"client_ip":  c.ClientIP(),
 						"panic_type": panicType,
 						"stack":      stack,
-					}, func() {
+					}
+					if traceID := c.GetString("trace_id"); traceID != "" {
+						entry["trace_id"] = traceID
+						entry["traceparent"] = c.GetString("traceparent")
+					}
+					writeStructuredLog(entry, func() {
 						writeTextPanicLog(requestID, c.Request.Method, path, c.ClientIP(), panicType, stack)
 					})
 				} else {

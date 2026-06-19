@@ -86,6 +86,8 @@ func TestRecoveryStructuredPanicLogUsesJSONAndRedactsValue(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
 	req.Header.Set("X-Request-Id", "req-json-panic")
+	traceparent := "00-7bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	req.Header.Set("Traceparent", traceparent)
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
 	if resp.Code != http.StatusInternalServerError {
@@ -99,6 +101,8 @@ func TestRecoveryStructuredPanicLogUsesJSONAndRedactsValue(t *testing.T) {
 	if entry["request_id"] != "req-json-panic" ||
 		entry["method"] != http.MethodGet ||
 		entry["path"] != "/panic" ||
+		entry["trace_id"] != "7bf92f3577b34da6a3ce929d0e0e4736" ||
+		entry["traceparent"] != traceparent ||
 		entry["client_ip"] == "" ||
 		entry["panic_type"] != "string" {
 		t.Fatalf("structured panic log fields mismatch: %+v", entry)

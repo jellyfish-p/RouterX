@@ -258,7 +258,7 @@ volumes:
 | `model` | 模型 |
 | `error` | 错误摘要 |
 
-当前 `observability.structured_logs_enabled=false` 时保留原文本 HTTP/Panic 日志；开启后 HTTP 访问日志输出 `event=http_request` 的 JSON line，字段包含 `request_id`、method、path、path_group、status、latency_ms 和 client_ip；请求携带合法 `traceparent` 时还会记录 `trace_id` 和 `traceparent`，响应回显 `Traceparent`，`/v1` 真实上游请求也会透传。Recovery panic 日志输出 `event=panic` 的 JSON line，字段包含 request_id、method、path、client_ip、panic_type 和 stack，仍不记录原始 panic 值。
+当前 `observability.structured_logs_enabled=false` 时保留原文本 HTTP/Panic 日志；开启后 HTTP 访问日志输出 `event=http_request` 的 JSON line，字段包含 `request_id`、method、path、path_group、status、latency_ms 和 client_ip；请求携带合法 `traceparent` 时还会记录 `trace_id` 和 `traceparent`，响应回显 `Traceparent`，`/v1` 真实上游请求也会透传。Recovery panic 日志输出 `event=panic` 的 JSON line，字段包含 request_id、method、path、client_ip、panic_type 和 stack；请求携带合法 `traceparent` 时同样写入 `trace_id` 和 `traceparent`，仍不记录原始 panic 值。
 
 脱敏规则：
 

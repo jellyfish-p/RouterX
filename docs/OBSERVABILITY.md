@@ -74,11 +74,11 @@
 | 响应 | 所有 HTTP 响应通过当前配置的 request id header 返回请求 ID。 |
 | 上下文 | Gin context 中写入 `request_id`。 |
 | `/v1` 上游 | 调用真实上游时传递或生成可追踪 request id，避免覆盖上游鉴权 header。 |
-| W3C Trace Context | 如果请求携带合法 `traceparent`，响应回显 `Traceparent`，结构化 HTTP 日志写入 `trace_id` 和 `traceparent`，`/v1` 真实上游请求继续透传该 header；非法值会被忽略。 |
+| W3C Trace Context | 如果请求携带合法 `traceparent`，响应回显 `Traceparent`，结构化 HTTP/Panic 日志写入 `trace_id` 和 `traceparent`，`/v1` 真实上游请求继续透传该 header；非法值会被忽略。 |
 | 多层 RouterX | 传递 `X-RouterX-Hop` 和 `X-RouterX-Chain`，防止循环并保留链路摘要。 |
 | 日志 | HTTP 日志、调用日志、审计日志和系统错误日志都写 request_id。 |
 
-当前 HTTP 中间件会按 `observability.request_id_header` 读取或生成请求 ID，并通过同名响应头返回；模型调用日志和管理审计已持久化 `request_id`；`/v1` 调用真实上游时会用当前配置的 request id header 透传同一个请求 ID。当前也会校验并保留 W3C `traceparent`，响应通过 `Traceparent` 回显，结构化 HTTP 日志写入 `trace_id` 和 `traceparent`，`/v1` 真实上游请求继续透传同一 trace context。`observability.structured_logs_enabled=false` 时维持原文本 HTTP/Panic 日志；设为 `true` 后 HTTP 访问日志输出一行 JSON，包含 `event=http_request`、`request_id`、method、path、path_group、status、latency_ms、client_ip，以及请求携带合法 `traceparent` 时的 `trace_id` 和 `traceparent`；Recovery 系统错误日志输出 `event=panic`、request_id、method、path、client_ip、panic_type 和 stack，但不会写入原始 panic 值；`/v1` panic 响应会复用入口协议识别，分别返回 OpenAI、Anthropic 或 Gemini 兼容的 500。后续可继续接入采样、span 生成和 OTLP 导出。
+当前 HTTP 中间件会按 `observability.request_id_header` 读取或生成请求 ID，并通过同名响应头返回；模型调用日志和管理审计已持久化 `request_id`；`/v1` 调用真实上游时会用当前配置的 request id header 透传同一个请求 ID。当前也会校验并保留 W3C `traceparent`，响应通过 `Traceparent` 回显，结构化 HTTP 和 Panic 日志写入 `trace_id` 和 `traceparent`，`/v1` 真实上游请求继续透传同一 trace context。`observability.structured_logs_enabled=false` 时维持原文本 HTTP/Panic 日志；设为 `true` 后 HTTP 访问日志输出一行 JSON，包含 `event=http_request`、`request_id`、method、path、path_group、status、latency_ms、client_ip，以及请求携带合法 `traceparent` 时的 `trace_id` 和 `traceparent`；Recovery 系统错误日志输出 `event=panic`、request_id、method、path、client_ip、panic_type、stack，以及可用时的 `trace_id` 和 `traceparent`，但不会写入原始 panic 值；`/v1` panic 响应会复用入口协议识别，分别返回 OpenAI、Anthropic 或 Gemini 兼容的 500。后续可继续接入采样、span 生成和 OTLP 导出。
 
 ## 模型调用日志
 
