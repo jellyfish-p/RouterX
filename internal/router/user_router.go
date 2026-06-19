@@ -41,6 +41,7 @@ func setupUserRoutes(
 			jwtRequired.PUT("/token/:id/scope", tokenH.UpdateScope)
 			jwtRequired.GET("/token/:id/usage", tokenH.Usage)
 			jwtRequired.GET("/token/:id/leak-window", tokenH.LeakWindow)
+			jwtRequired.GET("/token/:id/events", tokenH.EventWindow)
 
 			jwtRequired.GET("/log", logH.UserList)
 			jwtRequired.GET("/billing", logH.UserBilling)

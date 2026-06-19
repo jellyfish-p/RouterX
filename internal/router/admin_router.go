@@ -64,6 +64,7 @@ func setupAdminRoutes(
 			authRequired.GET("/token/export", tokenH.AdminExport)
 			authRequired.GET("/token/risk", tokenH.AdminRisk)
 			authRequired.GET("/token/:id/leak-window", tokenH.AdminLeakWindow)
+			authRequired.GET("/token/:id/events", tokenH.AdminEventWindow)
 			authRequired.POST("/token/batch-disable", tokenH.BatchDisable)
 			authRequired.POST("/token/batch-expire", tokenH.BatchExpire)
 			authRequired.GET("/alerts", alertH.List)

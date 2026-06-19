@@ -161,6 +161,12 @@ type TokenLeakWindowCounterResponse struct {
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
 }
 
+type TokenEventCounterResponse struct {
+	Value      string     `json:"value"`
+	Count      int64      `json:"count"`
+	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+}
+
 type TokenLeakWindowResponse struct {
 	Token             TokenResponse                    `json:"token"`
 	TokenID           uint                             `json:"token_id"`
@@ -179,6 +185,26 @@ type TokenLeakWindowResponse struct {
 	SourceIPHashes    []TokenLeakWindowCounterResponse `json:"source_ip_hashes"`
 	LastUsedIPHash    string                           `json:"last_used_ip_hash,omitempty"`
 	LastUserAgentHash string                           `json:"last_user_agent_hash,omitempty"`
+}
+
+type TokenEventWindowResponse struct {
+	Token               TokenResponse               `json:"token"`
+	TokenID             uint                        `json:"token_id"`
+	WindowHours         int                         `json:"window_hours"`
+	WindowStart         time.Time                   `json:"window_start"`
+	WindowEnd           time.Time                   `json:"window_end"`
+	EventCount          int64                       `json:"event_count"`
+	ErrorCount          int64                       `json:"error_count"`
+	RateLimitCount      int64                       `json:"rate_limit_count"`
+	FirstSeenAt         *time.Time                  `json:"first_seen_at,omitempty"`
+	LastSeenAt          *time.Time                  `json:"last_seen_at,omitempty"`
+	ErrorCodes          []TokenEventCounterResponse `json:"error_codes"`
+	ErrorSources        []TokenEventCounterResponse `json:"error_sources"`
+	UpstreamStatuses    []TokenEventCounterResponse `json:"upstream_statuses"`
+	RateLimitDimensions []TokenEventCounterResponse `json:"rate_limit_dimensions"`
+	Models              []TokenEventCounterResponse `json:"models"`
+	LastUsedIPHash      string                      `json:"last_used_ip_hash,omitempty"`
+	LastUserAgentHash   string                      `json:"last_user_agent_hash,omitempty"`
 }
 
 type ReportTokenLeakResponse struct {

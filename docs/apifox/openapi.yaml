@@ -615,6 +615,38 @@ paths:
                         $ref: "#/components/schemas/TokenLeakWindow"
         "404":
           $ref: "#/components/responses/StandardNotFound"
+  /v0/user/token/{id}/events:
+    get:
+      tags: [User API Key]
+      summary: API Key 错误和限流事件摘要
+      description: 当前用户查询自己的单 Key 最近错误/限流事件窗口；window_hours 默认 24，最大 720。响应只基于失败调用日志聚合错误 code、错误来源、上游 HTTP 状态、限流维度和模型计数，不返回原始 IP、错误正文、完整明文 Key 或 Key 哈希。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: window_hours
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 720
+            default: 24
+          description: 分析窗口，单位小时；服务端会把小于等于 0 的值归一为 24，大于 720 的值归一为 720。
+      responses:
+        "200":
+          description: 单 Key 错误/限流事件摘要。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenEventWindow"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
   /v0/user/log:
     get:
       tags: [User Usage]
@@ -1436,6 +1468,38 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/TokenLeakWindow"
+        "404":
+          $ref: "#/components/responses/StandardNotFound"
+  /v0/admin/token/{id}/events:
+    get:
+      tags: [Admin API Key]
+      summary: 管理员 API Key 错误和限流事件摘要
+      description: 管理员跨用户查询单 Key 最近错误/限流事件窗口；window_hours 默认 24，最大 720。响应只基于失败调用日志聚合错误 code、错误来源、上游 HTTP 状态、限流维度和模型计数，不返回原始 IP、错误正文、完整明文 Key 或 Key 哈希。
+      security:
+        - UserJWT: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: window_hours
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 720
+            default: 24
+          description: 分析窗口，单位小时；服务端会把小于等于 0 的值归一为 24，大于 720 的值归一为 720。
+      responses:
+        "200":
+          description: 单 Key 错误/限流事件摘要。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenEventWindow"
         "404":
           $ref: "#/components/responses/StandardNotFound"
   /v0/admin/token/batch-disable:
@@ -5090,6 +5154,21 @@ components:
           format: date-time
           nullable: true
           description: 该值在窗口内最后出现时间。
+    TokenEventCounter:
+      type: object
+      properties:
+        value:
+          type: string
+          description: 聚合值；错误 code、错误来源、上游状态码、限流维度或模型名。
+        count:
+          type: integer
+          format: int64
+          description: 该值在窗口内出现次数。
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 该值在窗口内最后出现时间。
     TokenLeakWindow:
       type: object
       properties:
@@ -5146,6 +5225,71 @@ components:
           description: 来源 IP 的 SHA-256 摘要计数，不返回原始 IP。
           items:
             $ref: "#/components/schemas/TokenLeakWindowCounter"
+        last_used_ip_hash:
+          type: string
+          description: Token 最近来源 IP 摘要。
+        last_user_agent_hash:
+          type: string
+          description: Token 最近 User-Agent 摘要。
+    TokenEventWindow:
+      type: object
+      properties:
+        token:
+          $ref: "#/components/schemas/Token"
+        token_id:
+          type: integer
+          format: uint64
+        window_hours:
+          type: integer
+          description: 归一化后的分析窗口小时数。
+        window_start:
+          type: string
+          format: date-time
+        window_end:
+          type: string
+          format: date-time
+        event_count:
+          type: integer
+          format: int64
+          description: 窗口内失败事件总数。
+        error_count:
+          type: integer
+          format: int64
+          description: 窗口内失败日志数。
+        rate_limit_count:
+          type: integer
+          format: int64
+          description: error_code=rate_limit_exceeded 的事件数。
+        first_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_codes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenEventCounter"
+        error_sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenEventCounter"
+        upstream_statuses:
+          type: array
+          description: 上游 HTTP 状态码字符串计数；未调用上游或非上游错误不会出现。
+          items:
+            $ref: "#/components/schemas/TokenEventCounter"
+        rate_limit_dimensions:
+          type: array
+          description: 限流维度计数，例如 global、ip、token、user、model 或 channel；旧日志解析不到时为 unknown。
+          items:
+            $ref: "#/components/schemas/TokenEventCounter"
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenEventCounter"
         last_used_ip_hash:
           type: string
           description: Token 最近来源 IP 摘要。

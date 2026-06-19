@@ -172,6 +172,25 @@ type TokenLeakWindowStats struct {
 	LastUserAgentHash string
 }
 
+type TokenEventWindowStats struct {
+	Token               model.Token
+	WindowHours         int
+	WindowStart         time.Time
+	WindowEnd           time.Time
+	EventCount          int64
+	ErrorCount          int64
+	RateLimitCount      int64
+	FirstSeenAt         *time.Time
+	LastSeenAt          *time.Time
+	ErrorCodes          []TokenLeakWindowCounter
+	ErrorSources        []TokenLeakWindowCounter
+	UpstreamStatuses    []TokenLeakWindowCounter
+	RateLimitDimensions []TokenLeakWindowCounter
+	Models              []TokenLeakWindowCounter
+	LastUsedIPHash      string
+	LastUserAgentHash   string
+}
+
 type TokenLeakWindowCounter struct {
 	Value      string
 	Count      int64
@@ -1312,6 +1331,83 @@ func (s *TokenService) GetLeakWindow(id uint, windowHours int) (TokenLeakWindowS
 	return s.getLeakWindow(id, nil, windowHours)
 }
 
+func (s *TokenService) GetEventWindowForUser(id, userID uint, windowHours int) (TokenEventWindowStats, error) {
+	return s.getEventWindow(id, &userID, windowHours)
+}
+
+func (s *TokenService) GetEventWindow(id uint, windowHours int) (TokenEventWindowStats, error) {
+	return s.getEventWindow(id, nil, windowHours)
+}
+
+func (s *TokenService) getEventWindow(id uint, userID *uint, windowHours int) (TokenEventWindowStats, error) {
+	windowHours = normalizeLeakWindowHours(windowHours)
+	var token model.Token
+	query := internal.DB.Where("id = ?", id)
+	if userID != nil {
+		query = query.Where("user_id = ?", *userID)
+	}
+	if err := query.First(&token).Error; err != nil {
+		return TokenEventWindowStats{}, err
+	}
+
+	windowEnd := tokenNow()
+	windowStart := windowEnd.Add(-time.Duration(windowHours) * time.Hour)
+	stats := TokenEventWindowStats{
+		Token:               token,
+		WindowHours:         windowHours,
+		WindowStart:         windowStart,
+		WindowEnd:           windowEnd,
+		ErrorCodes:          []TokenLeakWindowCounter{},
+		ErrorSources:        []TokenLeakWindowCounter{},
+		UpstreamStatuses:    []TokenLeakWindowCounter{},
+		RateLimitDimensions: []TokenLeakWindowCounter{},
+		Models:              []TokenLeakWindowCounter{},
+		LastUsedIPHash:      token.LastUsedIPHash,
+		LastUserAgentHash:   token.LastUserAgentHash,
+	}
+
+	var logs []model.Log
+	if err := internal.DB.
+		Where("token_id = ? AND status = ? AND created_at >= ? AND created_at <= ?", id, common.LogStatusFailed, windowStart, windowEnd).
+		Order("created_at ASC, id ASC").
+		Find(&logs).Error; err != nil {
+		return TokenEventWindowStats{}, err
+	}
+	errorCodeCounters := map[string]TokenLeakWindowCounter{}
+	errorSourceCounters := map[string]TokenLeakWindowCounter{}
+	upstreamStatusCounters := map[string]TokenLeakWindowCounter{}
+	rateLimitDimensionCounters := map[string]TokenLeakWindowCounter{}
+	modelCounters := map[string]TokenLeakWindowCounter{}
+	for i := range logs {
+		log := logs[i]
+		stats.EventCount++
+		stats.ErrorCount++
+		if stats.FirstSeenAt == nil {
+			first := log.CreatedAt
+			stats.FirstSeenAt = &first
+		}
+		last := log.CreatedAt
+		stats.LastSeenAt = &last
+		addLeakWindowCounter(modelCounters, log.Model, log.CreatedAt)
+		errorCode := normalizeLogErrorCode(&log)
+		addLeakWindowCounter(errorCodeCounters, errorCode, log.CreatedAt)
+		addLeakWindowCounter(errorSourceCounters, normalizeLogErrorSource(&log), log.CreatedAt)
+		if status := normalizeLogUpstreamStatus(&log); status > 0 {
+			addLeakWindowCounter(upstreamStatusCounters, strconv.Itoa(status), log.CreatedAt)
+		}
+		if errorCode == "rate_limit_exceeded" {
+			stats.RateLimitCount++
+			addLeakWindowCounter(rateLimitDimensionCounters, rateLimitDimensionFromPolicySnapshot(log.PolicySnapshot), log.CreatedAt)
+		}
+	}
+	stats.ErrorCodes = sortedLeakWindowCounters(errorCodeCounters)
+	stats.ErrorSources = sortedLeakWindowCounters(errorSourceCounters)
+	stats.UpstreamStatuses = sortedLeakWindowCounters(upstreamStatusCounters)
+	stats.RateLimitDimensions = sortedLeakWindowCounters(rateLimitDimensionCounters)
+	stats.Models = sortedLeakWindowCounters(modelCounters)
+	return stats, nil
+}
+
 func (s *TokenService) getLeakWindow(id uint, userID *uint, windowHours int) (TokenLeakWindowStats, error) {
 	windowHours = normalizeLeakWindowHours(windowHours)
 	var token model.Token
@@ -1417,6 +1513,40 @@ func sortedLeakWindowCounters(counters map[string]TokenLeakWindowCounter) []Toke
 		return items[i].Value < items[j].Value
 	})
 	return items
+}
+
+func rateLimitDimensionFromPolicySnapshot(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "unknown"
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return "unknown"
+	}
+	if rateLimitSnapshot, ok := snapshot["rate_limit_snapshot"].(map[string]interface{}); ok {
+		if dimension := normalizedStringValue(rateLimitSnapshot["dimension"]); dimension != "" {
+			return dimension
+		}
+	}
+	if scopeResult, ok := snapshot["scope_result"].(map[string]interface{}); ok {
+		if dimension := normalizedStringValue(scopeResult["rate_limit_dimension"]); dimension != "" {
+			return dimension
+		}
+	}
+	return "unknown"
+}
+
+func normalizedStringValue(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.ToLower(strings.TrimSpace(typed))
+	default:
+		return strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+	}
 }
 
 func (s *TokenService) ListRisk(filter TokenRiskFilter) ([]TokenRiskItem, int64, error) {

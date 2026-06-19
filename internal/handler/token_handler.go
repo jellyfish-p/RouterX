@@ -356,6 +356,24 @@ func (h *TokenHandler) LeakWindow(c *gin.Context) {
 	common.Success(c, tokenLeakWindowResponse(stats))
 }
 
+func (h *TokenHandler) EventWindow(c *gin.Context) {
+	user, ok := currentUser(c)
+	if !ok {
+		common.FailWithStatus(c, 401, "未登录或登录已过期")
+		return
+	}
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	stats, err := h.svc.GetEventWindowForUser(id, user.ID, queryInt(c, "window_hours", 24))
+	if err != nil {
+		common.FailWithStatus(c, 404, "API Key 不存在")
+		return
+	}
+	common.Success(c, tokenEventWindowResponse(stats))
+}
+
 func (h *TokenHandler) AdminList(c *gin.Context) {
 	page := queryInt(c, "page", 1)
 	pageSize := queryInt(c, "page_size", 20)
@@ -433,6 +451,19 @@ func (h *TokenHandler) AdminLeakWindow(c *gin.Context) {
 		return
 	}
 	common.Success(c, tokenLeakWindowResponse(stats))
+}
+
+func (h *TokenHandler) AdminEventWindow(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	stats, err := h.svc.GetEventWindow(id, queryInt(c, "window_hours", 24))
+	if err != nil {
+		common.FailWithStatus(c, 404, "API Key 不存在")
+		return
+	}
+	common.Success(c, tokenEventWindowResponse(stats))
 }
 
 func (h *TokenHandler) BatchDisable(c *gin.Context) {
@@ -601,10 +632,44 @@ func tokenLeakWindowResponse(stats service.TokenLeakWindowStats) dto.TokenLeakWi
 	}
 }
 
+func tokenEventWindowResponse(stats service.TokenEventWindowStats) dto.TokenEventWindowResponse {
+	return dto.TokenEventWindowResponse{
+		Token:               dto.TokenFromModel(stats.Token),
+		TokenID:             stats.Token.ID,
+		WindowHours:         stats.WindowHours,
+		WindowStart:         stats.WindowStart,
+		WindowEnd:           stats.WindowEnd,
+		EventCount:          stats.EventCount,
+		ErrorCount:          stats.ErrorCount,
+		RateLimitCount:      stats.RateLimitCount,
+		FirstSeenAt:         stats.FirstSeenAt,
+		LastSeenAt:          stats.LastSeenAt,
+		ErrorCodes:          tokenEventWindowCounters(stats.ErrorCodes),
+		ErrorSources:        tokenEventWindowCounters(stats.ErrorSources),
+		UpstreamStatuses:    tokenEventWindowCounters(stats.UpstreamStatuses),
+		RateLimitDimensions: tokenEventWindowCounters(stats.RateLimitDimensions),
+		Models:              tokenEventWindowCounters(stats.Models),
+		LastUsedIPHash:      stats.LastUsedIPHash,
+		LastUserAgentHash:   stats.LastUserAgentHash,
+	}
+}
+
 func tokenLeakWindowCounters(items []service.TokenLeakWindowCounter) []dto.TokenLeakWindowCounterResponse {
 	out := make([]dto.TokenLeakWindowCounterResponse, 0, len(items))
 	for _, item := range items {
 		out = append(out, dto.TokenLeakWindowCounterResponse{
+			Value:      item.Value,
+			Count:      item.Count,
+			LastSeenAt: item.LastSeenAt,
+		})
+	}
+	return out
+}
+
+func tokenEventWindowCounters(items []service.TokenLeakWindowCounter) []dto.TokenEventCounterResponse {
+	out := make([]dto.TokenEventCounterResponse, 0, len(items))
+	for _, item := range items {
+		out = append(out, dto.TokenEventCounterResponse{
 			Value:      item.Value,
 			Count:      item.Count,
 			LastSeenAt: item.LastSeenAt,

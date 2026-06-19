@@ -1790,6 +1790,109 @@ func TestAPIKeyLeakWindowSummarizesRecentUse(t *testing.T) {
 	}
 }
 
+func TestAPIKeyEventWindowSummarizesErrorsAndRateLimits(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenSvc := service.NewTokenService()
+	targetToken, err := tokenSvc.Create(root.ID, "event-window-key", 1000, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainKey := targetToken.Key
+	targetTokenID := targetToken.ID
+	otherToken, err := tokenSvc.Create(root.ID, "event-window-other", 1000, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTokenID := otherToken.ID
+
+	now := time.Now()
+	logs := []model.Log{
+		{UserID: root.ID, TokenID: &targetTokenID, Model: "gpt-event", Status: common.LogStatusSuccess, TotalTokens: 3, QuotaUsed: 3, IP: "10.0.9.1", CreatedAt: now.Add(-50 * time.Minute)},
+		{UserID: root.ID, TokenID: &targetTokenID, Model: "gpt-event", Status: common.LogStatusFailed, ErrorCode: "upstream_timeout", ErrorSource: "upstream", UpstreamStatus: http.StatusGatewayTimeout, ErrorMsg: "upstream timeout with secret-ish detail", IP: "10.0.9.2", CreatedAt: now.Add(-40 * time.Minute)},
+		{UserID: root.ID, TokenID: &targetTokenID, Model: "gpt-event", Status: common.LogStatusFailed, ErrorCode: "rate_limit_exceeded", ErrorSource: "route", PolicySnapshot: `{"scope_result":{"rate_limit":"deny","rate_limit_dimension":"token"},"rate_limit_snapshot":{"dimension":"token","limit":1,"current":2,"remaining":0,"decision":"deny"}}`, IP: "10.0.9.3", CreatedAt: now.Add(-30 * time.Minute)},
+		{UserID: root.ID, TokenID: &targetTokenID, Model: "gpt-old", Status: common.LogStatusFailed, ErrorCode: "upstream_500", ErrorSource: "upstream", UpstreamStatus: http.StatusInternalServerError, CreatedAt: now.Add(-48 * time.Hour)},
+		{UserID: root.ID, TokenID: &otherTokenID, Model: "gpt-other", Status: common.LogStatusFailed, ErrorCode: "rate_limit_exceeded", ErrorSource: "route", PolicySnapshot: `{"scope_result":{"rate_limit":"deny","rate_limit_dimension":"ip"}}`, CreatedAt: now.Add(-20 * time.Minute)},
+	}
+	if err := internal.DB.Create(&logs).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	eventResp := performJSON(r, http.MethodGet, "/v0/user/token/"+uintString(targetTokenID)+"/events?window_hours=24", rootJWT, nil)
+	var payload struct {
+		Data struct {
+			Token struct {
+				ID   uint   `json:"id"`
+				Name string `json:"name"`
+			} `json:"token"`
+			EventCount     int64 `json:"event_count"`
+			ErrorCount     int64 `json:"error_count"`
+			RateLimitCount int64 `json:"rate_limit_count"`
+			ErrorCodes     []struct {
+				Value string `json:"value"`
+				Count int64  `json:"count"`
+			} `json:"error_codes"`
+			ErrorSources []struct {
+				Value string `json:"value"`
+				Count int64  `json:"count"`
+			} `json:"error_sources"`
+			UpstreamStatuses []struct {
+				Value string `json:"value"`
+				Count int64  `json:"count"`
+			} `json:"upstream_statuses"`
+			RateLimitDimensions []struct {
+				Value string `json:"value"`
+				Count int64  `json:"count"`
+			} `json:"rate_limit_dimensions"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(eventResp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("event window response should be json: %v", err)
+	}
+	if eventResp.Code != http.StatusOK {
+		t.Fatalf("event window should succeed, got %d %s", eventResp.Code, eventResp.Body.String())
+	}
+	data := payload.Data
+	if data.Token.ID != targetTokenID || data.Token.Name != "event-window-key" || data.EventCount != 2 || data.ErrorCount != 2 || data.RateLimitCount != 1 {
+		t.Fatalf("event window should summarize only recent failed logs for the token, got %+v", data)
+	}
+	if len(data.ErrorCodes) != 2 || data.ErrorCodes[0].Value != "rate_limit_exceeded" || data.ErrorCodes[1].Value != "upstream_timeout" {
+		t.Fatalf("event window should aggregate stable error codes, got %+v", data.ErrorCodes)
+	}
+	if len(data.ErrorSources) != 2 || data.ErrorSources[0].Value != "route" || data.ErrorSources[1].Value != "upstream" {
+		t.Fatalf("event window should aggregate error sources, got %+v", data.ErrorSources)
+	}
+	if len(data.UpstreamStatuses) != 1 || data.UpstreamStatuses[0].Value != "504" || data.UpstreamStatuses[0].Count != 1 {
+		t.Fatalf("event window should aggregate upstream status codes, got %+v", data.UpstreamStatuses)
+	}
+	if len(data.RateLimitDimensions) != 1 || data.RateLimitDimensions[0].Value != "token" || data.RateLimitDimensions[0].Count != 1 {
+		t.Fatalf("event window should aggregate rate limit dimensions, got %+v", data.RateLimitDimensions)
+	}
+	body := eventResp.Body.String()
+	if strings.Contains(body, "10.0.9.") || strings.Contains(body, plainKey) || strings.Contains(body, "sk-") || strings.Contains(body, "secret-ish") {
+		t.Fatalf("event window should not expose raw IPs, plaintext keys or error messages: %s", body)
+	}
+
+	adminResp := performJSON(r, http.MethodGet, "/v0/admin/token/"+uintString(targetTokenID)+"/events?window_hours=24", rootJWT, nil)
+	if adminResp.Code != http.StatusOK || !strings.Contains(adminResp.Body.String(), `"event_count":2`) {
+		t.Fatalf("admin event window should return token summary, got %d %s", adminResp.Code, adminResp.Body.String())
+	}
+}
+
 func TestAdminAPIKeyBatchExpire(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	r := newTestRouter(t)
