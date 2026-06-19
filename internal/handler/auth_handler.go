@@ -135,6 +135,65 @@ func (h *AuthHandler) OAuthCallback(c *gin.Context) {
 	common.Success(c, dto.LoginResponse{Token: token, User: dto.UserBriefFromModel(user)})
 }
 
+// GET /v0/user/oidc/:provider/login — 发起 OIDC 登录。
+func (h *AuthHandler) OIDCLogin(c *gin.Context) {
+	provider := c.Param("provider")
+	state, err := common.GenerateRandomString(24)
+	if err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "生成 OIDC state 失败")
+		return
+	}
+	nonce, err := common.GenerateRandomString(24)
+	if err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "生成 OIDC nonce 失败")
+		return
+	}
+	location, err := h.svc.OIDCLoginURL(provider, state, nonce, oidcCallbackURL(c, provider))
+	if err != nil {
+		common.FailWithStatus(c, http.StatusForbidden, err.Error())
+		return
+	}
+	setOIDCStateCookie(c, provider, state, 10*60)
+	setOIDCNonceCookie(c, provider, nonce, 10*60)
+	c.Redirect(http.StatusFound, location)
+}
+
+// GET /v0/user/oidc/:provider/callback — 处理 OIDC 回调并登录已绑定身份。
+func (h *AuthHandler) OIDCCallback(c *gin.Context) {
+	provider := c.Param("provider")
+	state := strings.TrimSpace(c.Query("state"))
+	code := strings.TrimSpace(c.Query("code"))
+	cookieState, err := c.Cookie(oidcStateCookieName(provider))
+	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(cookieState)) != 1 {
+		common.FailWithStatus(c, http.StatusBadRequest, "OIDC state 无效或已过期")
+		return
+	}
+	nonce, err := c.Cookie(oidcNonceCookieName(provider))
+	if err != nil || strings.TrimSpace(nonce) == "" {
+		common.FailWithStatus(c, http.StatusBadRequest, "OIDC nonce 无效或已过期")
+		return
+	}
+	setOIDCStateCookie(c, provider, "", -1)
+	setOIDCNonceCookie(c, provider, "", -1)
+
+	user, token, err := h.svc.OIDCCallbackLogin(provider, code, oidcCallbackURL(c, provider), nonce)
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, service.ErrOIDCIdentityNotBound) || errors.Is(err, service.ErrOIDCProviderDisabled) {
+			status = http.StatusForbidden
+		} else if errors.Is(err, service.ErrOIDCInvalidCallback) {
+			status = http.StatusBadRequest
+		}
+		common.FailWithStatus(c, status, err.Error())
+		return
+	}
+	if err := h.recordLoginAudit(c, user); err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.LoginResponse{Token: token, User: dto.UserBriefFromModel(user)})
+}
+
 // GET /v0/user/oauth/:provider/bind — 登录用户发起 OAuth 身份绑定。
 func (h *AuthHandler) OAuthBind(c *gin.Context) {
 	user, ok := currentUser(c)
@@ -350,6 +409,16 @@ func setOAuthStateCookie(c *gin.Context, provider, state string, maxAge int) {
 	c.SetCookie(oauthStateCookieName(provider), state, maxAge, "/v0/user/oauth/"+provider, "", c.Request.TLS != nil, true)
 }
 
+func setOIDCStateCookie(c *gin.Context, provider, state string, maxAge int) {
+	c.SetSameSite(2)
+	c.SetCookie(oidcStateCookieName(provider), state, maxAge, "/v0/user/oidc/"+provider, "", c.Request.TLS != nil, true)
+}
+
+func setOIDCNonceCookie(c *gin.Context, provider, nonce string, maxAge int) {
+	c.SetSameSite(2)
+	c.SetCookie(oidcNonceCookieName(provider), nonce, maxAge, "/v0/user/oidc/"+provider, "", c.Request.TLS != nil, true)
+}
+
 func setOAuthBindCookie(c *gin.Context, provider, state string, userID uint, maxAge int) error {
 	value := ""
 	if maxAge >= 0 {
@@ -393,6 +462,14 @@ func oauthStateCookieName(provider string) string {
 
 func oauthBindCookieName(provider string) string {
 	return "routerx_oauth_bind_" + strings.ToLower(strings.TrimSpace(provider))
+}
+
+func oidcStateCookieName(provider string) string {
+	return "routerx_oidc_state_" + strings.ToLower(strings.TrimSpace(provider))
+}
+
+func oidcNonceCookieName(provider string) string {
+	return "routerx_oidc_nonce_" + strings.ToLower(strings.TrimSpace(provider))
 }
 
 func oauthBindSignature(provider, state string, userID uint) (string, error) {
@@ -439,6 +516,22 @@ func oauthBindCallbackURL(c *gin.Context, provider string) string {
 		host = "localhost"
 	}
 	return scheme + "://" + host + "/v0/user/oauth/" + provider + "/bind/callback"
+}
+
+func oidcCallbackURL(c *gin.Context, provider string) string {
+	scheme := c.GetHeader("X-Forwarded-Proto")
+	if scheme == "" {
+		if c.Request != nil && c.Request.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := c.Request.Host
+	if host == "" {
+		host = "localhost"
+	}
+	return scheme + "://" + host + "/v0/user/oidc/" + provider + "/callback"
 }
 
 func currentUser(c *gin.Context) (*model.User, bool) {

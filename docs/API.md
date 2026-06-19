@@ -708,6 +708,8 @@ Provider 退款请求：
 | GET | `/v0/user/oauth/:provider/callback` | 基础实现 | OAuth 回调；校验 state Cookie，使用 provider token/userinfo 接口解析稳定 id/sub，只允许已绑定 `oauth/provider/identifier` 身份登录并写 `user.login` 审计；相同 email 不自动绑定 |
 | GET | `/v0/user/oauth/:provider/bind` | 基础实现 | 登录用户发起 OAuth identity 绑定；写入 state Cookie 和签名 bind Cookie 后跳转 provider，bind Cookie 只用于证明本次绑定由当前用户发起 |
 | GET | `/v0/user/oauth/:provider/bind/callback` | 基础实现 | OAuth 绑定回调；校验 state 与签名 bind Cookie 后创建或刷新 `oauth/provider/identifier` 身份；同一第三方 subject 已绑定其他用户时返回 409 |
+| GET | `/v0/user/oidc/:provider/login` | 基础实现 | OIDC 授权跳转；检查 `auth.login.oidc.enabled` 和 `oidc.{provider}.enabled`，读取 Discovery 后生成 state/nonce Cookie 并跳转 authorization endpoint |
+| GET | `/v0/user/oidc/:provider/callback` | 基础实现 | OIDC 回调；校验 state/nonce、RS256 ID Token 签名、iss、aud、exp 和 sub，只允许已绑定 `oidc/provider/sub` 身份登录并写 `user.login` 审计 |
 | GET | `/v0/user/identities` | 已实现 | 当前用户身份列表；只返回身份元数据，不返回密码哈希、JWT 或 API Key |
 | DELETE | `/v0/user/identities/:id` | 已实现 | 当前用户解绑非 `username/local` 主身份；软删除目标 identity，解绑后该身份不能继续登录，并写 `user.identity_unbound` 审计 |
 | GET | `/v0/user/self` | 已实现 | 获取个人信息 |
@@ -758,6 +760,8 @@ OAuth 基础登录当前用于已绑定第三方身份的登录闭环。`GET /v0
 OAuth 绑定由已登录用户通过 `GET /v0/user/oauth/:provider/bind` 发起。该接口需要 User JWT，会同时写入 state Cookie 和签名 bind Cookie；bind Cookie 用 `jwt.secret` 对 provider、state 和 user_id 签名，只用于回调时确认本次绑定由哪个本地用户发起。`GET /v0/user/oauth/:provider/bind/callback` 校验 state 和签名后，仍只使用 userinfo 的稳定 `id` 或 `sub` 创建 `user_identities(method=oauth, provider, identifier)`，不会按 email 自动绑定；同一 provider subject 已属于其他用户时返回 409。首次补齐注册、注销账号恢复和完整 OIDC 流程仍按 `docs/ACCOUNTS.md` 后续扩展。
 
 用户身份管理通过 `GET /v0/user/identities` 和 `DELETE /v0/user/identities/:id` 暴露。列表接口只返回当前用户未解绑的身份元数据；解绑接口只允许删除当前用户名下的非 `username/local` 主身份，采用软删除保留历史事实，成功后写入 `user.identity_unbound` 审计。解绑后的 OAuth/OIDC identity 不再可用于登录。
+
+OIDC 基础登录当前用于已绑定企业身份的登录闭环。`GET /v0/user/oidc/:provider/login` 会读取 `oidc.{provider}.issuer/client_id/client_secret/scopes`，通过 issuer Discovery 获取 `authorization_endpoint`、`token_endpoint` 和 `jwks_uri`，生成 state 与 nonce 后返回 302。`GET /v0/user/oidc/:provider/callback` 要求 state 与 Cookie 匹配，并校验 ID Token 的 RS256 签名、`iss`、`aud`、`exp`、`nonce` 和 `sub`，只用 `sub` 查询 `user_identities(method=oidc, provider, identifier)`。未绑定 subject 返回 403，相同 email 不会自动绑定或接管。OIDC 首次补齐注册、注销账号恢复和 OIDC 绑定入口仍按 `docs/ACCOUNTS.md` 后续扩展。
 
 ### API Key
 

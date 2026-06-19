@@ -25,6 +25,8 @@ func setupUserRoutes(
 		api.GET("/oauth/:provider/login", authH.OAuthLogin)
 		api.GET("/oauth/:provider/callback", authH.OAuthCallback)
 		api.GET("/oauth/:provider/bind/callback", authH.OAuthBindCallback)
+		api.GET("/oidc/:provider/login", authH.OIDCLogin)
+		api.GET("/oidc/:provider/callback", authH.OIDCCallback)
 
 		jwtRequired := api.Group("")
 		jwtRequired.Use(middleware.UserJwtAuthRequired())

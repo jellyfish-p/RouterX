@@ -3,15 +3,20 @@ package router
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/hmac"
 	"crypto/md5"
+	cryptorand "crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log"
+	"math/big"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -459,7 +464,9 @@ func TestApifoxOpenAPISecurityMatchesRouteGroups(t *testing.T) {
 
 func isPublicUserOperation(path string) bool {
 	switch path {
-	case "/v0/user/register", "/v0/user/login", "/v0/user/oauth/{provider}/login", "/v0/user/oauth/{provider}/callback", "/v0/user/oauth/{provider}/bind/callback":
+	case "/v0/user/register", "/v0/user/login",
+		"/v0/user/oauth/{provider}/login", "/v0/user/oauth/{provider}/callback", "/v0/user/oauth/{provider}/bind/callback",
+		"/v0/user/oidc/{provider}/login", "/v0/user/oidc/{provider}/callback":
 		return true
 	default:
 		return false
@@ -791,6 +798,8 @@ func TestTraceabilityP2EnterpriseIdentityEvidenceIncludesConcreteOAuthTests(t *t
 		"TestOAuthBindCallbackRejectsIdentityBoundToAnotherUser",
 		"TestUserIdentityListAndUnbindOAuthIdentity",
 		"TestUserIdentityUnbindRejectsPrimaryUsernameIdentity",
+		"TestOIDCCallbackLogsInBoundIdentityWithNonceAndSignedIDToken",
+		"TestOIDCCallbackRejectsTamperedOrMismatchedNonceIDToken",
 	}
 	issues := make([]string, 0)
 	for _, testName := range requiredTests {
@@ -3910,6 +3919,297 @@ func TestUserIdentityUnbindRejectsPrimaryUsernameIdentity(t *testing.T) {
 	}
 	if identityCount != 1 {
 		t.Fatalf("primary username identity should remain active, got %d", identityCount)
+	}
+}
+
+func TestOIDCCallbackLogsInBoundIdentityWithNonceAndSignedIDToken(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "oidc-user",
+		"password":     "password123",
+		"display_name": "OIDC User",
+		"email":        "oidc-user@example.com",
+		"role":         common.RoleUser,
+		"quota":        10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "oidc-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := internal.DB.Create(&model.UserIdentity{
+		UserID:     user.ID,
+		Method:     model.UserIdentityMethodOIDC,
+		Provider:   "corp",
+		Identifier: "oidc-sub-123",
+		VerifiedAt: &now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	key := newOIDCTestRSAKey(t)
+	var issuedNonce string
+	provider := newOIDCTestProvider(t, key, func(issuer string, req *http.Request) string {
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if req.Form.Get("code") != "oidc-code" {
+			t.Fatalf("unexpected oidc code: %s", req.Form.Get("code"))
+		}
+		if req.Form.Get("client_id") != "routerx-oidc-client" {
+			t.Fatalf("unexpected oidc client_id: %s", req.Form.Get("client_id"))
+		}
+		return signedOIDCIDToken(t, key, oidcTestKeyID, issuer, "routerx-oidc-client", "oidc-sub-123", issuedNonce)
+	})
+	defer provider.Close()
+	configureOIDCProvider(t, "corp", provider.URL)
+
+	loginResp := performJSON(r, http.MethodGet, "/v0/user/oidc/corp/login", "", nil)
+	if loginResp.Code != http.StatusFound {
+		t.Fatalf("oidc login should redirect to provider, got %d %s", loginResp.Code, loginResp.Body.String())
+	}
+	location, err := url.Parse(loginResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := location.Query().Get("state")
+	issuedNonce = location.Query().Get("nonce")
+	if state == "" || issuedNonce == "" || location.Query().Get("response_type") != "code" || location.Query().Get("client_id") != "routerx-oidc-client" {
+		t.Fatalf("oidc redirect should include state, nonce, response_type and client_id, got %s", loginResp.Header().Get("Location"))
+	}
+	if !strings.Contains(location.Query().Get("scope"), "openid") || !strings.Contains(location.Query().Get("redirect_uri"), "/v0/user/oidc/corp/callback") {
+		t.Fatalf("oidc redirect should request openid scope and callback URL, got %s", loginResp.Header().Get("Location"))
+	}
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oidc/corp/callback?state="+url.QueryEscape(state)+"&code=oidc-code", nil)
+	for _, cookie := range loginResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+	if callbackResp.Code != http.StatusOK {
+		t.Fatalf("oidc callback should login bound identity, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+	if !strings.Contains(callbackResp.Body.String(), `"token"`) || !strings.Contains(callbackResp.Body.String(), `"username":"oidc-user"`) {
+		t.Fatalf("oidc callback should issue user jwt for bound identity: %s", callbackResp.Body.String())
+	}
+	var identity model.UserIdentity
+	if err := internal.DB.Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOIDC, "corp", "oidc-sub-123").First(&identity).Error; err != nil {
+		t.Fatal(err)
+	}
+	if identity.LastUsedAt == nil {
+		t.Fatalf("oidc identity last_used_at should be updated")
+	}
+	var auditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "user.login", "user", strconv.FormatUint(uint64(user.ID), 10)).
+		Count(&auditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if auditCount == 0 {
+		t.Fatalf("oidc login should write user.login audit log")
+	}
+}
+
+func TestOIDCCallbackRejectsTamperedOrMismatchedNonceIDToken(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "oidc-invalid-user",
+		"password":     "password123",
+		"display_name": "OIDC Invalid User",
+		"email":        "oidc-invalid-user@example.com",
+		"role":         common.RoleUser,
+		"quota":        10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "oidc-invalid-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := internal.DB.Create(&model.UserIdentity{
+		UserID:     user.ID,
+		Method:     model.UserIdentityMethodOIDC,
+		Provider:   "corp",
+		Identifier: "oidc-sub-invalid",
+		VerifiedAt: &now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	key := newOIDCTestRSAKey(t)
+	wrongKey := newOIDCTestRSAKey(t)
+	issuedNonce := ""
+	provider := newOIDCTestProvider(t, key, func(issuer string, req *http.Request) string {
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		switch req.Form.Get("code") {
+		case "bad-signature":
+			return signedOIDCIDToken(t, wrongKey, oidcTestKeyID, issuer, "routerx-oidc-client", "oidc-sub-invalid", issuedNonce)
+		case "bad-nonce":
+			return signedOIDCIDToken(t, key, oidcTestKeyID, issuer, "routerx-oidc-client", "oidc-sub-invalid", "different-nonce")
+		default:
+			t.Fatalf("unexpected oidc code: %s", req.Form.Get("code"))
+		}
+		return ""
+	})
+	defer provider.Close()
+	configureOIDCProvider(t, "corp", provider.URL)
+
+	for _, code := range []string{"bad-signature", "bad-nonce"} {
+		loginResp := performJSON(r, http.MethodGet, "/v0/user/oidc/corp/login", "", nil)
+		if loginResp.Code != http.StatusFound {
+			t.Fatalf("oidc login should redirect before %s case, got %d %s", code, loginResp.Code, loginResp.Body.String())
+		}
+		location, err := url.Parse(loginResp.Header().Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := location.Query().Get("state")
+		issuedNonce = location.Query().Get("nonce")
+		callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oidc/corp/callback?state="+url.QueryEscape(state)+"&code="+url.QueryEscape(code), nil)
+		for _, cookie := range loginResp.Result().Cookies() {
+			callbackReq.AddCookie(cookie)
+		}
+		callbackResp := httptest.NewRecorder()
+		r.ServeHTTP(callbackResp, callbackReq)
+		if callbackResp.Code != http.StatusBadRequest {
+			t.Fatalf("oidc callback should reject %s id_token, got %d %s", code, callbackResp.Code, callbackResp.Body.String())
+		}
+	}
+}
+
+const oidcTestKeyID = "routerx-oidc-test-key"
+
+func configureOIDCProvider(t *testing.T, provider, issuer string) {
+	t.Helper()
+	settingSvc := service.NewSettingService()
+	values := map[string]string{
+		"auth.login.oidc.enabled":             "true",
+		"oidc." + provider + ".enabled":       "true",
+		"oidc." + provider + ".issuer":        issuer,
+		"oidc." + provider + ".client_id":     "routerx-oidc-client",
+		"oidc." + provider + ".client_secret": "routerx-oidc-secret",
+		"oidc." + provider + ".scopes":        "openid profile email",
+	}
+	for key, value := range values {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+}
+
+func newOIDCTestProvider(t *testing.T, key *rsa.PrivateKey, tokenFn func(issuer string, req *http.Request) string) *httptest.Server {
+	t.Helper()
+	var issuer string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/.well-known/openid-configuration":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"issuer":                 issuer,
+				"authorization_endpoint": issuer + "/authorize",
+				"token_endpoint":         issuer + "/token",
+				"jwks_uri":               issuer + "/jwks",
+			})
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"id_token":   tokenFn(issuer, req),
+				"token_type": "Bearer",
+			})
+		case "/jwks":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"keys": []interface{}{oidcRSAJWK(&key.PublicKey, oidcTestKeyID)},
+			})
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	issuer = server.URL
+	return server
+}
+
+func newOIDCTestRSAKey(t *testing.T) *rsa.PrivateKey {
+	t.Helper()
+	key, err := rsa.GenerateKey(cryptorand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
+func signedOIDCIDToken(t *testing.T, key *rsa.PrivateKey, kid, issuer, audience, subject, nonce string) string {
+	t.Helper()
+	header := map[string]interface{}{
+		"alg": "RS256",
+		"kid": kid,
+		"typ": "JWT",
+	}
+	claims := map[string]interface{}{
+		"iss":   issuer,
+		"aud":   audience,
+		"sub":   subject,
+		"nonce": nonce,
+		"iat":   time.Now().Add(-time.Minute).Unix(),
+		"exp":   time.Now().Add(time.Hour).Unix(),
+	}
+	signingInput := oidcJWTPart(t, header) + "." + oidcJWTPart(t, claims)
+	digest := sha256.Sum256([]byte(signingInput))
+	signature, err := rsa.SignPKCS1v15(cryptorand.Reader, key, crypto.SHA256, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(signature)
+}
+
+func oidcJWTPart(t *testing.T, value interface{}) string {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func oidcRSAJWK(pub *rsa.PublicKey, kid string) map[string]string {
+	exponent := big.NewInt(int64(pub.E)).Bytes()
+	return map[string]string{
+		"kty": "RSA",
+		"use": "sig",
+		"kid": kid,
+		"alg": "RS256",
+		"n":   base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(exponent),
 	}
 }
 
