@@ -5870,22 +5870,32 @@ components:
     AdminAuditLogInfo:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
+        id:
+          type: integer
+          format: uint64
+          description: 管理审计日志内部 ID。
         request_id:
           type: string
           nullable: true
-        actor_user_id: { type: integer, format: uint64 }
+          description: 关联的 HTTP 请求追踪 ID；可用于串联访问日志、调用日志和审计日志。
+        actor_user_id:
+          type: integer
+          format: uint64
+          description: 执行该管理动作的用户 ID。
         actor_role:
           type: integer
           description: 1=admin，2=super admin。
         action:
           type: string
+          description: 管理动作标识，通常采用 resource.verb 格式。
           example: channel.update
         resource_type:
           type: string
+          description: 被操作资源类型。
           example: channel
         resource_id:
           type: string
+          description: 被操作资源 ID；无单一资源时可为空或为聚合标识。
           example: "1"
         before_summary:
           type: string
@@ -5896,12 +5906,20 @@ components:
         result:
           type: string
           enum: [success, failed, denied]
+          description: 管理动作结果。
         error_code:
           type: string
           description: 失败或拒绝时的稳定 code。
-        ip: { type: string }
-        user_agent: { type: string }
-        created_at: { type: string, format: date-time }
+        ip:
+          type: string
+          description: 执行动作时记录的客户端 IP。
+        user_agent:
+          type: string
+          description: 执行动作时记录的 User-Agent。
+        created_at:
+          type: string
+          format: date-time
+          description: 审计日志创建时间。
     AdminAuditLogPage:
       allOf:
         - $ref: "#/components/schemas/PaginatedResult"
@@ -5914,32 +5932,43 @@ components:
     AlertEventInfo:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
+        id:
+          type: integer
+          format: uint64
+          description: 告警事件内部 ID。
         type:
           type: string
+          description: 告警类型标识。
           example: api_key.leak_reported
         severity:
           type: string
           enum: [critical, warning, info]
+          description: 告警严重级别。
         status:
           type: string
           enum: [open, acknowledged]
+          description: 告警处理状态。
         resource_type:
           type: string
+          description: 触发告警的资源类型。
           example: api_key
         resource_id:
           type: string
+          description: 触发告警的资源 ID。
           example: "1"
         user_id:
           type: integer
           format: uint64
           nullable: true
+          description: 告警关联用户 ID；无法关联到具体用户时为空。
         token_id:
           type: integer
           format: uint64
           nullable: true
+          description: 告警关联 API Key 内部 Token ID；非 Key 类告警时为空。
         title:
           type: string
+          description: 告警标题，用于控制台列表和通知摘要。
           example: API Key leak reported
         message:
           type: string
@@ -5947,17 +5976,26 @@ components:
         details:
           type: object
           nullable: true
+          description: 脱敏后的告警上下文，供控制台展开查看和排查。
           additionalProperties: true
         acked_at:
           type: string
           format: date-time
           nullable: true
+          description: 告警被确认的时间；未确认时为空。
         acked_by_user_id:
           type: integer
           format: uint64
           nullable: true
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
+          description: 确认该告警的管理用户 ID；未确认时为空。
+        created_at:
+          type: string
+          format: date-time
+          description: 告警创建时间。
+        updated_at:
+          type: string
+          format: date-time
+          description: 告警最近更新时间。
     AlertEventPage:
       allOf:
         - $ref: "#/components/schemas/PaginatedResult"
@@ -5970,7 +6008,10 @@ components:
     AlertDeliveryOutboxInfo:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
+        id:
+          type: integer
+          format: uint64
+          description: 告警投递 outbox 内部 ID。
         alert_id:
           type: integer
           format: uint64
@@ -5978,9 +6019,11 @@ components:
         target:
           type: string
           enum: [webhook, email, im]
+          description: 告警投递目标类型。
         status:
           type: string
           enum: [pending, completed, failed]
+          description: 当前投递状态。
         attempts:
           type: integer
           description: 已尝试投递次数。
@@ -5990,12 +6033,20 @@ components:
         next_attempt_at:
           type: string
           format: date-time
+          description: 下一次计划投递时间。
         completed_at:
           type: string
           format: date-time
           nullable: true
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
+          description: 投递完成时间；未完成时为空。
+        created_at:
+          type: string
+          format: date-time
+          description: outbox 记录创建时间。
+        updated_at:
+          type: string
+          format: date-time
+          description: outbox 记录最近更新时间。
     AlertDeliveryOutboxPage:
       allOf:
         - $ref: "#/components/schemas/PaginatedResult"
@@ -7363,17 +7414,39 @@ components:
     DashboardStats:
       type: object
       properties:
-        user_count: { type: integer, format: int64 }
-        channel_count: { type: integer, format: int64 }
-        token_count: { type: integer, format: int64 }
-        today_call_count: { type: integer, format: int64 }
-        today_quota_used: { type: integer, format: int64 }
-        active_channel_count: { type: integer, format: int64 }
-        ready: { type: boolean }
+        user_count:
+          type: integer
+          format: int64
+          description: 当前系统用户数量。
+        channel_count:
+          type: integer
+          format: int64
+          description: 当前系统通道数量。
+        token_count:
+          type: integer
+          format: int64
+          description: 当前系统 API Key 数量。
+        today_call_count:
+          type: integer
+          format: int64
+          description: 当日调用次数。
+        today_quota_used:
+          type: integer
+          format: int64
+          description: 当日已消耗额度。
+        active_channel_count:
+          type: integer
+          format: int64
+          description: 当前启用通道数量。
+        ready:
+          type: boolean
+          description: 后端关键依赖是否满足可用条件。
         ready_status:
           type: string
           enum: [ready, not_ready]
+          description: 面向控制台展示的整体就绪状态。
         dependencies:
+          description: 影响 ready 状态的依赖明细。
           $ref: "#/components/schemas/DashboardDependencies"
     DashboardDependencies:
       type: object
