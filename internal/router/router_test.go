@@ -17115,6 +17115,109 @@ func TestImageMultipartRejectsInvalidSizeBeforeUpstream(t *testing.T) {
 	}
 }
 
+func TestMultipartRejectsMissingRequiredFileBeforeUpstream(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"multipart-should-not-run","data":[{"url":"https://example.invalid/should-not-run"}]}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "multipart-required-file",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "multipart-required-file",
+		"models":   "gpt-multipart-required",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	for _, tc := range []struct {
+		endpoint   string
+		withPrompt bool
+	}{
+		{endpoint: "/v1/images/edits", withPrompt: true},
+		{endpoint: "/v1/images/variations"},
+		{endpoint: "/v1/audio/transcriptions"},
+		{endpoint: "/v1/audio/translations"},
+	} {
+		var reqBody bytes.Buffer
+		writer := multipart.NewWriter(&reqBody)
+		if err := writer.WriteField("model", "gpt-multipart-required"); err != nil {
+			t.Fatal(err)
+		}
+		if tc.withPrompt {
+			if err := writer.WriteField("prompt", "draw a tidy router"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, tc.endpoint, &reqBody)
+		req.Header.Set("Authorization", "Bearer "+tokenPayload.Data.Key)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		resp := httptest.NewRecorder()
+		r.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), `"code":"multipart_file_required"`) {
+			t.Fatalf("%s missing file should return multipart_file_required, got %d %s", tc.endpoint, resp.Code, resp.Body.String())
+		}
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("missing required multipart file must not call upstream, got %d calls", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 50 {
+		t.Fatalf("missing required multipart file should not deduct token budget, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("missing required multipart file should not deduct user quota, got %d", root.Quota)
+	}
+}
+
 func TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

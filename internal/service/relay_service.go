@@ -397,6 +397,7 @@ var (
 	errInvalidJSONBody        = errors.New("invalid json body")
 	errInvalidMultipartBody   = errors.New("invalid multipart body")
 	errMultipartFileTooLarge  = errors.New("multipart file exceeds maximum size")
+	errMultipartFileRequired  = errors.New("multipart file field is required")
 	errUnsafeMultipartFile    = errors.New("multipart file is not allowed")
 	errModelRequired          = errors.New("model is required")
 	errUnsupportedMultipart   = errors.New("multipart relay is not supported for selected upstream channel")
@@ -1616,6 +1617,8 @@ func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType 
 	reader := multipart.NewReader(bytes.NewReader(body), boundary)
 	info := relayRequestInfo{}
 	hasRouterXFormField := false
+	requiredFileField := requiredMultipartFileField(apiType)
+	hasRequiredFileField := false
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -1624,7 +1627,11 @@ func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType 
 		if err != nil {
 			return relayRequestInfo{}, errInvalidMultipartBody
 		}
+		name := part.FormName()
 		if part.FileName() != "" {
+			if name == requiredFileField {
+				hasRequiredFileField = true
+			}
 			if err := validateMultipartFile(apiType, part); err != nil {
 				return relayRequestInfo{}, err
 			}
@@ -1633,7 +1640,6 @@ func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType 
 			}
 			continue
 		}
-		name := part.FormName()
 		if name == "" {
 			continue
 		}
@@ -1679,7 +1685,21 @@ func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType 
 	if info.Model == "" {
 		return relayRequestInfo{}, errModelRequired
 	}
+	if requiredFileField != "" && !hasRequiredFileField {
+		return relayRequestInfo{}, errMultipartFileRequired
+	}
 	return info, nil
+}
+
+func requiredMultipartFileField(apiType relay.APIType) string {
+	switch apiType {
+	case relay.APIImagesEdits, relay.APIImagesVariations:
+		return "image"
+	case relay.APIAudioTranscriptions, relay.APIAudioTranslations:
+		return "file"
+	default:
+		return ""
+	}
 }
 
 func isImageMultipartAPIType(apiType relay.APIType) bool {
@@ -1715,6 +1735,8 @@ func relayRequestErrorCode(err error) string {
 		return "invalid_multipart"
 	case errors.Is(err, errMultipartFileTooLarge):
 		return "request_file_too_large"
+	case errors.Is(err, errMultipartFileRequired):
+		return "multipart_file_required"
 	case errors.Is(err, errUnsafeMultipartFile):
 		return "unsafe_multipart_file"
 	case errors.Is(err, errModelRequired):

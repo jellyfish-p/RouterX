@@ -151,6 +151,7 @@
 | `TestRateLimitPerChannelRejectsBeforeUpstream` | Redis 通道限流读取 `rate_limit.per_channel_per_min`，同一通道达到分钟阈值后本地 429，不调用上游、不额外扣费，并写通道维度拒绝 `policy_snapshot` 和 `rate_limit_snapshot` |
 | `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model 在本地失败且不污染通道和账单 |
 | `TestRelayMaxRequestBodyBytesRejectsBeforeUpstream` | `relay.max_request_body_bytes` 超限时本地返回 OpenAI-compatible 413 `request_body_too_large`，不调用上游、不扣用户额度或 API Key 预算 |
+| `TestMultipartRejectsMissingRequiredFileBeforeUpstream` | OpenAI-compatible Images/Audio multipart 缺少必填 `image` 或 `file` 文件字段时本地返回 400 `multipart_file_required`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestRelayMaxMultipartFileBytesRejectsBeforeUpstream` | OpenAI-compatible multipart 单个文件字段超过 `relay.max_multipart_file_bytes` 时本地返回 413 `request_file_too_large`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestRelayMultipartRejectsUnsafeFileNameBeforeUpstream` | OpenAI-compatible multipart 文件名命中路径形态或危险扩展名基础扫描时本地返回 400 `unsafe_multipart_file`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestRelayMultipartRejectsUnsafeFileContentBeforeUpstream` | OpenAI-compatible multipart 文件内容命中明显可执行签名时本地返回 400 `unsafe_multipart_file`，不调用上游、不扣用户额度或 API Key 预算 |
