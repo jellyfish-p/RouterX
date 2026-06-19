@@ -13918,6 +13918,7 @@ func TestRateLimitGlobalAndIPWriteSnapshotDetails(t *testing.T) {
 		}
 		rateLimitSnapshot, ok := policySnapshot["rate_limit_snapshot"].(map[string]interface{})
 		if !ok ||
+			rateLimitSnapshot["request_id"] != failedLog.RequestID ||
 			rateLimitSnapshot["dimension"] != dimension ||
 			rateLimitSnapshot["window"] != "minute" ||
 			rateLimitSnapshot["threshold"] != float64(1) ||
@@ -13925,6 +13926,9 @@ func TestRateLimitGlobalAndIPWriteSnapshotDetails(t *testing.T) {
 			rateLimitSnapshot["remaining"] != float64(0) ||
 			rateLimitSnapshot["decision"] != "deny" {
 			t.Fatalf("unexpected %s rate limit snapshot: %+v", dimension, policySnapshot)
+		}
+		if _, err := time.Parse(time.RFC3339Nano, fmt.Sprint(rateLimitSnapshot["created_at"])); err != nil {
+			t.Fatalf("%s rate limit snapshot should include RFC3339 created_at, snapshot=%+v err=%v", dimension, rateLimitSnapshot, err)
 		}
 	}
 	assertRateLimitSnapshot("%global rate limit%", "global")
@@ -23787,12 +23791,16 @@ func TestNoAvailableChannelWritesBreakerSnapshot(t *testing.T) {
 		t.Fatalf("breaker denial should include breaker_snapshot: %+v", policySnapshot)
 	}
 	if breakerSnapshot["decision"] != "deny" ||
+		breakerSnapshot["request_id"] != failedLog.RequestID ||
 		breakerSnapshot["reason"] != "health_blocked" ||
 		breakerSnapshot["auto_ban"] != true ||
 		breakerSnapshot["threshold"] != float64(1) ||
 		breakerSnapshot["cooldown_seconds"] != float64(300) ||
 		breakerSnapshot["blocked_channel_count"] != float64(1) {
 		t.Fatalf("unexpected breaker snapshot summary: %+v", breakerSnapshot)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, fmt.Sprint(breakerSnapshot["created_at"])); err != nil {
+		t.Fatalf("breaker snapshot should include RFC3339 created_at, snapshot=%+v err=%v", breakerSnapshot, err)
 	}
 	blockedChannels, ok := breakerSnapshot["blocked_channels"].([]interface{})
 	if !ok || len(blockedChannels) != 1 {

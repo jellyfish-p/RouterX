@@ -6788,7 +6788,7 @@ components:
           description: 脱敏请求快照 JSON 字符串；当前包含 request_id、created_at、用户/Key 安全摘要、来源摘要、入口协议、API 类型、请求模型、stream 标记、合法 trace context 摘要和安全路由摘要。
         policy_snapshot:
           type: string
-          description: 脱敏策略快照 JSON 字符串；当前包含 request_id、created_at、用户/Key 状态摘要、成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 no_available_channel 拒绝、breaker_snapshot，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝或依赖故障摘要和 rate_limit_snapshot。
+          description: 脱敏策略快照 JSON 字符串；当前包含 request_id、created_at、用户/Key 状态摘要、成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 no_available_channel 拒绝、含 request_id/created_at 的 breaker_snapshot，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝或依赖故障摘要和含 request_id/created_at 的 rate_limit_snapshot。
         access_rule_snapshot:
           type: string
           description: 脱敏访问控制快照 JSON 字符串；当前包含 request_id、created_at，并从 policy_snapshot 派生 access_decision、scope_result、token_status、user_status、reject_code 和 selected_channel_group。

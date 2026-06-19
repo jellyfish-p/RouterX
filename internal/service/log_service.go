@@ -620,7 +620,10 @@ func normalizeLogEnvelopeSnapshot(raw string, log *model.Log) string {
 	if err := json.Unmarshal([]byte(snapshot), &existing); err != nil {
 		return snapshot
 	}
-	if !enrichLogSnapshotEnvelope(existing, log) {
+	changed := enrichLogSnapshotEnvelope(existing, log)
+	changed = enrichNestedLogSnapshotEnvelope(existing, "rate_limit_snapshot", log) || changed
+	changed = enrichNestedLogSnapshotEnvelope(existing, "breaker_snapshot", log) || changed
+	if !changed {
 		return snapshot
 	}
 	encoded, err := json.Marshal(existing)
@@ -628,6 +631,18 @@ func normalizeLogEnvelopeSnapshot(raw string, log *model.Log) string {
 		return snapshot
 	}
 	return string(encoded)
+}
+
+func enrichNestedLogSnapshotEnvelope(parent map[string]interface{}, key string, log *model.Log) bool {
+	nested, ok := logSnapshotMap(parent[key])
+	if !ok {
+		return false
+	}
+	if !enrichLogSnapshotEnvelope(nested, log) {
+		return false
+	}
+	parent[key] = nested
+	return true
 }
 
 func enrichLogSnapshotEnvelope(snapshot map[string]interface{}, log *model.Log) bool {
