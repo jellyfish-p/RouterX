@@ -263,7 +263,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 用户统一登录
-      description: 管理后台也使用本接口获取 User JWT，不提供独立 /v0/admin/login。用户名密码登录始终可用；email/phone 密码登录仅对已有本地身份生效，并分别受 auth.login.email_password.enabled 与 auth.login.phone_password.enabled 控制，默认关闭。成功登录会写入 user.login 管理审计，审计摘要不包含密码或 JWT。
+      description: 管理后台也使用本接口获取 User JWT，不提供独立 /v0/admin/login。用户名密码登录始终可用；email/phone 密码登录仅对已有本地身份生效，并分别受 auth.login.email_password.enabled 与 auth.login.phone_password.enabled 控制，默认关闭；本地 email/phone 身份复用同一用户的 username/local 主密码，不要求各自保存独立密码哈希。成功登录会写入 user.login 管理审计，审计摘要不包含密码或 JWT。
       requestBody:
         required: true
         content:

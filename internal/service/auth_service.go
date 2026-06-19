@@ -262,7 +262,8 @@ func (s *AuthService) UserLogin(username, password string) (*model.User, string,
 	if identity.User == nil || identity.User.Status != common.UserStatusEnabled {
 		return nil, "", errors.New("account or credential is invalid")
 	}
-	if !common.CheckPassword(password, identity.PasswordHash) {
+	passwordHash, err := localAccountPasswordHash(identity.UserID)
+	if err != nil || !common.CheckPassword(password, passwordHash) {
 		return nil, "", errors.New("account or credential is invalid")
 	}
 
@@ -283,6 +284,23 @@ func (s *AuthService) UserLogin(username, password string) (*model.User, string,
 		return nil, "", err
 	}
 	return identity.User, token, nil
+}
+
+func localAccountPasswordHash(userID uint) (string, error) {
+	var identity model.UserIdentity
+	err := internal.DB.Where(
+		"user_id = ? AND method = ? AND provider = ?",
+		userID,
+		model.UserIdentityMethodUsername,
+		model.UserIdentityProviderLocal,
+	).First(&identity).Error
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(identity.PasswordHash) == "" {
+		return "", errors.New("account password is not configured")
+	}
+	return identity.PasswordHash, nil
 }
 
 // ChangePassword 修改密码。

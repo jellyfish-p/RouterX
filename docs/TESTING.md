@@ -112,7 +112,7 @@
 | `TestValidateAndGetTokenResolvesFromRedisAuthCache` | API Key 鉴权 lookup cache 命中后通过 Redis 中的 `SHA256(api_key) -> token_id` 映射回源加载 Token/User，仍不缓存授权结论 |
 | `TestAPIKeyAuthCacheWarmsAndClearsOnDisable` | API Key DB 鉴权成功后预热 Redis lookup cache，禁用 Key 后立即清理对应映射 |
 | `TestUserRegisterRespectsRegistrationSettings` | 自助注册默认关闭；开启后仍受用户名注册和验证码开关约束，并应用默认额度/分组 |
-| `TestUserLoginRespectsLoginMethodSettings` | 用户名密码登录保持可用；email/phone 密码登录默认关闭，开启对应 setting 后已有本地身份可登录 |
+| `TestUserLoginRespectsLoginMethodSettings` | 用户名密码登录保持可用；email/phone 密码登录默认关闭，开启对应 setting 后已有本地身份可登录，且 email 身份可复用 `username/local` 主密码 |
 | `TestUserLoginWritesAuditLogWithoutSecrets` | 成功登录写入 `user.login` 管理审计，超级管理员可按动作和用户资源查询，审计摘要不包含密码或 JWT |
 | `TestUserSelfCancelDisablesAccountButPreservesIdentity` | 当前用户自助注销必须提供正确本地密码二次确认；缺少或错误密码不会禁用账号/API Key，会写 `user.self_cancel_denied` 拒绝审计且不泄露密码；确认通过后账号禁用、API Key 禁用、用户名 identity 和历史账号记录保留；同名重新注册恢复原账号、更新本地密码、不恢复旧 API Key，并写 `user.self_cancel` 与 `user.recover` 审计 |
 | `TestInitRedisSkipsEmptyConfig` | `REDIS_CONN` 为空时不隐式连接本机 Redis，SQLite 单机模式保持可降级 |

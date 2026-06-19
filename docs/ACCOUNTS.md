@@ -21,7 +21,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认和基础用户名恢复账号所需的账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名账号时会恢复原账号。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC、隐私字段擦除和非用户名恢复属于目标设计，需要按阶段继续实现。
+当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认和基础用户名恢复账号所需的账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名账号时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，并统一校验同一用户的 `username/local` 主密码。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC、隐私字段擦除和非用户名恢复属于目标设计，需要按阶段继续实现。
 
 阶段边界：
 
@@ -110,7 +110,7 @@ password_hash = bcrypt hash
 密码校验规则：
 
 - 账户密码以 `username/local` 身份上的 `password_hash` 为准。
-- 邮箱和手机号密码登录不要求各自 identity 存储独立密码。
+- 邮箱和手机号密码登录不要求各自 identity 存储独立密码；服务端会读取同一用户的 `username/local` 主身份密码哈希。
 - 修改密码时只更新账户主密码，即 `username/local` 的 `password_hash`。
 - 用户注销时不删除 `user_identities`，必须保留用户名、邮箱、手机号、OAuth、OIDC 标识用于后续去重和账号恢复。
 

@@ -2314,12 +2314,11 @@ func TestUserLoginRespectsLoginMethodSettings(t *testing.T) {
 	now := time.Now()
 	if err := internal.DB.Create(&[]model.UserIdentity{
 		{
-			UserID:       user.ID,
-			Method:       model.UserIdentityMethodEmail,
-			Provider:     model.UserIdentityProviderLocal,
-			Identifier:   "method@example.com",
-			PasswordHash: hash,
-			VerifiedAt:   &now,
+			UserID:     user.ID,
+			Method:     model.UserIdentityMethodEmail,
+			Provider:   model.UserIdentityProviderLocal,
+			Identifier: "method@example.com",
+			VerifiedAt: &now,
 		},
 		{
 			UserID:       user.ID,
