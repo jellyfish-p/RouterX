@@ -18,14 +18,24 @@ func Recovery() gin.HandlerFunc {
 		defer func() {
 			if err := recover(); err != nil {
 				path := c.Request.URL.Path
-				log.Printf("[PANIC] request_id=%s method=%s path=%s client_ip=%s panic_type=%s stack=%s",
-					c.GetString("request_id"),
-					c.Request.Method,
-					path,
-					c.ClientIP(),
-					fmt.Sprintf("%T", err),
-					string(debug.Stack()),
-				)
+				requestID := c.GetString("request_id")
+				panicType := fmt.Sprintf("%T", err)
+				stack := string(debug.Stack())
+				if common.StructuredLogsEnabled() {
+					writeStructuredLog(map[string]interface{}{
+						"event":      "panic",
+						"request_id": requestID,
+						"method":     c.Request.Method,
+						"path":       path,
+						"client_ip":  c.ClientIP(),
+						"panic_type": panicType,
+						"stack":      stack,
+					}, func() {
+						writeTextPanicLog(requestID, c.Request.Method, path, c.ClientIP(), panicType, stack)
+					})
+				} else {
+					writeTextPanicLog(requestID, c.Request.Method, path, c.ClientIP(), panicType, stack)
+				}
 				if strings.HasPrefix(path, "/v1/") || path == "/v1" {
 					abortV1Panic(c)
 					return
@@ -39,6 +49,17 @@ func Recovery() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func writeTextPanicLog(requestID, method, path, clientIP, panicType, stack string) {
+	log.Printf("[PANIC] request_id=%s method=%s path=%s client_ip=%s panic_type=%s stack=%s",
+		requestID,
+		method,
+		path,
+		clientIP,
+		panicType,
+		stack,
+	)
 }
 
 func abortV1Panic(c *gin.Context) {

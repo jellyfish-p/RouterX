@@ -241,7 +241,7 @@ volumes:
 | 管理审计日志 | `admin_audit_logs` 表 | 管理员操作、目标资源、变更前后摘要 |
 | 系统错误日志 | 应用日志 | panic、DB、Redis、下游错误 |
 
-结构化日志字段建议：
+结构化日志字段：
 
 | 字段 | 说明 |
 |------|------|
@@ -256,6 +256,8 @@ volumes:
 | `channel_id` | 通道 ID |
 | `model` | 模型 |
 | `error` | 错误摘要 |
+
+当前 `observability.structured_logs_enabled=false` 时保留原文本 HTTP/Panic 日志；开启后 HTTP 访问日志输出 `event=http_request` 的 JSON line，字段包含 `request_id`、method、path、path_group、status、latency_ms 和 client_ip。Recovery panic 日志输出 `event=panic` 的 JSON line，字段包含 request_id、method、path、client_ip、panic_type 和 stack，仍不记录原始 panic 值。
 
 脱敏规则：
 

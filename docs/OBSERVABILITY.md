@@ -42,7 +42,7 @@
 - 管理员导出调用日志会写入 `log.export` 管理审计摘要，记录过滤条件、导出上限和导出条数，CSV 不包含请求/响应体、IP、错误原文或 snapshot。
 - HTTP Logger 中间件已经记录基础访问日志。
 
-这些能力构成 P0 的可见闭环，并补上了 API Key 管理、API Key 批量操作拒绝、用户管理、支付商品管理、系统/通道模型价格管理、支付入账/明确失败/退款回调、Stripe/易支付 provider 退款请求、Stripe 争议生命周期、支付人工修正与人工退款、settings 变更、用户调额、充值码管理、通道管理、管理员账号管理、日志清理和日志导出审计的基础切片。商业级增强需要继续补更完整的审计覆盖、结构化字段、指标、告警、追踪和保留策略。
+这些能力构成 P0 的可见闭环，并补上了 API Key 管理、API Key 批量操作拒绝、用户管理、支付商品管理、系统/通道模型价格管理、支付入账/明确失败/退款回调、Stripe/易支付 provider 退款请求、Stripe 争议生命周期、支付人工修正与人工退款、settings 变更、用户调额、充值码管理、通道管理、管理员账号管理、日志清理和日志导出审计的基础切片。当前已提供可配置 HTTP/Panic JSON line 结构化日志；商业级增强需要继续补更完整的审计覆盖、结构化字段、指标、告警、追踪和保留策略。
 
 ## 观测事实分层
 
@@ -77,7 +77,7 @@
 | 多层 RouterX | 传递 `X-RouterX-Hop` 和 `X-RouterX-Chain`，防止循环并保留链路摘要。 |
 | 日志 | HTTP 日志、调用日志、审计日志和系统错误日志都写 request_id。 |
 
-当前 HTTP 中间件会按 `observability.request_id_header` 读取或生成请求 ID，并通过同名响应头返回；模型调用日志和管理审计已持久化 `request_id`；`/v1` 调用真实上游时会用当前配置的 request id header 透传同一个请求 ID。Recovery 系统错误日志会记录 `request_id`、method、path、client_ip、panic 类型和堆栈，但不会写入原始 panic 值；`/v1` panic 响应会复用入口协议识别，分别返回 OpenAI、Anthropic 或 Gemini 兼容的 500。跨实例追踪仍需按目标规则继续补齐。
+当前 HTTP 中间件会按 `observability.request_id_header` 读取或生成请求 ID，并通过同名响应头返回；模型调用日志和管理审计已持久化 `request_id`；`/v1` 调用真实上游时会用当前配置的 request id header 透传同一个请求 ID。`observability.structured_logs_enabled=false` 时维持原文本 HTTP/Panic 日志；设为 `true` 后 HTTP 访问日志输出一行 JSON，包含 `event=http_request`、`request_id`、method、path、path_group、status、latency_ms 和 client_ip，Recovery 系统错误日志输出 `event=panic`、request_id、method、path、client_ip、panic_type 和 stack，但不会写入原始 panic 值；`/v1` panic 响应会复用入口协议识别，分别返回 OpenAI、Anthropic 或 Gemini 兼容的 500。跨实例追踪仍需按目标规则继续补齐。
 
 ## 模型调用日志
 
@@ -273,7 +273,7 @@
 | 阶段 | 目标 |
 |------|------|
 | P0 | 调用日志、用户日志、管理员日志、基础账单和基础 dashboard 可用；body 日志默认关闭。 |
-| P1 | 已补调用日志 request_id、error_code、usage_source、error_source、upstream_status、基础 request_snapshot、覆盖成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝、`breaker_snapshot` 和 Redis 全局/IP/Token/User/Model/Channel 限流拒绝分支的基础 policy_snapshot 与 `rate_limit_snapshot`、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/规则版本/业务倍率/预算前后摘要的基础 billing_snapshot；继续补更完整结构化失败事实。 |
+| P1 | 已补调用日志 request_id、error_code、usage_source、error_source、upstream_status、基础 request_snapshot、覆盖成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝、`breaker_snapshot` 和 Redis 全局/IP/Token/User/Model/Channel 限流拒绝分支的基础 policy_snapshot 与 `rate_limit_snapshot`、含过滤/模型重写/重试摘要的基础 route_snapshot、含价格表达式或 P0 回退表达式/规则版本/业务倍率/预算前后摘要的基础 billing_snapshot，并可配置输出 HTTP/Panic JSON line 日志；继续补更完整结构化失败事实。 |
 | P2 | 扩展管理审计覆盖、更多 Prometheus 指标、告警、长期保留、导出审计和生产 readiness 指标。 |
 
 ## 测试要求

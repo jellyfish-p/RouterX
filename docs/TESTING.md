@@ -93,6 +93,8 @@
 | `TestMetricsEndpointCountsInfrastructureErrors` | `/metrics` 输出 DB 迁移状态读取失败和 Redis ping 失败的低基数错误计数 |
 | `TestMetricsEndpointReportsIndependentLogDBHealth` | `/metrics` 输出独立日志库配置、ping 状态和日志补写 outbox 当前状态，日志库不可用时仍回退主库事实并保持指标可用 |
 | `TestRequestIDHeaderUsesConfiguredSetting` | `observability.request_id_header` 修改后，请求 ID 从配置 header 读取并通过同名响应头返回，缺失时生成新 ID |
+| `TestStructuredHTTPLogsUseJSONWhenEnabled` | `observability.structured_logs_enabled=true` 后 HTTP 访问日志输出可解析 JSON line，并包含 request_id、method、path_group、status、latency_ms 和 client_ip |
+| `TestRecoveryStructuredPanicLogUsesJSONAndRedactsValue` | 结构化日志开启后 Recovery panic 日志输出 JSON line，包含请求上下文和堆栈，且不记录原始 panic 值 |
 | `TestRecoveryLogsRequestContextAndRedactsPanicValue` | Recovery 捕获 panic 时返回统一 500，并在系统错误日志写入 request_id、method、path、client_ip 和堆栈，同时不记录原始 panic 值 |
 | `TestRecoveryUsesEntryProtocolErrorEnvelopeForV1Panics` | `/v1` panic 会按入口协议返回 Anthropic 或 Gemini 兼容 500，而不是固定 OpenAI 错误外形 |
 | `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、request id header 名校验、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |
@@ -528,7 +530,7 @@ Gemini-compatible 最小断言：
 | P2 | 企业账号 | 本地密码成功登录审计已覆盖；OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管待补 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、批量禁用、批量过期、批量操作无筛选拒绝审计、基础风险视图、泄露风险基础轮换建议、单 Key 泄露窗口分析、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝、RPM/TPM 拒绝、基础 Redis 鉴权 lookup cache 命中/预热/禁用失效和 router Redis 兼容已覆盖；主动告警通知待补 |
 | P2 | 支付充值 | 充值码批次/备注/过期策略、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账和明确失败审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回审计、支付人工退款落账审计；更多 provider 自动退款适配待补 |
-| P2 | 观测审计 | 成功登录、API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status 和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis up 与错误计数/日志库/outbox 指标测试已覆盖；继续补更完整结构化日志、更多管理审计动作和生产 `/ready` |
+| P2 | 观测审计 | 成功登录、API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status、可配置 HTTP/Panic JSON line 结构化日志和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis up 与错误计数/日志库/outbox 指标测试已覆盖；继续补更完整结构化失败事实、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
 

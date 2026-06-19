@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -5124,6 +5125,7 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"observability.metrics_enabled",
 		"observability.audit_enabled",
 		"observability.request_id_header",
+		"observability.structured_logs_enabled",
 		"ready.production_strict",
 		"routing.channel_cache.enabled",
 		"routing.channel_cache.preload",
@@ -5199,6 +5201,55 @@ func TestRequestIDHeaderUsesConfiguredSetting(t *testing.T) {
 	generatedResp := performRawWithHeaders(r, http.MethodGet, "/health", "", "", nil)
 	if got := generatedResp.Header().Get("X-Correlation-Id"); strings.TrimSpace(got) == "" {
 		t.Fatalf("configured request id header should receive generated id, headers=%v", generatedResp.Header())
+	}
+}
+
+func TestStructuredHTTPLogsUseJSONWhenEnabled(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+
+	var logs bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+		_ = service.NewSettingService().Set("observability.structured_logs_enabled", "false")
+	})
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("observability.structured_logs_enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := performRawWithHeaders(r, http.MethodGet, "/health", "", "", map[string]string{
+		"X-Request-Id": "req-structured-log",
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("health should pass, got %d %s", resp.Code, resp.Body.String())
+	}
+
+	entry := findStructuredLogEntry(t, logs.String(), "http_request")
+	if entry["request_id"] != "req-structured-log" ||
+		entry["method"] != http.MethodGet ||
+		entry["path"] != "/health" ||
+		entry["path_group"] != "/health" ||
+		entry["status"] != float64(http.StatusOK) {
+		t.Fatalf("structured HTTP log fields mismatch: %+v", entry)
+	}
+	if _, ok := entry["latency_ms"].(float64); !ok {
+		t.Fatalf("structured HTTP log should include numeric latency_ms, got %+v", entry)
+	}
+	if strings.TrimSpace(fmt.Sprint(entry["client_ip"])) == "" {
+		t.Fatalf("structured HTTP log should include client_ip, got %+v", entry)
 	}
 }
 
@@ -16630,6 +16681,25 @@ func performRawWithHeaders(r http.Handler, method, path, bearer, body string, he
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
+}
+
+func findStructuredLogEntry(t *testing.T, rawLogs, event string) map[string]interface{} {
+	t.Helper()
+	for _, line := range strings.Split(rawLogs, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var entry map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("structured log line should be JSON: %v line=%q", err, line)
+		}
+		if entry["event"] == event {
+			return entry
+		}
+	}
+	t.Fatalf("structured log event %q not found in logs:\n%s", event, rawLogs)
+	return nil
 }
 
 func performForm(r http.Handler, method, path string, values url.Values) *httptest.ResponseRecorder {

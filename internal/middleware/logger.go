@@ -86,15 +86,38 @@ func Logger() gin.HandlerFunc {
 		status := c.Writer.Status()
 		recordHTTPMetrics(c, latency)
 
-		log.Printf("[HTTP] %s %s | %d | %v | %s | request_id=%s",
-			c.Request.Method,
-			c.Request.URL.Path,
-			status,
-			latency,
-			c.ClientIP(),
-			requestID,
-		)
+		if common.StructuredLogsEnabled() {
+			pathGroup := c.FullPath()
+			if pathGroup == "" {
+				pathGroup = "unmatched"
+			}
+			writeStructuredLog(map[string]interface{}{
+				"event":      "http_request",
+				"request_id": requestID,
+				"method":     c.Request.Method,
+				"path":       c.Request.URL.Path,
+				"path_group": pathGroup,
+				"status":     status,
+				"latency_ms": float64(latency.Microseconds()) / 1000,
+				"client_ip":  c.ClientIP(),
+			}, func() {
+				writeTextHTTPLog(c, status, latency, requestID)
+			})
+			return
+		}
+		writeTextHTTPLog(c, status, latency, requestID)
 	}
+}
+
+func writeTextHTTPLog(c *gin.Context, status int, latency time.Duration, requestID string) {
+	log.Printf("[HTTP] %s %s | %d | %v | %s | request_id=%s",
+		c.Request.Method,
+		c.Request.URL.Path,
+		status,
+		latency,
+		c.ClientIP(),
+		requestID,
+	)
 }
 
 // ResetHTTPMetrics clears in-memory HTTP metrics. SetupRouter calls it once so tests

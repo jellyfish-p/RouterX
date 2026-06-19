@@ -5067,6 +5067,7 @@ components:
         routing.channel_cache.preload: "true"
         routing.channel_cache.ttl_seconds: "60"
         routing.channel_cache.version: "1"
+        observability.structured_logs_enabled: "true"
         payment.dispute.auto_disable_tokens: "true"
         payment.epay.refund_url: "https://pay.example.com/refund"
     ChatCompletionRequest:

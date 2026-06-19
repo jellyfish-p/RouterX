@@ -257,7 +257,7 @@ func validateSettingValue(key, value string) error {
 		"routing.channel_cache.enabled", "routing.channel_cache.preload",
 		"ready.production_strict", "payment.epay.enabled", "payment.stripe.enabled",
 		"payment.refund.auto_deduct", "payment.refund.allow_negative_balance", "payment.dispute.auto_disable_tokens", "payment.manual_adjust.require_reason",
-		"observability.metrics_enabled", "observability.audit_enabled":
+		"observability.metrics_enabled", "observability.audit_enabled", "observability.structured_logs_enabled":
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {
 			return errors.New(key + " must be a boolean")
@@ -469,5 +469,8 @@ func applyRuntimeSetting(key, value string) {
 	switch key {
 	case "observability.request_id_header":
 		common.SetRequestIDHeaderName(value)
+	case "observability.structured_logs_enabled":
+		enabled, err := strconv.ParseBool(strings.TrimSpace(value))
+		common.SetStructuredLogsEnabled(err == nil && enabled)
 	}
 }

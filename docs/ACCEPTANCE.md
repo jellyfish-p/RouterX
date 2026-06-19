@@ -112,7 +112,7 @@ P2 可以宣称完成时，必须证明生产和企业增强不破坏 P0/P1：
 | G20 管理审计 | settings、通道、用户、额度、价格和支付关键操作可追溯。 | 审计日志测试。 |
 | G21 支付幂等 | Stripe/易支付/充值码/人工补账不会重复入账，金额和签名可信。 | 支付 provider fixture、幂等测试。 |
 | G22 密钥轮换 | API Key、下游密钥、`ENCRYPTION_KEY` 或 KMS 轮换有兼容和恢复策略。 | 轮换测试、脱敏扫描。 |
-| G23 生产观测 | Request ID、结构化日志、Prometheus 指标、告警和生产 `/ready` 可用。 | `TestRequestIDHeaderUsesConfiguredSetting`、readiness/metrics 测试、指标字段断言。 |
+| G23 生产观测 | Request ID、结构化日志、Prometheus 指标、告警和生产 `/ready` 可用。 | `TestRequestIDHeaderUsesConfiguredSetting`、`TestStructuredHTTPLogsUseJSONWhenEnabled`、`TestRecoveryStructuredPanicLogUsesJSONAndRedactsValue`、readiness/metrics 测试、指标字段断言。 |
 | G24 高级 API | Responses、Images、Audio、Moderations 等按能力矩阵打开，不影响基础 Chat。 | 高级 API 安全和协议测试。 |
 
 ## 交付前检查

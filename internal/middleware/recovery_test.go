@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"encoding/json"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"routerx/internal/common"
 )
 
 func TestRecoveryLogsRequestContextAndRedactsPanicValue(t *testing.T) {
@@ -55,6 +57,54 @@ func TestRecoveryLogsRequestContextAndRedactsPanicValue(t *testing.T) {
 	}
 	if strings.Contains(logBody, "super-secret-token") {
 		t.Fatalf("panic log should not include raw panic value, got %q", logBody)
+	}
+}
+
+func TestRecoveryStructuredPanicLogUsesJSONAndRedactsValue(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	common.SetStructuredLogsEnabled(true)
+	t.Cleanup(func() {
+		common.SetStructuredLogsEnabled(false)
+	})
+
+	var logs bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	})
+
+	r := gin.New()
+	r.Use(Recovery())
+	r.Use(Logger())
+	r.GET("/panic", func(c *gin.Context) {
+		panic("top-secret-panic-value")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	req.Header.Set("X-Request-Id", "req-json-panic")
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("panic should return 500, got %d %s", resp.Code, resp.Body.String())
+	}
+	if strings.Contains(logs.String(), "top-secret-panic-value") {
+		t.Fatalf("structured panic log should redact raw panic value, got %q", logs.String())
+	}
+
+	entry := structuredLogEntry(t, logs.String(), "panic")
+	if entry["request_id"] != "req-json-panic" ||
+		entry["method"] != http.MethodGet ||
+		entry["path"] != "/panic" ||
+		entry["client_ip"] == "" ||
+		entry["panic_type"] != "string" {
+		t.Fatalf("structured panic log fields mismatch: %+v", entry)
+	}
+	if strings.TrimSpace(entry["stack"].(string)) == "" {
+		t.Fatalf("structured panic log should include stack, got %+v", entry)
 	}
 }
 
@@ -106,4 +156,23 @@ func TestRecoveryUsesEntryProtocolErrorEnvelopeForV1Panics(t *testing.T) {
 	if strings.Contains(logBody, "anthropic-secret") || strings.Contains(logBody, "gemini-secret") {
 		t.Fatalf("panic logs should remain redacted for protocol panics, got %q", logBody)
 	}
+}
+
+func structuredLogEntry(t *testing.T, rawLogs, event string) map[string]interface{} {
+	t.Helper()
+	for _, line := range strings.Split(rawLogs, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var entry map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("structured log line should be JSON: %v line=%q", err, line)
+		}
+		if entry["event"] == event {
+			return entry
+		}
+	}
+	t.Fatalf("structured log event %q not found in logs:\n%s", event, rawLogs)
+	return nil
 }

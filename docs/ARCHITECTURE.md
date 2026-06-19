@@ -129,7 +129,7 @@ Recovery
 | 中间件 | 当前状态 | 目标职责 |
 |--------|----------|----------|
 | `Recovery` | 已存在 | 捕获 panic，记录脱敏 request_id/method/path/client_ip/panic 类型/堆栈；管理 API 返回统一 500，`/v1` 返回入口协议兼容 500 |
-| `Logger` | 已存在 | 按 `observability.request_id_header` 读取或生成 request_id，写响应头并记录 method/path/status/latency/ip，后续切结构化日志 |
+| `Logger` | 已存在 | 按 `observability.request_id_header` 读取或生成 request_id，写响应头并记录 method/path/status/latency/ip；`observability.structured_logs_enabled=true` 时输出 HTTP JSON line |
 | `SetupCheck` | 已存在 | 系统未初始化时拦截非 setup/health 请求 |
 | `AdminAuthRequired` | 已存在 | 校验 User JWT 和管理员角色 |
 | `RequireSuperAdmin` | 已存在 | 校验超级管理员权限 |
@@ -290,5 +290,5 @@ POST /v0/setup/init
 | RateLimit | 已有基础中间件；后续补更多维度、Redis 不可用策略和指标 |
 | Token 管理 | API Key CRUD 已注册；后续补 Redis 缓存失效、最近使用时间和更完整审计 |
 | RedemCode | 模型存在，充值码 API 尚未注册 |
-| Observability | 结构化日志、指标、追踪属于 P2 生产增强目标 |
+| Observability | 可配置 HTTP/Panic 结构化 JSON line 日志、基础指标和审计查询已落地；追踪、告警和更完整事件字段属于 P2 生产增强目标 |
 | Readiness | 已检查 DB、迁移 dirty 状态、JWT、外部数据库 Redis、关键 settings、支付密钥和已有加密通道密钥的 `ENCRYPTION_KEY`；后续补 KMS/逐条解密巡检和更多 Redis 策略 |

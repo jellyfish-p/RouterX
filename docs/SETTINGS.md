@@ -187,6 +187,7 @@ P0 补齐这些配置时，应同时补测试：
 | `observability.metrics_enabled` | `false` | P2 | 是否暴露 `/metrics` |
 | `observability.audit_enabled` | `true` | P2 | 是否记录管理审计 |
 | `observability.request_id_header` | `X-Request-Id` | P2 | 请求 ID header；必须是合法 HTTP header 名，修改后后续请求会从该 header 读取并用同名响应头返回 request id |
+| `observability.structured_logs_enabled` | `false` | P2 | 是否把 HTTP 访问日志和 Recovery panic 日志输出为 JSON line；默认保留原文本日志 |
 
 ### Payment
 
@@ -282,6 +283,7 @@ validate key exists
 - `payment.epay.enabled=true` 但 `PAYMENT_EPAY_KEY` 不可用。
 - `payment.stripe.enabled=true` 但 `PAYMENT_STRIPE_SECRET_KEY` 或 `PAYMENT_STRIPE_WEBHOOK_SECRET` 不可用。
 - 迁移状态 dirty 或必要 settings 未加载。
+- `observability.structured_logs_enabled` 不是布尔值。
 
 开发/演示模式可以降级启动，但必须给出明确警告，不能让用户误以为该状态适合生产。
 

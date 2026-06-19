@@ -241,9 +241,10 @@ func buildDefaultSettings() map[string]map[string]string {
 			"log.response_body_enabled": "false",
 		},
 		"observability": {
-			"observability.metrics_enabled":   "false",
-			"observability.audit_enabled":     "true",
-			"observability.request_id_header": "X-Request-Id",
+			"observability.metrics_enabled":         "false",
+			"observability.audit_enabled":           "true",
+			"observability.request_id_header":       "X-Request-Id",
+			"observability.structured_logs_enabled": "false",
 		},
 		"ready": {
 			"ready.production_strict": "true",
