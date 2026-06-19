@@ -4426,6 +4426,19 @@ func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 	if disabledProviderResp.Code != http.StatusBadRequest {
 		t.Fatalf("disabled payment provider should reject new orders, got %d %s", disabledProviderResp.Code, disabledProviderResp.Body.String())
 	}
+	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id=quota_100&result=denied&error_code=payment_order_provider_disabled", rootJWT, nil)
+	deniedAuditBody := deniedAuditResp.Body.String()
+	if deniedAuditResp.Code != http.StatusOK ||
+		!strings.Contains(deniedAuditBody, `"action":"payment_order.create_denied"`) ||
+		!strings.Contains(deniedAuditBody, `"error_code":"payment_order_provider_disabled"`) ||
+		!strings.Contains(deniedAuditBody, `"resource_id":"quota_100"`) ||
+		!strings.Contains(deniedAuditBody, `\"provider\":\"stripe\"`) ||
+		!strings.Contains(deniedAuditBody, `\"product_id\":\"quota_100\"`) {
+		t.Fatalf("disabled payment provider should write denied order creation audit, got %d %s", deniedAuditResp.Code, deniedAuditBody)
+	}
+	if strings.Contains(deniedAuditBody, "checkout_url") || strings.Contains(deniedAuditBody, "PAYMENT_STRIPE_SECRET_KEY") {
+		t.Fatalf("payment order creation denial audit should not store checkout URL or provider secret names: %s", deniedAuditBody)
+	}
 	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
 		t.Fatal(err)
 	}

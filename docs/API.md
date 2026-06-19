@@ -457,7 +457,7 @@ Provider 退款请求：
 | `resource_id` | string | 资源 ID 过滤 |
 | `actor_user_id` | uint | 操作人 ID 过滤 |
 | `result` | string | 结果过滤，例如 `success`、`failed`、`denied` |
-| `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden` 或 `payment_order_cancel_not_pending` |
+| `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden`、`payment_order_provider_disabled` 或 `payment_order_cancel_not_pending` |
 | `start_time` | int64 | 起始 Unix 秒，按 `created_at >= start_time` 过滤 |
 | `end_time` | int64 | 结束 Unix 秒，按 `created_at <= end_time` 过滤 |
 
@@ -478,6 +478,7 @@ Provider 退款请求：
 | `channel_model_price.disable` | `PATCH /v0/admin/channel-model-prices/:id/disable` |
 | `channel_model_price.enable` | `PATCH /v0/admin/channel-model-prices/:id/enable` |
 | `payment_order.create` | `POST /v0/user/payment/orders` |
+| `payment_order.create_denied` | `POST /v0/user/payment/orders` 本地拒绝创建订单或 provider checkout 发起失败 |
 | `payment_order.cancel` | `POST /v0/user/payment/orders/:order_no/cancel` |
 | `payment_order.cancel_denied` | `POST /v0/user/payment/orders/:order_no/cancel` 拒绝取消非 `pending`、不存在或不属于当前用户的订单 |
 | `payment_webhook.processed` | `POST /v0/payment/stripe/webhook`、`POST /v0/payment/epay/notify` |
@@ -779,7 +780,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/v0/user/payment/products` | 获取可购买的充值商品 |
-| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并写 `payment_order.create` 管理审计；provider 必须已在 settings 启用，Stripe secret + 绝对 `return_url` 齐全时创建 Stripe Checkout Session，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；`expires_at` 来自 `payment.order_expire_minutes` |
+| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并写 `payment_order.create` 管理审计；provider 必须已在 settings 启用，Stripe secret + 绝对 `return_url` 齐全时创建 Stripe Checkout Session，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，稳定 `error_code` 包含 `payment_order_provider_disabled`、`payment_order_product_unavailable` 或 `payment_order_provider_checkout_failed`；`expires_at` 来自 `payment.order_expire_minutes` |
 | GET | `/v0/user/payment/orders` | 查询当前用户支付订单列表 |
 | GET | `/v0/user/payment/orders/:order_no` | 查询当前用户支付订单详情 |
 | POST | `/v0/user/payment/orders/:order_no/cancel` | 取消当前用户自己的 `pending` 订单，置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付/退款中/已退款订单拒绝取消并写 `payment_order.cancel_denied`，稳定 `error_code` 包含 `payment_order_cancel_not_pending` 或 `payment_order_cancel_not_found`，不会入账 |

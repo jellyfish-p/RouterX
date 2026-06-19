@@ -72,7 +72,7 @@
 | `TestChatCompletionUsesModelPriceExpressionForBilling` | Chat 成功调用后按启用系统模型价格表达式扣减用户余额和 Key 预算；选中通道存在启用覆盖时优先按通道级表达式扣费，并在 `billing_snapshot` 记录规则来源、表达式、变量和版本 |
 | `TestChatCompletionAppliesBillingMultipliers` | Chat 成功调用后在价格表达式之后应用倍率；用户分组 x 通道分组组合倍率命中时覆盖用户分组倍率和通道分组倍率乘积，未命中时再分别相乘，并在 `billing_snapshot` 记录倍率模式和最终 `effective_ratio` |
 | `TestChannelModelUserEnabledFiltersRelayCandidates` | 普通用户调用会过滤 `channel_model_prices.user_enabled=false` 的通道模型；显式路由到隐藏通道时上游不被调用，失败日志写 `channel_model=deny` policy 快照 |
-| `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品；未启用 provider 拒绝下单，启用后创建本地 pending 订单并写 `payment_order.create` 管理审计，订单按 settings 过期且不入账 |
+| `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品；未启用 provider 拒绝下单并写 `payment_order.create_denied` 拒绝审计，启用后创建本地 pending 订单并写 `payment_order.create` 管理审计，订单按 settings 过期且不入账 |
 | `TestUserCancelsPendingPaymentOrder` | 用户取消自己的 pending 支付订单，订单进入 `closed` 且不入账；重复取消不重复审计，已 paid 订单不能取消，并写 `payment_order.cancel_denied` 拒绝审计 |
 | `TestStripeOrderCreatesCheckoutSessionWhenConfigured` | Stripe secret、测试 API base 和绝对 return_url 齐全时创建 Checkout Session，表单 metadata/金额/货币可复核，并保存 session id/url |
 | `TestEpayOrderBuildsSignedCheckoutURL` | 易支付网关配置齐全时创建订单返回签名收银台 URL，参数和签名可复核 |

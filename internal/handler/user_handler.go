@@ -1328,11 +1328,13 @@ func (h *UserHandler) CreatePaymentOrder(c *gin.Context) {
 	}
 	var req dto.CreatePaymentOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		h.recordPaymentOrderCreateDenied(c, user, req, "payment_order_invalid_request")
 		common.FailWithStatus(c, 400, "支付订单参数无效")
 		return
 	}
 	order, err := h.svc.CreatePaymentOrder(user.ID, req.Provider, req.ProductID, req.PayType, req.ReturnURL)
 	if err != nil {
+		h.recordPaymentOrderCreateDenied(c, user, req, paymentOrderCreateErrorCode(err))
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
@@ -1341,6 +1343,61 @@ func (h *UserHandler) CreatePaymentOrder(c *gin.Context) {
 		return
 	}
 	common.Success(c, dto.PaymentOrderInfoFromModel(order))
+}
+
+func (h *UserHandler) recordPaymentOrderCreateDenied(c *gin.Context, operator *model.User, req dto.CreatePaymentOrderRequest, errorCode string) {
+	if operator == nil {
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(req.Provider))
+	productID := strings.TrimSpace(req.ProductID)
+	resourceID := productID
+	if resourceID == "" {
+		resourceID = provider
+	}
+	if resourceID == "" {
+		resourceID = "payment_order_create"
+	}
+	summary := map[string]interface{}{
+		"provider":   provider,
+		"product_id": productID,
+		"pay_type":   strings.TrimSpace(req.PayType),
+		"user_id":    operator.ID,
+		"error_code": errorCode,
+	}
+	_ = h.recordAdminAuditStringResult(c, operator, "payment_order.create_denied", common.QuotaSourceTypePaymentOrder, resourceID, nil, summary, paymentOrderCreateAuditResult(errorCode), errorCode)
+}
+
+func paymentOrderCreateAuditResult(errorCode string) string {
+	if errorCode == "payment_order_provider_checkout_failed" {
+		return "failed"
+	}
+	return "denied"
+}
+
+func paymentOrderCreateErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(msg, "unsupported payment provider"):
+		return "payment_order_provider_unsupported"
+	case strings.Contains(msg, "payment provider is disabled"):
+		return "payment_order_provider_disabled"
+	case strings.Contains(msg, "product_id is required"):
+		return "payment_order_product_required"
+	case strings.Contains(msg, "payment product is unavailable"):
+		return "payment_order_product_unavailable"
+	case strings.Contains(msg, "return_url"):
+		return "payment_order_return_url_invalid"
+	case strings.Contains(msg, "checkout session failed") || strings.Contains(msg, "checkout session response"):
+		return "payment_order_provider_checkout_failed"
+	case strings.Contains(msg, "payment.order_expire_minutes"):
+		return "payment_order_expire_setting_invalid"
+	default:
+		return "payment_order_create_rejected"
+	}
 }
 
 // GET /v0/user/payment/orders — 当前用户支付订单列表

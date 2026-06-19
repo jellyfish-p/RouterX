@@ -33,7 +33,7 @@
 - `PUT /v0/admin/setting` 批量更新成功后会按 key 写入 `setting.create` 或 `setting.update` 管理审计摘要；校验失败会写 `setting.denied`，敏感值只保存脱敏摘要。
 - `PATCH /v0/admin/user/:id/quota` 调整普通用户额度时会写入 `user.quota_update` 管理审计摘要，并关联调额原因。
 - 充值码生成、导入、作废和兑换会写入 `redem_code.*` 管理审计摘要，完整兑换码不会明文写入审计摘要。
-- 支付订单创建会写入 `payment_order.create` 管理审计摘要，checkout URL 不会写入审计摘要。
+- 支付订单创建会写入 `payment_order.create` 管理审计摘要，checkout URL 不会写入审计摘要；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，使用稳定 `error_code` 支持审计过滤。
 - 支付 provider 成功回调会写入 `payment_webhook.processed` 和 `payment_order.paid` 管理审计摘要；provider 明确失败通知会写入 `payment_webhook.failed`；管理端向 Stripe 或易支付发起 provider 退款请求会写入 `payment_refund.requested`；Stripe 全额或部分退款会写入 `payment_refund.processed`，自动扣回成功时写入 `payment_refund.deducted`；Stripe 争议/拒付生命周期会写入 `payment_dispute.created`、`payment_dispute.updated`、`payment_dispute.closed` 或 `payment_dispute.funds_changed`，并在自动禁用策略开启时记录禁用的 API Key 数量。
 - 支付相关人工补账/扣回会写入 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 管理审计摘要，并记录原因、幂等键和前后余额；人工退款会写入 `payment_refund.manual`，记录订单、退款额度、订单状态、原因、幂等键和前后余额。
 - 通道创建、编辑、启用、禁用、删除、测试和拉取模型会写入 `channel.*` 管理审计摘要，下游密钥只记录数量或是否配置。
