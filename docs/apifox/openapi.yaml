@@ -2682,12 +2682,7 @@ paths:
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
+        $ref: "#/components/requestBodies/OpenAIResponsesJSON"
       responses:
         "200":
           description: OpenAI-compatible Responses 响应；stream=true 时为 SSE。
@@ -2782,7 +2777,7 @@ paths:
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
-        $ref: "#/components/requestBodies/GenericJSON"
+        $ref: "#/components/requestBodies/OpenAICompletionsJSON"
       responses:
         "200":
           description: Legacy Completions 响应；stream=true 时为 OpenAI-compatible SSE。
@@ -3890,6 +3885,132 @@ components:
                       type: string
                       minLength: 1
                     example: ["hello", "world"]
+              user:
+                type: string
+                description: 上游 user 字段；按原样透传。
+              routerx:
+                type: object
+                additionalProperties: true
+                description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
+    OpenAIResponsesJSON:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [model]
+            additionalProperties: true
+            description: OpenAI Responses 请求体；RouterX 会保留未知字段用于 OpenAI-compatible 透传，并在命中 Anthropic/Gemini 上游时转换已支持的基础字段。
+            properties:
+              model:
+                type: string
+                description: 客户端请求的模型名；RouterX 使用该值选择通道，Azure OpenAI 通道会保留为 deployment 名。
+                example: gpt-4.1-mini
+              input:
+                oneOf:
+                  - type: string
+                    description: 文本输入；命中 Anthropic/Gemini 上游时会映射为对应消息内容。
+                    example: Summarize this request.
+                  - type: array
+                    description: Responses 原生输入数组；OpenAI-compatible 上游会透传，非 OpenAI 上游仅支持基础可转换子集。
+                    items:
+                      type: object
+                      additionalProperties: true
+                  - type: object
+                    description: Responses 原生输入对象；OpenAI-compatible 上游会透传，非 OpenAI 上游仅支持基础可转换子集。
+                    additionalProperties: true
+              instructions:
+                type: string
+                description: 系统级指令；命中 Anthropic/Gemini 上游时会映射为对应系统提示。
+                example: Be concise.
+              stream:
+                type: boolean
+                description: true 时要求 OpenAI-compatible SSE；非 OpenAI SSE 形态通道会返回 unsupported_stream_channel。
+              max_output_tokens:
+                type: integer
+                minimum: 1
+                description: 最大输出 token；命中 Chat/Messages/generateContent 上游时映射到对应字段。
+              temperature:
+                type: number
+                format: double
+                description: 采样温度；支持的上游会按对应字段转发。
+              top_p:
+                type: number
+                format: double
+                description: nucleus sampling 参数；支持的上游会按对应字段转发。
+              user:
+                type: string
+                description: 上游 user 字段；按原样透传到支持的上游。
+              routerx:
+                type: object
+                additionalProperties: true
+                description: RouterX 私有路由或上游补充选项；发往真实上游前会被剥离。
+    OpenAICompletionsJSON:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [model]
+            additionalProperties: true
+            description: Legacy Completions 请求体；RouterX 支持 OpenAI-compatible JSON/SSE 透传，Azure OpenAI 通道会按 deployment 路径转发。
+            properties:
+              model:
+                type: string
+                description: 客户端请求的模型名；RouterX 使用该值选择通道，Azure OpenAI 通道会把该值作为 deployment 名。
+                example: text-davinci-003
+              prompt:
+                oneOf:
+                  - type: string
+                    description: 单条文本 prompt。
+                    example: Write one sentence about RouterX.
+                  - type: array
+                    description: 批量 prompt；具体支持范围由上游模型决定。
+                    items:
+                      oneOf:
+                        - type: string
+                        - type: integer
+                        - type: array
+                          items: { type: integer }
+                  - type: array
+                    description: 单条 token id prompt。
+                    items:
+                      type: integer
+              suffix:
+                type: string
+                description: 补全文本后的后缀；具体支持范围由上游决定。
+              max_tokens:
+                type: integer
+                minimum: 1
+                description: 最大生成 token 数。
+              temperature:
+                type: number
+                format: double
+                description: 采样温度；按原样转发给支持的上游。
+              top_p:
+                type: number
+                format: double
+                description: nucleus sampling 参数；按原样转发给支持的上游。
+              n:
+                type: integer
+                minimum: 1
+                description: 生成候选数量；具体上限由上游决定。
+              stream:
+                type: boolean
+                description: true 时要求 OpenAI-compatible SSE；非 OpenAI SSE 形态通道会返回 unsupported_stream_channel。
+              logprobs:
+                type: integer
+                nullable: true
+                description: 请求 token 概率信息；具体支持范围由上游决定。
+              echo:
+                type: boolean
+                description: 是否在响应中回显 prompt；具体支持范围由上游决定。
+              stop:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items: { type: string }
+                description: 停止序列。
               user:
                 type: string
                 description: 上游 user 字段；按原样透传。

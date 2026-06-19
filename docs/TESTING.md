@@ -27,6 +27,7 @@
 | `TestApifoxOpenAPIInternalRefsResolve` | 递归检查 `docs/apifox/openapi.yaml` 内部 `$ref`，确保 requestBodies、responses、schemas、parameters 等组件引用都能解析，防止 Apifox 导入时出现断链 |
 | `TestApifoxOpenAPISecurityMatchesRouteGroups` | 检查 `/v1/*` operation 声明 `ApiKeyBearer`，`/v0/admin/*` 和除注册/登录外的 `/v0/user/*` operation 声明 `UserJWT`，避免可导入文档遗漏鉴权要求 |
 | `TestApifoxOpenAPIOperationTagsAreDeclared` | 检查每个公开 operation 都带有非空 tags，且对应 tag 已在 OpenAPI 顶层声明并带说明，避免 Apifox 导入后接口分组缺失或漂移 |
+| `TestApifoxOpenAITextEndpointsUseTypedRequestBodies` | 检查 OpenAI Responses 和 Legacy Completions 不再使用通用 JSON 占位 requestBody，确保 Apifox 导入后能展示字段级请求说明 |
 | `TestModelListSupportsRouterXProtocolSelector` | `/v1/models` 和 `/v1/models/{model}` 支持 `routerx_protocol` query 和 `X-RouterX-Protocol` header 选择 OpenAI、Anthropic 或 Gemini 模型外形；Gemini 外形声明生成、计数和 Embeddings 方法；`format` 保持最高优先级，无效 API Key 和模型详情 `model_not_found` 错误也按所选入口协议返回 |
 | `TestUserAPIKeyManagementAuditLogs` | API Key 创建、编辑、用户端额度/无限标记编辑拒绝、禁用和删除写入 `api_key.*` 管理审计，审计摘要不泄露 `sk-` 明文，并覆盖审计 `result`/`error_code`/时间范围过滤 |
 | `TestUserAPIKeyAdvancedManagement` | 用户查看单 Key 用量摘要、轮换 Key、泄露上报禁用、轮换链路和禁用原因落库，相关审计不泄露明文 Key |

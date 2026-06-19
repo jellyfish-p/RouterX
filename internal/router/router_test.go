@@ -354,6 +354,29 @@ func TestApifoxOpenAPIOperationTagsAreDeclared(t *testing.T) {
 	}
 }
 
+func TestApifoxOpenAITextEndpointsUseTypedRequestBodies(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := make([]string, 0)
+	for _, operation := range []string{
+		"POST /v1/responses",
+		"POST /v1/completions",
+	} {
+		requestBody, ok := apifoxOperationRequestBody(doc, operation)
+		if !ok {
+			issues = append(issues, operation+" missing requestBody")
+			continue
+		}
+		if apifoxRequestBodyIsGenericJSONPlaceholder(requestBody) {
+			issues = append(issues, operation+" still uses a generic JSON placeholder requestBody")
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("OpenAI text generation endpoints need typed Apifox request bodies:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -19950,6 +19973,58 @@ func loadApifoxRawDocument(t *testing.T) interface{} {
 		t.Fatalf("docs/apifox/openapi.yaml should parse as YAML: %v", err)
 	}
 	return doc
+}
+
+func apifoxOperationRequestBody(doc interface{}, operation string) (map[string]interface{}, bool) {
+	method, path, ok := strings.Cut(operation, " ")
+	if !ok {
+		return nil, false
+	}
+	root, ok := doc.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	paths, ok := root["paths"].(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	pathItem, ok := paths[path].(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	operationItem, ok := pathItem[strings.ToLower(method)].(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	requestBody, ok := operationItem["requestBody"].(map[string]interface{})
+	return requestBody, ok
+}
+
+func apifoxRequestBodyIsGenericJSONPlaceholder(requestBody map[string]interface{}) bool {
+	if ref, _ := requestBody["$ref"].(string); ref == "#/components/requestBodies/GenericJSON" {
+		return true
+	}
+	content, ok := requestBody["content"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	jsonContent, ok := content["application/json"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	schema, ok := jsonContent["schema"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	if ref, _ := schema["$ref"].(string); ref == "#/components/requestBodies/GenericJSON" {
+		return true
+	}
+	properties, hasProperties := schema["properties"].(map[string]interface{})
+	required, hasRequired := schema["required"].([]interface{})
+	return schema["type"] == "object" &&
+		schema["additionalProperties"] == true &&
+		(!hasProperties || len(properties) == 0) &&
+		(!hasRequired || len(required) == 0)
 }
 
 func loadApifoxOpenAPIBytes(t *testing.T) []byte {
