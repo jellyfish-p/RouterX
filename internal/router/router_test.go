@@ -1518,6 +1518,65 @@ func TestUserLoginRespectsLoginMethodSettings(t *testing.T) {
 	}
 }
 
+func TestUserLoginWritesAuditLogWithoutSecrets(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "login-audit-user",
+		"password":     "password123",
+		"display_name": "Login Audit User",
+		"email":        "login-audit@example.com",
+		"role":         common.RoleUser,
+		"quota":        10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "login-audit-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	loginResp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "login-audit-user",
+		"password": "password123",
+	})
+	var loginPayload struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(loginResp.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatal(err)
+	}
+	if loginResp.Code != http.StatusOK || loginPayload.Data.Token == "" {
+		t.Fatalf("user login failed: %d %s", loginResp.Code, loginResp.Body.String())
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?action=user.login&resource_type=user&resource_id="+uintString(user.ID), rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK ||
+		!strings.Contains(auditBody, `"action":"user.login"`) ||
+		!strings.Contains(auditBody, `"resource_id":"`+uintString(user.ID)+`"`) ||
+		!strings.Contains(auditBody, `"result":"success"`) {
+		t.Fatalf("user login should write audit log, got %d %s", auditResp.Code, auditBody)
+	}
+	if strings.Contains(auditBody, "password123") || strings.Contains(auditBody, loginPayload.Data.Token) {
+		t.Fatalf("login audit should not expose password or JWT: %s", auditBody)
+	}
+}
+
 func TestAdminUserGroupManagement(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

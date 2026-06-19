@@ -74,6 +74,10 @@ func (h *AuthHandler) UserLogin(c *gin.Context) {
 		common.FailWithStatus(c, 401, "账号或凭据错误")
 		return
 	}
+	if err := h.recordLoginAudit(c, user); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
 	common.Success(c, dto.LoginResponse{Token: token, User: dto.UserBriefFromModel(user)})
 }
 
@@ -101,6 +105,25 @@ func loginAccount(req dto.LoginRequest) string {
 		return req.Account
 	}
 	return req.Username
+}
+
+// recordLoginAudit records successful logins without storing credentials or the issued JWT.
+func (h *AuthHandler) recordLoginAudit(c *gin.Context, user *model.User) error {
+	if user == nil {
+		return nil
+	}
+	return service.NewUserService().RecordAdminAuditLog(service.AdminAuditRecordInput{
+		RequestID:    c.GetString("request_id"),
+		ActorUserID:  user.ID,
+		ActorRole:    user.Role,
+		Action:       "user.login",
+		ResourceType: "user",
+		ResourceID:   strconv.FormatUint(uint64(user.ID), 10),
+		AfterSummary: auditSummary(dto.UserBriefFromModel(user)),
+		Result:       "success",
+		IP:           c.ClientIP(),
+		UserAgent:    c.GetHeader("User-Agent"),
+	})
 }
 
 func setJWTCookie(c *gin.Context, token string) {

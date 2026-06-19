@@ -21,7 +21,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、管理员角色校验、API Key 鉴权、自助注销保留账号和基础用户名恢复账号所需的账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名账号时会恢复原账号。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC、注销二次验证、隐私字段擦除和非用户名恢复属于目标设计，需要按阶段继续实现。
+当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号和基础用户名恢复账号所需的账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名账号时会恢复原账号。本文档中的完整验证码校验、邮箱/手机号注册、OAuth/OIDC、注销二次验证、隐私字段擦除和非用户名恢复属于目标设计，需要按阶段继续实现。
 
 阶段边界：
 
@@ -372,6 +372,7 @@ POST /v0/user/login
     -> bcrypt 校验主身份 password_hash
     -> 更新本次使用 identity 的 last_used_at
     -> 签发包含 role 的 User JWT
+    -> 写 user.login 审计，摘要不包含密码或 JWT
 ```
 
 密码登录开关：
@@ -684,4 +685,4 @@ API Key 用于 `/v1/*`，不等同于登录态。
 | P1 | 手机号身份、手机注册开关、手机号密码登录、短信验证码登录、注销保留账号和恢复账号 |
 | P2 | OAuth Provider 配置、登录、绑定、补齐密码注册流程、OAuth identity 去重恢复 |
 | P2 | OIDC Discovery、Authorization Code Flow、企业 SSO、补齐密码注册流程、OIDC subject 去重恢复 |
-| P3 | MFA、多会话管理、登录审计和风险检测 |
+| P3 | MFA、多会话管理、登录风险检测和更完整会话审计 |
