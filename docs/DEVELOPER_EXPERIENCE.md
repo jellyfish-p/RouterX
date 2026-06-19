@@ -364,6 +364,15 @@ P0 验收：
 - 成功调用写日志并扣正确余额。
 - 响应、日志和错误不泄露密钥。
 
+当前 P0 证据：
+
+| 接入证据 | 回归测试 |
+|----------|----------|
+| API Key、通道、模型列表和基础开箱路径 | `TestP0BackendFlow` |
+| `/v1/models` OpenAI/Anthropic/Gemini 外形选择和模型详情错误 | `TestModelListSupportsRouterXProtocolSelector` |
+| 非流式 Chat HTTP 调用、request_id 透传、日志、用量和余额事实 | `TestChatCompletionSuccessLogsAndDeductsQuota` |
+| 失败日志中的 request_id、稳定错误 code 和上游失败事实 | `TestRelayFailureLogPersistsRequestIDAndErrorCode` |
+
 P1 验收：
 
 - 主流 SDK 可通过 RouterX 完成基础非流式和流式调用。

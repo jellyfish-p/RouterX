@@ -534,6 +534,42 @@ func TestApifoxV1OperationsUseTypedRequestBodies(t *testing.T) {
 	}
 }
 
+func TestTraceabilityP0RowsUseConcreteEvidence(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TRACEABILITY.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issues := make([]string, 0)
+	vagueMarkers := []string{"验收", "待补", "仍需", "TODO", "未覆盖"}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "| P0-C") {
+			continue
+		}
+		cells := strings.Split(line, "|")
+		if len(cells) < 7 {
+			issues = append(issues, "malformed P0 row: "+line)
+			continue
+		}
+		id := strings.TrimSpace(cells[1])
+		evidence := strings.TrimSpace(cells[len(cells)-2])
+		if !strings.Contains(evidence, "Test") {
+			issues = append(issues, id+" evidence needs at least one concrete test name")
+		}
+		for _, marker := range vagueMarkers {
+			if strings.Contains(evidence, marker) {
+				issues = append(issues, id+" evidence contains vague placeholder marker "+marker+": "+evidence)
+			}
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("P0 traceability evidence must be concrete and regression-testable:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
