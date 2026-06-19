@@ -32,6 +32,7 @@
 | `TestApifoxAccountResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查初始化状态、登录响应、用户摘要、身份摘要和用户分组摘要字段都有可读说明，避免账号路径在 Apifox 中只展示裸字段名 |
 | `TestApifoxAPIKeyResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 API Key 摘要和用量摘要响应字段都有可读说明，避免 Key 生命周期接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxAPIKeyRiskResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 API Key 泄露窗口、事件窗口、风险视图、泄露上报和批量处置响应字段都有可读说明，避免安全运维接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxChannelResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查通道摘要、上游端点摘要、连通性测试和模型拉取响应字段都有可读说明，避免通道管理接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v0` 请求体顶层字段都有可读说明，避免管理端和用户端接口在 Apifox 中只有字段名而缺少用途、边界或安全语义 |
 | `TestApifoxV1RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v1` 模型入口请求体顶层字段都有可读说明，避免 OpenAI/Anthropic/Gemini 兼容接口在 Apifox 中缺少字段用途或转换语义 |
 | `TestApifoxOpenAPIInternalRefsResolve` | 递归检查 `docs/apifox/openapi.yaml` 内部 `$ref`，确保 requestBodies、responses、schemas、parameters 等组件引用都能解析，防止 Apifox 导入时出现断链 |

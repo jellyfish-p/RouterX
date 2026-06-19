@@ -7055,8 +7055,12 @@ components:
     ChannelUpstreamPublic:
       type: object
       properties:
-        base_url: { type: string }
-        has_api_key: { type: boolean }
+        base_url:
+          type: string
+          description: 上游端点地址；响应中不包含该端点的密钥明文。
+        has_api_key:
+          type: boolean
+          description: 该上游端点是否已配置专用密钥。
     CreateChannelRequest:
       type: object
       required: [type, name, models]
@@ -7126,31 +7130,60 @@ components:
     ChannelInfo:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
-        idx: { type: integer }
-        type: { type: integer }
-        name: { type: string }
-        models: { type: string }
-        base_url: { type: string }
+        id:
+          type: integer
+          format: uint64
+          description: 通道内部 ID。
+        idx:
+          type: integer
+          description: 排序或兼容索引字段。
+        type:
+          type: integer
+          description: 通道类型；对应后端 adapter/provider 枚举。
+        name:
+          type: string
+          description: 通道人类可读名称。
+        models:
+          type: string
+          description: 通道可处理的模型配置，通常为逗号分隔模型名。
+        base_url:
+          type: string
+          description: 默认上游基础地址；单上游通道通常使用该字段。
         base_urls:
           type: array
+          description: 多基础地址列表；服务端会按通道策略选择上游端点。
           items: { type: string }
-        key_selection_mode: { type: string }
-        api_key_count: { type: integer }
+        key_selection_mode:
+          type: string
+          description: 多密钥选择模式，例如 round_robin 或 random。
+        api_key_count:
+          type: integer
+          description: 当前通道已配置的上游密钥或端点密钥数量。
         upstreams:
           type: array
+          description: 多上游端点的脱敏摘要列表。
           items:
             $ref: "#/components/schemas/ChannelUpstreamPublic"
         model_rewrites:
           type: object
+          description: 模型名重写表；key 为 RouterX 对外模型名，value 为上游实际模型名。
           additionalProperties: true
-        group: { type: string }
+        group:
+          type: string
+          description: 通道分组；用于路由候选筛选、访问控制和管理查询。
         upstream_options:
           type: object
+          description: 通道级上游补充选项；响应中不应包含下游密钥或敏感凭据明文。
           additionalProperties: true
-        priority: { type: integer }
-        weight: { type: integer }
-        status: { type: integer }
+        priority:
+          type: integer
+          description: 候选排序优先级；数值语义由当前路由策略定义。
+        weight:
+          type: integer
+          description: 同优先级候选的权重；用于加权选择。
+        status:
+          type: integer
+          description: 通道状态；禁用状态不会进入可用候选。
         health_status:
           type: string
           enum: [healthy, disabled, tripped, probing]
@@ -7166,11 +7199,24 @@ components:
           format: int64
           description: health_status=tripped 时剩余冷却秒数；其他状态通常为 0 或省略。
           example: 42
-        response_ms: { type: integer }
-        balance: { type: integer, format: int64 }
-        error_count: { type: integer }
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
+        response_ms:
+          type: integer
+          description: 最近一次通道测试或探测记录的响应耗时，单位毫秒。
+        balance:
+          type: integer
+          format: int64
+          description: 通道可用余额或上游额度摘要；具体含义由上游适配器决定。
+        error_count:
+          type: integer
+          description: 当前累计错误计数；用于健康状态和熔断判断。
+        created_at:
+          type: string
+          format: date-time
+          description: 通道创建时间。
+        updated_at:
+          type: string
+          format: date-time
+          description: 通道最近更新时间。
     ChannelPage:
       allOf:
         - $ref: "#/components/schemas/PaginatedResult"
@@ -7183,15 +7229,25 @@ components:
     TestChannelResult:
       type: object
       properties:
-        success: { type: boolean }
-        response_ms: { type: integer, format: int64 }
-        error: { type: string }
-        model_count: { type: integer }
+        success:
+          type: boolean
+          description: 本次通道连通性测试是否成功。
+        response_ms:
+          type: integer
+          format: int64
+          description: 本次测试的响应耗时，单位毫秒。
+        error:
+          type: string
+          description: 测试失败时返回的错误摘要；成功时通常省略。
+        model_count:
+          type: integer
+          description: 测试期间探测到的上游模型数量；未探测时通常为 0 或省略。
     FetchChannelModelsResult:
       type: object
       properties:
         models:
           type: array
+          description: 从指定通道上游拉取到的模型名列表。
           items: { type: string }
     RotateSecretsRequest:
       type: object

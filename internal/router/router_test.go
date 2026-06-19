@@ -642,6 +642,21 @@ func TestApifoxAPIKeyRiskResponseSchemasHaveHumanReadablePropertyDescriptions(t 
 	}
 }
 
+func TestApifoxChannelResponseSchemasHaveHumanReadablePropertyDescriptions(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := apifoxSchemaPropertyDescriptionIssues(doc, []string{
+		"ChannelUpstreamPublic",
+		"ChannelInfo",
+		"TestChannelResult",
+		"FetchChannelModelsResult",
+	})
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml channel response schemas need human-readable property descriptions:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
