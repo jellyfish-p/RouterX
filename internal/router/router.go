@@ -35,6 +35,7 @@ func SetupRouter(
 	setupH *handler.SetupHandler,
 ) *gin.Engine {
 	middleware.ResetHTTPMetrics()
+	middleware.ResetAPIKeyAuthMetrics()
 	service.ResetRelayMetrics()
 
 	r := gin.New()
@@ -165,6 +166,12 @@ func metricsHandler(c *gin.Context) {
 	writeLabeledCounter(&b, "routerx_relay_errors_total", "Relay errors by protocol, API type, code and source.", extended.RelayErrors)
 	writeLabeledCounter(&b, "routerx_tokens_used_total", "Model tokens used by model, provider and usage source.", extended.TokensUsed)
 	writeLabeledCounter(&b, "routerx_quota_used_total", "Quota used by model, provider and user group.", extended.QuotaUsed)
+	writeLabeledCounter(&b, "routerx_api_key_auth_total", "API key authentication attempts by result and reason.", extended.APIKeyAuth)
+	writeLabeledGauge(&b, "routerx_api_key_active_total", "API keys by lifecycle status.", extended.APIKeyActive)
+	writeLabeledHistogram(&b, "routerx_api_key_last_used_age_seconds", "API key age since last use in seconds by lifecycle status.", extended.APIKeyLastUsedAge)
+	writeLabeledGauge(&b, "routerx_api_key_quota_remaining", "Remaining limited API key quota by user group and key type.", extended.APIKeyQuotaRemaining)
+	writeLabeledCounter(&b, "routerx_api_key_rotation_total", "API key rotations by reason.", extended.APIKeyRotations)
+	writeLabeledCounter(&b, "routerx_api_key_leak_events_total", "API key leak reports by source.", extended.APIKeyLeakEvents)
 	writeLabeledGauge(&b, "routerx_channel_available", "Channel availability by channel and provider.", extended.ChannelAvailable)
 	writeLabeledGauge(&b, "routerx_channel_error_count", "Channel error counters by channel and provider.", extended.ChannelErrorCounts)
 	writeLabeledCounter(&b, "routerx_channel_probe_total", "Background channel breaker probes by result.", extended.ChannelProbes)
@@ -213,6 +220,12 @@ type extendedMetrics struct {
 	RelayErrors          []metricSample
 	TokensUsed           []metricSample
 	QuotaUsed            []metricSample
+	APIKeyAuth           []metricSample
+	APIKeyActive         []metricSample
+	APIKeyLastUsedAge    []metricHistogramSample
+	APIKeyQuotaRemaining []metricSample
+	APIKeyRotations      []metricSample
+	APIKeyLeakEvents     []metricSample
 	ChannelErrorCounts   []metricSample
 	ChannelAvailable     []metricSample
 	ChannelProbes        []metricSample
@@ -282,6 +295,17 @@ func collectExtendedMetrics() (extendedMetrics, error) {
 		return extendedMetrics{}, err
 	}
 	metrics.QuotaUsed = quotaUsed
+	metrics.APIKeyAuth = collectAPIKeyAuthMetrics()
+
+	apiKeyActive, apiKeyLastUsedAge, apiKeyQuotaRemaining, apiKeyRotations, apiKeyLeakEvents, err := collectAPIKeyLifecycleMetrics(time.Now())
+	if err != nil {
+		return extendedMetrics{}, err
+	}
+	metrics.APIKeyActive = apiKeyActive
+	metrics.APIKeyLastUsedAge = apiKeyLastUsedAge
+	metrics.APIKeyQuotaRemaining = apiKeyQuotaRemaining
+	metrics.APIKeyRotations = apiKeyRotations
+	metrics.APIKeyLeakEvents = apiKeyLeakEvents
 
 	channelAvailable, err := collectChannelAvailabilityMetrics()
 	if err != nil {
@@ -692,6 +716,253 @@ func quotaUsageUserGroups(rows []quotaUsageMetricRow) (map[uint]string, error) {
 		}
 	}
 	return labels, nil
+}
+
+var apiKeyLastUsedAgeBuckets = []float64{3600, 86400, 604800, 2592000, 7776000}
+
+type apiKeyQuotaMetricKey struct {
+	UserGroup string
+	KeyType   string
+}
+
+type apiKeyAgeHistogramValue struct {
+	Buckets    []int64
+	Count      int64
+	SumSeconds float64
+}
+
+func collectAPIKeyAuthMetrics() []metricSample {
+	rows := middleware.APIKeyAuthMetricsSnapshot()
+	samples := make([]metricSample, 0, len(rows))
+	for _, row := range rows {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{
+				{Name: "result", Value: row.Result},
+				{Name: "reason", Value: row.Reason},
+			},
+			Value: row.Count,
+		})
+	}
+	return samples
+}
+
+func collectAPIKeyLifecycleMetrics(now time.Time) ([]metricSample, []metricHistogramSample, []metricSample, []metricSample, []metricSample, error) {
+	var tokens []model.Token
+	if err := internal.DB.Preload("User").Preload("User.Group").Find(&tokens).Error; err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+
+	statusCounts := map[string]int64{
+		"enabled":  0,
+		"disabled": 0,
+		"expired":  0,
+	}
+	lastUsedAges := map[string]*apiKeyAgeHistogramValue{}
+	quotaRemaining := map[apiKeyQuotaMetricKey]int64{}
+	rotationCounts := map[string]int64{}
+	leakCounts := map[string]int64{}
+
+	for _, token := range tokens {
+		status := apiKeyLifecycleStatus(token, now)
+		statusCounts[status]++
+		if token.LastUsedAt != nil {
+			observeAPIKeyLastUsedAge(lastUsedAges, status, now.Sub(*token.LastUsedAt).Seconds())
+		}
+		if status == "enabled" && !apiKeyIsUnlimited(token) {
+			key := apiKeyQuotaMetricKey{
+				UserGroup: apiKeyMetricUserGroup(token),
+				KeyType:   "limited",
+			}
+			quotaRemaining[key] += maxInt64(token.RemainQuota, 0)
+		}
+		if token.RotatedFromID != nil {
+			rotationCounts["user_rotate"]++
+		}
+		if source, ok := apiKeyLeakSource(token); ok {
+			leakCounts[source]++
+		}
+	}
+
+	return apiKeyActiveSamples(statusCounts),
+		apiKeyLastUsedAgeSamples(lastUsedAges),
+		apiKeyQuotaRemainingSamples(quotaRemaining),
+		apiKeyLabeledCountSamples(rotationCounts, "reason"),
+		apiKeyLabeledCountSamples(leakCounts, "source"),
+		nil
+}
+
+func apiKeyLifecycleStatus(token model.Token, now time.Time) string {
+	if token.Status != common.TokenStatusEnabled {
+		return "disabled"
+	}
+	if token.ExpiredAt != nil && !token.ExpiredAt.After(now) {
+		return "expired"
+	}
+	return "enabled"
+}
+
+func apiKeyIsUnlimited(token model.Token) bool {
+	return token.Unlimited || token.RemainQuota == common.QuotaUnlimited
+}
+
+func apiKeyMetricUserGroup(token model.Token) string {
+	if token.User != nil && token.User.Group != nil {
+		return metricDimensionOrDefault(token.User.Group.Name, "default")
+	}
+	return "default"
+}
+
+func observeAPIKeyLastUsedAge(values map[string]*apiKeyAgeHistogramValue, status string, seconds float64) {
+	if seconds < 0 {
+		seconds = 0
+	}
+	value := values[status]
+	if value == nil {
+		value = &apiKeyAgeHistogramValue{Buckets: make([]int64, len(apiKeyLastUsedAgeBuckets))}
+		values[status] = value
+	}
+	for i, bucket := range apiKeyLastUsedAgeBuckets {
+		if seconds <= bucket {
+			value.Buckets[i]++
+		}
+	}
+	value.Count++
+	value.SumSeconds += seconds
+}
+
+func apiKeyActiveSamples(counts map[string]int64) []metricSample {
+	statuses := []string{"enabled", "disabled", "expired"}
+	for status := range counts {
+		if status != "enabled" && status != "disabled" && status != "expired" {
+			statuses = append(statuses, status)
+		}
+	}
+	sort.Strings(statuses[3:])
+	samples := make([]metricSample, 0, len(statuses))
+	for _, status := range statuses {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{{Name: "status", Value: status}},
+			Value:  counts[status],
+		})
+	}
+	return samples
+}
+
+func apiKeyLastUsedAgeSamples(values map[string]*apiKeyAgeHistogramValue) []metricHistogramSample {
+	statuses := make([]string, 0, len(values))
+	for status := range values {
+		statuses = append(statuses, status)
+	}
+	sort.Strings(statuses)
+	samples := make([]metricHistogramSample, 0, len(statuses))
+	for _, status := range statuses {
+		value := values[status]
+		buckets := make([]metricHistogramBucket, 0, len(apiKeyLastUsedAgeBuckets)+1)
+		for i, bucket := range apiKeyLastUsedAgeBuckets {
+			buckets = append(buckets, metricHistogramBucket{
+				Le:    strconv.FormatFloat(bucket, 'f', -1, 64),
+				Count: value.Buckets[i],
+			})
+		}
+		buckets = append(buckets, metricHistogramBucket{Le: "+Inf", Count: value.Count})
+		samples = append(samples, metricHistogramSample{
+			Labels:  []metricLabel{{Name: "status", Value: status}},
+			Buckets: buckets,
+			Sum:     value.SumSeconds,
+			Count:   value.Count,
+		})
+	}
+	return samples
+}
+
+func apiKeyQuotaRemainingSamples(counts map[apiKeyQuotaMetricKey]int64) []metricSample {
+	keys := make([]apiKeyQuotaMetricKey, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].UserGroup != keys[j].UserGroup {
+			return keys[i].UserGroup < keys[j].UserGroup
+		}
+		return keys[i].KeyType < keys[j].KeyType
+	})
+	samples := make([]metricSample, 0, len(keys))
+	for _, key := range keys {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{
+				{Name: "user_group", Value: key.UserGroup},
+				{Name: "key_type", Value: key.KeyType},
+			},
+			Value: counts[key],
+		})
+	}
+	return samples
+}
+
+func apiKeyLabeledCountSamples(counts map[string]int64, labelName string) []metricSample {
+	labels := make([]string, 0, len(counts))
+	for label := range counts {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	samples := make([]metricSample, 0, len(labels))
+	for _, label := range labels {
+		samples = append(samples, metricSample{
+			Labels: []metricLabel{{Name: labelName, Value: label}},
+			Value:  counts[label],
+		})
+	}
+	return samples
+}
+
+func apiKeyLeakSource(token model.Token) (string, bool) {
+	if token.Status != common.TokenStatusDisabled {
+		return "", false
+	}
+	reason := metricLabelSlug(token.RevokedReason)
+	if reason == "" || reason == "rotated" || reason == "user_disabled" || reason == "admin_batch_disable" {
+		return "", false
+	}
+	if reason == "public_repository" || reason == "github_public_repo" {
+		return "public_repo", true
+	}
+	if strings.Contains(reason, "public") && strings.Contains(reason, "repo") {
+		return "public_repo", true
+	}
+	for _, marker := range []string{"leak", "exposed", "compromised", "public", "secret"} {
+		if strings.Contains(reason, marker) {
+			return reason, true
+		}
+	}
+	return "", false
+}
+
+func metricLabelSlug(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range value {
+		keep := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.'
+		switch {
+		case keep:
+			b.WriteRune(r)
+			lastUnderscore = false
+		case !lastUnderscore:
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func providerFromRouteSnapshot(raw string) string {

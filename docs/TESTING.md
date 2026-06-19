@@ -191,6 +191,7 @@
 | `TestChatCompletionHonorsDisabledAutoBanSetting` | `relay.error_auto_ban=false` 时高 `error_count` 通道仍可参与候选并在成功后恢复计数 |
 | `TestChannelBreakerCooldownAllowsProbeAfterWindow` | 达到 `relay.error_ban_threshold` 的通道在 `relay.error_ban_cooldown_seconds` 冷却窗口内继续被过滤，冷却后可重新进入候选作为半开探测 |
 | `TestChannelBreakerProbeRecoversCooledTrippedChannel` | 后台探测的一击式服务方法只复测已过冷却窗口的熔断启用通道，成功后清零 `error_count` |
+| `TestMetricsEndpointIncludesAPIKeyLifecycleAndRiskSignals` | `/metrics` 暴露 API Key 鉴权成功/失败、启用/禁用/过期状态、最近使用年龄、可用有限额度、轮换和泄露事件指标 |
 | `TestMetricsEndpointIncludesChannelProbeCounters` | `/metrics` 暴露后台熔断探测 success/failed 低基数计数器 |
 | `TestAdminChannelListIncludesHealthStatus` | 管理端通道列表返回 `healthy`、`disabled`、`tripped` 和 `probing` 显式健康状态，并包含冷却剩余秒数 |
 | `TestNoAvailableChannelWritesBreakerSnapshot` | 所有候选都因 `health_blocked` 熔断过滤时不调用上游，返回 `no_available_channel`，失败日志 `policy_snapshot` 写 `breaker_snapshot` 的阈值、冷却窗口和被挡通道摘要 |

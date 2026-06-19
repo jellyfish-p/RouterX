@@ -269,7 +269,7 @@ volumes:
 
 完整指标目录、标签控制和告警建议以 `docs/OBSERVABILITY.md` 为准。
 
-当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、日志补写 outbox 状态、HTTP 请求量/耗时、调用日志状态、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标，后续继续补更细错误维度。
+当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、日志补写 outbox 状态、HTTP 请求量/耗时、调用日志状态、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露指标、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标，后续继续补更细错误维度。
 
 核心指标：
 
@@ -284,6 +284,12 @@ volumes:
 | `routerx_upstream_duration_seconds` | histogram | 上游调用耗时 |
 | `routerx_tokens_used_total` | counter | token 用量 |
 | `routerx_quota_used_total` | counter | 按模型、供应商和用户组统计的额度消耗 |
+| `routerx_api_key_auth_total` | counter | API Key 鉴权成功和失败趋势 |
+| `routerx_api_key_active_total` | gauge | API Key 启用、禁用和过期状态 |
+| `routerx_api_key_last_used_age_seconds` | histogram | API Key 距离上次使用的秒数 |
+| `routerx_api_key_quota_remaining` | gauge | 可用有限额度 API Key 的剩余额度；无限额度 Key 不混入 |
+| `routerx_api_key_rotation_total` | counter | API Key 轮换记录计数 |
+| `routerx_api_key_leak_events_total` | counter | API Key 泄露相关禁用事件 |
 | `routerx_channel_available` | gauge | 通道可用状态 |
 | `routerx_channel_error_count` | gauge | 通道连续错误数 |
 | `routerx_channel_probe_total` | counter | 后台熔断探测结果计数，标签为 `result=success|failed` |

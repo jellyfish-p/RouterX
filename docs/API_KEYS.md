@@ -327,12 +327,12 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 
 | 指标 | 类型 | 标签 | 用途 |
 |------|------|------|------|
-| `routerx_api_key_auth_total` | counter | result、reason | 鉴权成功和失败趋势。 |
-| `routerx_api_key_active_total` | gauge | status | 活跃、禁用、过期 Key 数。 |
-| `routerx_api_key_last_used_age_seconds` | histogram | status | 长期未使用 Key 清理和风险识别。 |
-| `routerx_api_key_quota_remaining` | gauge | user_group、key_type | 额度风险和告警。 |
-| `routerx_api_key_rotation_total` | counter | reason | 轮换策略执行情况。 |
-| `routerx_api_key_leak_events_total` | counter | source | 泄露响应趋势。 |
+| `routerx_api_key_auth_total` | counter | result、reason | 鉴权成功和失败趋势；成功 reason 为 `authenticated`，失败 reason 包含 `missing`、`invalid_key`、`disabled`、`expired` 和 `user_disabled`。 |
+| `routerx_api_key_active_total` | gauge | status | 启用、禁用、过期 Key 数；status 固定为 `enabled`、`disabled`、`expired`。 |
+| `routerx_api_key_last_used_age_seconds` | histogram | status | 已有最近使用时间的 Key 距离上次使用的秒数，用于长期未使用 Key 清理和风险识别。 |
+| `routerx_api_key_quota_remaining` | gauge | user_group、key_type | 当前可用且未过期的有限额度 Key 剩余额度；无限额度 Key 不混入该指标。 |
+| `routerx_api_key_rotation_total` | counter | reason | 轮换策略执行情况；当前用户主动轮换 reason 为 `user_rotate`。 |
+| `routerx_api_key_leak_events_total` | counter | source | 泄露响应趋势；source 来自规范化后的泄露原因，例如 `public_repo`。 |
 
 ## 14. 泄露处理剧本
 

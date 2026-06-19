@@ -5262,6 +5262,81 @@ func TestMetricsEndpointIncludesHTTPMetrics(t *testing.T) {
 	}
 }
 
+func TestMetricsEndpointIncludesAPIKeyLifecycleAndRiskSignals(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	if err := service.NewSettingService().Set("observability.metrics_enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Model(&model.User{}).Where("id = ?", root.ID).Update("quota", int64(1000)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tokenSvc := service.NewTokenService()
+	limited, err := tokenSvc.Create(root.ID, "metrics-limited", 75, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tokenSvc.Create(root.ID, "metrics-unlimited", 0, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	expiredAt := time.Now().Add(-time.Hour).Unix()
+	if _, err := tokenSvc.Create(root.ID, "metrics-expired", 12, false, &expiredAt); err != nil {
+		t.Fatal(err)
+	}
+	rotatedSource, err := tokenSvc.Create(root.ID, "metrics-rotated", 33, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := tokenSvc.RotateForUser(rotatedSource.ID, root.ID); err != nil {
+		t.Fatal(err)
+	}
+	leaked, err := tokenSvc.Create(root.ID, "metrics-leaked", 10, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tokenSvc.ReportLeakForUser(leaked.ID, root.ID, "public_repo"); err != nil {
+		t.Fatal(err)
+	}
+	lastUsedAt := time.Now().Add(-2 * time.Hour)
+	if err := internal.DB.Model(&model.Token{}).Where("id = ?", limited.ID).Update("last_used_at", &lastUsedAt).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	invalidResp := performJSON(r, http.MethodGet, "/v1/models", "Bearer sk-invalid", nil)
+	if invalidResp.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid api key request should fail auth, got %d %s", invalidResp.Code, invalidResp.Body.String())
+	}
+	_ = performJSON(r, http.MethodGet, "/v1/models", "Bearer "+limited.Key, nil)
+
+	resp := performJSON(r, http.MethodGet, "/metrics", "", nil)
+	body := resp.Body.String()
+	if resp.Code != http.StatusOK ||
+		!strings.Contains(body, `routerx_api_key_auth_total{result="failure",reason="invalid_key"} 1`) ||
+		!strings.Contains(body, `routerx_api_key_auth_total{result="success",reason="authenticated"} 1`) ||
+		!strings.Contains(body, `routerx_api_key_active_total{status="enabled"} 3`) ||
+		!strings.Contains(body, `routerx_api_key_active_total{status="disabled"} 2`) ||
+		!strings.Contains(body, `routerx_api_key_active_total{status="expired"} 1`) ||
+		!strings.Contains(body, `routerx_api_key_last_used_age_seconds_count{status="enabled"} 1`) ||
+		!strings.Contains(body, `routerx_api_key_quota_remaining{user_group="default",key_type="limited"} 108`) ||
+		!strings.Contains(body, `routerx_api_key_rotation_total{reason="user_rotate"} 1`) ||
+		!strings.Contains(body, `routerx_api_key_leak_events_total{source="public_repo"} 1`) {
+		t.Fatalf("metrics should include api key lifecycle and risk signals, got %d %s", resp.Code, body)
+	}
+}
+
 func TestMetricsEndpointIncludesRelayDurationMetrics(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

@@ -24,7 +24,7 @@
 - `GET /v0/admin/channel` 返回计算型通道健康摘要，包含 `health_status`、`health_reason` 和 `cooldown_remaining_seconds`，便于把手工状态、熔断阈值和冷却窗口区分开。
 - `admin_audit_logs` 表保存基础管理审计日志，字段包含 actor、action、resource、before/after 摘要、request_id、IP 和 User-Agent。
 - `GET /v0/admin/audit` 已注册为超级管理员查询接口，支持按 `action`、`resource_type`、`resource_id`、`actor_user_id`、`result`、`error_code` 和时间范围过滤。
-- `GET /metrics` 已注册为 Prometheus 文本指标接口，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、日志补写 outbox 状态、HTTP 请求量和耗时、调用日志状态、Relay 请求数、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标。
+- `GET /metrics` 已注册为 Prometheus 文本指标接口，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、日志补写 outbox 状态、HTTP 请求量和耗时、调用日志状态、Relay 请求数、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、API Key 鉴权、生命周期、最近使用年龄、可用有限额度、轮换和泄露事件、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标。
 - API Key 创建、编辑、禁用、删除、scope 更新、批量禁用、批量过期、批量操作缺少筛选条件拒绝和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计摘要，完整 Key 明文和哈希不会写入审计摘要。
 - 普通用户成功登录、创建、编辑、禁用、删除和拒绝角色变更会写入 `user.*` 管理审计摘要，密码和 JWT 不会写入审计摘要。
 - 支付商品创建、更新、启用和禁用会写入 `payment_product.*` 管理审计摘要。
@@ -191,6 +191,12 @@
 | `routerx_upstream_duration_seconds` | histogram | provider、channel_id、status | 上游耗时 |
 | `routerx_tokens_used_total` | counter | model、provider、usage_source | 模型 token 用量 |
 | `routerx_quota_used_total` | counter | model、provider、user_group | 额度消耗 |
+| `routerx_api_key_auth_total` | counter | result、reason | API Key 鉴权成功和失败趋势 |
+| `routerx_api_key_active_total` | gauge | status | API Key 启用、禁用和过期状态计数 |
+| `routerx_api_key_last_used_age_seconds` | histogram | status | 已有最近使用时间的 API Key 距离上次使用的秒数 |
+| `routerx_api_key_quota_remaining` | gauge | user_group、key_type | 当前可用且未过期的有限额度 API Key 剩余额度；无限额度 Key 不混入该指标 |
+| `routerx_api_key_rotation_total` | counter | reason | API Key 轮换记录计数 |
+| `routerx_api_key_leak_events_total` | counter | source | 禁用原因为泄露相关的 API Key 事件计数 |
 | `routerx_channel_available` | gauge | channel_id、provider | 通道可用状态 |
 | `routerx_channel_error_count` | gauge | channel_id、provider | 通道连续错误数 |
 | `routerx_channel_probe_total` | counter | result | 后台熔断探测结果计数；只使用 `success`/`failed` 低基数标签，不按 channel_id 拆分 |
@@ -281,7 +287,7 @@
 | 账单一致 | 用户账单聚合等于成功日志事实；启用独立日志库时主库结算最小事实可恢复。 |
 | 脱敏 | 日志和导出不包含 API Key、上游密钥、DSN、支付密钥。 |
 | 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖成功登录、API Key 管理和 scope 更新、用户管理、支付商品管理、settings 更新与校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理和日志导出操作。 |
-| 指标 | `/metrics` 暴露基础实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、日志补写 outbox、支付、审计和 DB/Redis/日志库指标，不包含高基数或敏感 label；后续继续补更细错误维度和告警。 |
+| 指标 | `/metrics` 暴露基础实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露指标、通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、日志补写 outbox、支付、审计和 DB/Redis/日志库指标，不包含高基数或敏感 label；后续继续补更细错误维度和告警。 |
 
 ## 文档同步
 

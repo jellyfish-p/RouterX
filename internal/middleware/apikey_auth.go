@@ -70,12 +70,14 @@ func authenticateAPIKey(c *gin.Context) bool {
 		ok = key != ""
 	}
 	if !ok {
+		recordAPIKeyAuthMetric("failure", "missing")
 		writeProtocolAuthError(c, http.StatusUnauthorized, "invalid api key", "authentication_error", "invalid_api_key")
 		return false
 	}
 	tokenSvc := service.NewTokenService()
 	token, err := tokenSvc.ValidateAndGetToken(key)
 	if err != nil {
+		recordAPIKeyAuthMetric("failure", apiKeyAuthFailureReason(err))
 		if errors.Is(err, service.ErrAPIUserDisabled) {
 			writeProtocolAuthError(c, http.StatusForbidden, "user is disabled", "permission_error", "user_disabled")
 			return false
@@ -83,6 +85,7 @@ func authenticateAPIKey(c *gin.Context) bool {
 		writeProtocolAuthError(c, http.StatusUnauthorized, "invalid api key", "authentication_error", "invalid_api_key")
 		return false
 	}
+	recordAPIKeyAuthMetric("success", "authenticated")
 	// 入口协议 scope 在 relay 解析前执行，确保拒绝响应仍保持当前协议的错误外形。
 	if err := tokenSvc.CheckEntryProtocolScope(token, entryProtocol(c)); err != nil {
 		tokenSvc.RecordScopeDeniedPolicyLog(token, "entry protocol not allowed by api key scope", c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"), "token_forbidden", "not_evaluated", policyDeniedScopeResult("entry_protocol"))
@@ -170,6 +173,19 @@ func writeProtocolAuthError(c *gin.Context, status int, message, typ, code strin
 		c.JSON(status, common.GeminiError(status, message, geminiStatusText(status)))
 	default:
 		c.JSON(status, common.OpenAIError(message, typ, code))
+	}
+}
+
+func apiKeyAuthFailureReason(err error) string {
+	switch {
+	case errors.Is(err, service.ErrAPIKeyDisabled):
+		return "disabled"
+	case errors.Is(err, service.ErrAPIKeyExpired):
+		return "expired"
+	case errors.Is(err, service.ErrAPIUserDisabled):
+		return "user_disabled"
+	default:
+		return "invalid_key"
 	}
 }
 
