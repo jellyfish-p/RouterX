@@ -184,6 +184,7 @@
 | `TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage` | Image Generations 基础 JSON 透传、`routerx` 剥离、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestImageGenerationsRejectsInvalidSizeBeforeUpstream` | Image Generations 在上游前拒绝超界 `size`，返回 `invalid_image_size`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestImageMultipartPassthroughUsesRouteAndMinimumCharge` | Image Edits/Variations multipart 表单透传、`routerx` 表单字段剥离与路由偏好、图像/遮罩文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestImageMultipartRejectsInvalidSizeBeforeUpstream` | Image Edits/Variations 在上游前拒绝超界 `size`，返回 `invalid_image_size`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge` | Audio Speech 基础 JSON 透传、`routerx` 剥离、二进制音频响应和 Content-Type 透传、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestAudioSpeechRejectsInvalidResponseFormatBeforeUpstream` | Audio Speech 在上游前拒绝非法 `response_format`，返回 `invalid_audio_response_format`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestAudioSpeechRejectsInvalidRequestFieldsBeforeUpstream` | Audio Speech 在上游前拒绝空输入、超长输入和空 voice，返回稳定错误码，不调用上游且不扣用户额度或 API Key 预算 |

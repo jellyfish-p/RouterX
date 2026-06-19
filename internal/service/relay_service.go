@@ -1386,6 +1386,10 @@ func validateImageGenerationSize(raw json.RawMessage) error {
 		return errInvalidImageSize
 	}
 	size = strings.ToLower(strings.TrimSpace(size))
+	return validateImageSizeValue(size)
+}
+
+func validateImageSizeValue(size string) error {
 	if size == "" || size == "auto" {
 		return nil
 	}
@@ -1606,6 +1610,12 @@ func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType 
 			info.Model = strings.TrimSpace(string(raw))
 		case "stream":
 			info.Stream = multipartBoolValue(raw)
+		case "size":
+			if isImageMultipartAPIType(apiType) {
+				if err := validateImageMultipartSize(raw); err != nil {
+					return relayRequestInfo{}, err
+				}
+			}
 		case "response_format":
 			if isAudioTextMultipartAPIType(apiType) {
 				if err := validateAudioMultipartResponseFormat(raw); err != nil {
@@ -1634,6 +1644,14 @@ func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType 
 		return relayRequestInfo{}, errModelRequired
 	}
 	return info, nil
+}
+
+func isImageMultipartAPIType(apiType relay.APIType) bool {
+	return apiType == relay.APIImagesEdits || apiType == relay.APIImagesVariations
+}
+
+func validateImageMultipartSize(raw []byte) error {
+	return validateImageSizeValue(strings.ToLower(strings.TrimSpace(string(raw))))
 }
 
 func isAudioTextMultipartAPIType(apiType relay.APIType) bool {
