@@ -7797,6 +7797,8 @@ func TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage(t *testing.T)
 			},
 		},
 		"outputDimensionality": 128,
+		"taskType":             "RETRIEVAL_DOCUMENT",
+		"title":                "RouterX handbook",
 	})
 	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"embedding":{"values":[0.25,0.5]}`) {
 		t.Fatalf("gemini embedContent should return Gemini embedding response, got %d %s", resp.Code, resp.Body.String())
@@ -7827,6 +7829,14 @@ func TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage(t *testing.T)
 	}
 	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 6 || callLog.TotalTokens != 6 || callLog.PromptTokens != 6 || callLog.CompletionTokens != 0 {
 		t.Fatalf("unexpected gemini embedContent success log: %+v", callLog)
+	}
+	var requestSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RequestSnapshot), &requestSnapshot); err != nil {
+		t.Fatalf("gemini embedContent request snapshot should be JSON, got %q: %v", callLog.RequestSnapshot, err)
+	}
+	if !snapshotHasAdapterDegradation(requestSnapshot, "gemini", "taskType", "dropped") ||
+		!snapshotHasAdapterDegradation(requestSnapshot, "gemini", "title", "dropped") {
+		t.Fatalf("gemini embedContent request snapshot should explain unmapped fields: %+v", requestSnapshot)
 	}
 }
 
@@ -7896,12 +7906,15 @@ func TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage(t *test
 					"parts": []map[string]interface{}{{"text": "hello"}},
 				},
 				"outputDimensionality": 256,
+				"taskType":             "RETRIEVAL_QUERY",
+				"title":                "Ignored query title",
 			},
 			{
 				"content": map[string]interface{}{
 					"parts": []map[string]interface{}{{"text": "world"}},
 				},
 				"outputDimensionality": 256,
+				"taskType":             "RETRIEVAL_QUERY",
 			},
 		},
 	})
@@ -7935,6 +7948,14 @@ func TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage(t *test
 	}
 	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 8 || callLog.TotalTokens != 8 || callLog.PromptTokens != 8 || callLog.CompletionTokens != 0 {
 		t.Fatalf("unexpected gemini batchEmbedContents success log: %+v", callLog)
+	}
+	var requestSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RequestSnapshot), &requestSnapshot); err != nil {
+		t.Fatalf("gemini batchEmbedContents request snapshot should be JSON, got %q: %v", callLog.RequestSnapshot, err)
+	}
+	if !snapshotHasAdapterDegradation(requestSnapshot, "gemini", "requests.taskType", "dropped") ||
+		!snapshotHasAdapterDegradation(requestSnapshot, "gemini", "requests.title", "dropped") {
+		t.Fatalf("gemini batchEmbedContents request snapshot should explain unmapped fields: %+v", requestSnapshot)
 	}
 }
 

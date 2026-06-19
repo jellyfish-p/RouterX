@@ -466,6 +466,7 @@ func (s *RelayService) RelayGeminiEmbedContent(ctx context.Context, token *model
 	if err != nil {
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayAdapterDegradations(ctx, geminiEmbedContentAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
 	if err != nil {
 		return nil, usage, err
@@ -482,6 +483,7 @@ func (s *RelayService) RelayGeminiBatchEmbedContents(ctx context.Context, token 
 	if err != nil {
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
+	ctx = contextWithRelayAdapterDegradations(ctx, geminiBatchEmbedContentsAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
 	if err != nil {
 		return nil, usage, err
@@ -2335,6 +2337,46 @@ func geminiGenerateAdapterDegradations(body []byte) []relayAdapterDegradation {
 	degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "safetySettings", input.SafetySettings)
 	degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "cachedContent", input.CachedContent)
 	degradations = appendGeminiGenerationConfigDegradations(degradations, input.GenerationConfig)
+	return degradations
+}
+
+func geminiEmbedContentAdapterDegradations(body []byte) []relayAdapterDegradation {
+	var input struct {
+		Content struct {
+			Parts []json.RawMessage `json:"parts"`
+		} `json:"content"`
+		TaskType json.RawMessage `json:"taskType"`
+		Title    json.RawMessage `json:"title"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil
+	}
+	degradations := make([]relayAdapterDegradation, 0)
+	degradations = appendGeminiPartDegradations(degradations, "content.parts", input.Content.Parts)
+	degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "taskType", input.TaskType)
+	degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "title", input.Title)
+	return degradations
+}
+
+func geminiBatchEmbedContentsAdapterDegradations(body []byte) []relayAdapterDegradation {
+	var input struct {
+		Requests []struct {
+			Content struct {
+				Parts []json.RawMessage `json:"parts"`
+			} `json:"content"`
+			TaskType json.RawMessage `json:"taskType"`
+			Title    json.RawMessage `json:"title"`
+		} `json:"requests"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil
+	}
+	degradations := make([]relayAdapterDegradation, 0)
+	for _, request := range input.Requests {
+		degradations = appendGeminiPartDegradations(degradations, "requests.content.parts", request.Content.Parts)
+		degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "requests.taskType", request.TaskType)
+		degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "requests.title", request.Title)
+	}
 	return degradations
 }
 

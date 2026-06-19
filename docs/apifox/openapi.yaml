@@ -3211,7 +3211,7 @@ paths:
     post:
       tags: [Gemini Compatible]
       summary: Gemini embedContent
-      description: 基础实现；Gemini content.parts 文本会转换为 OpenAI-compatible Embeddings input，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings 上游，OpenAI embedding 响应会转换为 Gemini embedding.values。usage 写入 RouterX 日志并扣费；taskType/title 和 Gemini 原生上游以 docs/PROTOCOLS.md 为准。
+      description: 基础实现；Gemini content.parts 文本会转换为 OpenAI-compatible Embeddings input，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings 上游，OpenAI embedding 响应会转换为 Gemini embedding.values。usage 写入 RouterX 日志并扣费；taskType/title 暂不转发但会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要，Gemini 原生上游以 docs/PROTOCOLS.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -3248,7 +3248,7 @@ paths:
     post:
       tags: [Gemini Compatible]
       summary: Gemini batchEmbedContents
-      description: 基础实现；Gemini requests[].content.parts 文本会转换为 OpenAI-compatible Embeddings input 数组，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings 上游，OpenAI embedding list 会转换为 Gemini embeddings[].values。usage 写入 RouterX 日志并扣费；同批次已填写的 outputDimensionality 必须一致；批量请求继承 OpenAI Embeddings 2048 上限，上游返回 embedding 数量必须与请求数量一致，否则返回 Gemini 兼容 502/UNAVAILABLE，message 为 upstream response conversion failed，对应 RouterX 错误语义 upstream_conversion_failed；taskType/title 和 Gemini 原生上游以 docs/PROTOCOLS.md 为准。
+      description: 基础实现；Gemini requests[].content.parts 文本会转换为 OpenAI-compatible Embeddings input 数组，outputDimensionality 会映射为 OpenAI dimensions，并调用 /v1/embeddings 上游，OpenAI embedding list 会转换为 Gemini embeddings[].values。usage 写入 RouterX 日志并扣费；同批次已填写的 outputDimensionality 必须一致；批量请求继承 OpenAI Embeddings 2048 上限，上游返回 embedding 数量必须与请求数量一致，否则返回 Gemini 兼容 502/UNAVAILABLE，message 为 upstream response conversion failed，对应 RouterX 错误语义 upstream_conversion_failed；taskType/title 暂不转发但会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要，Gemini 原生上游以 docs/PROTOCOLS.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -3503,10 +3503,10 @@ components:
                       - text: world
               taskType:
                 type: string
-                description: 当前基础实现暂不转发；后续按 docs/PROTOCOLS.md 补齐字段保真。
+                description: 当前基础实现暂不转发；有值时会记录 dropped 降级摘要，后续按 docs/PROTOCOLS.md 补齐字段保真。
               title:
                 type: string
-                description: 当前基础实现暂不转发；后续按 docs/PROTOCOLS.md 补齐字段保真。
+                description: 当前基础实现暂不转发；有值时会记录 dropped 降级摘要，后续按 docs/PROTOCOLS.md 补齐字段保真。
               outputDimensionality:
                 type: integer
                 minimum: 1
@@ -3543,10 +3543,10 @@ components:
                                 minLength: 1
                     taskType:
                       type: string
-                      description: 当前基础实现暂不转发；后续按 docs/PROTOCOLS.md 补齐字段保真。
+                      description: 当前基础实现暂不转发；有值时会记录 dropped 降级摘要，后续按 docs/PROTOCOLS.md 补齐字段保真。
                     title:
                       type: string
-                      description: 当前基础实现暂不转发；后续按 docs/PROTOCOLS.md 补齐字段保真。
+                      description: 当前基础实现暂不转发；有值时会记录 dropped 降级摘要，后续按 docs/PROTOCOLS.md 补齐字段保真。
                     outputDimensionality:
                       type: integer
                       minimum: 1
