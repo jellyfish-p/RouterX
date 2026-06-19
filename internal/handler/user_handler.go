@@ -1324,18 +1324,21 @@ func (h *UserHandler) CancelSelf(c *gin.Context) {
 		common.FailWithStatus(c, 401, "未登录或登录已过期")
 		return
 	}
-	var req dto.CancelSelfRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		common.FailWithStatus(c, 400, "注销账号需要确认密码")
-		return
-	}
 	before, err := h.svc.GetByID(user.ID)
 	if err != nil {
 		common.FailWithStatus(c, 404, "用户不存在")
 		return
 	}
+	var req dto.CancelSelfRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.recordSelfCancelDenied(c, user, before, "password_confirmation_required", "self_cancel_password_required")
+		common.FailWithStatus(c, 400, "注销账号需要确认密码")
+		return
+	}
 	cancelled, err := h.svc.CancelSelf(user.ID, req.Password)
 	if err != nil {
+		errorCode := selfCancelErrorCode(err)
+		h.recordSelfCancelDenied(c, user, before, errorCode, errorCode)
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
@@ -1344,6 +1347,26 @@ func (h *UserHandler) CancelSelf(c *gin.Context) {
 		return
 	}
 	common.SuccessMsg(c, "账号已注销")
+}
+
+func (h *UserHandler) recordSelfCancelDenied(c *gin.Context, actor *model.User, before *model.User, reason, errorCode string) {
+	if actor == nil || before == nil {
+		return
+	}
+	_ = h.recordAdminAuditResult(c, actor, "user.self_cancel_denied", "user", before.ID, userAuditSummary(before), map[string]interface{}{
+		"reason": reason,
+	}, "denied", errorCode)
+}
+
+func selfCancelErrorCode(err error) string {
+	switch {
+	case errors.Is(err, service.ErrSelfCancelPasswordRequired):
+		return "self_cancel_password_required"
+	case errors.Is(err, service.ErrSelfCancelPasswordInvalid):
+		return "self_cancel_password_invalid"
+	default:
+		return "self_cancel_rejected"
+	}
 }
 
 // POST /v0/user/redem — 使用充值码给当前账户增加额度

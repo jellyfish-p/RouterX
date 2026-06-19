@@ -29,6 +29,11 @@ func NewUserService() *UserService {
 	return &UserService{}
 }
 
+var (
+	ErrSelfCancelPasswordRequired = errors.New("password confirmation is required")
+	ErrSelfCancelPasswordInvalid  = errors.New("password confirmation is invalid")
+)
+
 type AdminAuditRecordInput struct {
 	RequestID     string
 	ActorUserID   uint
@@ -3086,7 +3091,7 @@ func (s *UserService) CancelSelf(userID uint, password string) (*model.User, err
 		return nil, errors.New("user is required")
 	}
 	if password == "" {
-		return nil, errors.New("password confirmation is required")
+		return nil, ErrSelfCancelPasswordRequired
 	}
 	var cancelled model.User
 	err := internal.DB.Transaction(func(tx *gorm.DB) error {
@@ -3103,10 +3108,10 @@ func (s *UserService) CancelSelf(userID uint, password string) (*model.User, err
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
 			}
-			return errors.New("password identity is required")
+			return ErrSelfCancelPasswordInvalid
 		}
 		if identity.PasswordHash == "" || !common.CheckPassword(password, identity.PasswordHash) {
-			return errors.New("password confirmation is invalid")
+			return ErrSelfCancelPasswordInvalid
 		}
 		if user.Status != common.UserStatusDisabled {
 			if err := tx.Model(&model.User{}).

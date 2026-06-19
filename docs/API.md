@@ -514,6 +514,7 @@ Provider 退款请求：
 | `user.denied` | 用户管理接口拒绝角色变更 |
 | `user.quota_update` | `PATCH /v0/admin/user/:id/quota` |
 | `user.self_cancel` | `DELETE /v0/user/self` |
+| `user.self_cancel_denied` | `DELETE /v0/user/self` 缺少或未通过本地密码二次确认 |
 | `user.recover` | `POST /v0/user/register` 命中已注销同名账号并恢复 |
 | `user_group.create` | `POST /v0/admin/groups` |
 | `user_group.update` | `PUT /v0/admin/groups/:id` |
@@ -666,7 +667,7 @@ Provider 退款请求：
 | POST | `/v0/user/login` | 已实现 | 用户统一登录；用户名密码始终可用，email/phone 密码登录受 settings 控制；成功登录写 `user.login` 管理审计，摘要不包含密码或 JWT |
 | GET | `/v0/user/self` | 已实现 | 获取个人信息 |
 | PUT | `/v0/user/self` | 已实现 | 修改个人信息 |
-| DELETE | `/v0/user/self` | 已实现 | 注销当前普通用户账号；请求体必须提供 `password` 做二次确认，成功后禁用登录和 API Key，保留账号、身份、日志、额度与历史事实，并写 `user.self_cancel` 审计 |
+| DELETE | `/v0/user/self` | 已实现 | 注销当前普通用户账号；请求体必须提供 `password` 做二次确认，成功后禁用登录和 API Key，保留账号、身份、日志、额度与历史事实，并写 `user.self_cancel` 审计；缺少或错误密码会写 `user.self_cancel_denied` 拒绝审计 |
 | POST | `/v0/user/self/password` | 已实现 | 修改密码 |
 
 注册目标请求：
@@ -682,7 +683,7 @@ Provider 退款请求：
 
 注册策略拒绝返回 403，例如公开注册关闭、用户名注册关闭，或当前无验证码请求但 `auth.register.captcha.required=true`。新账号注册成功时会应用 `auth.register.default_quota` 和可解析的 `auth.register.default_group_id`。如果同名 `username/local` identity 命中已注销的普通用户账号，当前接口会恢复原 `users.id`，把账号状态改回启用，更新本地密码身份和展示名，保留原额度、分组、日志和历史流水，不会自动启用旧 API Key，并写入 `user.recover` 审计。
 
-自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号，请求体必须提交当前本地密码进行二次确认。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key；不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史。缺少密码或密码错误时不会修改账号和 API Key 状态。注销后用户名密码登录返回统一认证失败，同名注册会走上述恢复流程；隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复会在 `docs/ACCOUNTS.md` 的规则基础上继续扩展。
+自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号，请求体必须提交当前本地密码进行二次确认。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key；不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史。缺少密码或密码错误时不会修改账号和 API Key 状态，并写入 `user.self_cancel_denied` 拒绝审计，`error_code` 分别为 `self_cancel_password_required` 或 `self_cancel_password_invalid`，审计摘要不保存密码。注销后用户名密码登录返回统一认证失败，同名注册会走上述恢复流程；隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复会在 `docs/ACCOUNTS.md` 的规则基础上继续扩展。
 
 登录目标响应：
 

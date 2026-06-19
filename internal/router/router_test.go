@@ -1989,6 +1989,7 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 	if initResp.Code != http.StatusOK {
 		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
 	}
+	rootJWT := loginBearer(t, r, "root", "password123")
 
 	settingSvc := service.NewSettingService()
 	if err := settingSvc.Set("auth.register.enabled", "true"); err != nil {
@@ -2045,6 +2046,17 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 	}
 	if activeUser.Status != common.UserStatusEnabled {
 		t.Fatalf("rejected self-cancel should keep user enabled, got status=%d", activeUser.Status)
+	}
+	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=user&resource_id="+uintString(activeUser.ID)+"&result=denied", rootJWT, nil)
+	deniedAuditBody := deniedAuditResp.Body.String()
+	if deniedAuditResp.Code != http.StatusOK ||
+		!strings.Contains(deniedAuditBody, `"action":"user.self_cancel_denied"`) ||
+		!strings.Contains(deniedAuditBody, `"error_code":"self_cancel_password_required"`) ||
+		!strings.Contains(deniedAuditBody, `"error_code":"self_cancel_password_invalid"`) {
+		t.Fatalf("self-cancel denials should write denied audit logs, got %d %s", deniedAuditResp.Code, deniedAuditBody)
+	}
+	if strings.Contains(deniedAuditBody, "wrong-password") || strings.Contains(deniedAuditBody, "password123") {
+		t.Fatalf("self-cancel denied audit should not expose passwords: %s", deniedAuditBody)
 	}
 	var activeToken model.Token
 	if err := internal.DB.First(&activeToken, tokenPayload.Data.ID).Error; err != nil {

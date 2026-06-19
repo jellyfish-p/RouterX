@@ -327,7 +327,7 @@ paths:
     delete:
       tags: [User Auth]
       summary: 注销当前账号
-      description: 当前普通用户注销自己的账号；请求体必须提供当前本地密码做二次确认，缺少或错误密码不会修改账号和 API Key 状态。确认通过后服务端将 users.status 置为 disabled、禁用该用户已启用 API Key 并写 user.self_cancel 审计。该操作保留 users、user_identities、tokens、logs、quota 和历史流水；注销后不能再次登录，同名 username/local 注册会恢复原账号并写 user.recover 审计，旧 API Key 不会自动恢复。隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复属于后续增强。
+      description: 当前普通用户注销自己的账号；请求体必须提供当前本地密码做二次确认，缺少或错误密码不会修改账号和 API Key 状态，会写 user.self_cancel_denied 拒绝审计，error_code 为 self_cancel_password_required 或 self_cancel_password_invalid，摘要不保存密码。确认通过后服务端将 users.status 置为 disabled、禁用该用户已启用 API Key 并写 user.self_cancel 审计。该操作保留 users、user_identities、tokens、logs、quota 和历史流水；注销后不能再次登录，同名 username/local 注册会恢复原账号并写 user.recover 审计，旧 API Key 不会自动恢复。隐私字段擦除和邮箱/手机号/OAuth/OIDC 恢复属于后续增强。
       security:
         - UserJWT: []
       requestBody:
@@ -1730,7 +1730,7 @@ paths:
     get:
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖成功登录，API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、自助注销、基础恢复、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、provider 明确失败通知、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖成功登录，API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、自助注销、自助注销二次确认拒绝、基础恢复、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建，支付 webhook 入账、provider 明确失败通知、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
       security:
         - UserJWT: []
       parameters:
@@ -1740,7 +1740,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 api_key.created、api_key.batch_disable_denied、api_key.batch_expire_denied、api_key.quota_limit_denied、user.create、user_group.create、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_webhook.processed、payment_webhook.failed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.batch_disable_denied、api_key.batch_expire_denied、api_key.quota_limit_denied、user.create、user.self_cancel_denied、user_group.create、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_webhook.processed、payment_webhook.failed、payment_refund.requested、payment_refund.deducted、payment_refund.manual、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
         - name: resource_type
           in: query
           required: false
@@ -1767,7 +1767,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 失败或拒绝 code 过滤，例如 api_key_quota_edit_forbidden。
+          description: 失败或拒绝 code 过滤，例如 api_key_quota_edit_forbidden、self_cancel_password_required 或 self_cancel_password_invalid。
         - name: start_time
           in: query
           required: false
