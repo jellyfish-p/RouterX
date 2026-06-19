@@ -25,6 +25,7 @@
 | `TestApifoxOpenAPICoversRegisteredRoutes` | 从 Gin 注册路由读取实际 `METHOD path`，解析 `docs/apifox/openapi.yaml` 的 OpenAPI paths，确保已注册公开 API 都有 Apifox 可导入的文档条目，且 Apifox 不宣传未注册公开 API；Gemini action wildcard 会展开为真实公开 action URL |
 | `TestApifoxOpenAPIOperationsHaveHumanReadableDocs` | 解析 `docs/apifox/openapi.yaml`，确保每个公开 operation 都包含 `summary`、`description` 和 `responses`，避免 Apifox 导入后出现只有路径、缺少人类可读说明的接口 |
 | `TestApifoxOpenAPIPathParametersAreDeclared` | 解析 `docs/apifox/openapi.yaml`，确保每个 `{path}` 变量都有匹配且 `required=true` 的 `in: path` 参数，防止 Apifox 导入后路径参数模板不可用 |
+| `TestApifoxOpenAPIParametersHaveHumanReadableDescriptions` | 检查每个 path/query/header 参数都有可读说明，避免 Apifox 导入后只显示字段名而缺少用途说明 |
 | `TestApifoxOpenAPIInternalRefsResolve` | 递归检查 `docs/apifox/openapi.yaml` 内部 `$ref`，确保 requestBodies、responses、schemas、parameters 等组件引用都能解析，防止 Apifox 导入时出现断链 |
 | `TestApifoxOpenAPISecurityMatchesRouteGroups` | 检查 `/v1/*` operation 声明 `ApiKeyBearer`，`/v0/admin/*` 和除注册/登录/OAuth 公开入口及公开回调外的 `/v0/user/*` operation 声明 `UserJWT`，避免可导入文档遗漏鉴权要求 |
 | `TestApifoxOpenAPIOperationTagsAreDeclared` | 检查每个公开 operation 都带有非空 tags，且对应 tag 已在 OpenAPI 顶层声明并带说明，避免 Apifox 导入后接口分组缺失或漂移 |

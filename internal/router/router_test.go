@@ -425,6 +425,24 @@ func TestApifoxOpenAPIPathParametersAreDeclared(t *testing.T) {
 	}
 }
 
+func TestApifoxOpenAPIParametersHaveHumanReadableDescriptions(t *testing.T) {
+	operations := loadApifoxOperations(t)
+	issues := make([]string, 0)
+
+	for _, operation := range operations {
+		for _, parameter := range operation.Parameters {
+			if strings.TrimSpace(parameter.Description) == "" {
+				issues = append(issues, operation.Key+" parameter "+parameter.In+"."+parameter.Name+" missing description")
+			}
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml parameters need human-readable descriptions:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxOpenAPIInternalRefsResolve(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
@@ -663,6 +681,9 @@ func TestAcceptanceG0EvidenceNamesDocLinkCheck(t *testing.T) {
 	}
 	if !strings.Contains(evidence, "TestApifoxOpenAPIOperationIDsAreStableAndUnique") {
 		issues = append(issues, "G0 evidence must name TestApifoxOpenAPIOperationIDsAreStableAndUnique")
+	}
+	if !strings.Contains(evidence, "TestApifoxOpenAPIParametersHaveHumanReadableDescriptions") {
+		issues = append(issues, "G0 evidence must name TestApifoxOpenAPIParametersHaveHumanReadableDescriptions")
 	}
 	if strings.Contains(evidence, "文档链接检查") {
 		issues = append(issues, "G0 evidence still uses manual 文档链接检查 wording")
@@ -24951,10 +24972,11 @@ type apifoxTagDoc struct {
 }
 
 type apifoxParameterDoc struct {
-	Ref      string `yaml:"$ref"`
-	Name     string `yaml:"name"`
-	In       string `yaml:"in"`
-	Required bool   `yaml:"required"`
+	Ref         string `yaml:"$ref"`
+	Name        string `yaml:"name"`
+	In          string `yaml:"in"`
+	Required    bool   `yaml:"required"`
+	Description string `yaml:"description"`
 }
 
 func (o apifoxOperationDoc) hasRequiredPathParameter(name string) bool {

@@ -1482,6 +1482,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+          description: RouterX 本地支付订单号。
       responses:
         "200":
           description: 当前用户订单详情。
@@ -1509,6 +1510,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+          description: RouterX 本地支付订单号。
       responses:
         "200":
           description: 取消成功或订单已关闭。
@@ -3763,6 +3765,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+          description: RouterX 对外模型名；响应外形由协议选择参数或请求头决定。
         - name: format
           in: query
           required: false
@@ -3920,6 +3923,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+          description: Gemini 模型名，例如 gemini-pro。
       requestBody:
         $ref: "#/components/requestBodies/GeminiGenerateContentJSON"
       responses:
@@ -3949,6 +3953,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+          description: Gemini 模型名，例如 gemini-pro。
       requestBody:
         $ref: "#/components/requestBodies/GeminiEmbedContentJSON"
       responses:
@@ -3987,6 +3992,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+          description: Gemini 模型名，例如 gemini-pro。
       requestBody:
         $ref: "#/components/requestBodies/GeminiBatchEmbedContentsJSON"
       responses:
@@ -4024,6 +4030,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+          description: Gemini 模型名，例如 gemini-pro。
       requestBody:
         $ref: "#/components/requestBodies/GeminiCountTokensJSON"
       responses:
@@ -4057,6 +4064,7 @@ components:
       in: path
       required: true
       schema: { type: integer, format: uint64 }
+      description: 资源 ID；对应当前路径中的管理对象、用户对象、通道、API Key 或价格规则。
     OAuthProvider:
       name: provider
       in: path
@@ -4073,14 +4081,17 @@ components:
       name: page
       in: query
       schema: { type: integer, default: 1, minimum: 1 }
+      description: 分页页码，从 1 开始。
     PageSize:
       name: page_size
       in: query
       schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+      description: 每页数量；服务端会限制在允许范围内。
     Keyword:
       name: keyword
       in: query
       schema: { type: string }
+      description: 关键字过滤；用于名称、备注或可搜索文本的模糊查询。
     Role:
       name: role
       in: query
@@ -4090,6 +4101,7 @@ components:
       name: status
       in: query
       schema: { type: integer }
+      description: 状态过滤；具体取值由当前资源定义。
     ErrorCode:
       name: error_code
       in: query
@@ -4111,22 +4123,27 @@ components:
       name: group_id
       in: query
       schema: { type: integer, format: uint64 }
+      description: 用户分组 ID 过滤。
     UserID:
       name: user_id
       in: query
       schema: { type: integer, format: uint64 }
+      description: 用户 ID 过滤。
     TokenID:
       name: token_id
       in: query
       schema: { type: integer, format: uint64 }
+      description: API Key 内部 Token ID 过滤。
     ChannelID:
       name: channel_id
       in: query
       schema: { type: integer, format: uint64 }
+      description: 通道 ID 过滤。
     Model:
       name: model
       in: query
       schema: { type: string }
+      description: RouterX 对外模型名过滤。
     RouterXOptions:
       name: X-RouterX-Options
       in: header
@@ -4156,10 +4173,12 @@ components:
       name: start_time
       in: query
       schema: { type: string, format: date-time }
+      description: 查询时间范围起点；使用 RFC3339/date-time 格式。
     EndTime:
       name: end_time
       in: query
       schema: { type: string, format: date-time }
+      description: 查询时间范围终点；使用 RFC3339/date-time 格式。
   requestBodies:
     AnthropicCountTokensJSON:
       required: true
