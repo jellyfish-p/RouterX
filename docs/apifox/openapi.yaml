@@ -6536,13 +6536,32 @@ components:
     Token:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
-        user_id: { type: integer, format: uint64 }
-        name: { type: string }
-        status: { type: integer }
-        expired_at: { type: string, format: date-time, nullable: true }
-        remain_quota: { type: integer, format: int64 }
-        unlimited: { type: boolean }
+        id:
+          type: integer
+          format: uint64
+          description: API Key 内部 Token ID；用于编辑、禁用、轮换和查询用量。
+        user_id:
+          type: integer
+          format: uint64
+          description: API Key 所属用户 ID；用户侧只会返回自己的 Key，管理端可跨用户查询。
+        name:
+          type: string
+          description: API Key 名称；用于列表展示、审计和人工识别。
+        status:
+          type: integer
+          description: API Key 状态；0=禁用，1=启用。
+        expired_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: API Key 过期时间；为空表示不按时间自动过期。
+        remain_quota:
+          type: integer
+          format: int64
+          description: API Key 剩余预算；unlimited=true 时可为兼容显示值，实际仍受用户余额和策略约束。
+        unlimited:
+          type: boolean
+          description: 是否不按 Key 预算额外限制；true 仍会继承用户余额、scope、限流和访问控制。
         rotated_from_id:
           type: integer
           format: uint64
@@ -6552,6 +6571,7 @@ components:
           type: string
           description: 禁用原因；启用 Key 通常为空。
         scope:
+          description: API Key scope 收窄策略；为空表示继承用户和系统策略。
           $ref: "#/components/schemas/TokenScope"
         metadata:
           $ref: "#/components/schemas/TokenMetadata"
@@ -6576,8 +6596,14 @@ components:
           type: string
           description: 最近失败的协议化错误 code；最近调用成功时为空。
           example: rate_limit_exceeded
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
+        created_at:
+          type: string
+          format: date-time
+          description: API Key 创建时间。
+        updated_at:
+          type: string
+          format: date-time
+          description: API Key 最近更新时间。
     TokenScope:
       type: object
       properties:
@@ -6659,14 +6685,38 @@ components:
     TokenUsage:
       type: object
       properties:
-        token_id: { type: integer, format: uint64 }
-        call_count: { type: integer, format: int64 }
-        success_count: { type: integer, format: int64 }
-        error_count: { type: integer, format: int64 }
-        total_quota: { type: integer, format: int64 }
-        total_tokens: { type: integer, format: int64 }
-        last_used_at: { type: string, format: date-time, nullable: true }
-        last_model: { type: string }
+        token_id:
+          type: integer
+          format: uint64
+          description: 被统计的 API Key 内部 Token ID。
+        call_count:
+          type: integer
+          format: int64
+          description: 统计窗口或全部历史中的调用日志数量。
+        success_count:
+          type: integer
+          format: int64
+          description: 成功调用数量。
+        error_count:
+          type: integer
+          format: int64
+          description: 失败调用数量。
+        total_quota:
+          type: integer
+          format: int64
+          description: 成功调用累计消耗额度。
+        total_tokens:
+          type: integer
+          format: int64
+          description: 成功调用累计模型 token 数。
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 最近一条调用日志时间；没有日志时为空。
+        last_model:
+          type: string
+          description: 最近一次调用的模型名；没有日志时为空。
         last_status:
           type: integer
           description: 最近一条日志状态；1=成功，2=失败。
