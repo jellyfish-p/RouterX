@@ -980,6 +980,104 @@ func TestAdminAPIKeyRiskViewRecommendsRotationForLeakedKeys(t *testing.T) {
 	}
 }
 
+func TestAPIKeyLeakReportCreatesAdminAlert(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "leak-alert-key",
+		"remain_quota": int64(100),
+	})
+	var createPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createPayload); err != nil {
+		t.Fatal(err)
+	}
+	if createResp.Code != http.StatusOK || createPayload.Data.ID == 0 || createPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+
+	reportResp := performJSON(r, http.MethodPost, "/v0/user/token/"+uintString(createPayload.Data.ID)+"/report-leak", rootJWT, map[string]interface{}{
+		"reason": "public_repo",
+	})
+	if reportResp.Code != http.StatusOK {
+		t.Fatalf("report leak failed: %d %s", reportResp.Code, reportResp.Body.String())
+	}
+
+	listResp := performJSON(r, http.MethodGet, "/v0/admin/alerts?type=api_key.leak_reported&status=open", rootJWT, nil)
+	var listPayload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				ID           uint       `json:"id"`
+				Type         string     `json:"type"`
+				Severity     string     `json:"severity"`
+				Status       string     `json:"status"`
+				ResourceType string     `json:"resource_type"`
+				ResourceID   string     `json:"resource_id"`
+				UserID       *uint      `json:"user_id"`
+				TokenID      *uint      `json:"token_id"`
+				Title        string     `json:"title"`
+				Message      string     `json:"message"`
+				AckedAt      *time.Time `json:"acked_at"`
+				AckedByID    *uint      `json:"acked_by_user_id"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(listResp.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("alert list response should be json: %v", err)
+	}
+	if listResp.Code != http.StatusOK || listPayload.Data.Total != 1 || len(listPayload.Data.Data) != 1 {
+		t.Fatalf("alert list should return one open API key leak alert, got %d %s", listResp.Code, listResp.Body.String())
+	}
+	alert := listPayload.Data.Data[0]
+	if alert.Type != "api_key.leak_reported" || alert.Severity != "critical" || alert.Status != "open" ||
+		alert.ResourceType != "api_key" || alert.ResourceID != uintString(createPayload.Data.ID) ||
+		alert.TokenID == nil || *alert.TokenID != createPayload.Data.ID || alert.Title == "" || alert.Message == "" ||
+		alert.AckedAt != nil || alert.AckedByID != nil {
+		t.Fatalf("unexpected alert payload: %+v", alert)
+	}
+	body := listResp.Body.String()
+	if strings.Contains(body, createPayload.Data.Key) || strings.Contains(body, "sk-") {
+		t.Fatalf("alert list should not expose plaintext API keys: %s", body)
+	}
+
+	ackResp := performJSON(r, http.MethodPost, "/v0/admin/alerts/"+uintString(alert.ID)+"/ack", rootJWT, nil)
+	var ackPayload struct {
+		Data struct {
+			ID        uint       `json:"id"`
+			Status    string     `json:"status"`
+			AckedAt   *time.Time `json:"acked_at"`
+			AckedByID *uint      `json:"acked_by_user_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(ackResp.Body.Bytes(), &ackPayload); err != nil {
+		t.Fatalf("alert ack response should be json: %v", err)
+	}
+	if ackResp.Code != http.StatusOK || ackPayload.Data.ID != alert.ID || ackPayload.Data.Status != "acknowledged" ||
+		ackPayload.Data.AckedAt == nil || ackPayload.Data.AckedByID == nil {
+		t.Fatalf("alert ack should mark the alert acknowledged, got %d %s", ackResp.Code, ackResp.Body.String())
+	}
+
+	openResp := performJSON(r, http.MethodGet, "/v0/admin/alerts?status=open", rootJWT, nil)
+	if openResp.Code != http.StatusOK || strings.Contains(openResp.Body.String(), `"id":`+uintString(alert.ID)) {
+		t.Fatalf("acknowledged alert should leave open list, got %d %s", openResp.Code, openResp.Body.String())
+	}
+}
+
 func TestAPIKeyLeakWindowSummarizesRecentUse(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	r := newTestRouter(t)
@@ -16355,6 +16453,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		&model.PaymentRefundRequest{},
 		&model.PaymentDispute{},
 		&model.AdminAuditLog{},
+		&model.AlertEvent{},
 		&model.Setting{},
 	); err != nil {
 		t.Fatal(err)
@@ -16369,6 +16468,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 	channelSvc := service.NewChannelService()
 	tokenSvc := service.NewTokenService()
 	logSvc := service.NewLogService()
+	alertSvc := service.NewAlertService()
 	setupSvc := service.NewSetupService(userSvc, settingSvc)
 	relaySvc := service.NewRelayService(channelSvc, tokenSvc, logSvc, settingSvc)
 
@@ -16380,6 +16480,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		handler.NewChannelHandler(channelSvc),
 		handler.NewRelayHandler(relaySvc),
 		handler.NewLogHandler(logSvc),
+		handler.NewAlertHandler(alertSvc),
 		handler.NewSettingHandler(settingSvc),
 		handler.NewSetupHandler(setupSvc),
 	)

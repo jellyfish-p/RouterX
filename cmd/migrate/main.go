@@ -50,6 +50,7 @@ func main() {
 		&model.PaymentRefundRequest{},
 		&model.PaymentDispute{},
 		&model.AdminAuditLog{},
+		&model.AlertEvent{},
 		&model.Setting{},
 	)
 	if err != nil {

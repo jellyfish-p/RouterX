@@ -175,7 +175,7 @@ P2 验收标准：
 - OpenAI Files、Fine-tuning、Assistants、Realtime 等高级 API。
 - 多区域通道路由和成本优先路由。
 - 模型别名、灰度路由和 A/B 路由。
-- 成本分析、利润报表和告警通知。
+- 成本分析、利润报表和邮件、IM、Webhook 等外部告警通知。
 - 企业多组织、多项目、多 API Key 分组。
 - Webhook、事件订阅和外部审计系统集成。
 

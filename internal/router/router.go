@@ -31,6 +31,7 @@ func SetupRouter(
 	channelH *handler.ChannelHandler,
 	relayH *handler.RelayHandler,
 	logH *handler.LogHandler,
+	alertH *handler.AlertHandler,
 	settingH *handler.SettingHandler,
 	setupH *handler.SetupHandler,
 ) *gin.Engine {
@@ -56,7 +57,7 @@ func SetupRouter(
 	setupPublicRoutes(r, setupH)
 
 	// Admin 管理端路由组 (需要 AdminAuth + 系统已初始化)
-	setupAdminRoutes(r, authH, userH, tokenH, adminH, channelH, relayH, logH, settingH)
+	setupAdminRoutes(r, authH, userH, tokenH, adminH, channelH, relayH, logH, alertH, settingH)
 
 	// User Web API (需要 UserJwtAuth + 系统已初始化)
 	setupUserRoutes(r, authH, userH, tokenH, logH)

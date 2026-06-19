@@ -18,6 +18,7 @@ func setupAdminRoutes(
 	channelH *handler.ChannelHandler,
 	relayH *handler.RelayHandler,
 	logH *handler.LogHandler,
+	alertH *handler.AlertHandler,
 	settingH *handler.SettingHandler,
 ) {
 	admin := r.Group("/v0/admin")
@@ -64,6 +65,8 @@ func setupAdminRoutes(
 			authRequired.GET("/token/:id/leak-window", tokenH.AdminLeakWindow)
 			authRequired.POST("/token/batch-disable", tokenH.BatchDisable)
 			authRequired.POST("/token/batch-expire", tokenH.BatchExpire)
+			authRequired.GET("/alerts", alertH.List)
+			authRequired.POST("/alerts/:id/ack", alertH.Ack)
 
 			// 管理员账户查看 (Admin+)；写操作仅 SuperAdmin。
 			authRequired.GET("/admin", adminH.List)

@@ -15,10 +15,11 @@ import (
 type TokenHandler struct {
 	svc      *service.TokenService
 	auditSvc *service.UserService
+	alertSvc *service.AlertService
 }
 
 func NewTokenHandler(svc *service.TokenService) *TokenHandler {
-	return &TokenHandler{svc: svc, auditSvc: service.NewUserService()}
+	return &TokenHandler{svc: svc, auditSvc: service.NewUserService(), alertSvc: service.NewAlertService()}
 }
 
 func (h *TokenHandler) List(c *gin.Context) {
@@ -249,6 +250,11 @@ func (h *TokenHandler) ReportLeak(c *gin.Context) {
 	}
 	if err := h.recordAPIKeyAudit(c, user, "api_key.leak_reported", id, tokenAuditSummary(before), auditAfter); err != nil {
 		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
+	// 泄露上报进入告警收件箱，便于管理员无需翻审计日志也能主动处置。
+	if _, err := h.alertSvc.CreateAPIKeyLeakAlert(after, user.ID); err != nil {
+		common.FailWithStatus(c, 500, "创建 API Key 告警失败")
 		return
 	}
 	common.Success(c, dto.ReportTokenLeakResponse{

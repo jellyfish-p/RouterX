@@ -231,6 +231,7 @@
 | 上游 429 | provider 或通道限流持续出现 | 降低并发、调整路由、增加通道 |
 | 计费失败 | `routerx_billing_failures_total` 增长 | 停止相关调用，核对日志和余额事务 |
 | API Key 轮换建议 | `/v0/admin/token/risk` 返回 `rotation_recommended=true` | 轮换对应 Key，排查泄露来源并保留工单证据 |
+| API Key 泄露告警 | 用户调用 `/v0/user/token/:id/report-leak` 后产生 `api_key.leak_reported` 告警 | 在 `/v0/admin/alerts` 查看并通过 `/v0/admin/alerts/:id/ack` 确认处理 |
 | 日志写入失败 | 调用成功但日志写入失败 | 保护账单事实，检查 DB 和事务 |
 | 日志补写积压 | `routerx_log_replication_outbox_items{status="pending"}` 持续增长，或 `status="failed"` 大于 0 | 检查 `LOG_SQL_DSN`、日志库连接、迁移状态和后台 worker |
 | 支付回调失败 | 支付签名、金额或状态校验失败增长 | 检查 provider 配置和恶意回调 |

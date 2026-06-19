@@ -34,6 +34,7 @@ func main() {
 	channelSvc := service.NewChannelService()
 	tokenSvc := service.NewTokenService()
 	logSvc := service.NewLogService()
+	alertSvc := service.NewAlertService()
 	setupSvc := service.NewSetupService(userSvc, settingSvc)
 	relaySvc := service.NewRelayService(channelSvc, tokenSvc, logSvc, settingSvc)
 	if err := settingSvc.EnsureDefaults(); err != nil {
@@ -54,11 +55,12 @@ func main() {
 	channelH := handler.NewChannelHandler(channelSvc)
 	relayH := handler.NewRelayHandler(relaySvc)
 	logH := handler.NewLogHandler(logSvc)
+	alertH := handler.NewAlertHandler(alertSvc)
 	settingH := handler.NewSettingHandler(settingSvc)
 	setupH := handler.NewSetupHandler(setupSvc)
 
 	// 5. 配置路由
-	r := router.SetupRouter(authH, userH, tokenH, adminH, channelH, relayH, logH, settingH, setupH)
+	r := router.SetupRouter(authH, userH, tokenH, adminH, channelH, relayH, logH, alertH, settingH, setupH)
 
 	// 6. 启动服务
 	port := os.Getenv("SERVER_PORT")
