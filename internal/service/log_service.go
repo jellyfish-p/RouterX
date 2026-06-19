@@ -392,7 +392,18 @@ func normalizeLogErrorSnapshot(log *model.Log) string {
 		return ""
 	}
 	if snapshot := strings.TrimSpace(log.ErrorSnapshot); snapshot != "" {
-		return snapshot
+		var existing map[string]interface{}
+		if err := json.Unmarshal([]byte(snapshot), &existing); err != nil {
+			return snapshot
+		}
+		if !enrichLogSnapshotEnvelope(existing, log) {
+			return snapshot
+		}
+		encoded, err := json.Marshal(existing)
+		if err != nil {
+			return snapshot
+		}
+		return string(encoded)
 	}
 	if log.Status != common.LogStatusFailed {
 		return ""
@@ -417,6 +428,7 @@ func normalizeLogErrorSnapshot(log *model.Log) string {
 	if requestID := strings.TrimSpace(log.RequestID); requestID != "" {
 		snapshot["request_id"] = requestID
 	}
+	enrichLogSnapshotEnvelope(snapshot, log)
 	if upstreamStatus > 0 {
 		snapshot["upstream_status"] = upstreamStatus
 	}
@@ -482,7 +494,18 @@ func normalizeLogAccessRuleSnapshot(log *model.Log) string {
 		return ""
 	}
 	if snapshot := strings.TrimSpace(log.AccessRuleSnapshot); snapshot != "" {
-		return snapshot
+		var existing map[string]interface{}
+		if err := json.Unmarshal([]byte(snapshot), &existing); err != nil {
+			return snapshot
+		}
+		if !enrichLogSnapshotEnvelope(existing, log) {
+			return snapshot
+		}
+		encoded, err := json.Marshal(existing)
+		if err != nil {
+			return snapshot
+		}
+		return string(encoded)
 	}
 	policyRaw := strings.TrimSpace(log.PolicySnapshot)
 	if policyRaw == "" {
@@ -534,6 +557,7 @@ func normalizeLogAccessRuleSnapshot(log *model.Log) string {
 	if selectedGroup := selectedChannelGroupFromRouteSnapshot(log.RouteSnapshot); selectedGroup != "" {
 		snapshot["selected_channel_group"] = selectedGroup
 	}
+	enrichLogSnapshotEnvelope(snapshot, log)
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		return ""

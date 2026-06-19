@@ -15773,6 +15773,9 @@ func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
 	if err := json.Unmarshal([]byte(failedLog.AccessRuleSnapshot), &accessRuleSnapshot); err != nil {
 		t.Fatalf("user group access denial should store access rule snapshot JSON, got %q: %v", failedLog.AccessRuleSnapshot, err)
 	}
+	if _, err := time.Parse(time.RFC3339Nano, fmt.Sprint(accessRuleSnapshot["created_at"])); err != nil {
+		t.Fatalf("access rule snapshot should include RFC3339 created_at, snapshot=%+v err=%v", accessRuleSnapshot, err)
+	}
 	accessScopeResult, ok := accessRuleSnapshot["scope_result"].(map[string]interface{})
 	if !ok ||
 		accessRuleSnapshot["schema"] != "routerx.snapshot.v1" ||
@@ -24128,6 +24131,9 @@ func TestRelayFailureLogPersistsRequestIDAndErrorCode(t *testing.T) {
 	var errorSnapshot map[string]interface{}
 	if err := json.Unmarshal([]byte(callLog.ErrorSnapshot), &errorSnapshot); err != nil {
 		t.Fatalf("failed relay log should store error snapshot JSON, got %q: %v", callLog.ErrorSnapshot, err)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, fmt.Sprint(errorSnapshot["created_at"])); err != nil {
+		t.Fatalf("error snapshot should include RFC3339 created_at, snapshot=%+v err=%v", errorSnapshot, err)
 	}
 	if errorSnapshot["schema"] != "routerx.snapshot.v1" ||
 		errorSnapshot["kind"] != "error" ||
