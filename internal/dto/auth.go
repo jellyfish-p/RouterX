@@ -2,9 +2,12 @@ package dto
 
 // LoginRequest Admin / User 登录请求
 type LoginRequest struct {
-	Username string `json:"username"`
-	Account  string `json:"account"`
-	Password string `json:"password" binding:"required"`
+	Username       string `json:"username"`
+	Account        string `json:"account"`
+	CredentialType string `json:"credential_type"`
+	Password       string `json:"password"`
+	CaptchaID      string `json:"captcha_id"`
+	CaptchaCode    string `json:"captcha_code"`
 }
 
 // LoginResponse 登录响应

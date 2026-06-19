@@ -130,6 +130,7 @@
 | `TestUserRegisterSupportsEmailAndPhoneMethods` | 统一注册入口支持 `register_method=email/phone`；分别受邮箱/手机号注册开关控制，仍创建有密码用户名账号，并写入无重复密码哈希的 email/phone 本地身份 |
 | `TestUserRegisterRestoresCancelledEmailAndPhoneIdentities` | 已注销普通用户通过同邮箱或同手机号重新注册时恢复原账号、更新本地密码和展示名，并写 `user.recover` 审计 |
 | `TestUserLoginRespectsLoginMethodSettings` | 用户名密码登录保持可用；email/phone 密码登录默认关闭，开启对应 setting 后已有本地身份可登录，且 email 身份可复用 `username/local` 主密码 |
+| `TestUserLoginCodeCredentialFailsClosedWithoutVerifier` | 统一登录显式提交 `credential_type=code` 时不会回退到密码登录；邮箱/手机号验证码校验器未落地前按对应开关 fail-closed 且不签发 JWT |
 | `TestUserLoginWritesAuditLogWithoutSecrets` | 成功登录写入 `user.login` 管理审计，超级管理员可按动作和用户资源查询，审计摘要不包含密码或 JWT |
 | `TestOAuthCallbackLogsInBoundIdentityWithState` | OAuth 登录生成 state Cookie 并跳转 provider；回调校验 state、换取 token/userinfo 后只登录已绑定的 provider subject，并写 `user.login` 审计 |
 | `TestOAuthCallbackDoesNotAutoBindExistingEmail` | OAuth 回调中 provider email 命中已有本地账号时，不会自动创建第三方 identity 或签发登录态 |

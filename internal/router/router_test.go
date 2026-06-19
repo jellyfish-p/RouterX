@@ -3724,6 +3724,110 @@ func TestUserLoginRespectsLoginMethodSettings(t *testing.T) {
 	}
 }
 
+func TestUserLoginCodeCredentialFailsClosedWithoutVerifier(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "code-login-user",
+		"password":     "password123",
+		"display_name": "Code Login User",
+		"email":        "code-login@example.com",
+		"phone":        "+15550002222",
+		"role":         common.RoleUser,
+		"quota":        10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "code-login-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for _, identity := range []model.UserIdentity{
+		{
+			UserID:     user.ID,
+			Method:     model.UserIdentityMethodEmail,
+			Provider:   model.UserIdentityProviderLocal,
+			Identifier: "code-login@example.com",
+			VerifiedAt: &now,
+		},
+		{
+			UserID:     user.ID,
+			Method:     model.UserIdentityMethodPhone,
+			Provider:   model.UserIdentityProviderLocal,
+			Identifier: "+15550002222",
+			VerifiedAt: &now,
+		},
+	} {
+		var count int64
+		if err := internal.DB.Model(&model.UserIdentity{}).
+			Where("method = ? AND provider = ? AND identifier = ?", identity.Method, identity.Provider, identity.Identifier).
+			Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count == 0 {
+			if err := internal.DB.Create(&identity).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.login.email_password.enabled": "true",
+		"auth.login.phone_password.enabled": "true",
+		"auth.login.email_code.enabled":     "true",
+		"auth.login.phone_code.enabled":     "true",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	emailCodeLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":         "code-login@example.com",
+		"credential_type": "code",
+		"password":        "password123",
+		"captcha_id":      "login-code-id",
+		"captcha_code":    "123456",
+	})
+	if emailCodeLogin.Code != http.StatusForbidden || strings.Contains(emailCodeLogin.Body.String(), `"token"`) {
+		t.Fatalf("email code login should fail closed without verifier, got %d %s", emailCodeLogin.Code, emailCodeLogin.Body.String())
+	}
+
+	phoneCodeLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":         "+15550002222",
+		"credential_type": "code",
+		"password":        "password123",
+		"captcha_id":      "login-code-id",
+		"captcha_code":    "123456",
+	})
+	if phoneCodeLogin.Code != http.StatusForbidden || strings.Contains(phoneCodeLogin.Body.String(), `"token"`) {
+		t.Fatalf("phone code login should fail closed without verifier, got %d %s", phoneCodeLogin.Code, phoneCodeLogin.Body.String())
+	}
+
+	passwordLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":         "code-login@example.com",
+		"credential_type": "password",
+		"password":        "password123",
+	})
+	if passwordLogin.Code != http.StatusOK {
+		t.Fatalf("explicit password login should still work, got %d %s", passwordLogin.Code, passwordLogin.Body.String())
+	}
+}
+
 func TestUserLoginWritesAuditLogWithoutSecrets(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

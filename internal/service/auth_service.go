@@ -25,6 +25,9 @@ var (
 	ErrEmailRegistrationDisabled      = errors.New("email registration is disabled")
 	ErrPhoneRegistrationDisabled      = errors.New("phone registration is disabled")
 	ErrRegistrationCaptchaRequired    = errors.New("registration captcha is required")
+	ErrLoginCodeDisabled              = errors.New("code login is disabled")
+	ErrLoginCodeUnsupported           = errors.New("code login only supports email or phone accounts")
+	ErrLoginCodeVerifierUnavailable   = errors.New("code login verifier is not available")
 	ErrOAuthProviderDisabled          = errors.New("oauth provider is disabled")
 	ErrOAuthInvalidCallback           = errors.New("oauth callback is invalid")
 	ErrOAuthIdentityNotBound          = errors.New("oauth identity is not bound")
@@ -568,6 +571,24 @@ func (s *AuthService) UserLogin(username, password string) (*model.User, string,
 		return nil, "", err
 	}
 	return identity.User, token, nil
+}
+
+// UserCodeLogin reserves the email/phone verification-code login path.
+// The verifier service is not wired yet, so enabled code-login requests fail
+// closed here instead of falling through to password authentication.
+func (s *AuthService) UserCodeLogin(account, captchaID, captchaCode string) (*model.User, string, error) {
+	account = strings.TrimSpace(account)
+	if account == "" || strings.TrimSpace(captchaID) == "" || strings.TrimSpace(captchaCode) == "" {
+		return nil, "", errors.New("account or credential is invalid")
+	}
+	method, ok := localCodeLoginMethod(account)
+	if !ok {
+		return nil, "", ErrLoginCodeUnsupported
+	}
+	if !localCodeLoginEnabled(method) {
+		return nil, "", ErrLoginCodeDisabled
+	}
+	return nil, "", ErrLoginCodeVerifierUnavailable
 }
 
 // OAuthLoginURL builds the provider authorization URL and keeps the generated
@@ -1302,6 +1323,27 @@ func localPasswordLoginEnabled(method string) bool {
 		return loginBoolSettingDefault("auth.login.email_password.enabled", false)
 	case model.UserIdentityMethodPhone:
 		return loginBoolSettingDefault("auth.login.phone_password.enabled", false)
+	default:
+		return false
+	}
+}
+
+func localCodeLoginMethod(account string) (string, bool) {
+	if strings.Contains(account, "@") {
+		return model.UserIdentityMethodEmail, true
+	}
+	if strings.HasPrefix(account, "+") {
+		return model.UserIdentityMethodPhone, true
+	}
+	return "", false
+}
+
+func localCodeLoginEnabled(method string) bool {
+	switch method {
+	case model.UserIdentityMethodEmail:
+		return loginBoolSettingDefault("auth.login.email_code.enabled", false)
+	case model.UserIdentityMethodPhone:
+		return loginBoolSettingDefault("auth.login.phone_code.enabled", false)
 	default:
 		return false
 	}

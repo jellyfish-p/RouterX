@@ -345,6 +345,8 @@ POST /v0/user/login
 | `captcha_id` | 验证码登录时必填 |
 | `captcha_code` | 验证码登录时必填 |
 
+当前实现已经识别 `credential_type=password|code`。`credential_type` 为空时按密码登录处理；`credential_type=code` 只接受邮箱或手机号账号，会检查 `auth.login.email_code.enabled` 或 `auth.login.phone_code.enabled`，但验证码校验器未落地前会 fail-closed 返回 403，且不会回退到密码登录，即使请求体同时携带正确密码。
+
 ### 账号识别
 
 后端不暴露不同登录接口，但内部需要识别 `account`。
@@ -409,6 +411,7 @@ POST /v0/user/login
 - 即使使用验证码登录，账户也必须已经设置密码。
 - 验证码只存 Redis，短 TTL，一次性消费。
 - 验证码发送和校验都需要限流。
+- 当前验证码校验器未落地，已开启对应 code 开关的请求仍 fail-closed，不会签发 JWT。
 
 ## 邮箱规则
 

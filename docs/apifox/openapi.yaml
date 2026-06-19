@@ -265,7 +265,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 用户统一登录
-      description: 管理后台也使用本接口获取 User JWT，不提供独立 /v0/admin/login。用户名密码登录始终可用；email/phone 密码登录仅对已有本地身份生效，并分别受 auth.login.email_password.enabled 与 auth.login.phone_password.enabled 控制，默认关闭；本地 email/phone 身份复用同一用户的 username/local 主密码，不要求各自保存独立密码哈希。成功登录会写入 user.login 管理审计，审计摘要不包含密码或 JWT。
+      description: 管理后台也使用本接口获取 User JWT，不提供独立 /v0/admin/login。credential_type 省略时按 password 处理；用户名密码登录始终可用；email/phone 密码登录仅对已有本地身份生效，并分别受 auth.login.email_password.enabled 与 auth.login.phone_password.enabled 控制，默认关闭；本地 email/phone 身份复用同一用户的 username/local 主密码，不要求各自保存独立密码哈希。credential_type=code 当前只识别邮箱或手机号账号并检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled；验证码校验器未落地前 fail-closed 返回 403，不会回退为密码登录。成功登录会写入 user.login 管理审计，审计摘要不包含密码或 JWT。
       requestBody:
         required: true
         content:
@@ -286,6 +286,14 @@ paths:
                         $ref: "#/components/schemas/LoginResponse"
         "400":
           $ref: "#/components/responses/StandardBadRequest"
+        "401":
+          $ref: "#/components/responses/StandardUnauthorized"
+        "403":
+          description: 验证码登录未开启、账号类型不支持或验证码校验器尚不可用。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
   /v0/user/oauth/{provider}/login:
     get:
       tags: [User Auth]
@@ -4825,16 +4833,31 @@ components:
           description: 可选邮箱；若票据包含 ID Token 邮箱，服务端优先使用票据邮箱。
     LoginRequest:
       type: object
-      required: [password]
       properties:
         account:
           type: string
-          description: 用户名、邮箱或其他统一账号标识。
+          description: 用户名、邮箱或手机号；旧客户端也可使用 username。
         username:
           type: string
-          description: 兼容旧客户端。
+          description: 兼容旧客户端的用户名字段；account 为空时使用。
+        credential_type:
+          type: string
+          enum: [password, code]
+          default: password
+          description: 凭据类型；省略时按 password 处理。code 当前 fail-closed，不会回退到密码登录。
         password:
           type: string
+          description: 密码登录时必填；email/phone 密码登录复用 username/local 主密码。
+        captcha_id:
+          type: string
+          description: 验证码登录时必填；当前校验器未落地，code 请求 fail-closed。
+        captcha_code:
+          type: string
+          description: 验证码登录时必填；当前校验器未落地，code 请求 fail-closed。
+      example:
+        account: alice@example.com
+        credential_type: password
+        password: password
     LoginResponse:
       type: object
       properties:

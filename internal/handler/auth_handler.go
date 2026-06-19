@@ -76,8 +76,39 @@ func (h *AuthHandler) UserLogin(c *gin.Context) {
 		return
 	}
 	account := loginAccount(req)
-	user, token, err := h.svc.UserLogin(account, req.Password)
+	credentialType := strings.TrimSpace(req.CredentialType)
+	if credentialType == "" {
+		credentialType = "password"
+	}
+	var (
+		user  *model.User
+		token string
+		err   error
+	)
+	switch credentialType {
+	case "password":
+		if req.Password == "" {
+			common.FailWithStatus(c, 400, "登录参数无效")
+			return
+		}
+		user, token, err = h.svc.UserLogin(account, req.Password)
+	case "code":
+		if account == "" || strings.TrimSpace(req.CaptchaID) == "" || strings.TrimSpace(req.CaptchaCode) == "" {
+			common.FailWithStatus(c, 400, "登录参数无效")
+			return
+		}
+		user, token, err = h.svc.UserCodeLogin(account, req.CaptchaID, req.CaptchaCode)
+	default:
+		common.FailWithStatus(c, 400, "登录参数无效")
+		return
+	}
 	if err != nil {
+		if errors.Is(err, service.ErrLoginCodeDisabled) ||
+			errors.Is(err, service.ErrLoginCodeUnsupported) ||
+			errors.Is(err, service.ErrLoginCodeVerifierUnavailable) {
+			common.FailWithStatus(c, 403, err.Error())
+			return
+		}
 		common.FailWithStatus(c, 401, "账号或凭据错误")
 		return
 	}

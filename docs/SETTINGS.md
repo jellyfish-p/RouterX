@@ -45,8 +45,8 @@
 | `auth.login.username_password.enabled` | `auth` | bool | `true` | 否 | hot | auth | 必须为 `true` |
 | `auth.login.email_password.enabled` | `auth` | bool | `false` | 否 | hot | auth | bool；只作用于已有本地邮箱身份 |
 | `auth.login.phone_password.enabled` | `auth` | bool | `false` | 否 | hot | auth | bool；只作用于已有本地手机号身份 |
-| `auth.login.email_code.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前登录接口暂未使用 |
-| `auth.login.phone_code.enabled` | `auth` | bool | `false` | 否 | hot | auth | 当前登录接口暂未使用 |
+| `auth.login.email_code.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制邮箱验证码登录入口；校验器未落地前 fail-closed |
+| `auth.login.phone_code.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制手机号验证码登录入口；校验器未落地前 fail-closed |
 | `auth.login.oauth.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 OAuth 已绑定身份登录和绑定入口 |
 | `auth.login.oidc.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 OIDC 已绑定身份登录和绑定入口 |
 | `auth.register.enabled` | `auth` | bool | `false` | 否 | hot | auth | bool |
@@ -142,8 +142,8 @@ P0 补齐这些配置时，应同时补测试：
 | `auth.login.username_password.enabled` | `true` | P1 | 当前已落地；用户名密码登录基线，配置层不得关闭 |
 | `auth.login.email_password.enabled` | `false` | P1 | 当前已落地；已有本地邮箱身份可在开启后使用邮箱 + 密码登录 |
 | `auth.login.phone_password.enabled` | `false` | P1 | 当前已落地；已有本地手机号身份可在开启后使用手机号 + 密码登录 |
-| `auth.login.email_code.enabled` | `false` | P1 | 当前已校验；邮箱验证码登录仍属后续增强 |
-| `auth.login.phone_code.enabled` | `false` | P1 | 当前已校验；手机号验证码登录仍属后续增强 |
+| `auth.login.email_code.enabled` | `false` | P1 | 当前已校验并 fail-closed；邮箱验证码校验器仍属后续增强 |
+| `auth.login.phone_code.enabled` | `false` | P1 | 当前已校验并 fail-closed；手机号验证码校验器仍属后续增强 |
 | `auth.login.oauth.enabled` | `false` | P1 | 当前已落地；控制 OAuth 已绑定身份登录和登录用户绑定 OAuth identity |
 | `auth.login.oidc.enabled` | `false` | P1 | 当前已落地；控制 OIDC Discovery、nonce/ID Token 校验、已绑定 subject 登录和登录用户绑定 OIDC identity |
 | `auth.register.enabled` | `false` | P1 | 当前已落地；是否开放公开自助注册，默认关闭 |
