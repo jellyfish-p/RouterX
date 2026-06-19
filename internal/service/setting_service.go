@@ -221,6 +221,12 @@ func (s *SettingService) LoadCache() error {
 	return internal.RDB.HSet(ctx, "settings", values).Err()
 }
 
+// ValidateSettingValue exposes the same registry validation used by writes so
+// readiness checks can detect config drift caused by direct database edits.
+func ValidateSettingValue(key, value string) error {
+	return validateSettingValue(key, value)
+}
+
 func validateSettingValue(key, value string) error {
 	value = strings.TrimSpace(value)
 	switch key {

@@ -5758,6 +5758,43 @@ func TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets(t *testing.T) 
 	}
 }
 
+func TestReadinessRejectsInvalidCriticalSettings(t *testing.T) {
+	cases := []struct {
+		key   string
+		value string
+	}{
+		{key: "relay.retry_on_status", value: "[200]"},
+		{key: "relay.routerx_max_hops", value: "0"},
+		{key: "rate_limit.per_token_per_min", value: "-1"},
+		{key: "auth.login.username_password.enabled", value: "false"},
+		{key: "auth.register.default_group_id", value: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.key, func(t *testing.T) {
+			t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+			t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+			r := newTestRouter(t)
+
+			initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+				"username": "root",
+				"password": "password123",
+			})
+			if initResp.Code != http.StatusOK {
+				t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+			}
+			if err := internal.DB.Model(&model.Setting{}).Where("key = ?", tc.key).Update("value", tc.value).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			readyResp := performJSON(r, http.MethodGet, "/ready", "", nil)
+			if readyResp.Code != http.StatusServiceUnavailable || !strings.Contains(readyResp.Body.String(), tc.key) {
+				t.Fatalf("invalid critical setting %s=%q should make ready fail, got %d %s", tc.key, tc.value, readyResp.Code, readyResp.Body.String())
+			}
+		})
+	}
+}
+
 func TestAdminSettingUpdateWritesAuditLog(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

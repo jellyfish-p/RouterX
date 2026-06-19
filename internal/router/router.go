@@ -1203,13 +1203,8 @@ func readinessSettingProblem() string {
 	if problem := readinessEncryptionKeyProblem(); problem != "" {
 		return problem
 	}
-	relayTimeout, ok := settingValue("relay.timeout")
-	if !ok {
-		return "relay.timeout"
-	}
-	timeout, err := strconv.Atoi(strings.TrimSpace(relayTimeout))
-	if err != nil || timeout <= 0 {
-		return "relay.timeout"
+	if problem := readinessCriticalSettingProblem(); problem != "" {
+		return problem
 	}
 	epayEnabled, problem := readinessBoolSetting("payment.epay.enabled")
 	if problem != "" {
@@ -1227,6 +1222,57 @@ func readinessSettingProblem() string {
 	}
 	if stripeEnabled && strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_WEBHOOK_SECRET")) == "" {
 		return "PAYMENT_STRIPE_WEBHOOK_SECRET"
+	}
+	return ""
+}
+
+var readinessCriticalSettings = []string{
+	"server.mode",
+	"auth.login.username_password.enabled",
+	"auth.login.email_password.enabled",
+	"auth.login.phone_password.enabled",
+	"auth.login.email_code.enabled",
+	"auth.login.phone_code.enabled",
+	"auth.login.oauth.enabled",
+	"auth.login.oidc.enabled",
+	"auth.register.enabled",
+	"auth.register.username.enabled",
+	"auth.register.email.enabled",
+	"auth.register.phone.enabled",
+	"auth.register.captcha.required",
+	"auth.register.default_quota",
+	"auth.register.default_group_id",
+	"rate_limit.enabled",
+	"rate_limit.global_per_min",
+	"rate_limit.per_token_per_min",
+	"rate_limit.per_ip_per_min",
+	"rate_limit.per_user_per_min",
+	"rate_limit.per_model_per_min",
+	"rate_limit.per_channel_per_min",
+	"relay.timeout",
+	"relay.retry_count",
+	"relay.retry_on_status",
+	"relay.max_request_body_bytes",
+	"relay.max_multipart_file_bytes",
+	"relay.max_response_body_bytes",
+	"relay.routerx_max_hops",
+	"relay.error_auto_ban",
+	"relay.error_ban_threshold",
+	"relay.error_ban_cooldown_seconds",
+	"relay.error_probe_enabled",
+	"relay.error_probe_interval_seconds",
+	"relay.error_probe_batch_size",
+}
+
+func readinessCriticalSettingProblem() string {
+	for _, key := range readinessCriticalSettings {
+		value, ok := settingValue(key)
+		if !ok {
+			return key
+		}
+		if err := service.ValidateSettingValue(key, value); err != nil {
+			return key
+		}
 	}
 	return ""
 }

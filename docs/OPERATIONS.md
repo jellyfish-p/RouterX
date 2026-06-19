@@ -311,11 +311,12 @@ volumes:
 | `/ready` | 就绪检查 | DB、迁移状态、必要配置 |
 | `/metrics` | 指标 | Prometheus metrics，受 `observability.metrics_enabled` 控制 |
 
-当前 `/ready` 已检查数据库连通性、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、`relay.timeout`、已启用支付 provider 的必需密钥，以及已有加密通道密钥时的主密钥：
+当前 `/ready` 已检查数据库连通性、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、关键 auth/relay/rate-limit settings 的注册表校验、已启用支付 provider 的必需密钥，以及已有加密通道密钥时的主密钥：
 
 - `payment.epay.enabled=true` 时必须存在 `PAYMENT_EPAY_KEY`。
 - `payment.stripe.enabled=true` 时必须存在 `PAYMENT_STRIPE_SECRET_KEY` 和 `PAYMENT_STRIPE_WEBHOOK_SECRET`。
 - 数据库中存在 `enc:v1:` 通道密钥时必须存在 `ENCRYPTION_KEY`。
+- 如果关键 settings 因直接改库、迁移漂移或人工修复变成非法值，`/ready` 会返回 `not_ready` 并在 `setting` 字段指出问题 key。
 
 目标生产就绪检查应继续补充：
 
@@ -323,7 +324,7 @@ volumes:
 - 生产模式下 `JWT_SECRET` 或数据库 `jwt.secret` 可用且跨实例一致。
 - KMS 可用性和已有 `enc:v1:` 密文的逐条解密巡检。
 - Redis 策略符合当前模式：SQLite 单镜像可无 Redis；外部数据库和集群模式必须 Redis 可用。
-- 必要 settings 已加载，关键配置值格式合法。
+- 更完整的必要 settings 覆盖和跨模块配置巡检。
 
 Redis 失败处理：
 

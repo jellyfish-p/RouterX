@@ -187,7 +187,7 @@ P2 验收标准：
 
 | 工作包 | 阶段 | 主要模块 | 必须证明的结果 | 当前测试线索 |
 |--------|------|----------|----------------|--------------|
-| WP0-1 初始化、settings 与就绪 | P0 | setup、settings、ready、JWT | 空库可初始化；重复初始化被拒绝；初始化后 JWT 可用；settings 默认值和类型可验证；`/ready` 能反映 DB、外部数据库 Redis 依赖、JWT、密钥和关键配置状态 | `TestP0BackendFlow`、`TestSetupBootstrapAdminQuotaAndSettingsDefaults`、`TestSettingsValidationAndReadiness`、`TestSettingCacheRefreshesStaleRedisValues`、`TestInitRedisSkipsEmptyConfig`、`TestReadinessRequiresRedisForExternalDatabaseMode`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets` |
+| WP0-1 初始化、settings 与就绪 | P0 | setup、settings、ready、JWT | 空库可初始化；重复初始化被拒绝；初始化后 JWT 可用；settings 默认值和类型可验证；`/ready` 能反映 DB、外部数据库 Redis 依赖、JWT、密钥和关键配置状态，并能发现关键 auth/relay/rate-limit settings 配置漂移 | `TestP0BackendFlow`、`TestSetupBootstrapAdminQuotaAndSettingsDefaults`、`TestSettingsValidationAndReadiness`、`TestSettingCacheRefreshesStaleRedisValues`、`TestInitRedisSkipsEmptyConfig`、`TestReadinessRequiresRedisForExternalDatabaseMode`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、`TestReadinessRejectsInvalidCriticalSettings` |
 | WP0-2 账号与权限 | P0 | auth、user、admin middleware、audit | 用户登录签发 JWT；管理员/超级管理员边界正确；普通用户不能越权；用户和管理员账号管理审计不泄露密码 | `TestAdminPrivilegeBoundaries`、`TestAdminUserManagementAuditLogs`、`TestAdminAccountManagementAuditLogs` 覆盖账号边界和审计 |
 | WP0-3 API Key 生命周期 | P0 | token、API Key auth、Redis 缓存、audit | Key 明文只返回一次；DB 保存哈希；禁用、过期、删除、用户禁用立即影响 `/v1`；创建、编辑、禁用、删除和用户端额度编辑拒绝可审计 | `TestP0BackendFlow` 覆盖创建、禁用和额度边界；`TestUserAPIKeyManagementAuditLogs` 覆盖生命周期审计 |
 | WP0-4 通道基础管理 | P0 | channel、adapter registry、secret encryption、audit | 管理员可创建/测试/启停通道；下游密钥加密；响应、日志和审计摘要不泄露密钥 | `TestP0BackendFlow`、`TestChannelExtendedManagement`、`TestAdminChannelManagementAuditLogs` |
@@ -220,7 +220,7 @@ P2 验收标准：
 | 1 | Chat 非流式成功调用写日志并扣费 | 已覆盖：`TestChatCompletionSuccessLogsAndDeductsQuota` | 证明 P0 不只是 `/v1/models` 可用，而是真正完成一次模型调用闭环。 |
 | 2 | Chat 非流式本地请求错误、下游 400/401/403/5xx/超时错误映射和安全重试 | 已覆盖：`TestChatCompletionInvalidRequestDoesNotCallUpstream`、`TestChatCompletionUpstreamBadRequestMapping`、`TestChatCompletionUpstreamErrorStatusMapping`、`TestChatCompletionUpstreamTimeoutMapping`、`TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce`、`TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus` | 证明 SDK 兼容错误、重试边界和通道故障归因正确。 |
 | 3 | 余额不足、禁用用户、禁用 API Key、禁用通道不调用下游 | 已覆盖：`TestRelayPrecheckRejectsBeforeUpstream` | 证明安全和计费预检发生在下游调用前。 |
-| 4 | settings 注册表、类型校验、缓存刷新和生产 readiness | 已覆盖：`TestSetupBootstrapAdminQuotaAndSettingsDefaults`、`TestSettingsValidationAndReadiness`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、`TestSettingCacheRefreshesStaleRedisValues` | 证明配置不是散落字符串，关键配置错误能阻止生产实例接流量。 |
+| 4 | settings 注册表、类型校验、缓存刷新和生产 readiness | 已覆盖：`TestSetupBootstrapAdminQuotaAndSettingsDefaults`、`TestSettingsValidationAndReadiness`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、`TestReadinessRejectsInvalidCriticalSettings`、`TestSettingCacheRefreshesStaleRedisValues` | 证明配置不是散落字符串，关键配置错误能阻止生产实例接流量。 |
 | 5 | 多 key、多 base URL、`upstreams` 优先级和模型重写 | 已覆盖：`TestChannelRoutingConfigResolution` | 证明通道高级配置不会产生不可解释的随机行为。 |
 | 6 | 日志、usage、扣费和用户账单聚合一致 | 已覆盖：`TestUserBillingMatchesLogs` | 证明账单不是从多个互相矛盾的事实源拼出来。 |
 | 7 | Responses 基础 JSON/SSE 透传和 usage 映射 | 已覆盖：`TestResponsesPassthroughExtractsUsageAndDeductsQuota`、`TestResponsesStreamForwardsSSEAndDeductsUsage` | 先保证 OpenAI-compatible Responses 调用事实可计费。 |
