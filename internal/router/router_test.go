@@ -9098,6 +9098,79 @@ func TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets(t *testing.T) 
 	}
 }
 
+func TestReadinessDecryptsEncryptedChannelSecrets(t *testing.T) {
+	cases := []struct {
+		name         string
+		buildChannel func(t *testing.T) model.Channel
+	}{
+		{
+			name: "single api key",
+			buildChannel: func(t *testing.T) model.Channel {
+				encrypted, err := common.EncryptSecret("single-secret")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return model.Channel{APIKey: encrypted}
+			},
+		},
+		{
+			name: "multi api keys",
+			buildChannel: func(t *testing.T) model.Channel {
+				encrypted, err := common.EncryptSecret("multi-secret")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return model.Channel{APIKeys: model.NewJSONValue([]string{encrypted})}
+			},
+		},
+		{
+			name: "upstream api key",
+			buildChannel: func(t *testing.T) model.Channel {
+				encrypted, err := common.EncryptSecret("upstream-secret")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return model.Channel{Upstreams: model.NewJSONValue([]map[string]string{{
+					"base_url": "https://upstream.example",
+					"api_key":  encrypted,
+				}})}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+			t.Setenv("ENCRYPTION_KEY", "correct-encryption-key")
+			r := newTestRouter(t)
+
+			initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+				"username": "root",
+				"password": "password123",
+			})
+			if initResp.Code != http.StatusOK {
+				t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+			}
+
+			channel := tc.buildChannel(t)
+			channel.Type = common.ChannelTypeOpenAICompat
+			channel.Name = "decrypt-ready"
+			channel.Models = "gpt-ready"
+			channel.BaseURL = "https://upstream.example"
+			channel.Status = common.ChannelStatusEnabled
+			if err := internal.DB.Create(&channel).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			t.Setenv("ENCRYPTION_KEY", "wrong-encryption-key")
+			readyResp := performJSON(r, http.MethodGet, "/ready", "", nil)
+			if readyResp.Code != http.StatusServiceUnavailable || !strings.Contains(readyResp.Body.String(), "ENCRYPTION_KEY") {
+				t.Fatalf("undecryptable channel secrets should make ready fail, got %d %s", readyResp.Code, readyResp.Body.String())
+			}
+		})
+	}
+}
+
 func TestReadinessRejectsInvalidCriticalSettings(t *testing.T) {
 	cases := []struct {
 		key   string

@@ -319,18 +319,18 @@ volumes:
 | `/ready` | 就绪检查 | DB、迁移状态、必要配置 |
 | `/metrics` | 指标 | Prometheus metrics，受 `observability.metrics_enabled` 控制 |
 
-当前 `/ready` 已检查数据库连通性、`schema_migrations.dirty` 迁移状态、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、关键 auth/relay/rate-limit settings 的注册表校验、已启用支付 provider 的必需密钥，以及已有加密通道密钥时的主密钥：
+当前 `/ready` 已检查数据库连通性、`schema_migrations.dirty` 迁移状态、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、关键 auth/relay/rate-limit settings 的注册表校验、已启用支付 provider 的必需密钥，以及已有加密通道密钥时的主密钥可用性和密文可解性：
 
 - `payment.epay.enabled=true` 时必须存在 `PAYMENT_EPAY_KEY`。
 - `payment.stripe.enabled=true` 时必须存在 `PAYMENT_STRIPE_SECRET_KEY` 和 `PAYMENT_STRIPE_WEBHOOK_SECRET`。
-- 数据库中存在 `enc:v1:` 通道密钥时必须存在 `ENCRYPTION_KEY`。
+- 数据库中存在 `enc:v1:` 通道密钥时必须存在 `ENCRYPTION_KEY`，且单 key、多 key、upstreams 中的密文必须能被当前主密钥解开。
 - 如果 golang-migrate 的 `schema_migrations` 表存在且最新记录 `dirty=true`，`/ready` 会返回 `not_ready` 并在 `migration` 字段返回 `dirty`。
 - 如果关键 settings 因直接改库、迁移漂移或人工修复变成非法值，`/ready` 会返回 `not_ready` 并在 `setting` 字段指出问题 key。
 
 目标生产就绪检查应继续补充：
 
 - 生产模式下 `JWT_SECRET` 或数据库 `jwt.secret` 可用且跨实例一致。
-- KMS 可用性和已有 `enc:v1:` 密文的逐条解密巡检。
+- KMS provider 可用性、轮换任务和存量密文重加密流程。
 - Redis 策略符合当前模式：SQLite 单镜像可无 Redis；外部数据库和集群模式必须 Redis 可用。
 - 更完整的必要 settings 覆盖和跨模块配置巡检。
 
@@ -361,7 +361,7 @@ Redis 失败处理：
 - `jwt.secret` 初始化后不可为空。
 - `jwt.secret` 必须支持由 `JWT_SECRET` 环境变量指定；生产和多实例必须显式配置，禁止各实例启动时各自随机生成。
 - 下游 API Key、OAuth/OIDC client secret 应加密存储，主密钥来自 `ENCRYPTION_KEY` 环境变量或 KMS。
-- 当前加密格式使用 `enc:v1:` 前缀；未配置 `ENCRYPTION_KEY` 时新密钥可能以兼容方式保存，已有 `enc:v1:` 通道密钥且缺少 `ENCRYPTION_KEY` 时 `/ready` 会阻止实例接收流量。
+- 当前加密格式使用 `enc:v1:` 前缀；未配置 `ENCRYPTION_KEY` 时新密钥可能以兼容方式保存，已有 `enc:v1:` 通道密钥且缺少或无法通过当前 `ENCRYPTION_KEY` 解密时 `/ready` 会阻止实例接收流量。
 - 支付密钥应通过环境变量、KMS 或加密配置提供，禁止写入前端响应、日志或明文配置文件。
 - API Key 明文只返回一次，数据库保存 SHA256 哈希；后续重点是存量明文迁移兜底、缓存失效和审计。
 - 管理端任何响应不得返回完整下游 API Key。

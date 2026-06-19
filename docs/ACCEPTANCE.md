@@ -58,7 +58,7 @@ P0 可以宣称完成时，必须同时满足以下门禁。
 |------|----------|----------|
 | G0 文档一致 | 主设计稿、路线图、API、数据模型、Relay、计费、测试不互相冲突；已注册公开 API 必须出现在 Apifox 可导入文档中，且每个公开 operation 都有人类可读说明、可用路径参数、可解析组件引用、明确鉴权要求和可维护的 Apifox 分组。 | `TestApifoxOpenAPICoversRegisteredRoutes`、`TestApifoxOpenAPIOperationsHaveHumanReadableDocs`、`TestApifoxOpenAPIPathParametersAreDeclared`、`TestApifoxOpenAPIInternalRefsResolve`、`TestApifoxOpenAPISecurityMatchesRouteGroups`、`TestApifoxOpenAPIOperationTagsAreDeclared`、旧术语扫描、`git diff --check`、文档链接检查。 |
 | G1 空库初始化 | 空库能创建超级管理员、默认 settings 和本地身份。 | `TestSetupBootstrapAdminQuota`、`TestP0BackendFlow`。 |
-| G2 就绪状态 | `/ready` 能反映数据库、迁移 dirty 状态、初始化、JWT、密钥和关键配置状态。 | `TestSettingsValidationAndReadiness`、`TestReadinessRejectsDirtyMigrationState`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、ready 接口断言。 |
+| G2 就绪状态 | `/ready` 能反映数据库、迁移 dirty 状态、初始化、JWT、密钥和关键配置状态。 | `TestSettingsValidationAndReadiness`、`TestReadinessRejectsDirtyMigrationState`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、`TestReadinessDecryptsEncryptedChannelSecrets`、ready 接口断言。 |
 | G3 账号和权限 | 普通用户、管理员、超级管理员边界正确。 | `TestAdminPrivilegeBoundaries`。 |
 | G4 API Key 安全 | API Key 明文只返回一次，数据库保存哈希，禁用/过期/删除立即生效。 | `TestP0BackendFlow`、API Key 列表脱敏断言。 |
 | G5 通道安全 | 管理员能创建可用通道，下游密钥加密或脱敏，响应和日志不泄露密钥。 | `TestChannelExtendedManagement`、敏感词扫描。 |

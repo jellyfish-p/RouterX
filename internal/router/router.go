@@ -1721,16 +1721,13 @@ func readinessCriticalSettingProblem() string {
 }
 
 func readinessEncryptionKeyProblem() string {
-	if strings.TrimSpace(os.Getenv("ENCRYPTION_KEY")) != "" {
-		return ""
-	}
-	if encryptedChannelSecretsPresent() {
+	if encryptedChannelSecretsDecryptProblem() {
 		return "ENCRYPTION_KEY"
 	}
 	return ""
 }
 
-func encryptedChannelSecretsPresent() bool {
+func encryptedChannelSecretsDecryptProblem() bool {
 	var channels []model.Channel
 	if err := internal.DB.
 		Model(&model.Channel{}).
@@ -1739,15 +1736,52 @@ func encryptedChannelSecretsPresent() bool {
 		return false
 	}
 	for _, channel := range channels {
-		// APIKeys and Upstreams are serialized JSON columns, so the prefix scan
-		// intentionally works on their raw payloads instead of decoded structs.
-		if common.ContainsEncryptedSecret(channel.APIKey) ||
-			common.ContainsEncryptedSecret(string(channel.APIKeys)) ||
-			common.ContainsEncryptedSecret(string(channel.Upstreams)) {
-			return true
+		for _, secret := range channelEncryptedSecretValues(channel) {
+			if _, err := common.DecryptSecret(secret); err != nil {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func channelEncryptedSecretValues(channel model.Channel) []string {
+	secrets := make([]string, 0, 3)
+	if common.IsEncryptedSecret(channel.APIKey) {
+		secrets = append(secrets, channel.APIKey)
+	}
+	secrets = appendEncryptedSecretsFromJSON(secrets, channel.APIKeys)
+	secrets = appendEncryptedSecretsFromJSON(secrets, channel.Upstreams)
+	return secrets
+}
+
+func appendEncryptedSecretsFromJSON(secrets []string, raw model.JSONValue) []string {
+	if len(raw) == 0 || !common.ContainsEncryptedSecret(string(raw)) {
+		return secrets
+	}
+	var value interface{}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return secrets
+	}
+	return appendEncryptedSecretsFromValue(secrets, value)
+}
+
+func appendEncryptedSecretsFromValue(secrets []string, value interface{}) []string {
+	switch typed := value.(type) {
+	case string:
+		if common.IsEncryptedSecret(typed) {
+			secrets = append(secrets, typed)
+		}
+	case []interface{}:
+		for _, item := range typed {
+			secrets = appendEncryptedSecretsFromValue(secrets, item)
+		}
+	case map[string]interface{}:
+		for _, item := range typed {
+			secrets = appendEncryptedSecretsFromValue(secrets, item)
+		}
+	}
+	return secrets
 }
 
 func settingValue(key string) (string, bool) {

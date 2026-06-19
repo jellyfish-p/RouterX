@@ -56,7 +56,7 @@ RouterX 运行时
 | ID | 威胁 | 风险场景 | 默认控制 | 验收证据 |
 |----|------|----------|----------|----------|
 | S1 | API Key 泄露 | 用户 API Key 出现在日志、管理响应、缓存键或错误信息中。 | 明文只返回一次；数据库保存 SHA256；日志和响应脱敏；缓存键使用哈希或内部 ID。 | `TestP0BackendFlow`、敏感词日志扫描、API Key 列表不返回明文。 |
-| S2 | 上游密钥泄露 | 通道密钥被管理列表、测试接口、错误响应或调用日志暴露。 | 使用 `ENCRYPTION_KEY` 或 KMS 加密；管理响应只返回脱敏摘要；错误摘要不含密钥；已有加密通道密钥但缺少主密钥时 `/ready` 不就绪。 | `TestChannelExtendedManagement`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、通道响应和日志不包含测试密钥。 |
+| S2 | 上游密钥泄露 | 通道密钥被管理列表、测试接口、错误响应或调用日志暴露。 | 使用 `ENCRYPTION_KEY` 或 KMS 加密；管理响应只返回脱敏摘要；错误摘要不含密钥；已有加密通道密钥但缺少主密钥或无法解密时 `/ready` 不就绪。 | `TestChannelExtendedManagement`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、`TestReadinessDecryptsEncryptedChannelSecrets`、通道响应和日志不包含测试密钥。 |
 | S3 | JWT 伪造或跨实例失效 | 多实例各自生成 `jwt.secret`，或弱密钥导致伪造。 | 生产必须显式配置一致 `JWT_SECRET` 或数据库 `jwt.secret`；`/ready` 检查关键配置。 | `TestSettingsValidationAndReadiness`、生产 readiness 缺关键密钥时不就绪。 |
 | S4 | 管理权限越权 | 普通用户调用管理员接口，或普通管理员修改超级管理员配置。 | User JWT + role 校验；超级管理员能力单独判断；API Key 不继承管理权限。 | `TestAdminPrivilegeBoundaries`、权限矩阵接口测试。 |
 | S5 | API Key 越权调用管理接口 | 管理员的 API Key 被拿来调用 `/v0/admin/*`。 | API Key 只在 `/v1/*` 生效；管理接口只看 User JWT。 | API 鉴权边界测试，API Key 调 `/v0` 返回未登录或权限错误。 |

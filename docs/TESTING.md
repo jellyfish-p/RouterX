@@ -143,6 +143,7 @@
 | `TestReadinessRequiresRedisForExternalDatabaseMode` | `SQL_DSN` 指向外部数据库且 Redis 不可用时 `/ready` 返回不就绪 |
 | `TestReadinessRejectsDirtyMigrationState` | `schema_migrations.dirty=true` 时 `/ready` 返回不就绪，清理 dirty 后恢复 ready |
 | `TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets` | 数据库已有 `enc:v1:` 通道密钥但缺少 `ENCRYPTION_KEY` 时 `/ready` 返回不就绪 |
+| `TestReadinessDecryptsEncryptedChannelSecrets` | 数据库已有 `enc:v1:` 通道密钥但当前 `ENCRYPTION_KEY` 无法解密时 `/ready` 返回不就绪，覆盖单 key、多 key 和 upstreams |
 | `TestReadinessRejectsInvalidCriticalSettings` | 关键 auth/relay/rate-limit settings 即使被直接改库污染，`/ready` 也会复用注册表校验返回不就绪并指出问题 key |
 | `TestInitLogDBUsesConfiguredDSN` | 启动期读取 `LOG_SQL_DSN`，初始化独立日志数据库并迁移 `logs` schema |
 | `TestLogServiceWritesMainFactAndExternalLogDB` | 配置独立日志库时，`LogService` 先在主库保留调用/结算事实并更新 API Key 最近使用摘要，再写日志库副本 |

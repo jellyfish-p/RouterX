@@ -103,7 +103,7 @@ main
 | User | `/v0/user` | `SetupCheck`、User JWT | 用户控制台 API |
 | Relay | `/v1` | `SetupCheck`、API Key Auth | OpenAI、Gemini、Anthropic 入口协议和多上游转发 API |
 
-当前 `/ready` 挂在公共路由上，已检查数据库连接、golang-migrate 的 `schema_migrations.dirty` 状态、外部数据库模式下 Redis 可用性、初始化后的 JWT 配置、关键 settings、支付 provider 环境密钥，以及存在 `enc:v1:` 通道密钥时的 `ENCRYPTION_KEY`。目标生产版本应继续补 KMS/密文逐条解密巡检和更多 Redis 集群策略；这些检查属于运维就绪，不应阻塞 `/health` 存活探测。
+当前 `/ready` 挂在公共路由上，已检查数据库连接、golang-migrate 的 `schema_migrations.dirty` 状态、外部数据库模式下 Redis 可用性、初始化后的 JWT 配置、关键 settings、支付 provider 环境密钥，以及存在 `enc:v1:` 通道密钥时的 `ENCRYPTION_KEY` 和逐条解密结果。目标生产版本应继续补 KMS provider/轮换任务和更多 Redis 集群策略；这些检查属于运维就绪，不应阻塞 `/health` 存活探测。
 
 全局中间件顺序：
 
@@ -291,4 +291,4 @@ POST /v0/setup/init
 | Token 管理 | API Key CRUD 已注册；后续补 Redis 缓存失效、最近使用时间和更完整审计 |
 | RedemCode | 模型存在，充值码 API 尚未注册 |
 | Observability | 可配置 HTTP/Panic 结构化 JSON line 日志、基础指标和审计查询已落地；追踪、告警和更完整事件字段属于 P2 生产增强目标 |
-| Readiness | 已检查 DB、迁移 dirty 状态、JWT、外部数据库 Redis、关键 settings、支付密钥和已有加密通道密钥的 `ENCRYPTION_KEY`；后续补 KMS/逐条解密巡检和更多 Redis 策略 |
+| Readiness | 已检查 DB、迁移 dirty 状态、JWT、外部数据库 Redis、关键 settings、支付密钥和已有加密通道密钥的 `ENCRYPTION_KEY` 及逐条解密；后续补 KMS provider/轮换任务和更多 Redis 策略 |
