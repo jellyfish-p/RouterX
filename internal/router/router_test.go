@@ -465,7 +465,7 @@ func TestApifoxOpenAPISecurityMatchesRouteGroups(t *testing.T) {
 
 func isPublicUserOperation(path string) bool {
 	switch path {
-	case "/v0/user/register/captcha", "/v0/user/register", "/v0/user/login",
+	case "/v0/user/register/captcha", "/v0/user/register", "/v0/user/login/code", "/v0/user/login",
 		"/v0/user/oauth/{provider}/login", "/v0/user/oauth/{provider}/callback", "/v0/user/oauth/{provider}/register", "/v0/user/oauth/{provider}/bind/callback",
 		"/v0/user/oidc/{provider}/login", "/v0/user/oidc/{provider}/callback", "/v0/user/oidc/{provider}/register", "/v0/user/oidc/{provider}/bind/callback":
 		return true
@@ -4121,6 +4121,112 @@ func TestUserLoginCodeCredentialFailsClosedWithoutVerifier(t *testing.T) {
 	})
 	if passwordLogin.Code != http.StatusOK {
 		t.Fatalf("explicit password login should still work, got %d %s", passwordLogin.Code, passwordLogin.Body.String())
+	}
+}
+
+func TestUserLoginCodeEndpointGeneratesConsumableRedisCode(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createCodeLoginUser(t, r, rootJWT)
+	enableCodeLoginSettings(t)
+	if err := service.NewSettingService().Set("auth.captcha.ttl_seconds", "90"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.NewSettingService().Set("auth.captcha.debug_response.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	oldRDB := internal.RDB
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = oldRDB
+	})
+
+	codeResp := performJSON(r, http.MethodPost, "/v0/user/login/code", "", map[string]interface{}{
+		"account": "CODE-LOGIN@example.com",
+	})
+	var codePayload struct {
+		Data struct {
+			CaptchaID      string `json:"captcha_id"`
+			DeliveryMethod string `json:"delivery_method"`
+			DebugCode      string `json:"debug_code"`
+			TTLSeconds     int    `json:"ttl_seconds"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(codeResp.Body.Bytes(), &codePayload); err != nil {
+		t.Fatalf("decode login code response: %v\n%s", err, codeResp.Body.String())
+	}
+	if codeResp.Code != http.StatusOK ||
+		codePayload.Data.CaptchaID == "" ||
+		codePayload.Data.DeliveryMethod != model.UserIdentityMethodEmail ||
+		!regexp.MustCompile(`^[0-9]{6}$`).MatchString(codePayload.Data.DebugCode) ||
+		codePayload.Data.TTLSeconds != 90 {
+		t.Fatalf("login code endpoint should return an email challenge, got %d %s", codeResp.Code, codeResp.Body.String())
+	}
+
+	raw, err := rdb.Get(context.Background(), routerLoginCodeKey(codePayload.Data.CaptchaID)).Result()
+	if err != nil {
+		t.Fatalf("generated login code should be stored in redis: %v", err)
+	}
+	if strings.Contains(raw, codePayload.Data.DebugCode) {
+		t.Fatalf("login code redis record should store only the code hash, got %s", raw)
+	}
+
+	loginResp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":         "code-login@example.com",
+		"credential_type": "code",
+		"password":        "wrong-password-is-ignored",
+		"captcha_id":      codePayload.Data.CaptchaID,
+		"captcha_code":    codePayload.Data.DebugCode,
+	})
+	if loginResp.Code != http.StatusOK || !strings.Contains(loginResp.Body.String(), `"token"`) {
+		t.Fatalf("generated login code should be consumable, got %d %s", loginResp.Code, loginResp.Body.String())
+	}
+	if _, err := rdb.Get(context.Background(), routerLoginCodeKey(codePayload.Data.CaptchaID)).Result(); !errors.Is(err, redis.Nil) {
+		t.Fatalf("generated login code should be consumed after login, err=%v", err)
+	}
+}
+
+func TestUserLoginCodeEndpointFailsClosedWithoutRedis(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	createCodeLoginUser(t, r, rootJWT)
+	enableCodeLoginSettings(t)
+
+	oldRDB := internal.RDB
+	internal.RDB = nil
+	t.Cleanup(func() {
+		internal.RDB = oldRDB
+	})
+
+	resp := performJSON(r, http.MethodPost, "/v0/user/login/code", "", map[string]interface{}{
+		"account": "code-login@example.com",
+	})
+	if resp.Code != http.StatusServiceUnavailable || strings.Contains(resp.Body.String(), "debug_code") {
+		t.Fatalf("login code generation should fail closed without Redis, got %d %s", resp.Code, resp.Body.String())
 	}
 }
 
@@ -10173,6 +10279,7 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"auth.login.oidc.enabled",
 		"auth.captcha.ttl_seconds",
 		"auth.captcha.max_attempts",
+		"auth.captcha.debug_response.enabled",
 		"auth.register.enabled",
 		"auth.register.username.enabled",
 		"auth.register.email.enabled",
@@ -11486,6 +11593,7 @@ func TestReadinessRejectsInvalidCriticalSettings(t *testing.T) {
 		{key: "relay.routerx_max_hops", value: "0"},
 		{key: "rate_limit.per_token_per_min", value: "-1"},
 		{key: "auth.login.username_password.enabled", value: "false"},
+		{key: "auth.captcha.debug_response.enabled", value: "maybe"},
 		{key: "auth.register.default_group_id", value: ""},
 	}
 

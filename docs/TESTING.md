@@ -134,6 +134,8 @@
 | `TestUserRegisterCaptchaTracksAttemptsAndExpiresCode` | 注册验证码错误尝试会累计，达到 `auth.captcha.max_attempts` 后删除 Redis 记录并拒绝后续正确验证码 |
 | `TestUserRegisterRestoresCancelledEmailAndPhoneIdentities` | 已注销普通用户通过同邮箱或同手机号重新注册时恢复原账号、更新本地密码和展示名，并写 `user.recover` 审计 |
 | `TestUserLoginRespectsLoginMethodSettings` | 用户名密码登录保持可用；email/phone 密码登录默认关闭，开启对应 setting 后已有本地身份可登录，且 email 身份可复用 `username/local` 主密码 |
+| `TestUserLoginCodeEndpointGeneratesConsumableRedisCode` | 登录验证码生成接口写入 Redis 登录验证码记录，显式开启调试响应时返回验证码 ID、投递方式、TTL 和调试验证码；返回验证码可直接完成验证码登录并一次性消费 Redis key |
+| `TestUserLoginCodeEndpointFailsClosedWithoutRedis` | Redis 验证码存储不可用时，登录验证码生成接口 fail-closed 返回 503，不返回调试验证码 |
 | `TestUserLoginCodeCredentialFailsClosedWithoutVerifier` | 统一登录显式提交 `credential_type=code` 时不会回退到密码登录；缺少 Redis 验证器时按对应开关 fail-closed 且不签发 JWT |
 | `TestUserLoginCodeCredentialConsumesRedisCode` | 邮箱/手机号验证码登录读取 Redis 记录、忽略请求体密码、成功签发 JWT 并一次性消费验证码 |
 | `TestUserLoginCodeCredentialTracksAttemptsAndExpiresCode` | 登录验证码错误尝试会累计，达到 `auth.captcha.max_attempts` 后删除 Redis 记录并拒绝后续正确验证码 |

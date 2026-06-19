@@ -9,7 +9,7 @@ info:
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 缺少必填 image/file 文件字段时返回 400 multipart_file_required，单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态/危险扩展名、扩展名或文件头与图片/音频 API 不匹配或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，以上均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
-    - 充值码、充值码创建/兑换拒绝审计、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook/邮件/IM 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期、最近使用、额度、轮换和泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、订单创建拒绝审计与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知、易支付同步返回基础接口，以及 OAuth 基础登录/绑定/首次补齐注册/注销账号恢复、OIDC Discovery、已绑定身份回调登录、登录用户绑定、首次补齐注册和注销账号恢复接口已注册。
+    - 充值码、充值码创建/兑换拒绝审计、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook/邮件/IM 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期、最近使用、额度、轮换和泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、订单创建拒绝审计与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知、易支付同步返回基础接口，以及 Redis-backed 注册图片验证码生成、登录验证码基础生成、OAuth 基础登录/绑定/首次补齐注册/注销账号恢复、OIDC Discovery、已绑定身份回调登录、登录用户绑定、首次补齐注册和注销账号恢复接口已注册。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -287,6 +287,49 @@ paths:
           $ref: "#/components/responses/StandardBadRequest"
         "403":
           description: 公开注册关闭、对应注册方法关闭，或 auth.register.captcha.required=true 但验证码不可用或不匹配。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+  /v0/user/login/code:
+    post:
+      tags: [User Auth]
+      summary: 生成邮箱或手机号登录验证码
+      description: 公开入口；根据 account 识别 email 或 phone，检查 auth.login.email_code.enabled 或 auth.login.phone_code.enabled，确认本地身份、用户状态和 username/local 主密码存在后，生成 6 位验证码并写入 Redis key auth:login_code:<captcha_id>，value 包含 method、account、SHA256(captcha_code)、attempts 和 max_attempts，并按 auth.captcha.ttl_seconds 设置 TTL。当前基础实现尚未接入真实邮件/短信网关，默认不返回验证码明文；只有显式开启 auth.captcha.debug_response.enabled=true 时，响应才会返回 debug_code 供自部署前端和 Apifox 调试。Redis 不可用时返回 503 fail-closed，不生成不可消费验证码。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginCodeRequest"
+      responses:
+        "200":
+          description: 登录验证码已生成。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/LoginCodeResponse"
+        "400":
+          $ref: "#/components/responses/StandardBadRequest"
+        "401":
+          description: 账号不存在、用户禁用或缺少本地主密码身份。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "403":
+          description: 账号类型不支持或对应验证码登录开关未启用。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "503":
+          description: Redis 验证码存储不可用，不能生成可消费验证码。
           content:
             application/json:
               schema:
@@ -4790,6 +4833,31 @@ components:
         captcha_image_svg:
           type: string
           description: 可直接展示的 SVG 图片；用户从图片中读取 6 位数字验证码后提交为 captcha_code。
+        ttl_seconds:
+          type: integer
+          description: 验证码有效期秒数，来自 auth.captcha.ttl_seconds。
+    LoginCodeRequest:
+      type: object
+      required: [account]
+      properties:
+        account:
+          type: string
+          description: 邮箱或手机号；用户名不支持验证码登录。
+      example:
+        account: alice@example.com
+    LoginCodeResponse:
+      type: object
+      properties:
+        captcha_id:
+          type: string
+          description: 登录验证码 ID；提交 /v0/user/login 时作为 captcha_id 使用。
+        delivery_method:
+          type: string
+          enum: [email, phone]
+          description: 后端识别出的投递方式，也是 Redis 记录中的 method。
+        debug_code:
+          type: string
+          description: 仅 auth.captcha.debug_response.enabled=true 时返回的 6 位验证码；只用于自部署和 Apifox 调试，生产默认不暴露给终端用户。
         ttl_seconds:
           type: integer
           description: 验证码有效期秒数，来自 auth.captcha.ttl_seconds。

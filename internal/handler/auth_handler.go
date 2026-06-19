@@ -90,6 +90,34 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	common.Success(c, dto.UserBriefFromModel(result.User))
 }
 
+// POST /v0/user/login/code — 生成邮箱或手机号登录验证码。
+func (h *AuthHandler) LoginCode(c *gin.Context) {
+	var req dto.LoginCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, http.StatusBadRequest, "登录验证码参数无效")
+		return
+	}
+	challenge, err := h.svc.CreateLoginCode(req.Account)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrLoginCodeDisabled) ||
+			errors.Is(err, service.ErrLoginCodeUnsupported):
+			common.FailWithStatus(c, http.StatusForbidden, err.Error())
+		case errors.Is(err, service.ErrCaptchaStoreUnavailable):
+			common.FailWithStatus(c, http.StatusServiceUnavailable, err.Error())
+		default:
+			common.FailWithStatus(c, http.StatusUnauthorized, "账号或凭据错误")
+		}
+		return
+	}
+	common.Success(c, dto.LoginCodeResponse{
+		CaptchaID:      challenge.CaptchaID,
+		DeliveryMethod: challenge.DeliveryMethod,
+		DebugCode:      challenge.DebugCode,
+		TTLSeconds:     challenge.TTLSeconds,
+	})
+}
+
 // POST /v0/user/login — 用户登录 (返回 JWT)
 func (h *AuthHandler) UserLogin(c *gin.Context) {
 	var req dto.LoginRequest

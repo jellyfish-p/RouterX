@@ -700,8 +700,8 @@ Provider 退款请求：
 鉴权：
 
 - 注册和登录不需要 User JWT，但需要系统已初始化。
-- 用户名密码登录是当前本地登录基线；email/phone 密码登录只对已有本地身份生效，并分别受 `auth.login.email_password.enabled` 与 `auth.login.phone_password.enabled` 控制，默认关闭；本地 email/phone 身份复用同一用户的 `username/local` 主密码，不要求各自保存独立密码哈希。统一登录接口已经识别 `credential_type=password|code`；验证码登录支持 Redis 中的短期验证码记录校验和一次性消费，Redis 缺失或不可用时 fail-closed 返回 403，不会回退为密码登录。
-- 自部署商业级默认关闭公开自助注册；`POST /v0/user/register/captcha` 当前可生成 Redis-backed 注册图片验证码，`POST /v0/user/register` 支持 `register_method=username/email/phone`，分别需要 `auth.register.enabled=true`、对应注册方法开关为 true。`auth.register.captcha.required=true` 时必须提交 Redis 中存在且匹配的注册验证码；登录验证码发送接口仍属后续增强。
+- 用户名密码登录是当前本地登录基线；email/phone 密码登录只对已有本地身份生效，并分别受 `auth.login.email_password.enabled` 与 `auth.login.phone_password.enabled` 控制，默认关闭；本地 email/phone 身份复用同一用户的 `username/local` 主密码，不要求各自保存独立密码哈希。`POST /v0/user/login/code` 当前可生成 Redis-backed 登录验证码挑战，统一登录接口已经识别 `credential_type=password|code`；验证码登录支持 Redis 中的短期验证码记录校验和一次性消费，Redis 缺失或不可用时 fail-closed，不会回退为密码登录。
+- 自部署商业级默认关闭公开自助注册；`POST /v0/user/register/captcha` 当前可生成 Redis-backed 注册图片验证码，`POST /v0/user/register` 支持 `register_method=username/email/phone`，分别需要 `auth.register.enabled=true`、对应注册方法开关为 true。`auth.register.captcha.required=true` 时必须提交 Redis 中存在且匹配的注册验证码。
 - 管理员创建用户不受自助注册开关影响。
 - 个人信息、日志和账单需要 User JWT。
 
@@ -711,6 +711,7 @@ Provider 退款请求：
 |------|------|----------|------|
 | POST | `/v0/user/register/captcha` | 已实现 | 生成注册图片验证码；写入 `auth:register_captcha:<captcha_id>` Redis 记录并返回可展示的 SVG、验证码 ID 和 TTL，Redis 不可用时 fail-closed |
 | POST | `/v0/user/register` | 已实现 | 统一自助注册入口，支持 `register_method=username/email/phone`；所有方法仍要求用户名和密码，可创建或恢复补齐 email/phone 本地登录标识但不保存重复密码哈希；命中已注销同名、同邮箱或同手机号账号时恢复原账号 |
+| POST | `/v0/user/login/code` | 已实现 | 生成邮箱或手机号登录验证码挑战；写入 `auth:login_code:<captcha_id>` Redis 记录，返回验证码 ID、投递方式和 TTL；显式开启 `auth.captcha.debug_response.enabled=true` 时额外返回自部署调试用 `debug_code`，Redis 不可用时返回 503 |
 | POST | `/v0/user/login` | 已实现 | 用户统一登录；用户名密码始终可用，email/phone 密码登录受 settings 控制并复用 `username/local` 主密码；`credential_type=code` 使用 Redis 验证码记录，成功后一次性消费且不会误走密码登录；成功登录写 `user.login` 管理审计，摘要不包含密码或 JWT |
 | GET | `/v0/user/oauth/:provider/login` | 基础实现 | OAuth 授权跳转；检查 `auth.login.oauth.enabled` 和 `oauth.{provider}.enabled`，生成一次性 state Cookie 后跳转 provider 授权地址 |
 | GET | `/v0/user/oauth/:provider/callback` | 基础实现 | OAuth 回调；校验 state Cookie，使用 provider token/userinfo 接口解析稳定 id/sub，只允许已绑定 `oauth/provider/identifier` 身份登录并写 `user.login` 审计；相同 email 不自动绑定 |
@@ -735,7 +736,7 @@ Provider 退款请求：
 POST /v0/user/register/captcha
 ```
 
-返回 `captcha_id`、`captcha_image_svg` 和 `ttl_seconds`；服务端在 Redis 写入 `auth:register_captcha:<captcha_id>`，验证码答案显示在 SVG 中，后续注册请求提交同一个 `captcha_id` 和用户读到的 `captcha_code`。该基础实现用于自部署前端显示图片验证码；邮箱/手机号归属验证和登录验证码发送仍按 `docs/ACCOUNTS.md` 后续阶段扩展。
+返回 `captcha_id`、`captcha_image_svg` 和 `ttl_seconds`；服务端在 Redis 写入 `auth:register_captcha:<captcha_id>`，验证码答案显示在 SVG 中，后续注册请求提交同一个 `captcha_id` 和用户读到的 `captcha_code`。该基础实现用于自部署前端显示图片验证码；邮箱/手机号归属验证仍按 `docs/ACCOUNTS.md` 后续阶段扩展。
 
 ```json
 {
@@ -759,6 +760,19 @@ POST /v0/user/register/captcha
 自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号，请求体必须提交当前本地密码进行二次确认。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key，同时清空 `users.display_name`、`users.email` 和 `users.phone`。服务端不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史；`username/local`、`email/local`、`phone/local`、OAuth 和 OIDC identity 继续保留用于去重和账号恢复。缺少密码或密码错误时不会修改账号和 API Key 状态，并写入 `user.self_cancel_denied` 拒绝审计，`error_code` 分别为 `self_cancel_password_required` 或 `self_cancel_password_invalid`，审计摘要不保存密码。注销后用户名密码登录返回统一认证失败，同名、同邮箱、同手机号注册、同一 OAuth identity 补齐注册或同一 OIDC subject 补齐注册会走上述恢复流程。
 
 登录目标请求：
+
+验证码登录前可先生成一次性登录验证码：
+
+```http
+POST /v0/user/login/code
+Content-Type: application/json
+
+{
+  "account": "alice@example.com"
+}
+```
+
+服务端会识别邮箱或手机号、检查 `auth.login.email_code.enabled` 或 `auth.login.phone_code.enabled`、确认本地身份和主密码存在，然后写入 `auth:login_code:<captcha_id>`。当前基础实现尚未接入真实邮件/短信网关；只有显式开启 `auth.captcha.debug_response.enabled=true` 时，响应才会返回 `debug_code` 供自部署前端和 Apifox 闭环调试。生产环境应保持该开关关闭，并在接入真实投递后只返回投递状态，不把验证码明文暴露给终端用户。
 
 ```json
 {

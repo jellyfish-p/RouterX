@@ -51,6 +51,7 @@
 | `auth.login.oidc.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 OIDC 已绑定身份登录和绑定入口 |
 | `auth.captcha.ttl_seconds` | `auth` | int | `300` | 否 | hot | auth | `>0`；发送验证码时写入 Redis TTL 的默认值 |
 | `auth.captcha.max_attempts` | `auth` | int | `5` | 否 | hot | auth | `>0`；单个注册/登录验证码错误尝试上限 |
+| `auth.captcha.debug_response.enabled` | `auth` | bool | `false` | 否 | hot | auth | bool；仅自部署调试时让登录验证码生成接口返回 `debug_code` |
 | `auth.register.enabled` | `auth` | bool | `false` | 否 | hot | auth | bool |
 | `auth.register.username.enabled` | `auth` | bool | `true` | 否 | hot | auth | bool |
 | `auth.register.email.enabled` | `auth` | bool | `false` | 否 | hot | auth | 控制 `register_method=email` 自助注册入口 |
@@ -105,7 +106,7 @@
 
 - `jwt.secret` 可以由 `JWT_SECRET` 注入；生产和多实例部署必须显式固定，不能让各实例随机生成不同值。
 - `auth.login.username_password.enabled=true` 是商业级基础登录硬约束，配置层会拒绝关闭；email/phone 密码登录默认关闭，只有已有本地 email/phone identity 且对应开关开启时才会命中。
-- `auth.register.enabled=false` 是商业级自部署安全默认；当前统一注册入口会按 `register_method` 检查 `auth.register.username.enabled`、`auth.register.email.enabled` 或 `auth.register.phone.enabled`，并在 `auth.register.captcha.required=true` 时要求消费 Redis 注册验证码。注册图片验证码生成已落地，登录验证码发送和邮件/短信投递仍按 `docs/ACCOUNTS.md` 分阶段补齐。
+- `auth.register.enabled=false` 是商业级自部署安全默认；当前统一注册入口会按 `register_method` 检查 `auth.register.username.enabled`、`auth.register.email.enabled` 或 `auth.register.phone.enabled`，并在 `auth.register.captcha.required=true` 时要求消费 Redis 注册验证码。注册图片验证码生成、登录验证码基础生成和消费已落地，真实邮件/短信投递仍按 `docs/ACCOUNTS.md` 分阶段补齐。
 - `rate_limit.global_per_min`、`rate_limit.per_token_per_min`、`rate_limit.per_ip_per_min`、`rate_limit.per_user_per_min`、`rate_limit.per_model_per_min` 和 `rate_limit.per_channel_per_min` 为 `0` 时表示关闭对应维度；Redis 可用时这些 hot setting 会影响后续请求。
 - `relay.retry_count` 默认是 `0`，表示不做自动重试；大于 0 时，非流式 Relay 只对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败进行有限候选通道重试。默认白名单为 429/500/502/503/504，生产环境不建议把 401/403 加入白名单。
 - `relay.error_auto_ban=false` 时仍会记录通道 `error_count`，但候选查询不会因为 `relay.error_ban_threshold` 排除通道；`relay.error_ban_cooldown_seconds>0` 时，达到阈值的通道在最近一次健康状态更新超过冷却窗口后可重新进入候选做半开探测，后台 worker 也会按 `relay.error_probe_*` 定期复测这些通道；`relay.error_ban_cooldown_seconds=0` 表示关闭自动半开和后台探测恢复，只能人工测试或后续成功调用清零。
@@ -144,12 +145,13 @@ P0 补齐这些配置时，应同时补测试：
 | `auth.login.username_password.enabled` | `true` | P1 | 当前已落地；用户名密码登录基线，配置层不得关闭 |
 | `auth.login.email_password.enabled` | `false` | P1 | 当前已落地；已有本地邮箱身份可在开启后使用邮箱 + 密码登录 |
 | `auth.login.phone_password.enabled` | `false` | P1 | 当前已落地；已有本地手机号身份可在开启后使用手机号 + 密码登录 |
-| `auth.login.email_code.enabled` | `false` | P1 | 当前已落地；邮箱验证码登录依赖 Redis 短期验证码记录 |
-| `auth.login.phone_code.enabled` | `false` | P1 | 当前已落地；手机号验证码登录依赖 Redis 短期验证码记录 |
+| `auth.login.email_code.enabled` | `false` | P1 | 当前已落地；邮箱验证码生成和登录依赖 Redis 短期验证码记录 |
+| `auth.login.phone_code.enabled` | `false` | P1 | 当前已落地；手机号验证码生成和登录依赖 Redis 短期验证码记录 |
 | `auth.login.oauth.enabled` | `false` | P1 | 当前已落地；控制 OAuth 已绑定身份登录和登录用户绑定 OAuth identity |
 | `auth.login.oidc.enabled` | `false` | P1 | 当前已落地；控制 OIDC Discovery、nonce/ID Token 校验、已绑定 subject 登录和登录用户绑定 OIDC identity |
-| `auth.captcha.ttl_seconds` | `300` | P1 | 当前已注册默认值和校验；注册图片验证码生成会按该值写入 Redis TTL |
+| `auth.captcha.ttl_seconds` | `300` | P1 | 当前已注册默认值和校验；注册图片验证码和登录验证码生成会按该值写入 Redis TTL |
 | `auth.captcha.max_attempts` | `5` | P1 | 当前已落地；注册/登录验证码错误次数达到上限后删除 Redis 记录 |
+| `auth.captcha.debug_response.enabled` | `false` | P1 | 当前已落地；默认不返回登录验证码明文，显式开启后仅供自部署和 Apifox 调试 |
 | `auth.register.enabled` | `false` | P1 | 当前已落地；是否开放公开自助注册，默认关闭 |
 | `auth.register.username.enabled` | `true` | P1 | 当前已落地；开启注册后是否允许用户名注册 |
 | `auth.register.email.enabled` | `false` | P1 | 当前已落地；开启后允许 `register_method=email`，仍要求用户名和密码 |

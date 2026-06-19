@@ -1676,6 +1676,7 @@ var readinessCriticalSettings = []string{
 	"auth.login.oidc.enabled",
 	"auth.captcha.ttl_seconds",
 	"auth.captcha.max_attempts",
+	"auth.captcha.debug_response.enabled",
 	"auth.register.enabled",
 	"auth.register.username.enabled",
 	"auth.register.email.enabled",

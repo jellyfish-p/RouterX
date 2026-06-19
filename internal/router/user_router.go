@@ -22,6 +22,7 @@ func setupUserRoutes(
 	{
 		api.POST("/register/captcha", authH.RegisterCaptcha)
 		api.POST("/register", authH.Register)
+		api.POST("/login/code", authH.LoginCode)
 		api.POST("/login", authH.UserLogin)
 		api.GET("/oauth/:provider/login", authH.OAuthLogin)
 		api.GET("/oauth/:provider/callback", authH.OAuthCallback)

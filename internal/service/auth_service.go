@@ -80,6 +80,13 @@ type RegisterCaptchaChallenge struct {
 	TTLSeconds      int
 }
 
+type LoginCodeChallenge struct {
+	CaptchaID      string
+	DeliveryMethod string
+	DebugCode      string
+	TTLSeconds     int
+}
+
 // RegisterInput carries the unified self-registration payload. Captcha fields
 // are consumed from Redis when auth.register.captcha.required is enabled.
 type RegisterInput struct {
@@ -127,6 +134,77 @@ func (s *AuthService) CreateRegisterCaptcha() (*RegisterCaptchaChallenge, error)
 		CaptchaID:       captchaID,
 		CaptchaImageSVG: renderRegisterCaptchaSVG(code),
 		TTLSeconds:      ttl,
+	}, nil
+}
+
+// CreateLoginCode creates the short-lived Redis record consumed by code login.
+// A real mail/SMS provider is still a later slice; DebugCode is only returned
+// when auth.captcha.debug_response.enabled is explicitly enabled for local
+// self-hosted debugging.
+func (s *AuthService) CreateLoginCode(account string) (*LoginCodeChallenge, error) {
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return nil, invalidLocalCredentialError()
+	}
+	method, ok := localCodeLoginMethod(account)
+	if !ok {
+		return nil, ErrLoginCodeUnsupported
+	}
+	if !localCodeLoginEnabled(method) {
+		return nil, ErrLoginCodeDisabled
+	}
+	normalizedAccount := normalizeCodeLoginAccount(method, account)
+	identity, err := findLocalIdentityByMethod(method, normalizedAccount)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, invalidLocalCredentialError()
+		}
+		return nil, err
+	}
+	if identity.User == nil || identity.User.Status != common.UserStatusEnabled {
+		return nil, invalidLocalCredentialError()
+	}
+	if _, err := localAccountPasswordHash(identity.UserID); err != nil {
+		return nil, invalidLocalCredentialError()
+	}
+	if internal.RDB == nil {
+		return nil, ErrCaptchaStoreUnavailable
+	}
+
+	captchaID, err := common.GenerateRandomString(16)
+	if err != nil {
+		return nil, err
+	}
+	code, err := randomNumericCode(6)
+	if err != nil {
+		return nil, err
+	}
+	record := loginCodeRecord{
+		Method:      method,
+		Account:     normalizedAccount,
+		CodeHash:    common.SHA256Hex(code),
+		Attempts:    0,
+		MaxAttempts: captchaMaxAttempts(),
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return nil, err
+	}
+	ttl := captchaTTLSeconds()
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := internal.RDB.Set(ctx, loginCodeRedisKey(captchaID), string(raw), time.Duration(ttl)*time.Second).Err(); err != nil {
+		return nil, ErrCaptchaStoreUnavailable
+	}
+	debugCode := ""
+	if loginBoolSettingDefault("auth.captcha.debug_response.enabled", false) {
+		debugCode = code
+	}
+	return &LoginCodeChallenge{
+		CaptchaID:      captchaID,
+		DeliveryMethod: method,
+		DebugCode:      debugCode,
+		TTLSeconds:     ttl,
 	}, nil
 }
 

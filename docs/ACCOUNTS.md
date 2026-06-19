@@ -21,7 +21,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备受 settings 控制的用户名、邮箱、手机号自助注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认、注销隐私字段擦除、基础用户名/邮箱/手机号恢复账号、Redis-backed 注册图片验证码生成与消费、Redis-backed 邮箱/手机号验证码登录，以及 OAuth 已绑定身份登录、OAuth 首次补齐注册、OAuth 注销账号恢复、登录用户绑定 OAuth identity、OIDC 已绑定身份登录、OIDC 首次补齐注册、OIDC 注销账号恢复、登录用户绑定 OIDC identity 和自助列出/解绑非主 identity 所需的账号能力。自助注册默认关闭；开启基础注册时，服务端会检查 `auth.register.enabled`、对应 `auth.register.{method}.enabled` 和 `auth.register.captcha.required`，需要验证码时会校验并一次性消费 Redis 注册验证码，新账号会应用默认额度/分组，命中已注销同名、同邮箱或同手机号身份时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，密码登录统一校验同一用户的 `username/local` 主密码，验证码登录会校验并一次性消费 Redis 中的短期验证码记录；当前本地 email/phone identity 不保存重复密码哈希。OAuth 当前支持授权跳转、state Cookie 校验、code 换 token、userinfo 稳定 id/sub 登录、恢复或绑定 `oauth/provider/identifier` 身份；当 `auth.register.oauth.enabled=true` 且 `oauth.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的身份会返回短期注册票据，用户提交用户名、密码，并在注册验证码开启时提交可消费验证码后创建本地有密码账号并绑定 OAuth identity，或恢复原账号并刷新该 OAuth identity 最近使用时间，同时明确禁止因相同 email 自动绑定或接管已有账号。OIDC 当前支持 Discovery、state/nonce、RS256 ID Token 签名、`iss/aud/exp/sub` 校验，并只用已验证 `sub` 登录、恢复、绑定或生成短期注册票据；当 `auth.register.oidc.enabled=true` 且 `oidc.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的 subject 可补齐用户名、密码，并在注册验证码开启时提交可消费验证码后创建本地有密码账号并绑定 OIDC identity，或恢复原账号并刷新 OIDC identity 最近使用时间。本文档中的登录验证码发送接口、绑定归属验证和更完整企业风控属于目标设计，需要按阶段继续实现。
+当前代码已经具备受 settings 控制的用户名、邮箱、手机号自助注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认、注销隐私字段擦除、基础用户名/邮箱/手机号恢复账号、Redis-backed 注册图片验证码生成与消费、Redis-backed 邮箱/手机号登录验证码生成与消费，以及 OAuth 已绑定身份登录、OAuth 首次补齐注册、OAuth 注销账号恢复、登录用户绑定 OAuth identity、OIDC 已绑定身份登录、OIDC 首次补齐注册、OIDC 注销账号恢复、登录用户绑定 OIDC identity 和自助列出/解绑非主 identity 所需的账号能力。自助注册默认关闭；开启基础注册时，服务端会检查 `auth.register.enabled`、对应 `auth.register.{method}.enabled` 和 `auth.register.captcha.required`，需要验证码时会校验并一次性消费 Redis 注册验证码，新账号会应用默认额度/分组，命中已注销同名、同邮箱或同手机号身份时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，密码登录统一校验同一用户的 `username/local` 主密码，验证码登录会先由 `POST /v0/user/login/code` 写入短期 Redis 记录，再由统一登录接口校验并一次性消费；当前本地 email/phone identity 不保存重复密码哈希，登录验证码生成响应里的 `debug_code` 只有在 `auth.captcha.debug_response.enabled=true` 时返回，仅用于尚未接入真实邮件/短信投递时的自部署调试闭环。OAuth 当前支持授权跳转、state Cookie 校验、code 换 token、userinfo 稳定 id/sub 登录、恢复或绑定 `oauth/provider/identifier` 身份；当 `auth.register.oauth.enabled=true` 且 `oauth.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的身份会返回短期注册票据，用户提交用户名、密码，并在注册验证码开启时提交可消费验证码后创建本地有密码账号并绑定 OAuth identity，或恢复原账号并刷新该 OAuth identity 最近使用时间，同时明确禁止因相同 email 自动绑定或接管已有账号。OIDC 当前支持 Discovery、state/nonce、RS256 ID Token 签名、`iss/aud/exp/sub` 校验，并只用已验证 `sub` 登录、恢复、绑定或生成短期注册票据；当 `auth.register.oidc.enabled=true` 且 `oidc.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的 subject 可补齐用户名、密码，并在注册验证码开启时提交可消费验证码后创建本地有密码账号并绑定 OIDC identity，或恢复原账号并刷新 OIDC identity 最近使用时间。本文档中的真实邮件/短信投递、绑定归属验证和更完整企业风控属于目标设计，需要按阶段继续实现。
 
 阶段边界：
 
@@ -149,10 +149,11 @@ password_hash = bcrypt hash
 | key | 默认 | 说明 |
 |-----|------|------|
 | `auth.captcha.register.type` | `image` | 注册验证码类型，支持 `image/email/sms` 等实现 |
-| `auth.captcha.login.email.enabled` | `false` | 是否允许邮箱验证码登录 |
-| `auth.captcha.login.phone.enabled` | `false` | 是否允许短信验证码登录 |
+| `auth.login.email_code.enabled` | `false` | 当前已落地；是否允许邮箱验证码生成和登录 |
+| `auth.login.phone_code.enabled` | `false` | 当前已落地；是否允许手机号验证码生成和登录 |
 | `auth.captcha.ttl_seconds` | `300` | 验证码有效期 |
 | `auth.captcha.max_attempts` | `5` | 单个验证码最大尝试次数 |
+| `auth.captcha.debug_response.enabled` | `false` | 当前已落地；默认不返回登录验证码明文，显式开启后仅用于自部署和 Apifox 调试 |
 
 配置判定规则：
 
@@ -328,6 +329,17 @@ POST /v0/user/login
 
 验证码登录请求：
 
+```http
+POST /v0/user/login/code
+Content-Type: application/json
+
+{
+  "account": "+8613800000000"
+}
+```
+
+当前基础生成接口会识别邮箱或手机号、检查对应验证码登录开关、确认本地身份和 `username/local` 主密码存在，然后写入 `auth:login_code:<captcha_id>`。因为邮件/短信投递网关尚未接入，响应默认只返回 `captcha_id`、`delivery_method` 和 `ttl_seconds`；只有 `auth.captcha.debug_response.enabled=true` 时才会额外返回自部署调试用 `debug_code`。真实投递接入后应只返回投递状态，不再把验证码明文暴露给终端用户。
+
 ```json
 {
   "account": "+8613800000000",
@@ -415,7 +427,8 @@ POST /v0/user/login
 - Redis key 约定为 `auth:login_code:<captcha_id>`，value 为 JSON：`method`、`account`、`code_hash`、`attempts` 和可选 `max_attempts`。
 - `code_hash` 使用 `SHA256(captcha_code)`；账号按邮箱小写去空格、手机号去首尾空格后匹配。
 - 错误尝试会递增 `attempts`，达到 `auth.captcha.max_attempts` 或记录自带 `max_attempts` 后删除验证码。
-- 验证码发送和校验都需要限流；当前已落地登录消费侧，发送接口仍按阶段继续实现。
+- `POST /v0/user/login/code` 当前会生成 6 位验证码并写入 Redis；显式开启 `auth.captcha.debug_response.enabled=true` 时会返回 `debug_code` 供自部署和 Apifox 调试，Redis 缺失或不可用时返回 503 fail-closed。
+- 验证码发送和校验都需要限流；当前已落地基础生成和消费侧，真实邮件/短信投递仍按阶段继续实现。
 
 注册验证码规则：
 
@@ -425,7 +438,7 @@ POST /v0/user/login
 - `code_hash` 使用 `SHA256(captcha_code)`；验证码正确后删除 Redis key 并继续注册。
 - 错误尝试会递增 `attempts`，达到 `auth.captcha.max_attempts` 或记录自带 `max_attempts` 后删除验证码。
 - Redis 缺失或不可用、验证码缺失、验证码过期、验证码错误都会拒绝注册。
-- 当前已落地注册图片验证码生成和消费侧；登录验证码发送、邮件/短信投递和邮箱/手机号归属验证仍按阶段继续实现。
+- 当前已落地注册图片验证码生成和消费侧、登录验证码基础生成和消费侧；邮件/短信投递和邮箱/手机号归属验证仍按阶段继续实现。
 
 ## 邮箱规则
 

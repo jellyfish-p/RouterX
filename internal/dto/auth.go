@@ -16,6 +16,19 @@ type LoginResponse struct {
 	User  UserBrief `json:"user"`
 }
 
+// LoginCodeRequest 请求生成邮箱或手机号登录验证码。
+type LoginCodeRequest struct {
+	Account string `json:"account" binding:"required"`
+}
+
+// LoginCodeResponse 返回可被 /v0/user/login 消费的验证码挑战。
+type LoginCodeResponse struct {
+	CaptchaID      string `json:"captcha_id"`
+	DeliveryMethod string `json:"delivery_method"`
+	DebugCode      string `json:"debug_code,omitempty"`
+	TTLSeconds     int    `json:"ttl_seconds"`
+}
+
 // RegisterRequest 用户注册请求
 type RegisterRequest struct {
 	Username       string `json:"username" binding:"required,min=3,max=64"`
