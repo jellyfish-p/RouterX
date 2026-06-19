@@ -919,7 +919,7 @@ Authorization: Bearer sk-xxxxxxxx
 | POST | `/v1/images/variations` | 基础实现，OpenAI-compatible multipart 图像表单透传，Azure OpenAI 可转发到 `/openai/v1/images/variations?api-version=preview`；`routerx` 表单字段剥离和路由偏好；单文件字段受 `relay.max_multipart_file_bytes` 限制，路径形态、危险扩展名、非图片扩展名、非图片文件头或可执行/脚本内容签名会本地拒绝；无 usage 时按 P0 最低计费 |
 | POST | `/v1/audio/transcriptions` | 基础实现，OpenAI-compatible multipart 音频表单透传；Azure OpenAI 通道转发到 `/openai/v1/audio/transcriptions?api-version=preview`；`routerx` 表单字段剥离和路由偏好；单文件字段受 `relay.max_multipart_file_bytes` 限制，路径形态、危险扩展名、非音频扩展名、非音频文件头或可执行/脚本内容签名会本地拒绝；无 usage 时按 P0 最低计费 |
 | POST | `/v1/audio/translations` | 基础实现，OpenAI-compatible multipart 音频表单透传；Azure OpenAI 通道转发到 `/openai/v1/audio/translations?api-version=preview`；`routerx` 表单字段剥离和路由偏好；单文件字段受 `relay.max_multipart_file_bytes` 限制，路径形态、危险扩展名、非音频扩展名、非音频文件头或可执行/脚本内容签名会本地拒绝；无 usage 时按 P0 最低计费 |
-| POST | `/v1/audio/speech` | 基础实现，OpenAI-compatible 文本转语音 JSON 透传，Azure OpenAI 通道转发到 `/openai/v1/audio/speech?api-version=preview`，二进制音频响应透传；无 usage 时按 P0 最低计费 |
+| POST | `/v1/audio/speech` | 基础实现，OpenAI-compatible 文本转语音 JSON 透传，Azure OpenAI 通道转发到 `/openai/v1/audio/speech?api-version=preview`，二进制音频响应透传；`response_format` 支持缺省、空字符串或 `mp3`、`opus`、`aac`、`flac`、`wav`、`pcm`，非法返回 `invalid_audio_response_format` 且不上游、不扣费；无 usage 时按 P0 最低计费 |
 | GET | `/v1/models` | 基础实现，模型列表；Gemini 外形会在 `supportedGenerationMethods` 声明 `generateContent`、`streamGenerateContent`、`countTokens`、`embedContent` 和 `batchEmbedContents` |
 | GET | `/v1/models/:model` | 基础实现，模型详情；支持 `format`、`routerx_protocol` 或 `X-RouterX-Protocol` 选择 OpenAI、Gemini 或 Anthropic 外形 |
 | POST | `/v1/moderations` | 基础实现，OpenAI-compatible Moderations JSON 透传；未支持该 APIType 的上游 adapter 返回 `unsupported_api_type`；无 usage 时按 P0 最低计费 |

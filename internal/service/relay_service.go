@@ -405,6 +405,7 @@ var (
 	errInvalidEmbeddingInput  = errors.New("embeddings input must be a non-empty string, string array, token array, or token array batch")
 	errEmbeddingBatchTooLarge = errors.New("embeddings input batch exceeds maximum size")
 	errInvalidImageSize       = errors.New("image size must be auto or WIDTHxHEIGHT within configured bounds")
+	errInvalidAudioFormat     = errors.New("audio response_format must be one of mp3, opus, aac, flac, wav, or pcm")
 )
 
 const maxEmbeddingBatchSize = 2048
@@ -1328,6 +1329,7 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 		Stream  bool            `json:"stream"`
 		Input   json.RawMessage `json:"input"`
 		Size    json.RawMessage `json:"size"`
+		Format  json.RawMessage `json:"response_format"`
 		RouterX json.RawMessage `json:"routerx"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -1352,6 +1354,11 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 	}
 	if apiType == relay.APIImagesGenerations {
 		if err := validateImageGenerationSize(payload.Size); err != nil {
+			return relayRequestInfo{}, err
+		}
+	}
+	if apiType == relay.APIAudioSpeech {
+		if err := validateAudioSpeechResponseFormat(payload.Format); err != nil {
 			return relayRequestInfo{}, err
 		}
 	}
@@ -1391,6 +1398,27 @@ func validateImageGenerationSize(raw json.RawMessage) error {
 		return errInvalidImageSize
 	}
 	return nil
+}
+
+// Audio Speech 只允许 OpenAI 兼容的音频容器格式，避免明显无效的格式请求进入上游。
+func validateAudioSpeechResponseFormat(raw json.RawMessage) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || isJSONNull(raw) {
+		return nil
+	}
+	var format string
+	if err := json.Unmarshal(raw, &format); err != nil {
+		return errInvalidAudioFormat
+	}
+	if format == "" {
+		return nil
+	}
+	switch format {
+	case "mp3", "opus", "aac", "flac", "wav", "pcm":
+		return nil
+	default:
+		return errInvalidAudioFormat
+	}
 }
 
 // Embeddings 在本地验证 OpenAI 支持的 input 形态，避免无效批量请求进入会计费的上游链路。
@@ -1583,6 +1611,8 @@ func relayRequestErrorCode(err error) string {
 		return "embedding_batch_too_large"
 	case errors.Is(err, errInvalidImageSize):
 		return "invalid_image_size"
+	case errors.Is(err, errInvalidAudioFormat):
+		return "invalid_audio_response_format"
 	default:
 		return "invalid_request"
 	}
