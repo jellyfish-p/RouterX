@@ -2708,7 +2708,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: OpenAI Chat Completions 转发
-      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。本地限流读取 rate_limit.*，覆盖全局、IP、Token、用户、模型和通道分钟窗口；API Key max_concurrency 可限制同一 Key 同时在途请求，rpm/tpm 可限制同一 Key 每分钟请求和模型 token，命中时返回 rate_limit_exceeded 且不调用上游。通道候选读取 relay.error_auto_ban、relay.error_ban_threshold 和 relay.error_ban_cooldown_seconds，自动排除达到阈值且仍在冷却窗口内的故障通道，冷却后可重新进入候选作为半开探测。非流式在 relay.retry_count > 0 时会对 relay.retry_on_status 白名单状态码（默认 429/500/502/503/504）、网络错误、超时和响应读取失败换候选通道；400/401/403 默认不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
+      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。请求体必须包含非空数组 messages，缺少、null、空数组或非数组时返回 invalid_chat_messages 且不调用上游。本地限流读取 rate_limit.*，覆盖全局、IP、Token、用户、模型和通道分钟窗口；API Key max_concurrency 可限制同一 Key 同时在途请求，rpm/tpm 可限制同一 Key 每分钟请求和模型 token，命中时返回 rate_limit_exceeded 且不调用上游。通道候选读取 relay.error_auto_ban、relay.error_ban_threshold 和 relay.error_ban_cooldown_seconds，自动排除达到阈值且仍在冷却窗口内的故障通道，冷却后可重新进入候选作为半开探测。非流式在 relay.retry_count > 0 时会对 relay.retry_on_status 白名单状态码（默认 429/500/502/503/504）、网络错误、超时和响应读取失败换候选通道；400/401/403 默认不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -2733,7 +2733,7 @@ paths:
                 type: string
                 description: "OpenAI-compatible SSE data chunks ending with data: [DONE]."
         "400":
-          description: 请求体或 routerx 扩展非法；常见 code 包括 invalid_json、model_required、invalid_routerx_options、invalid_routerx_route。
+          description: 请求体或 routerx 扩展非法；常见 code 包括 invalid_json、model_required、invalid_chat_messages、invalid_routerx_options、invalid_routerx_route。
           content:
             application/json:
               schema:
@@ -4011,7 +4011,7 @@ components:
           schema:
             $ref: "#/components/schemas/StandardResponse"
     OpenAIError:
-      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；Images prompt 缺失或为空时返回 400 invalid_image_prompt，n 非正整数时返回 400 invalid_image_count，size 超出基础边界时返回 400 invalid_image_size；Audio Speech input/voice/response_format 超出基础契约时返回 400 invalid_audio_speech_input、invalid_audio_speech_voice 或 invalid_audio_response_format；Audio Transcriptions/Translations response_format 超出基础枚举时返回 400 invalid_audio_response_format；Moderations input 超出基础契约时返回 400 invalid_moderation_input；OpenAI-compatible multipart 缺少必填 image/file 文件字段时返回 400 multipart_file_required，单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
+      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；Chat messages 缺失或不是非空数组时返回 400 invalid_chat_messages；Images prompt 缺失或为空时返回 400 invalid_image_prompt，n 非正整数时返回 400 invalid_image_count，size 超出基础边界时返回 400 invalid_image_size；Audio Speech input/voice/response_format 超出基础契约时返回 400 invalid_audio_speech_input、invalid_audio_speech_voice 或 invalid_audio_response_format；Audio Transcriptions/Translations response_format 超出基础枚举时返回 400 invalid_audio_response_format；Moderations input 超出基础契约时返回 400 invalid_moderation_input；OpenAI-compatible multipart 缺少必填 image/file 文件字段时返回 400 multipart_file_required，单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
       content:
         application/json:
           schema:
@@ -5881,6 +5881,8 @@ components:
         model: { type: string }
         messages:
           type: array
+          minItems: 1
+          description: 对话消息数组；缺失、null、空数组或非数组时返回 invalid_chat_messages，且不调用上游。
           items:
             $ref: "#/components/schemas/ChatMessage"
         temperature: { type: number, format: double, nullable: true }

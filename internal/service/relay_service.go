@@ -403,6 +403,7 @@ var (
 	errUnsupportedMultipart   = errors.New("multipart relay is not supported for selected upstream channel")
 	errInvalidRouterXOptions  = errors.New("invalid routerx options")
 	errInvalidRouterXRoute    = errors.New("invalid routerx route")
+	errInvalidChatMessages    = errors.New("chat messages must be a non-empty array")
 	errInvalidEmbeddingInput  = errors.New("embeddings input must be a non-empty string, string array, token array, or token array batch")
 	errEmbeddingBatchTooLarge = errors.New("embeddings input batch exceeds maximum size")
 	errInvalidImagePrompt     = errors.New("image generation prompt must be a non-empty string")
@@ -1332,15 +1333,16 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 		return relayRequestInfo{}, nil
 	}
 	var payload struct {
-		Model   string          `json:"model"`
-		Stream  bool            `json:"stream"`
-		Input   json.RawMessage `json:"input"`
-		Prompt  json.RawMessage `json:"prompt"`
-		N       json.RawMessage `json:"n"`
-		Size    json.RawMessage `json:"size"`
-		Voice   json.RawMessage `json:"voice"`
-		Format  json.RawMessage `json:"response_format"`
-		RouterX json.RawMessage `json:"routerx"`
+		Model    string          `json:"model"`
+		Stream   bool            `json:"stream"`
+		Messages json.RawMessage `json:"messages"`
+		Input    json.RawMessage `json:"input"`
+		Prompt   json.RawMessage `json:"prompt"`
+		N        json.RawMessage `json:"n"`
+		Size     json.RawMessage `json:"size"`
+		Voice    json.RawMessage `json:"voice"`
+		Format   json.RawMessage `json:"response_format"`
+		RouterX  json.RawMessage `json:"routerx"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return relayRequestInfo{}, errInvalidJSONBody
@@ -1356,6 +1358,11 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 	payload.Model = strings.TrimSpace(payload.Model)
 	if payload.Model == "" {
 		return relayRequestInfo{}, errModelRequired
+	}
+	if apiType == relay.APIChatCompletions {
+		if err := validateChatMessages(payload.Messages); err != nil {
+			return relayRequestInfo{}, err
+		}
 	}
 	if apiType == relay.APIEmbeddings {
 		if err := validateEmbeddingInput(payload.Input); err != nil {
@@ -1390,6 +1397,22 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 		}
 	}
 	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream, Route: route, Upstream: upstream}, nil
+}
+
+// OpenAI-compatible Chat 的 messages 是对话主体；消息内部结构由适配器继续处理。
+func validateChatMessages(raw json.RawMessage) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || isJSONNull(raw) {
+		return errInvalidChatMessages
+	}
+	var messages []json.RawMessage
+	if err := json.Unmarshal(raw, &messages); err != nil {
+		return errInvalidChatMessages
+	}
+	if len(messages) == 0 {
+		return errInvalidChatMessages
+	}
+	return nil
 }
 
 // Image Generations 的 prompt 是生成图片的必要文本输入，先在本地挡住空值和非字符串。
@@ -1787,6 +1810,8 @@ func relayRequestErrorCode(err error) string {
 		return "invalid_routerx_options"
 	case errors.Is(err, errInvalidRouterXRoute):
 		return "invalid_routerx_route"
+	case errors.Is(err, errInvalidChatMessages):
+		return "invalid_chat_messages"
 	case errors.Is(err, errInvalidEmbeddingInput):
 		return "invalid_embedding_input"
 	case errors.Is(err, errEmbeddingBatchTooLarge):

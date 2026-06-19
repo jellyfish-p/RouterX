@@ -9861,6 +9861,10 @@ func TestChatCompletionInvalidRequestDoesNotCallUpstream(t *testing.T) {
 	}{
 		{name: "invalid json", body: `{"model":`, code: "invalid_json"},
 		{name: "missing model", body: `{"messages":[{"role":"user","content":"hello"}]}`, code: "model_required"},
+		{name: "missing messages", body: `{"model":"gpt-test"}`, code: "invalid_chat_messages"},
+		{name: "null messages", body: `{"model":"gpt-test","messages":null}`, code: "invalid_chat_messages"},
+		{name: "empty messages", body: `{"model":"gpt-test","messages":[]}`, code: "invalid_chat_messages"},
+		{name: "non-array messages", body: `{"model":"gpt-test","messages":"hello"}`, code: "invalid_chat_messages"},
 	}
 	for _, tt := range cases {
 		resp := performRaw(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, tt.body)

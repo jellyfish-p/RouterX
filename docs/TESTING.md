@@ -149,7 +149,7 @@
 | `TestRateLimitPerUserAppliesAcrossAPIKeys` | Redis 用户限流读取 `rate_limit.per_user_per_min`，同一用户跨多个 API Key 达到分钟阈值后本地 429，不调用上游、不扣第二个 Key，并写用户维度拒绝 `policy_snapshot` 和 `rate_limit_snapshot` |
 | `TestRateLimitPerModelRejectsBeforeUpstream` | Redis 模型限流读取 `rate_limit.per_model_per_min`，同一模型达到分钟阈值后本地 429，不调用上游、不额外扣费，并写模型维度拒绝 `policy_snapshot` 和 `rate_limit_snapshot` |
 | `TestRateLimitPerChannelRejectsBeforeUpstream` | Redis 通道限流读取 `rate_limit.per_channel_per_min`，同一通道达到分钟阈值后本地 429，不调用上游、不额外扣费，并写通道维度拒绝 `policy_snapshot` 和 `rate_limit_snapshot` |
-| `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model 在本地失败且不污染通道和账单 |
+| `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model、缺少或非法 messages 在本地失败且不污染通道和账单 |
 | `TestRelayMaxRequestBodyBytesRejectsBeforeUpstream` | `relay.max_request_body_bytes` 超限时本地返回 OpenAI-compatible 413 `request_body_too_large`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestMultipartRejectsMissingRequiredFileBeforeUpstream` | OpenAI-compatible Images/Audio multipart 缺少必填 `image` 或 `file` 文件字段时本地返回 400 `multipart_file_required`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestRelayMaxMultipartFileBytesRejectsBeforeUpstream` | OpenAI-compatible multipart 单个文件字段超过 `relay.max_multipart_file_bytes` 时本地返回 413 `request_file_too_large`，不调用上游、不扣用户额度或 API Key 预算 |
@@ -449,6 +449,10 @@ Gemini-compatible 最小断言：
 |------|------|
 | 非法 JSON | 400 `invalid_json` |
 | 缺少 `model` | 400 `model_required` |
+| 缺少 `messages` | 400 `invalid_chat_messages` |
+| `messages` 为 null | 400 `invalid_chat_messages` |
+| `messages` 为空数组 | 400 `invalid_chat_messages` |
+| `messages` 不是数组 | 400 `invalid_chat_messages` |
 
 断言：
 

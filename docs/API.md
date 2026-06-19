@@ -153,7 +153,7 @@ Gemini-compatible 错误示例：
 
 | HTTP 状态 | 内部 code 示例 | type/status 示例 | 调用方含义 |
 |-----------|----------------|------------------|------------|
-| 400 | `invalid_json`、`invalid_multipart`、`invalid_image_prompt`、`invalid_image_count`、`multipart_file_required`、`unsafe_multipart_file`、`model_required`、`invalid_routerx_options`、`routerx_hop_exceeded` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数 |
+| 400 | `invalid_json`、`invalid_multipart`、`invalid_chat_messages`、`invalid_image_prompt`、`invalid_image_count`、`multipart_file_required`、`unsafe_multipart_file`、`model_required`、`invalid_routerx_options`、`routerx_hop_exceeded` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数 |
 | 401 | `invalid_api_key`、`expired_api_key` | `authentication_error` / `UNAUTHENTICATED` | 更换或重新创建 API Key |
 | 403 | `user_disabled`、`token_forbidden`、`model_not_allowed`、`route_forbidden` | `permission_error` / `PERMISSION_DENIED` | 联系管理员调整权限或通道分组 |
 | 404 | `model_not_found`、`unsupported_api`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名、接口路径或资源 ID |
@@ -170,6 +170,7 @@ Gemini-compatible 错误示例：
 - 下游原始错误可保存脱敏摘要；对客户端返回时必须转换为当前入口协议兼容格式。
 - 选中通道 adapter 不支持当前 APIType 时返回 502 `unsupported_api_type`，不调用上游且不扣费。
 - 下游非流式响应超过 `relay.max_response_body_bytes` 时返回 502 `upstream_response_too_large`，不反射完整下游响应体且不扣费。
+- OpenAI-compatible Chat 缺少非空数组 `messages` 时返回 400 `invalid_chat_messages`，不调用上游且不扣费。
 - OpenAI-compatible Image Generations 缺少非空字符串 `prompt` 时返回 400 `invalid_image_prompt`，不调用上游且不扣费。
 - OpenAI-compatible Image Generations 显式传入的 `n` 不是大于等于 1 的整数时返回 400 `invalid_image_count`，不调用上游且不扣费。
 - OpenAI-compatible Images/Audio multipart 缺少必填 `image` 或 `file` 文件字段时返回 400 `multipart_file_required`，不调用上游且不扣费。
@@ -944,6 +945,7 @@ Authorization: Bearer sk-xxxxxxxx
 成功要求：
 
 - 返回 OpenAI-compatible Chat Completions 响应。
+- 请求体必须包含非空数组 `messages`；RouterX 仅在本地校验数组存在性，消息内容结构继续由适配器和上游处理。
 - `stream=true` 且命中 OpenAI SSE 形态通道时，返回 `text/event-stream` 并逐行转发 `data:` chunk。
 - 保留下游返回的 `usage`，或按 P0 最低规则估算。
 - 写入 `logs`，包含 user、token、channel、model、prompt/completion/total tokens、`quota_used` 和 status。
@@ -955,6 +957,7 @@ P0 明确失败：
 |------|------|------|
 | 非法 JSON | 400 | `invalid_json` |
 | 缺少 `model` | 400 | `model_required` |
+| 缺少或非法 `messages` | 400 | `invalid_chat_messages` |
 | API Key scope 不允许该模型 | 403 | `model_not_allowed` |
 | API Key scope 不允许该 APIType | 403 | `token_forbidden` |
 | API Key scope 不允许该通道分组 | 403 | `route_forbidden` |
