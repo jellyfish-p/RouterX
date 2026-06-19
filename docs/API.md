@@ -457,7 +457,7 @@ Provider 退款请求：
 | `resource_id` | string | 资源 ID 过滤 |
 | `actor_user_id` | uint | 操作人 ID 过滤 |
 | `result` | string | 结果过滤，例如 `success`、`failed`、`denied` |
-| `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden`、`payment_order_provider_disabled` 或 `payment_order_cancel_not_pending` |
+| `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden`、`redem_code_invalid_or_used`、`payment_order_provider_disabled` 或 `payment_order_cancel_not_pending` |
 | `start_time` | int64 | 起始 Unix 秒，按 `created_at >= start_time` 过滤 |
 | `end_time` | int64 | 结束 Unix 秒，按 `created_at <= end_time` 过滤 |
 
@@ -527,6 +527,7 @@ Provider 退款请求：
 | `redem_code.create` | `POST /v0/admin/redem` |
 | `redem_code.disable` | `PATCH /v0/admin/redem/:id/disable` |
 | `redem_code.redeem` | `POST /v0/user/redem` 成功兑换充值码 |
+| `redem_code.redeem_denied` | `POST /v0/user/redem` 兑换码已用、作废、过期、不存在或参数无效 |
 | `admin.create` | `POST /v0/admin/admin` |
 | `admin.update` | `PUT /v0/admin/admin/:id` |
 | `admin.disable` | `PUT /v0/admin/admin/:id` 将管理员状态改为禁用 |
@@ -768,7 +769,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | GET | `/v0/user/log` | 已实现 | 当前用户调用日志 |
 | GET | `/v0/user/billing` | 基础实现 | 当前用户账单统计 |
 | GET | `/v0/user/quota-transactions` | 已实现 | 当前用户额度流水；支持按类型、来源和时间过滤，`user_id` 参数会被忽略 |
-| POST | `/v0/user/redem` | 基础实现 | 使用未兑换且未过期的充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水与 `redem_code.redeem` 管理审计 |
+| POST | `/v0/user/redem` | 基础实现 | 使用未兑换且未过期的充值码给当前用户增加额度，并写入 `quota_transactions` 幂等流水与 `redem_code.redeem` 管理审计；已用、作废、过期、不存在或参数无效会写 `redem_code.redeem_denied`，稳定 `error_code` 包含 `redem_code_invalid_or_used`、`redem_code_expired` 或 `redem_code_required` |
 | GET | `/v0/user/models` | 基础实现 | 当前启用通道暴露且未被 `channel_model_prices.user_enabled=false` 隐藏的可用模型列表；普通用户调用也会过滤这些隐藏通道；通道级价格优先返回 `channel_model_price:<price_mode>:v<rule_version>`，否则命中启用 `model_prices` 时返回 `model_price:<price_mode>:v<rule_version>`，再否则返回 `minimum_usage` |
 
 ### 支付接口

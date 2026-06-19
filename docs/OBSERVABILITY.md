@@ -32,7 +32,7 @@
 - 通道模型价格覆盖创建、更新、启用和禁用会写入 `channel_model_price.*` 管理审计摘要，`resource_id` 使用 `channel_id:model` 便于直接过滤。
 - `PUT /v0/admin/setting` 批量更新成功后会按 key 写入 `setting.create` 或 `setting.update` 管理审计摘要；校验失败会写 `setting.denied`，敏感值只保存脱敏摘要。
 - `PATCH /v0/admin/user/:id/quota` 调整普通用户额度时会写入 `user.quota_update` 管理审计摘要，并关联调额原因。
-- 充值码生成、导入、作废和兑换会写入 `redem_code.*` 管理审计摘要，完整兑换码不会明文写入审计摘要。
+- 充值码生成、导入、作废、兑换和兑换拒绝会写入 `redem_code.*` 管理审计摘要，完整兑换码不会明文写入审计摘要；兑换拒绝使用 `redem_code.redeem_denied` 和稳定 `error_code` 区分已用、作废、过期或不存在。
 - 支付订单创建会写入 `payment_order.create` 管理审计摘要，checkout URL 不会写入审计摘要；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，使用稳定 `error_code` 支持审计过滤。
 - 支付 provider 成功回调会写入 `payment_webhook.processed` 和 `payment_order.paid` 管理审计摘要；provider 明确失败通知会写入 `payment_webhook.failed`；管理端向 Stripe 或易支付发起 provider 退款请求会写入 `payment_refund.requested`；Stripe 全额或部分退款会写入 `payment_refund.processed`，自动扣回成功时写入 `payment_refund.deducted`；Stripe 争议/拒付生命周期会写入 `payment_dispute.created`、`payment_dispute.updated`、`payment_dispute.closed` 或 `payment_dispute.funds_changed`，并在自动禁用策略开启时记录禁用的 API Key 数量。
 - 支付相关人工补账/扣回会写入 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 管理审计摘要，并记录原因、幂等键和前后余额；人工退款会写入 `payment_refund.manual`，记录订单、退款额度、订单状态、原因、幂等键和前后余额。
@@ -42,7 +42,7 @@
 - 管理员导出调用日志会写入 `log.export` 管理审计摘要，记录过滤条件、导出上限和导出条数，CSV 不包含请求/响应体、IP、错误原文或 snapshot。
 - HTTP Logger 中间件已经记录基础访问日志。
 
-这些能力构成 P0 的可见闭环，并补上了 API Key 管理、API Key 批量操作拒绝、用户管理、支付商品管理、系统/通道模型价格管理、支付入账/明确失败/退款回调、Stripe/易支付 provider 退款请求、Stripe 争议生命周期、支付人工修正与人工退款、settings 变更、用户调额、充值码管理、通道管理、管理员账号管理、日志清理和日志导出审计的基础切片。当前已提供可配置 HTTP/Panic JSON line 结构化日志；商业级增强需要继续补更完整的审计覆盖、结构化字段、指标、告警、追踪和保留策略。
+这些能力构成 P0 的可见闭环，并补上了 API Key 管理、API Key 批量操作拒绝、用户管理、支付商品管理、系统/通道模型价格管理、支付入账/明确失败/退款回调、Stripe/易支付 provider 退款请求、Stripe 争议生命周期、支付人工修正与人工退款、settings 变更、用户调额、充值码管理和兑换拒绝、通道管理、管理员账号管理、日志清理和日志导出审计的基础切片。当前已提供可配置 HTTP/Panic JSON line 结构化日志；商业级增强需要继续补更完整的审计覆盖、结构化字段、指标、告警、追踪和保留策略。
 
 ## 观测事实分层
 
@@ -289,7 +289,7 @@
 | 管理日志筛选 | 管理员可按 user、token、channel、model、status、时间筛选。 |
 | 账单一致 | 用户账单聚合等于成功日志事实；启用独立日志库时主库结算最小事实可恢复。 |
 | 脱敏 | 日志和导出不包含 API Key、上游密钥、DSN、支付密钥。 |
-| 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖成功登录、API Key 管理和 scope 更新、用户管理、支付商品管理、settings 更新与校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理和日志导出操作。 |
+| 审计 | 高风险管理操作写审计，失败和拒绝也有摘要；当前已覆盖成功登录、API Key 管理和 scope 更新、用户管理、支付商品管理、settings 更新与校验拒绝、用户调额、充值码管理和兑换拒绝、通道管理、管理员账号管理、日志清理和日志导出操作。 |
 | 指标 | `/metrics` 暴露基础实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露指标、通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、日志补写 outbox、支付、审计和 DB/Redis/日志库 up 与 DB/Redis 错误计数指标，不包含高基数或敏感 label；后续继续补更细错误维度和告警。 |
 
 ## 文档同步

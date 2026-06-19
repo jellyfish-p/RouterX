@@ -3080,6 +3080,17 @@ func TestUserRedeemsRedemCodeOnce(t *testing.T) {
 	if txCount != 1 {
 		t.Fatalf("used redem code must not write duplicate quota transactions, got %d", txCount)
 	}
+	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=redem_code&resource_id="+uintString(code.ID)+"&result=denied&error_code=redem_code_invalid_or_used", rootJWT, nil)
+	deniedAuditBody := deniedAuditResp.Body.String()
+	if deniedAuditResp.Code != http.StatusOK ||
+		!strings.Contains(deniedAuditBody, `"action":"redem_code.redeem_denied"`) ||
+		!strings.Contains(deniedAuditBody, `"error_code":"redem_code_invalid_or_used"`) ||
+		!strings.Contains(deniedAuditBody, `\"code\":\"OFFL...IT-1\"`) {
+		t.Fatalf("used redem code should write denied redeem audit, got %d %s", deniedAuditResp.Code, deniedAuditBody)
+	}
+	if strings.Contains(deniedAuditBody, "OFFLINE-CREDIT-1") {
+		t.Fatalf("redem denied audit should not expose full code: %s", deniedAuditBody)
+	}
 }
 
 func TestAdminQuotaAdjustmentWritesTransaction(t *testing.T) {

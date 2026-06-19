@@ -318,8 +318,8 @@ user submits code
 
 - 用户可通过 `POST /v0/user/redem` 兑换未使用充值码。
 - 兑换在同一数据库事务内完成过期校验、`redem_codes.status/used_by/used_at` 更新、`users.quota` 增加和 `quota_transactions` 写入。
-- 同一个充值码只能成功兑换一次；已使用、已作废、已过期或不存在的充值码不会写入额度流水，重复兑换不会重复入账。
-- 兑换成功会写入 `redem_code.redeem` 管理审计，摘要记录脱敏兑换码、额度、使用人和兑换后余额，不保存完整兑换码。
+- 同一个充值码只能成功兑换一次；已使用、已作废、已过期或不存在的充值码不会写入额度流水，重复兑换不会重复入账，并写入 `redem_code.redeem_denied` 拒绝审计。
+- 兑换成功会写入 `redem_code.redeem` 管理审计，摘要记录脱敏兑换码、额度、使用人和兑换后余额，不保存完整兑换码；兑换拒绝摘要同样只保存脱敏兑换码和稳定 `error_code`。
 - 管理员额度调整已写入 `quota_transactions`，记录 `actor_user_id`、`reason`、变更前后余额和幂等键。
 - 用户可通过 `POST /v0/user/payment/orders/:order_no/cancel` 取消自己的 `pending` 订单，订单置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付、退款中或已退款订单不能取消，并写 `payment_order.cancel_denied` 拒绝审计，`error_code` 可用于区分非 pending、订单不存在或不属于当前用户。
 - 管理员可通过 `/v0/admin/redem` 生成随机充值码或导入指定充值码，可写入 `batch_no`、`note` 和未来 `expired_at`，并可作废未使用充值码；这些管理操作会写入 `redem_code.*` 管理审计，完整兑换码只进入脱敏摘要。
@@ -528,11 +528,11 @@ receive webhook
 - 接收和处理 webhook。
 - 支付入账。
 - 退款记录和扣回。
-- 充值码创建、作废、兑换。
+- 充值码创建、作废、兑换和兑换拒绝。
 - 人工补账、扣回、人工调整拒绝、人工退款落账、人工退款拒绝、订单创建拒绝、Stripe/易支付 provider 退款请求、provider 退款请求拒绝和争议生命周期。
 - 支付 settings 和密钥引用变更。
 
-当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建和本地拒绝审计，Stripe/易支付 webhook 入账，Stripe async payment failed 与易支付明确失败通知审计，Stripe 全额/部分退款和扣回，Stripe 争议生命周期记录和可选 API Key 禁用，支付相关人工补账/扣回及拒绝审计、人工退款落账及拒绝审计、Stripe/易支付 provider 退款请求及本地拒绝审计，以及充值码生成、导入、批次/备注/过期策略、作废、兑换的成功审计；更多 provider 自动退款适配和更多失败分支审计仍需继续补齐。
+当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建和本地拒绝审计，Stripe/易支付 webhook 入账，Stripe async payment failed 与易支付明确失败通知审计，Stripe 全额/部分退款和扣回，Stripe 争议生命周期记录和可选 API Key 禁用，支付相关人工补账/扣回及拒绝审计、人工退款落账及拒绝审计、Stripe/易支付 provider 退款请求及本地拒绝审计，以及充值码生成、导入、批次/备注/过期策略、作废、兑换成功和兑换拒绝审计；更多 provider 自动退款适配和更多失败分支审计仍需继续补齐。
 
 审计字段：
 

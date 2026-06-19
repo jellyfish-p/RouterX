@@ -1642,11 +1642,13 @@ func (h *UserHandler) RedeemCode(c *gin.Context) {
 	}
 	var req dto.RedeemCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		h.recordRedemCodeRedeemDenied(c, user, req.Code, "redem_code_invalid_request")
 		common.FailWithStatus(c, 400, "充值码参数无效")
 		return
 	}
 	redeemedQuota, quota, err := h.svc.RedeemCode(user.ID, req.Code, c.GetString("request_id"))
 	if err != nil {
+		h.recordRedemCodeRedeemDenied(c, user, req.Code, redemCodeRedeemErrorCode(err))
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
@@ -1660,6 +1662,46 @@ func (h *UserHandler) RedeemCode(c *gin.Context) {
 		return
 	}
 	common.Success(c, dto.RedeemCodeResult{RedeemedQuota: redeemedQuota, Quota: quota})
+}
+
+func (h *UserHandler) recordRedemCodeRedeemDenied(c *gin.Context, operator *model.User, code, errorCode string) {
+	if operator == nil {
+		return
+	}
+	code = strings.TrimSpace(code)
+	resourceID := common.RedactSecret(code)
+	if resourceID == "" {
+		resourceID = "redem_code_redeem"
+	}
+	summary := map[string]interface{}{
+		"code":       common.RedactSecret(code),
+		"user_id":    operator.ID,
+		"error_code": errorCode,
+	}
+	if redem, err := h.svc.GetRedemCodeByCode(code); err == nil {
+		resourceID = strconv.FormatUint(uint64(redem.ID), 10)
+		summary = redemCodeAuditSummary(redem)
+		summary["user_id"] = operator.ID
+		summary["error_code"] = errorCode
+	}
+	_ = h.recordAdminAuditStringResult(c, operator, "redem_code.redeem_denied", "redem_code", resourceID, nil, summary, "denied", errorCode)
+}
+
+func redemCodeRedeemErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(msg, "redem code is required"):
+		return "redem_code_required"
+	case strings.Contains(msg, "expired"):
+		return "redem_code_expired"
+	case strings.Contains(msg, "invalid or already used"):
+		return "redem_code_invalid_or_used"
+	default:
+		return "redem_code_redeem_rejected"
+	}
 }
 
 func redemCodeRedeemAuditSummary(code *model.RedemCode, redeemedQuota, balanceAfter int64) map[string]interface{} {
