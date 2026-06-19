@@ -6780,6 +6780,9 @@ components:
         upstream_status:
           type: integer
           description: 上游 HTTP 状态；未调用上游或非上游错误时为 0/省略。
+        error_snapshot:
+          type: string
+          description: 脱敏错误快照 JSON 字符串；失败日志包含 error_code、error_source、upstream_status、retryable、charged 和 safe_message。
         request_snapshot:
           type: string
           description: 脱敏请求快照 JSON 字符串；当前包含 request_id、用户/Key 安全摘要、来源摘要、入口协议、API 类型、请求模型、stream 标记、合法 trace context 摘要和安全路由摘要。

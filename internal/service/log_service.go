@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	stdlog "log"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -91,6 +92,7 @@ func (s *LogService) Record(log *model.Log) error {
 	log.ErrorCode = normalizeLogErrorCode(log)
 	log.ErrorSource = normalizeLogErrorSource(log)
 	log.UpstreamStatus = normalizeLogUpstreamStatus(log)
+	log.ErrorSnapshot = normalizeLogErrorSnapshot(log)
 	log.UsageSnapshot = normalizeLogUsageSnapshot(log)
 	log.BillingSnapshot = normalizeLogBillingSnapshot(log)
 	needsExternalReplication := s.usesExternalLogDB()
@@ -381,6 +383,74 @@ func upstreamStatusFromMessage(message string) int {
 		return 0
 	}
 	return status
+}
+
+func normalizeLogErrorSnapshot(log *model.Log) string {
+	if log == nil {
+		return ""
+	}
+	if snapshot := strings.TrimSpace(log.ErrorSnapshot); snapshot != "" {
+		return snapshot
+	}
+	if log.Status != common.LogStatusFailed {
+		return ""
+	}
+	errorCode := normalizeLogErrorCode(log)
+	if errorCode == "" {
+		return ""
+	}
+	errorSource := normalizeLogErrorSource(log)
+	upstreamStatus := normalizeLogUpstreamStatus(log)
+	snapshot := map[string]interface{}{
+		"schema":       "routerx.snapshot.v1",
+		"kind":         "error",
+		"stage":        "p1",
+		"source":       "relay",
+		"redacted":     true,
+		"error_code":   errorCode,
+		"error_source": errorSource,
+		"retryable":    logErrorRetryable(errorCode, upstreamStatus),
+		"charged":      log.QuotaUsed > 0,
+	}
+	if requestID := strings.TrimSpace(log.RequestID); requestID != "" {
+		snapshot["request_id"] = requestID
+	}
+	if upstreamStatus > 0 {
+		snapshot["upstream_status"] = upstreamStatus
+	}
+	if safeMessage := logErrorSafeMessage(log.ErrorMsg); safeMessage != "" {
+		snapshot["safe_message"] = safeMessage
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+func logErrorRetryable(errorCode string, upstreamStatus int) bool {
+	errorCode = strings.TrimSpace(errorCode)
+	if upstreamStatus == http.StatusTooManyRequests || upstreamStatus >= http.StatusInternalServerError {
+		return true
+	}
+	switch errorCode {
+	case "upstream_timeout", "upstream_request_failed", "upstream_response_failed", "upstream_response_too_large", "rate_limit_unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func logErrorSafeMessage(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return ""
+	}
+	runes := []rune(message)
+	if len(runes) > 256 {
+		return string(runes[:256])
+	}
+	return message
 }
 
 func normalizeLogUsageSnapshot(log *model.Log) string {

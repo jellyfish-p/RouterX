@@ -24094,11 +24094,29 @@ func TestRelayFailureLogPersistsRequestIDAndErrorCode(t *testing.T) {
 	if callLog.ErrorSource != "upstream" || callLog.UpstreamStatus != http.StatusBadRequest {
 		t.Fatalf("failed relay log should persist upstream failure facts, got %+v", callLog)
 	}
+	var errorSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.ErrorSnapshot), &errorSnapshot); err != nil {
+		t.Fatalf("failed relay log should store error snapshot JSON, got %q: %v", callLog.ErrorSnapshot, err)
+	}
+	if errorSnapshot["schema"] != "routerx.snapshot.v1" ||
+		errorSnapshot["kind"] != "error" ||
+		errorSnapshot["source"] != "relay" ||
+		errorSnapshot["redacted"] != true ||
+		errorSnapshot["request_id"] != requestID ||
+		errorSnapshot["error_code"] != "upstream_400" ||
+		errorSnapshot["error_source"] != "upstream" ||
+		errorSnapshot["upstream_status"] != float64(http.StatusBadRequest) ||
+		errorSnapshot["retryable"] != false ||
+		errorSnapshot["charged"] != false ||
+		errorSnapshot["safe_message"] != "upstream returned status 400" {
+		t.Fatalf("unexpected error snapshot: %+v", errorSnapshot)
+	}
 	logResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
 	logBody := logResp.Body.String()
 	if logResp.Code != http.StatusOK ||
 		!strings.Contains(logBody, `"request_id":"`+requestID+`"`) ||
 		!strings.Contains(logBody, `"error_code":"upstream_400"`) ||
+		!strings.Contains(logBody, `"error_snapshot":`) ||
 		!strings.Contains(logBody, `"error_source":"upstream"`) ||
 		!strings.Contains(logBody, `"upstream_status":400`) {
 		t.Fatalf("user log API should expose request_id, error_code and upstream failure facts, got %d %s", logResp.Code, logBody)
