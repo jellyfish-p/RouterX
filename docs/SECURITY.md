@@ -71,7 +71,7 @@ RouterX 运行时
 | S14 | OAuth/OIDC 账号接管 | 第三方 provider 返回相同 email 时自动绑定已有账号。 | 不因 email 自动接管；以 provider 稳定身份标识做 identity；绑定需已登录或明确恢复流程。 | 企业身份绑定和恢复测试。 |
 | S15 | 上游不可用扩大故障 | 401/403 被无限重试，或流式输出后切换通道造成协议混乱。 | 401/403 归因通道配置不重试；流式写出后不跨通道重试；熔断和错误计数可解释。 | 上游错误映射、重试和熔断测试。 |
 | S16 | Redis 缺失隐藏安全问题 | 外部数据库或集群模式下 Redis 不可用导致限流、API Key 禁用状态、settings 变化或通道候选缓存不一致。 | SQLite 单机可用进程内缓存；外部数据库或集群模式 Redis 缺失时不就绪；关键缓存更新失败可感知。 | Redis 缺失/故障测试、生产 readiness 策略测试。 |
-| S17 | 上传文件伪装危险内容 | Images/Audio multipart 使用安全扩展名包裹可执行或脚本内容，诱导上游或后续处理链消费危险文件。 | Relay 在上游前执行单文件大小、路径/扩展名和可执行/脚本内容签名基础扫描；命中时返回 `unsafe_multipart_file` 且不调用上游、不扣费。 | `TestRelayMultipartRejectsUnsafeFileNameBeforeUpstream`、`TestRelayMultipartRejectsUnsafeFileContentBeforeUpstream`。 |
+| S17 | 上传文件伪装危险内容 | Images/Audio multipart 使用安全扩展名包裹错误类型、可执行或脚本内容，诱导上游或后续处理链消费危险文件。 | Relay 在上游前执行单文件大小、路径/扩展名、API 类型文件头和可执行/脚本内容签名基础扫描；命中时返回 `unsafe_multipart_file` 且不调用上游、不扣费。 | `TestRelayMultipartRejectsUnsafeFileNameBeforeUpstream`、`TestRelayMultipartRejectsUnsafeFileContentBeforeUpstream`、`TestRelayMultipartRejectsIncompatibleFileExtensionBeforeUpstream`、`TestRelayMultipartRejectsMismatchedFileContentBeforeUpstream`。 |
 
 ## 默认控制点
 

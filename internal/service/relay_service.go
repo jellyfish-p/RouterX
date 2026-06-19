@@ -1475,7 +1475,7 @@ func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType 
 			if err := validateMultipartFile(apiType, part); err != nil {
 				return relayRequestInfo{}, err
 			}
-			if err := discardMultipartFileWithLimit(part, maxFileBytes); err != nil {
+			if err := discardMultipartFileWithLimit(part, maxFileBytes, apiType, part.FileName()); err != nil {
 				return relayRequestInfo{}, err
 			}
 			continue
@@ -2004,7 +2004,7 @@ func rewriteMultipartRelayBody(apiType relay.APIType, body []byte, contentType s
 				if err := validateMultipartFile(apiType, part); err != nil {
 					return nil, "", err
 				}
-				if err := discardMultipartFileWithLimit(part, maxFileBytes); err != nil {
+				if err := discardMultipartFileWithLimit(part, maxFileBytes, apiType, part.FileName()); err != nil {
 					return nil, "", err
 				}
 			} else {
@@ -2028,7 +2028,7 @@ func rewriteMultipartRelayBody(apiType relay.APIType, body []byte, contentType s
 			if err := validateMultipartFile(apiType, part); err != nil {
 				return nil, "", err
 			}
-			if err := copyMultipartFileWithLimit(dst, part, maxFileBytes); err != nil {
+			if err := copyMultipartFileWithLimit(dst, part, maxFileBytes, apiType, part.FileName()); err != nil {
 				return nil, "", err
 			}
 			continue
@@ -2113,6 +2113,65 @@ func stringInSet(value string, allowed ...string) bool {
 	return false
 }
 
+func multipartFileSignatureMatches(apiType relay.APIType, ext string, prefix []byte) bool {
+	ext = strings.ToLower(strings.TrimSpace(ext))
+	if ext == "" {
+		return true
+	}
+	switch apiType {
+	case relay.APIImagesEdits, relay.APIImagesVariations:
+		return imageFileSignatureMatches(ext, prefix)
+	case relay.APIAudioTranscriptions, relay.APIAudioTranslations:
+		return audioFileSignatureMatches(ext, prefix)
+	default:
+		return true
+	}
+}
+
+func imageFileSignatureMatches(ext string, prefix []byte) bool {
+	// Keep this as a cheap file header gate; full media decoding belongs in a
+	// deeper safety pipeline, not the Relay hot path.
+	switch ext {
+	case ".png":
+		return bytes.HasPrefix(prefix, []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+	case ".jpg", ".jpeg":
+		return bytes.HasPrefix(prefix, []byte{0xff, 0xd8, 0xff})
+	case ".gif":
+		return bytes.HasPrefix(prefix, []byte("GIF87a")) || bytes.HasPrefix(prefix, []byte("GIF89a"))
+	case ".webp":
+		return len(prefix) >= 12 && bytes.HasPrefix(prefix, []byte("RIFF")) && bytes.Equal(prefix[8:12], []byte("WEBP"))
+	default:
+		return true
+	}
+}
+
+func audioFileSignatureMatches(ext string, prefix []byte) bool {
+	switch ext {
+	case ".wav":
+		return len(prefix) >= 12 && bytes.HasPrefix(prefix, []byte("RIFF")) && bytes.Equal(prefix[8:12], []byte("WAVE"))
+	case ".aif", ".aiff":
+		return len(prefix) >= 12 && bytes.HasPrefix(prefix, []byte("FORM")) && (bytes.Equal(prefix[8:12], []byte("AIFF")) || bytes.Equal(prefix[8:12], []byte("AIFC")))
+	case ".flac":
+		return bytes.HasPrefix(prefix, []byte("fLaC"))
+	case ".mp3", ".mpeg", ".mpga":
+		return bytes.HasPrefix(prefix, []byte("ID3")) || mp3FrameSignature(prefix)
+	case ".mp4", ".m4a":
+		return len(prefix) >= 12 && bytes.Equal(prefix[4:8], []byte("ftyp"))
+	case ".oga", ".ogg", ".opus":
+		return bytes.HasPrefix(prefix, []byte("OggS"))
+	case ".webm":
+		return bytes.HasPrefix(prefix, []byte{0x1a, 0x45, 0xdf, 0xa3})
+	case ".aac":
+		return len(prefix) >= 2 && prefix[0] == 0xff && prefix[1]&0xf0 == 0xf0
+	default:
+		return true
+	}
+}
+
+func mp3FrameSignature(prefix []byte) bool {
+	return len(prefix) >= 2 && prefix[0] == 0xff && prefix[1]&0xe0 == 0xe0
+}
+
 const multipartFileSignatureScanBytes = 512
 
 func unsafeMultipartFileContent(prefix []byte) bool {
@@ -2142,11 +2201,11 @@ func unsafeMultipartFileContent(prefix []byte) bool {
 	}
 }
 
-func discardMultipartFileWithLimit(src io.Reader, maxBytes int64) error {
-	return copyMultipartFileWithLimit(io.Discard, src, maxBytes)
+func discardMultipartFileWithLimit(src io.Reader, maxBytes int64, apiType relay.APIType, filename string) error {
+	return copyMultipartFileWithLimit(io.Discard, src, maxBytes, apiType, filename)
 }
 
-func copyMultipartFileWithLimit(dst io.Writer, src io.Reader, maxBytes int64) error {
+func copyMultipartFileWithLimit(dst io.Writer, src io.Reader, maxBytes int64, apiType relay.APIType, filename string) error {
 	reader := src
 	if maxBytes > 0 {
 		reader = &io.LimitedReader{R: src, N: maxBytes + 1}
@@ -2162,6 +2221,9 @@ func copyMultipartFileWithLimit(dst io.Writer, src io.Reader, maxBytes int64) er
 	written := int64(n)
 	if maxBytes > 0 && written > maxBytes {
 		return errMultipartFileTooLarge
+	}
+	if !multipartFileSignatureMatches(apiType, filepath.Ext(filename), prefix[:n]) {
+		return errUnsafeMultipartFile
 	}
 	if n > 0 {
 		prefixWritten, err := dst.Write(prefix[:n])
