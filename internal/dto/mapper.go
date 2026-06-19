@@ -19,11 +19,16 @@ func UserBriefFromModel(user *model.User) UserBrief {
 	if user.Email != nil {
 		email = *user.Email
 	}
+	phone := ""
+	if user.Phone != nil {
+		phone = *user.Phone
+	}
 	return UserBrief{
 		ID:          user.ID,
 		Username:    username,
 		DisplayName: user.DisplayName,
 		Email:       email,
+		Phone:       phone,
 		Role:        user.Role,
 		Quota:       user.Quota,
 		Status:      user.Status,

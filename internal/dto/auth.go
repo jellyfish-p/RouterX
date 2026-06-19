@@ -63,6 +63,7 @@ type UserBrief struct {
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email,omitempty"`
+	Phone       string `json:"phone,omitempty"`
 	Role        int    `json:"role"`
 	Quota       int64  `json:"quota"`
 	Status      int    `json:"status"`

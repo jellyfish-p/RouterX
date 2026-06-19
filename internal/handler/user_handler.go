@@ -1632,7 +1632,7 @@ func (h *UserHandler) UpdateSelf(c *gin.Context) {
 		common.FailWithStatus(c, 400, "个人信息参数无效")
 		return
 	}
-	if err := h.svc.UpdateSelf(user.ID, req.DisplayName, req.Email); err != nil {
+	if err := h.svc.UpdateSelf(user.ID, req.DisplayName, req.Email, req.Phone); err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}

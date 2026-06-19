@@ -3071,7 +3071,7 @@ func allDigits(value string) bool {
 }
 
 // UpdateSelf 用户自助修改个人信息。
-func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
+func (s *UserService) UpdateSelf(id uint, displayName, email, phone string) error {
 	updates := map[string]interface{}{}
 	if strings.TrimSpace(displayName) != "" {
 		updates["display_name"] = strings.TrimSpace(displayName)
@@ -3081,15 +3081,27 @@ func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
 		normalizedEmail = normalizeEmail(email)
 		updates["email"] = normalizedEmail
 	}
+	normalizedPhone := ""
+	if strings.TrimSpace(phone) != "" {
+		normalizedPhone = normalizePhone(phone)
+		updates["phone"] = normalizedPhone
+	}
 	if len(updates) == 0 {
 		return nil
 	}
-	if normalizedEmail == "" {
+	if normalizedEmail == "" && normalizedPhone == "" {
 		return internal.DB.Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
 	}
 	return internal.DB.Transaction(func(tx *gorm.DB) error {
-		if err := syncSelfEmailIdentity(tx, id, normalizedEmail); err != nil {
-			return err
+		if normalizedEmail != "" {
+			if err := syncSelfEmailIdentity(tx, id, normalizedEmail); err != nil {
+				return err
+			}
+		}
+		if normalizedPhone != "" {
+			if err := syncSelfPhoneIdentity(tx, id, normalizedPhone); err != nil {
+				return err
+			}
 		}
 		return tx.Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
 	})
@@ -3098,17 +3110,27 @@ func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
 // syncSelfEmailIdentity keeps the profile email and the local email login identity aligned.
 // The email identity intentionally has no password hash; email/password login reuses username/local.
 func syncSelfEmailIdentity(tx *gorm.DB, userID uint, email string) error {
+	return syncSelfLocalContactIdentity(tx, userID, model.UserIdentityMethodEmail, email, "email already exists")
+}
+
+// syncSelfPhoneIdentity keeps the profile phone and the local phone login identity aligned.
+// The phone identity intentionally has no password hash; phone/password login reuses username/local.
+func syncSelfPhoneIdentity(tx *gorm.DB, userID uint, phone string) error {
+	return syncSelfLocalContactIdentity(tx, userID, model.UserIdentityMethodPhone, phone, "phone already exists")
+}
+
+func syncSelfLocalContactIdentity(tx *gorm.DB, userID uint, method, identifier, conflictMessage string) error {
 	now := time.Now()
 	var byIdentifier model.UserIdentity
 	err := tx.Where(
 		"method = ? AND provider = ? AND identifier = ?",
-		model.UserIdentityMethodEmail,
+		method,
 		model.UserIdentityProviderLocal,
-		email,
+		identifier,
 	).First(&byIdentifier).Error
 	if err == nil {
 		if byIdentifier.UserID != userID {
-			return errors.New("email already exists")
+			return errors.New(conflictMessage)
 		}
 		updates := map[string]interface{}{"password_hash": ""}
 		if byIdentifier.VerifiedAt == nil {
@@ -3124,12 +3146,12 @@ func syncSelfEmailIdentity(tx *gorm.DB, userID uint, email string) error {
 	err = tx.Where(
 		"user_id = ? AND method = ? AND provider = ?",
 		userID,
-		model.UserIdentityMethodEmail,
+		method,
 		model.UserIdentityProviderLocal,
 	).First(&existing).Error
 	if err == nil {
 		updates := map[string]interface{}{
-			"identifier":    email,
+			"identifier":    identifier,
 			"password_hash": "",
 		}
 		if existing.VerifiedAt == nil {
@@ -3143,9 +3165,9 @@ func syncSelfEmailIdentity(tx *gorm.DB, userID uint, email string) error {
 
 	return tx.Create(&model.UserIdentity{
 		UserID:     userID,
-		Method:     model.UserIdentityMethodEmail,
+		Method:     method,
 		Provider:   model.UserIdentityProviderLocal,
-		Identifier: email,
+		Identifier: identifier,
 		VerifiedAt: &now,
 	}).Error
 }

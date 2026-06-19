@@ -3514,6 +3514,117 @@ func TestUserSelfEmailUpdateMaintainsLocalIdentity(t *testing.T) {
 	}
 }
 
+func TestUserSelfPhoneUpdateMaintainsLocalIdentity(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("auth.register.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.username.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.captcha.required", "false"); err != nil {
+		t.Fatal(err)
+	}
+
+	registerResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "self-phone-user",
+		"password":     "password123",
+		"display_name": "Self Phone User",
+	})
+	if registerResp.Code != http.StatusOK {
+		t.Fatalf("register user failed: %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	userJWT := loginBearer(t, r, "self-phone-user", "password123")
+
+	updateResp := performJSON(r, http.MethodPut, "/v0/user/self", userJWT, map[string]interface{}{
+		"display_name": "Updated Self Phone User",
+		"phone":        " +15550005001 ",
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("self phone update should succeed, got %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "self-phone-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Phone == nil || *user.Phone != "+15550005001" {
+		t.Fatalf("self phone update should normalize users.phone, got %#v", user.Phone)
+	}
+	if user.DisplayName != "Updated Self Phone User" {
+		t.Fatalf("self display name should update, got %q", user.DisplayName)
+	}
+	var phoneIdentity model.UserIdentity
+	if err := internal.DB.Where(
+		"user_id = ? AND method = ? AND provider = ? AND identifier = ?",
+		user.ID,
+		model.UserIdentityMethodPhone,
+		model.UserIdentityProviderLocal,
+		"+15550005001",
+	).First(&phoneIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
+	if phoneIdentity.PasswordHash != "" {
+		t.Fatalf("self phone identity should not store duplicated password hash")
+	}
+	if err := settingSvc.Set("auth.login.phone_password.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	phoneLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "+15550005001",
+		"password": "password123",
+	})
+	if phoneLogin.Code != http.StatusOK {
+		t.Fatalf("self phone identity should log in with primary password, got %d %s", phoneLogin.Code, phoneLogin.Body.String())
+	}
+
+	conflictRegisterResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "self-phone-conflict-user",
+		"password":     "password123",
+		"display_name": "Self Phone Conflict User",
+	})
+	if conflictRegisterResp.Code != http.StatusOK {
+		t.Fatalf("register conflict user failed: %d %s", conflictRegisterResp.Code, conflictRegisterResp.Body.String())
+	}
+	conflictJWT := loginBearer(t, r, "self-phone-conflict-user", "password123")
+	conflictResp := performJSON(r, http.MethodPut, "/v0/user/self", conflictJWT, map[string]interface{}{
+		"display_name": "Should Not Persist",
+		"phone":        "+15550005001",
+	})
+	if conflictResp.Code != http.StatusBadRequest {
+		t.Fatalf("self phone update should reject occupied phone identity, got %d %s", conflictResp.Code, conflictResp.Body.String())
+	}
+	var conflictUser model.User
+	if err := internal.DB.Where("username = ?", "self-phone-conflict-user").First(&conflictUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	if conflictUser.Phone != nil {
+		t.Fatalf("conflicting phone update should not persist users.phone, got %#v", conflictUser.Phone)
+	}
+	if conflictUser.DisplayName == "Should Not Persist" {
+		t.Fatalf("conflicting phone update should not persist display name")
+	}
+	var conflictIdentityCount int64
+	if err := internal.DB.Model(&model.UserIdentity{}).
+		Where("user_id = ? AND method = ? AND provider = ? AND identifier = ?", conflictUser.ID, model.UserIdentityMethodPhone, model.UserIdentityProviderLocal, "+15550005001").
+		Count(&conflictIdentityCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if conflictIdentityCount != 0 {
+		t.Fatalf("conflicting phone update should not create phone identity, got count=%d", conflictIdentityCount)
+	}
+}
+
 func TestUserLoginRespectsLoginMethodSettings(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

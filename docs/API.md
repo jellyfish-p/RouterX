@@ -715,7 +715,7 @@ Provider 退款请求：
 | GET | `/v0/user/identities` | 已实现 | 当前用户身份列表；只返回身份元数据，不返回密码哈希、JWT 或 API Key |
 | DELETE | `/v0/user/identities/:id` | 已实现 | 当前用户解绑非 `username/local` 主身份；软删除目标 identity，解绑后该身份不能继续登录，并写 `user.identity_unbound` 审计 |
 | GET | `/v0/user/self` | 已实现 | 获取个人信息 |
-| PUT | `/v0/user/self` | 已实现 | 修改个人信息；提交 email 时会规范化并同步同用户 `email/local` 登录标识，邮箱已被其他账号占用时整笔拒绝 |
+| PUT | `/v0/user/self` | 已实现 | 修改个人信息；提交 email 或 phone 时会规范化并同步同用户 `email/local` 或 `phone/local` 登录标识，目标身份已被其他账号占用时整笔拒绝 |
 | DELETE | `/v0/user/self` | 已实现 | 注销当前普通用户账号；请求体必须提供 `password` 做二次确认，成功后禁用登录和 API Key，清空展示名、主邮箱和主手机号，保留账号、身份、日志、额度与历史事实，并写 `user.self_cancel` 审计；缺少或错误密码会写 `user.self_cancel_denied` 拒绝审计 |
 | POST | `/v0/user/self/password` | 已实现 | 修改密码 |
 
@@ -736,7 +736,7 @@ Provider 退款请求：
 
 `register_method` 省略时按 `username` 处理；`email` 方法必须填写 email 并开启 `auth.register.email.enabled`，`phone` 方法必须填写 phone 并开启 `auth.register.phone.enabled`。注册策略拒绝返回 403，例如公开注册关闭、对应注册方法关闭，或当前无验证码请求但 `auth.register.captcha.required=true`。新账号注册成功时会应用 `auth.register.default_quota` 和可解析的 `auth.register.default_group_id`。如果请求提供 `email` 或 `phone`，服务端会规范化并创建对应 `email/local` 或 `phone/local` identity 作为可选登录标识，但密码哈希只保存到 `username/local` 主身份。若同名 `username/local`、同邮箱 `email/local` 或同手机号 `phone/local` identity 命中已注销的普通用户账号，当前接口会恢复原 `users.id`，把账号状态改回启用，更新本地密码身份和展示名；恢复请求附带未被其他账号占用的 `email` 或 `phone` 时，会补齐同用户的本地登录标识。恢复保留原额度、分组、日志和历史流水，不会自动启用旧 API Key，并写入 `user.recover` 审计。
 
-自助修改个人信息使用 `PUT /v0/user/self`。当前实现允许更新展示名和 email；email 会先规范化为小写去空格，再和同用户 `email/local` identity 在同一事务中保持一致。该 identity 不保存重复密码哈希，邮箱密码登录开启后仍复用同用户 `username/local` 主密码。目标 email 如果已绑定其他用户身份，接口返回 400，用户资料和 identity 都不会部分落库。
+自助修改个人信息使用 `PUT /v0/user/self`。当前实现允许更新展示名、email 和 phone；email 会先规范化为小写去空格，phone 会去除首尾空格，再分别和同用户 `email/local` 或 `phone/local` identity 在同一事务中保持一致。这些 identity 不保存重复密码哈希，邮箱或手机号密码登录开启后仍复用同用户 `username/local` 主密码。目标 email 或 phone 如果已绑定其他用户身份，接口返回 400，用户资料和 identity 都不会部分落库。`GET /v0/user/self`、登录和注册响应中的 `UserBrief` 会返回当前主邮箱和主手机号。
 
 自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号，请求体必须提交当前本地密码进行二次确认。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key，同时清空 `users.display_name`、`users.email` 和 `users.phone`。服务端不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史；`username/local`、`email/local`、`phone/local`、OAuth 和 OIDC identity 继续保留用于去重和账号恢复。缺少密码或密码错误时不会修改账号和 API Key 状态，并写入 `user.self_cancel_denied` 拒绝审计，`error_code` 分别为 `self_cancel_password_required` 或 `self_cancel_password_invalid`，审计摘要不保存密码。注销后用户名密码登录返回统一认证失败，同名、同邮箱、同手机号注册、同一 OAuth identity 补齐注册或同一 OIDC subject 补齐注册会走上述恢复流程。
 

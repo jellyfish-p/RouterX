@@ -106,6 +106,7 @@ type QuotaTransactionInfo struct {
 type UpdateSelfRequest struct {
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email"`
+	Phone       string `json:"phone"`
 }
 
 type CancelSelfRequest struct {
