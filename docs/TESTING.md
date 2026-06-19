@@ -154,6 +154,7 @@
 | `TestRelayMaxMultipartFileBytesRejectsBeforeUpstream` | OpenAI-compatible multipart 单个文件字段超过 `relay.max_multipart_file_bytes` 时本地返回 413 `request_file_too_large`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestRelayMultipartRejectsUnsafeFileNameBeforeUpstream` | OpenAI-compatible multipart 文件名命中路径形态或危险扩展名基础扫描时本地返回 400 `unsafe_multipart_file`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestRelayMultipartRejectsUnsafeFileContentBeforeUpstream` | OpenAI-compatible multipart 文件内容命中明显可执行签名时本地返回 400 `unsafe_multipart_file`，不调用上游、不扣用户额度或 API Key 预算 |
+| `TestRelayMultipartRejectsIncompatibleFileExtensionBeforeUpstream` | OpenAI-compatible multipart 文件扩展名与图片/音频 API 类型明显不匹配时本地返回 400 `unsafe_multipart_file`，不调用上游、不扣用户额度或 API Key 预算 |
 | `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
 | `TestUserBillingMatchesLogs` | 多次成功/失败混合后，用户账单、日志、余额和 Key 预算一致 |
 | `TestUserBillingFiltersByAPIKey` | `/v0/user/billing?token_id=` 只聚合当前用户指定 API Key 的成功日志，其他 Key 和失败日志不混入 |

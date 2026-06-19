@@ -397,7 +397,7 @@ var (
 	errInvalidJSONBody        = errors.New("invalid json body")
 	errInvalidMultipartBody   = errors.New("invalid multipart body")
 	errMultipartFileTooLarge  = errors.New("multipart file exceeds maximum size")
-	errUnsafeMultipartFile    = errors.New("multipart file name is not allowed")
+	errUnsafeMultipartFile    = errors.New("multipart file is not allowed")
 	errModelRequired          = errors.New("model is required")
 	errUnsupportedMultipart   = errors.New("multipart relay is not supported for selected upstream channel")
 	errInvalidRouterXOptions  = errors.New("invalid routerx options")
@@ -854,7 +854,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	outBody := body
 	outContentType := ""
 	if isMultipartRelayContentType(contentType) {
-		outBody, outContentType, err = rewriteMultipartRelayBody(body, contentType, upstreamModel, s.MaxMultipartFileBytes())
+		outBody, outContentType, err = rewriteMultipartRelayBody(apiType, body, contentType, upstreamModel, s.MaxMultipartFileBytes())
 		if err != nil {
 			return nil, nil, false, relayInvalidRequestHTTPError(err)
 		}
@@ -1311,7 +1311,7 @@ type relayUpstreamOptions struct {
 
 func parseRelayRequestWithContentType(apiType relay.APIType, body []byte, contentType string, headerRouterX json.RawMessage, maxMultipartFileBytes int64) (relayRequestInfo, error) {
 	if isMultipartRelayContentType(contentType) {
-		return parseMultipartRelayRequest(body, contentType, headerRouterX, maxMultipartFileBytes)
+		return parseMultipartRelayRequest(apiType, body, contentType, headerRouterX, maxMultipartFileBytes)
 	}
 	return parseRelayRequest(apiType, body, headerRouterX)
 }
@@ -1455,7 +1455,7 @@ func validEmbeddingTokenID(raw json.RawMessage) bool {
 	return err == nil && tokenID >= 0
 }
 
-func parseMultipartRelayRequest(body []byte, contentType string, headerRouterX json.RawMessage, maxFileBytes int64) (relayRequestInfo, error) {
+func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType string, headerRouterX json.RawMessage, maxFileBytes int64) (relayRequestInfo, error) {
 	boundary, err := multipartBoundary(contentType)
 	if err != nil {
 		return relayRequestInfo{}, err
@@ -1472,7 +1472,7 @@ func parseMultipartRelayRequest(body []byte, contentType string, headerRouterX j
 			return relayRequestInfo{}, errInvalidMultipartBody
 		}
 		if part.FileName() != "" {
-			if err := validateMultipartFileName(part); err != nil {
+			if err := validateMultipartFile(apiType, part); err != nil {
 				return relayRequestInfo{}, err
 			}
 			if err := discardMultipartFileWithLimit(part, maxFileBytes); err != nil {
@@ -1982,7 +1982,7 @@ func routerXHopHTTPError(err error) *HTTPError {
 	}
 }
 
-func rewriteMultipartRelayBody(body []byte, contentType string, modelName string, maxFileBytes int64) ([]byte, string, error) {
+func rewriteMultipartRelayBody(apiType relay.APIType, body []byte, contentType string, modelName string, maxFileBytes int64) ([]byte, string, error) {
 	boundary, err := multipartBoundary(contentType)
 	if err != nil {
 		return nil, "", err
@@ -2001,7 +2001,7 @@ func rewriteMultipartRelayBody(body []byte, contentType string, modelName string
 		name := part.FormName()
 		if name == "routerx" {
 			if part.FileName() != "" {
-				if err := validateMultipartFileName(part); err != nil {
+				if err := validateMultipartFile(apiType, part); err != nil {
 					return nil, "", err
 				}
 				if err := discardMultipartFileWithLimit(part, maxFileBytes); err != nil {
@@ -2025,7 +2025,7 @@ func rewriteMultipartRelayBody(body []byte, contentType string, modelName string
 			continue
 		}
 		if part.FileName() != "" {
-			if err := validateMultipartFileName(part); err != nil {
+			if err := validateMultipartFile(apiType, part); err != nil {
 				return nil, "", err
 			}
 			if err := copyMultipartFileWithLimit(dst, part, maxFileBytes); err != nil {
@@ -2043,7 +2043,7 @@ func rewriteMultipartRelayBody(body []byte, contentType string, modelName string
 	return out.Bytes(), writer.FormDataContentType(), nil
 }
 
-func validateMultipartFileName(part *multipart.Part) error {
+func validateMultipartFile(apiType relay.APIType, part *multipart.Part) error {
 	if unsafeMultipartFilePathName(rawMultipartFileName(part)) {
 		return errUnsafeMultipartFile
 	}
@@ -2052,6 +2052,9 @@ func validateMultipartFileName(part *multipart.Part) error {
 		return nil
 	}
 	if unsafeMultipartFileExtension(filepath.Ext(filename)) {
+		return errUnsafeMultipartFile
+	}
+	if !allowedMultipartFileExtension(apiType, filepath.Ext(filename)) {
 		return errUnsafeMultipartFile
 	}
 	return nil
@@ -2084,6 +2087,30 @@ func unsafeMultipartFileExtension(ext string) bool {
 	default:
 		return false
 	}
+}
+
+func allowedMultipartFileExtension(apiType relay.APIType, ext string) bool {
+	ext = strings.ToLower(strings.TrimSpace(ext))
+	if ext == "" {
+		return true
+	}
+	switch apiType {
+	case relay.APIImagesEdits, relay.APIImagesVariations:
+		return stringInSet(ext, ".gif", ".jpeg", ".jpg", ".png", ".webp")
+	case relay.APIAudioTranscriptions, relay.APIAudioTranslations:
+		return stringInSet(ext, ".aac", ".aif", ".aiff", ".flac", ".m4a", ".mp3", ".mp4", ".mpeg", ".mpga", ".oga", ".ogg", ".opus", ".wav", ".webm")
+	default:
+		return true
+	}
+}
+
+func stringInSet(value string, allowed ...string) bool {
+	for _, item := range allowed {
+		if value == item {
+			return true
+		}
+	}
+	return false
 }
 
 const multipartFileSignatureScanBytes = 512
