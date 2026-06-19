@@ -258,6 +258,8 @@ POST /v0/user/register
 
 当前已落地基础接口 `DELETE /v0/user/self`：要求当前 User JWT 和本地密码二次确认，限制普通用户只能注销自己；服务端将 `users.status` 置为禁用、禁用该用户已启用 API Key 并写入 `user.self_cancel` 审计。缺少密码或密码错误时拒绝注销，用户和 API Key 状态保持不变，并写入 `user.self_cancel_denied` 拒绝审计，错误码区分 `self_cancel_password_required` 和 `self_cancel_password_invalid`，审计摘要不保存密码。该接口不删除 `users`、`user_identities`、`tokens`、`logs`、余额或额度流水。当前基础用户名注册会在相同 `username/local` identity 命中已注销普通用户时恢复原账号，写入 `user.recover` 审计，并要求用户用本次提交的新密码重新登录；恢复请求附带未被占用的 email 时会补齐 `email/local` 登录标识且不写重复密码哈希。旧 API Key 不会自动恢复启用。当前版本尚未实现隐私字段擦除和手机号/OAuth/OIDC 恢复入口。
 
+当前已落地基础接口 `PUT /v0/user/self` 会在用户修改 email 时同步维护同用户 `email/local` 登录标识：新邮箱会规范化，已有同用户邮箱身份会更新为新邮箱，没有则创建；该身份不保存重复密码哈希，邮箱密码登录开启后复用 `username/local` 主密码。如果目标邮箱已被其他账号的本地邮箱身份占用，接口拒绝并回滚本次资料更新。
+
 注销后保留的数据：
 
 | 数据 | 保留原因 |

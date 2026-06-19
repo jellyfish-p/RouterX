@@ -3076,14 +3076,78 @@ func (s *UserService) UpdateSelf(id uint, displayName, email string) error {
 	if strings.TrimSpace(displayName) != "" {
 		updates["display_name"] = strings.TrimSpace(displayName)
 	}
+	normalizedEmail := ""
 	if strings.TrimSpace(email) != "" {
-		normalized := normalizeEmail(email)
-		updates["email"] = normalized
+		normalizedEmail = normalizeEmail(email)
+		updates["email"] = normalizedEmail
 	}
 	if len(updates) == 0 {
 		return nil
 	}
-	return internal.DB.Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
+	if normalizedEmail == "" {
+		return internal.DB.Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
+	}
+	return internal.DB.Transaction(func(tx *gorm.DB) error {
+		if err := syncSelfEmailIdentity(tx, id, normalizedEmail); err != nil {
+			return err
+		}
+		return tx.Model(&model.User{}).Where("id = ?", id).Updates(updates).Error
+	})
+}
+
+// syncSelfEmailIdentity keeps the profile email and the local email login identity aligned.
+// The email identity intentionally has no password hash; email/password login reuses username/local.
+func syncSelfEmailIdentity(tx *gorm.DB, userID uint, email string) error {
+	now := time.Now()
+	var byIdentifier model.UserIdentity
+	err := tx.Where(
+		"method = ? AND provider = ? AND identifier = ?",
+		model.UserIdentityMethodEmail,
+		model.UserIdentityProviderLocal,
+		email,
+	).First(&byIdentifier).Error
+	if err == nil {
+		if byIdentifier.UserID != userID {
+			return errors.New("email already exists")
+		}
+		updates := map[string]interface{}{"password_hash": ""}
+		if byIdentifier.VerifiedAt == nil {
+			updates["verified_at"] = &now
+		}
+		return tx.Model(&model.UserIdentity{}).Where("id = ?", byIdentifier.ID).Updates(updates).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	var existing model.UserIdentity
+	err = tx.Where(
+		"user_id = ? AND method = ? AND provider = ?",
+		userID,
+		model.UserIdentityMethodEmail,
+		model.UserIdentityProviderLocal,
+	).First(&existing).Error
+	if err == nil {
+		updates := map[string]interface{}{
+			"identifier":    email,
+			"password_hash": "",
+		}
+		if existing.VerifiedAt == nil {
+			updates["verified_at"] = &now
+		}
+		return tx.Model(&model.UserIdentity{}).Where("id = ?", existing.ID).Updates(updates).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	return tx.Create(&model.UserIdentity{
+		UserID:     userID,
+		Method:     model.UserIdentityMethodEmail,
+		Provider:   model.UserIdentityProviderLocal,
+		Identifier: email,
+		VerifiedAt: &now,
+	}).Error
 }
 
 // CancelSelf 注销当前普通用户账号。

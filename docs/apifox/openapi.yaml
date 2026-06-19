@@ -308,7 +308,7 @@ paths:
     put:
       tags: [User Auth]
       summary: 修改个人信息
-      description: 当前用户修改自己的展示名等个人资料；不能通过该接口提升角色、修改余额、切换分组或绕过管理员权限。
+      description: 当前用户修改自己的展示名和 email 等个人资料；不能通过该接口提升角色、修改余额、切换分组或绕过管理员权限。提交 email 时服务端会规范化并同步同用户 email/local 登录标识，该身份不保存重复密码哈希，邮箱密码登录开启后复用 username/local 主密码；目标 email 已被其他账号身份占用时返回 400，资料和 identity 都不会部分落库。
       security:
         - UserJWT: []
       requestBody:
@@ -3980,8 +3980,12 @@ components:
     UpdateSelfRequest:
       type: object
       properties:
-        display_name: { type: string }
-        email: { type: string }
+        display_name:
+          type: string
+          description: 新展示名；空字符串不会修改现有展示名。
+        email:
+          type: string
+          description: 新邮箱；服务端会规范化并同步同用户 email/local 登录标识，若已被其他账号绑定则返回 400。
     CancelSelfRequest:
       type: object
       required: [password]

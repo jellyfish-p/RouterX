@@ -2397,6 +2397,117 @@ func TestUserRecoveryCreatesEmailIdentity(t *testing.T) {
 	}
 }
 
+func TestUserSelfEmailUpdateMaintainsLocalIdentity(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	if err := settingSvc.Set("auth.register.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.username.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("auth.register.captcha.required", "false"); err != nil {
+		t.Fatal(err)
+	}
+
+	registerResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "self-email-user",
+		"password":     "password123",
+		"display_name": "Self Email User",
+	})
+	if registerResp.Code != http.StatusOK {
+		t.Fatalf("register user failed: %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	userJWT := loginBearer(t, r, "self-email-user", "password123")
+
+	updateResp := performJSON(r, http.MethodPut, "/v0/user/self", userJWT, map[string]interface{}{
+		"display_name": "Updated Self Email User",
+		"email":        "Self-Email@Example.COM",
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("self email update should succeed, got %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "self-email-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Email == nil || *user.Email != "self-email@example.com" {
+		t.Fatalf("self email update should normalize users.email, got %#v", user.Email)
+	}
+	if user.DisplayName != "Updated Self Email User" {
+		t.Fatalf("self display name should update, got %q", user.DisplayName)
+	}
+	var emailIdentity model.UserIdentity
+	if err := internal.DB.Where(
+		"user_id = ? AND method = ? AND provider = ? AND identifier = ?",
+		user.ID,
+		model.UserIdentityMethodEmail,
+		model.UserIdentityProviderLocal,
+		"self-email@example.com",
+	).First(&emailIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
+	if emailIdentity.PasswordHash != "" {
+		t.Fatalf("self email identity should not store duplicated password hash")
+	}
+	if err := settingSvc.Set("auth.login.email_password.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	emailLogin := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "self-email@example.com",
+		"password": "password123",
+	})
+	if emailLogin.Code != http.StatusOK {
+		t.Fatalf("self email identity should log in with primary password, got %d %s", emailLogin.Code, emailLogin.Body.String())
+	}
+
+	conflictRegisterResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "self-email-conflict-user",
+		"password":     "password123",
+		"display_name": "Self Email Conflict User",
+	})
+	if conflictRegisterResp.Code != http.StatusOK {
+		t.Fatalf("register conflict user failed: %d %s", conflictRegisterResp.Code, conflictRegisterResp.Body.String())
+	}
+	conflictJWT := loginBearer(t, r, "self-email-conflict-user", "password123")
+	conflictResp := performJSON(r, http.MethodPut, "/v0/user/self", conflictJWT, map[string]interface{}{
+		"display_name": "Should Not Persist",
+		"email":        "self-email@example.com",
+	})
+	if conflictResp.Code != http.StatusBadRequest {
+		t.Fatalf("self email update should reject occupied email identity, got %d %s", conflictResp.Code, conflictResp.Body.String())
+	}
+	var conflictUser model.User
+	if err := internal.DB.Where("username = ?", "self-email-conflict-user").First(&conflictUser).Error; err != nil {
+		t.Fatal(err)
+	}
+	if conflictUser.Email != nil {
+		t.Fatalf("conflicting email update should not persist users.email, got %#v", conflictUser.Email)
+	}
+	if conflictUser.DisplayName == "Should Not Persist" {
+		t.Fatalf("conflicting email update should not persist display name")
+	}
+	var conflictIdentityCount int64
+	if err := internal.DB.Model(&model.UserIdentity{}).
+		Where("user_id = ? AND method = ? AND provider = ? AND identifier = ?", conflictUser.ID, model.UserIdentityMethodEmail, model.UserIdentityProviderLocal, "self-email@example.com").
+		Count(&conflictIdentityCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if conflictIdentityCount != 0 {
+		t.Fatalf("conflicting email update should not create email identity, got count=%d", conflictIdentityCount)
+	}
+}
+
 func TestUserLoginRespectsLoginMethodSettings(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
