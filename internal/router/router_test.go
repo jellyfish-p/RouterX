@@ -3887,6 +3887,68 @@ func TestUserLoginWritesAuditLogWithoutSecrets(t *testing.T) {
 	}
 }
 
+func TestUserChangePasswordWritesAuditLogWithoutSecrets(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
+		"username":     "password-audit-user",
+		"password":     "oldpassword123",
+		"display_name": "Password Audit User",
+		"role":         common.RoleUser,
+		"quota":        10,
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var user model.User
+	if err := internal.DB.Where("username = ?", "password-audit-user").First(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	userJWT := loginBearer(t, r, "password-audit-user", "oldpassword123")
+
+	changeResp := performJSON(r, http.MethodPost, "/v0/user/self/password", userJWT, map[string]interface{}{
+		"old_password": "oldpassword123",
+		"new_password": "newpassword456",
+	})
+	if changeResp.Code != http.StatusOK {
+		t.Fatalf("change password failed: %d %s", changeResp.Code, changeResp.Body.String())
+	}
+	oldLoginResp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "password-audit-user",
+		"password": "oldpassword123",
+	})
+	if oldLoginResp.Code != http.StatusUnauthorized {
+		t.Fatalf("old password should no longer login, got %d %s", oldLoginResp.Code, oldLoginResp.Body.String())
+	}
+	newLoginResp := performJSON(r, http.MethodPost, "/v0/user/login", "", map[string]interface{}{
+		"account":  "password-audit-user",
+		"password": "newpassword456",
+	})
+	if newLoginResp.Code != http.StatusOK {
+		t.Fatalf("new password should login, got %d %s", newLoginResp.Code, newLoginResp.Body.String())
+	}
+
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?action=user.password_changed&resource_type=user&resource_id="+uintString(user.ID), rootJWT, nil)
+	auditBody := auditResp.Body.String()
+	if auditResp.Code != http.StatusOK || !strings.Contains(auditBody, `"action":"user.password_changed"`) {
+		t.Fatalf("password change should write audit log, got %d %s", auditResp.Code, auditBody)
+	}
+	if strings.Contains(auditBody, "oldpassword123") || strings.Contains(auditBody, "newpassword456") {
+		t.Fatalf("password change audit should not expose old or new password: %s", auditBody)
+	}
+}
+
 func TestOAuthCallbackLogsInBoundIdentityWithState(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

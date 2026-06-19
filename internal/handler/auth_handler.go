@@ -554,6 +554,10 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
+	if err := h.recordPasswordChangedAudit(c, user); err != nil {
+		common.FailWithStatus(c, 500, "写入审计日志失败")
+		return
+	}
 	common.SuccessMsg(c, "密码修改成功")
 }
 
@@ -643,6 +647,27 @@ func (h *AuthHandler) recordIdentityUnboundAudit(c *gin.Context, user *model.Use
 		Result:        "success",
 		IP:            c.ClientIP(),
 		UserAgent:     c.GetHeader("User-Agent"),
+	})
+}
+
+func (h *AuthHandler) recordPasswordChangedAudit(c *gin.Context, user *model.User) error {
+	if user == nil {
+		return nil
+	}
+	return service.NewUserService().RecordAdminAuditLog(service.AdminAuditRecordInput{
+		RequestID:    c.GetString("request_id"),
+		ActorUserID:  user.ID,
+		ActorRole:    user.Role,
+		Action:       "user.password_changed",
+		ResourceType: "user",
+		ResourceID:   strconv.FormatUint(uint64(user.ID), 10),
+		AfterSummary: auditSummary(map[string]interface{}{
+			"user":             dto.UserBriefFromModel(user),
+			"password_changed": true,
+		}),
+		Result:    "success",
+		IP:        c.ClientIP(),
+		UserAgent: c.GetHeader("User-Agent"),
 	})
 }
 

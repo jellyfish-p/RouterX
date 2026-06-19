@@ -260,6 +260,8 @@ POST /v0/user/register
 
 当前已落地基础接口 `PUT /v0/user/self` 会在用户修改 email 或 phone 时同步维护同用户 `email/local` 或 `phone/local` 登录标识：新邮箱会规范化为小写去空格，新手机号会去除首尾空格；已有同用户本地联系身份会更新为新值，没有则创建；这些身份不保存重复密码哈希，邮箱或手机号密码登录开启后复用 `username/local` 主密码。如果目标邮箱或手机号已被其他账号的本地身份占用，接口拒绝并回滚本次资料更新。
 
+当前已落地基础接口 `POST /v0/user/self/password`：要求当前 User JWT、旧密码和新密码；服务端只更新 `username/local` 主身份的 `password_hash`，email/phone 本地身份仍不保存重复密码哈希。成功后写入 `user.password_changed` 审计，摘要只包含用户元数据和变更事实，不保存旧密码、新密码或 JWT。
+
 注销后保留的数据：
 
 | 数据 | 保留原因 |

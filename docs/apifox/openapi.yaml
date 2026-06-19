@@ -743,7 +743,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 修改登录密码
-      description: 当前用户在登录态下修改本地密码；服务端校验旧密码后更新本地身份凭据，不会返回密码摘要或其他认证秘密。
+      description: 当前用户在登录态下修改本地密码；服务端校验旧密码后只更新 username/local 主身份的 password_hash，email/phone 本地身份仍不保存重复密码哈希。成功后写 user.password_changed 审计，摘要不包含旧密码、新密码、JWT 或其他认证秘密。
       security:
         - UserJWT: []
       requestBody:
