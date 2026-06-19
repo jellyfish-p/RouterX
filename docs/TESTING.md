@@ -142,7 +142,7 @@
 | `TestOIDCCallbackRejectsTamperedOrMismatchedNonceIDToken` | OIDC 回调拒绝签名不匹配或 nonce 不匹配的 ID Token，不允许绕过企业身份校验 |
 | `TestOIDCBindCallbackCreatesIdentityForLoggedInUser` | 登录用户 OIDC 绑定生成 state、nonce 和签名 bind Cookie；回调校验后创建 passwordless OIDC identity，更新最近使用时间，并写 `user.identity_bound` 审计 |
 | `TestOIDCBindCallbackRejectsIdentityBoundToAnotherUser` | OIDC 绑定回调中 provider subject 已属于其他用户时返回冲突，且不会给当前用户创建重复 identity |
-| `TestUserSelfCancelDisablesAccountButPreservesIdentity` | 当前用户自助注销必须提供正确本地密码二次确认；缺少或错误密码不会禁用账号/API Key，会写 `user.self_cancel_denied` 拒绝审计且不泄露密码；确认通过后账号禁用、API Key 禁用、用户名和 email identity 及历史账号记录保留；同名重新注册恢复原账号、只更新主密码、不恢复旧 API Key，并写 `user.self_cancel` 与 `user.recover` 审计 |
+| `TestUserSelfCancelDisablesAccountButPreservesIdentity` | 当前用户自助注销必须提供正确本地密码二次确认；缺少或错误密码不会禁用账号/API Key，会写 `user.self_cancel_denied` 拒绝审计且不泄露密码；确认通过后账号禁用、API Key 禁用，展示名、主邮箱和主手机号被清空，用户名、email/phone identity 及历史账号记录保留；同名重新注册恢复原账号、只更新主密码、不恢复旧 API Key，并写 `user.self_cancel` 与 `user.recover` 审计 |
 | `TestUserRecoveryCreatesEmailIdentity` | 无 email 的注销账号用同名注册恢复时，可补齐未占用的 `email/local` 登录标识；该 identity 不保存重复密码哈希，并可在邮箱登录开关开启后复用主密码登录 |
 | `TestUserSelfEmailUpdateMaintainsLocalIdentity` | 当前用户自助修改 email 时会规范化 `users.email`、创建或更新同用户 `email/local` 登录标识且不保存重复密码哈希；邮箱密码登录开启后复用主密码，目标邮箱已被其他账号占用时资料和 identity 都不落库 |
 | `TestInitRedisSkipsEmptyConfig` | `REDIS_CONN` 为空时不隐式连接本机 Redis，SQLite 单机模式保持可降级 |

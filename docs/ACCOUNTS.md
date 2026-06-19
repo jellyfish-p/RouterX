@@ -21,7 +21,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备受 settings 控制的基础用户名密码注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认、基础用户名恢复账号，以及 OAuth 已绑定身份登录、OAuth 首次补齐注册、OAuth 注销账号恢复、登录用户绑定 OAuth identity、OIDC 已绑定身份登录、OIDC 首次补齐注册、OIDC 注销账号恢复、登录用户绑定 OIDC identity 和自助列出/解绑非主 identity 所需的账号能力。自助注册默认关闭；开启基础用户名注册时，服务端会检查 `auth.register.enabled`、`auth.register.username.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名账号时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，并统一校验同一用户的 `username/local` 主密码；当前 username 注册附带的 email identity 不保存重复密码哈希。OAuth 当前支持授权跳转、state Cookie 校验、code 换 token、userinfo 稳定 id/sub 登录、恢复或绑定 `oauth/provider/identifier` 身份；当 `auth.register.oauth.enabled=true` 且 `oauth.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的身份会返回短期注册票据，用户提交用户名和密码后创建本地有密码账号并绑定 OAuth identity，或恢复原账号并刷新该 OAuth identity 最近使用时间，同时明确禁止因相同 email 自动绑定或接管已有账号。OIDC 当前支持 Discovery、state/nonce、RS256 ID Token 签名、`iss/aud/exp/sub` 校验，并只用已验证 `sub` 登录、恢复、绑定或生成短期注册票据；当 `auth.register.oidc.enabled=true` 且 `oidc.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的 subject 可补齐用户名和密码后创建本地有密码账号并绑定 OIDC identity，或恢复原账号并刷新 OIDC identity 最近使用时间。本文档中的完整验证码校验、邮箱/手机号注册、隐私字段擦除和非用户名/非第三方恢复属于目标设计，需要按阶段继续实现。
+当前代码已经具备受 settings 控制的用户名、邮箱、手机号自助注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认、注销隐私字段擦除、基础用户名/邮箱/手机号恢复账号，以及 OAuth 已绑定身份登录、OAuth 首次补齐注册、OAuth 注销账号恢复、登录用户绑定 OAuth identity、OIDC 已绑定身份登录、OIDC 首次补齐注册、OIDC 注销账号恢复、登录用户绑定 OIDC identity 和自助列出/解绑非主 identity 所需的账号能力。自助注册默认关闭；开启基础注册时，服务端会检查 `auth.register.enabled`、对应 `auth.register.{method}.enabled` 和 `auth.register.captcha.required`，新账号会应用默认额度/分组，命中已注销同名、同邮箱或同手机号身份时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，并统一校验同一用户的 `username/local` 主密码；当前本地 email/phone identity 不保存重复密码哈希。OAuth 当前支持授权跳转、state Cookie 校验、code 换 token、userinfo 稳定 id/sub 登录、恢复或绑定 `oauth/provider/identifier` 身份；当 `auth.register.oauth.enabled=true` 且 `oauth.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的身份会返回短期注册票据，用户提交用户名和密码后创建本地有密码账号并绑定 OAuth identity，或恢复原账号并刷新该 OAuth identity 最近使用时间，同时明确禁止因相同 email 自动绑定或接管已有账号。OIDC 当前支持 Discovery、state/nonce、RS256 ID Token 签名、`iss/aud/exp/sub` 校验，并只用已验证 `sub` 登录、恢复、绑定或生成短期注册票据；当 `auth.register.oidc.enabled=true` 且 `oidc.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的 subject 可补齐用户名和密码后创建本地有密码账号并绑定 OIDC identity，或恢复原账号并刷新 OIDC identity 最近使用时间。本文档中的完整验证码校验、邮箱/手机号验证码登录、绑定归属验证和更完整企业风控属于目标设计，需要按阶段继续实现。
 
 阶段边界：
 
@@ -256,7 +256,7 @@ POST /v0/user/register
     -> 清理当前登录会话
 ```
 
-当前已落地基础接口 `DELETE /v0/user/self`：要求当前 User JWT 和本地密码二次确认，限制普通用户只能注销自己；服务端将 `users.status` 置为禁用、禁用该用户已启用 API Key 并写入 `user.self_cancel` 审计。缺少密码或密码错误时拒绝注销，用户和 API Key 状态保持不变，并写入 `user.self_cancel_denied` 拒绝审计，错误码区分 `self_cancel_password_required` 和 `self_cancel_password_invalid`，审计摘要不保存密码。该接口不删除 `users`、`user_identities`、`tokens`、`logs`、余额或额度流水。当前 `register_method=username/email/phone` 会分别在相同 `username/local`、`email/local` 或 `phone/local` identity 命中已注销普通用户时恢复原账号；OAuth/OIDC 首次注册补齐会在相同 `oauth/provider/identifier` 或 `oidc/provider/sub` 命中已注销普通用户时恢复原账号。恢复会写入 `user.recover` 审计，要求用户用本次提交的新密码重新登录；恢复请求附带未被占用的 email/phone 时会补齐同用户 `email/local` 或 `phone/local` 登录标识且不写重复密码哈希，旧 API Key 不会自动恢复启用。当前版本尚未实现隐私字段擦除。
+当前已落地基础接口 `DELETE /v0/user/self`：要求当前 User JWT 和本地密码二次确认，限制普通用户只能注销自己；服务端将 `users.status` 置为禁用、清空 `users.display_name`、`users.email` 和 `users.phone` 这类非必要资料字段、禁用该用户已启用 API Key 并写入 `user.self_cancel` 审计。缺少密码或密码错误时拒绝注销，用户和 API Key 状态保持不变，并写入 `user.self_cancel_denied` 拒绝审计，错误码区分 `self_cancel_password_required` 和 `self_cancel_password_invalid`，审计摘要不保存密码。该接口不删除 `users`、`user_identities`、`tokens`、`logs`、余额或额度流水，且会保留 `username/local`、`email/local`、`phone/local`、OAuth 和 OIDC 身份用于后续去重和恢复。当前 `register_method=username/email/phone` 会分别在相同 `username/local`、`email/local` 或 `phone/local` identity 命中已注销普通用户时恢复原账号；OAuth/OIDC 首次注册补齐会在相同 `oauth/provider/identifier` 或 `oidc/provider/sub` 命中已注销普通用户时恢复原账号。恢复会写入 `user.recover` 审计，要求用户用本次提交的新密码重新登录；恢复请求附带未被占用的 email/phone 时会补齐同用户 `email/local` 或 `phone/local` 登录标识且不写重复密码哈希，旧 API Key 不会自动恢复启用。
 
 当前已落地基础接口 `PUT /v0/user/self` 会在用户修改 email 时同步维护同用户 `email/local` 登录标识：新邮箱会规范化，已有同用户邮箱身份会更新为新邮箱，没有则创建；该身份不保存重复密码哈希，邮箱密码登录开启后复用 `username/local` 主密码。如果目标邮箱已被其他账号的本地邮箱身份占用，接口拒绝并回滚本次资料更新。
 
@@ -292,13 +292,15 @@ POST /v0/user/register
 - 欠款、历史消费、风控标签不能因恢复而清零。
 - API Key 默认不自动恢复启用，建议要求用户重新创建。
 
-当前基础用户名恢复实现保留原 `quota`、`group_id` 和历史事实，只更新 `users.status`、可选展示资料和 `username/local` 主密码；请求附带未被其他账号占用的 email 时，会创建或保留同用户 `email/local` identity 作为登录标识。恢复不会重新应用 `auth.register.default_quota` 或默认分组。
+当前基础恢复实现保留原 `quota`、`group_id` 和历史事实，只更新 `users.status`、可选展示资料和 `username/local` 主密码；请求附带未被其他账号占用的 email 或 phone 时，会创建或保留同用户 `email/local` 或 `phone/local` identity 作为登录标识。恢复不会重新应用 `auth.register.default_quota` 或默认分组。
 
 隐私处理：
 
 - 如果需要满足隐私删除诉求，可以清空展示资料和非必要个人资料。
 - 用于去重的身份标识必须保留，或迁移为不可逆 hash 后保留匹配能力。
 - 不能删除可用于识别历史欠款和封禁的 identity。
+
+当前 `DELETE /v0/user/self` 已清空展示名、主邮箱和主手机号；登录 identity 继续保留，避免注销后重新注册绕过去重、欠款或封禁历史。
 
 ## 登录设计
 

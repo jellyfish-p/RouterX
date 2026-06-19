@@ -3179,12 +3179,17 @@ func (s *UserService) CancelSelf(userID uint, password string) (*model.User, err
 		if identity.PasswordHash == "" || !common.CheckPassword(password, identity.PasswordHash) {
 			return ErrSelfCancelPasswordInvalid
 		}
-		if user.Status != common.UserStatusDisabled {
-			if err := tx.Model(&model.User{}).
-				Where("id = ? AND role = ?", userID, common.RoleUser).
-				Update("status", common.UserStatusDisabled).Error; err != nil {
-				return err
-			}
+		// Keep username and identities for future de-duplication/recovery, but erase
+		// optional profile fields that are not required to preserve account history.
+		if err := tx.Model(&model.User{}).
+			Where("id = ? AND role = ?", userID, common.RoleUser).
+			Updates(map[string]interface{}{
+				"status":       common.UserStatusDisabled,
+				"display_name": "",
+				"email":        nil,
+				"phone":        nil,
+			}).Error; err != nil {
+			return err
 		}
 		if err := tx.Model(&model.Token{}).
 			Where("user_id = ? AND status <> ?", userID, common.TokenStatusDisabled).

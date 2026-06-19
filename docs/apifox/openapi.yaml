@@ -713,7 +713,7 @@ paths:
     delete:
       tags: [User Auth]
       summary: 注销当前账号
-      description: 当前普通用户注销自己的账号；请求体必须提供当前本地密码做二次确认，缺少或错误密码不会修改账号和 API Key 状态，会写 user.self_cancel_denied 拒绝审计，error_code 为 self_cancel_password_required 或 self_cancel_password_invalid，摘要不保存密码。确认通过后服务端将 users.status 置为 disabled、禁用该用户已启用 API Key 并写 user.self_cancel 审计。该操作保留 users、user_identities、tokens、logs、quota 和历史流水；注销后不能再次登录，同名 username/local 注册、同一 OAuth identity 补齐注册或同一 OIDC subject 补齐注册会恢复原账号并写 user.recover 审计，旧 API Key 不会自动恢复。隐私字段擦除和邮箱/手机号独立恢复属于后续增强。
+      description: 当前普通用户注销自己的账号；请求体必须提供当前本地密码做二次确认，缺少或错误密码不会修改账号和 API Key 状态，会写 user.self_cancel_denied 拒绝审计，error_code 为 self_cancel_password_required 或 self_cancel_password_invalid，摘要不保存密码。确认通过后服务端将 users.status 置为 disabled，清空 users.display_name、users.email 和 users.phone，禁用该用户已启用 API Key 并写 user.self_cancel 审计。该操作保留 users、user_identities、tokens、logs、quota 和历史流水；username/local、email/local、phone/local、OAuth 和 OIDC identity 继续用于后续去重和恢复。注销后不能再次登录，同名 username/local、同邮箱 email/local、同手机号 phone/local、同一 OAuth identity 补齐注册或同一 OIDC subject 补齐注册会恢复原账号并写 user.recover 审计，旧 API Key 不会自动恢复。
       security:
         - UserJWT: []
       requestBody:

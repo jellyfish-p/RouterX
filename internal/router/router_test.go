@@ -3126,6 +3126,7 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 		"password":     "password123",
 		"display_name": "Cancel User",
 		"email":        "cancel@example.com",
+		"phone":        "+15550004001",
 	}
 	registerResp := performJSON(r, http.MethodPost, "/v0/user/register", "", registerBody)
 	if registerResp.Code != http.StatusOK {
@@ -3200,6 +3201,9 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 	if user.Status != common.UserStatusDisabled {
 		t.Fatalf("self-cancelled user should be disabled, got status=%d", user.Status)
 	}
+	if user.DisplayName != "" || user.Email != nil || user.Phone != nil {
+		t.Fatalf("self-cancel should erase non-essential profile fields, got display_name=%q email=%v phone=%v", user.DisplayName, user.Email, user.Phone)
+	}
 	var storedToken model.Token
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
@@ -3224,6 +3228,16 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 		model.UserIdentityProviderLocal,
 		"cancel@example.com",
 	).First(&cancelledEmailIdentity).Error; err != nil {
+		t.Fatal(err)
+	}
+	var cancelledPhoneIdentity model.UserIdentity
+	if err := internal.DB.Where(
+		"user_id = ? AND method = ? AND provider = ? AND identifier = ?",
+		user.ID,
+		model.UserIdentityMethodPhone,
+		model.UserIdentityProviderLocal,
+		"+15550004001",
+	).First(&cancelledPhoneIdentity).Error; err != nil {
 		t.Fatal(err)
 	}
 	var auditCount int64

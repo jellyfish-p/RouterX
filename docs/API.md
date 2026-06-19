@@ -716,7 +716,7 @@ Provider 退款请求：
 | DELETE | `/v0/user/identities/:id` | 已实现 | 当前用户解绑非 `username/local` 主身份；软删除目标 identity，解绑后该身份不能继续登录，并写 `user.identity_unbound` 审计 |
 | GET | `/v0/user/self` | 已实现 | 获取个人信息 |
 | PUT | `/v0/user/self` | 已实现 | 修改个人信息；提交 email 时会规范化并同步同用户 `email/local` 登录标识，邮箱已被其他账号占用时整笔拒绝 |
-| DELETE | `/v0/user/self` | 已实现 | 注销当前普通用户账号；请求体必须提供 `password` 做二次确认，成功后禁用登录和 API Key，保留账号、身份、日志、额度与历史事实，并写 `user.self_cancel` 审计；缺少或错误密码会写 `user.self_cancel_denied` 拒绝审计 |
+| DELETE | `/v0/user/self` | 已实现 | 注销当前普通用户账号；请求体必须提供 `password` 做二次确认，成功后禁用登录和 API Key，清空展示名、主邮箱和主手机号，保留账号、身份、日志、额度与历史事实，并写 `user.self_cancel` 审计；缺少或错误密码会写 `user.self_cancel_denied` 拒绝审计 |
 | POST | `/v0/user/self/password` | 已实现 | 修改密码 |
 
 注册目标请求：
@@ -738,7 +738,7 @@ Provider 退款请求：
 
 自助修改个人信息使用 `PUT /v0/user/self`。当前实现允许更新展示名和 email；email 会先规范化为小写去空格，再和同用户 `email/local` identity 在同一事务中保持一致。该 identity 不保存重复密码哈希，邮箱密码登录开启后仍复用同用户 `username/local` 主密码。目标 email 如果已绑定其他用户身份，接口返回 400，用户资料和 identity 都不会部分落库。
 
-自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号，请求体必须提交当前本地密码进行二次确认。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key；不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史。缺少密码或密码错误时不会修改账号和 API Key 状态，并写入 `user.self_cancel_denied` 拒绝审计，`error_code` 分别为 `self_cancel_password_required` 或 `self_cancel_password_invalid`，审计摘要不保存密码。注销后用户名密码登录返回统一认证失败，同名、同邮箱、同手机号注册、同一 OAuth identity 补齐注册或同一 OIDC subject 补齐注册会走上述恢复流程；隐私字段擦除会在 `docs/ACCOUNTS.md` 的规则基础上继续扩展。
+自助注销使用 `DELETE /v0/user/self`，仅允许当前普通用户操作自己的账号，请求体必须提交当前本地密码进行二次确认。当前实现复用 `users.status=disabled` 表达注销态，并在同一事务中禁用该用户所有已启用 API Key，同时清空 `users.display_name`、`users.email` 和 `users.phone`。服务端不会删除 `users`、`user_identities`、`tokens`、`logs` 或额度历史；`username/local`、`email/local`、`phone/local`、OAuth 和 OIDC identity 继续保留用于去重和账号恢复。缺少密码或密码错误时不会修改账号和 API Key 状态，并写入 `user.self_cancel_denied` 拒绝审计，`error_code` 分别为 `self_cancel_password_required` 或 `self_cancel_password_invalid`，审计摘要不保存密码。注销后用户名密码登录返回统一认证失败，同名、同邮箱、同手机号注册、同一 OAuth identity 补齐注册或同一 OIDC subject 补齐注册会走上述恢复流程。
 
 登录目标响应：
 
