@@ -713,6 +713,17 @@ func signOAuthRegistrationTicket(claims oauthRegistrationTicketClaims) (string, 
 }
 
 func parseOAuthRegistrationTicket(ticket string) (*oauthRegistrationTicketClaims, error) {
+	claims, err := parseExternalRegistrationTicket(ticket)
+	if err != nil {
+		return nil, ErrOAuthRegistrationTicketInvalid
+	}
+	if claims.Type != "oauth_register" {
+		return nil, ErrOAuthRegistrationTicketInvalid
+	}
+	return claims, nil
+}
+
+func parseExternalRegistrationTicket(ticket string) (*oauthRegistrationTicketClaims, error) {
 	secret, err := GetJWTSecret()
 	if err != nil {
 		return nil, err
@@ -734,7 +745,7 @@ func parseOAuthRegistrationTicket(ticket string) (*oauthRegistrationTicketClaims
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return nil, ErrOAuthRegistrationTicketInvalid
 	}
-	if claims.Type != "oauth_register" ||
+	if claims.Type == "" ||
 		claims.Provider == "" ||
 		claims.Identifier == "" ||
 		claims.ExpiresAt <= time.Now().Unix() {

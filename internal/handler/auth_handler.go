@@ -210,7 +210,7 @@ func (h *AuthHandler) OIDCLogin(c *gin.Context) {
 	c.Redirect(http.StatusFound, location)
 }
 
-// GET /v0/user/oidc/:provider/callback — 处理 OIDC 回调并登录已绑定身份。
+// GET /v0/user/oidc/:provider/callback — 处理 OIDC 回调并登录已绑定身份，或返回首次注册票据。
 func (h *AuthHandler) OIDCCallback(c *gin.Context) {
 	provider := c.Param("provider")
 	state := strings.TrimSpace(c.Query("state"))
@@ -228,7 +228,7 @@ func (h *AuthHandler) OIDCCallback(c *gin.Context) {
 	setOIDCStateCookie(c, provider, "", -1)
 	setOIDCNonceCookie(c, provider, "", -1)
 
-	user, token, err := h.svc.OIDCCallbackLogin(provider, code, oidcCallbackURL(c, provider), nonce)
+	result, err := h.svc.OIDCCallbackLogin(provider, code, oidcCallbackURL(c, provider), nonce)
 	if err != nil {
 		status := http.StatusBadGateway
 		if errors.Is(err, service.ErrOIDCIdentityNotBound) || errors.Is(err, service.ErrOIDCProviderDisabled) {
@@ -239,11 +239,63 @@ func (h *AuthHandler) OIDCCallback(c *gin.Context) {
 		common.FailWithStatus(c, status, err.Error())
 		return
 	}
-	if err := h.recordLoginAudit(c, user); err != nil {
+	if result != nil && result.RegistrationRequired != nil {
+		common.Success(c, dto.OIDCRegistrationRequiredResponse{
+			RegistrationRequired: true,
+			RegistrationTicket:   result.RegistrationRequired.Ticket,
+			Provider:             result.RegistrationRequired.Provider,
+			SuggestedUsername:    result.RegistrationRequired.SuggestedUsername,
+			Email:                result.RegistrationRequired.Email,
+		})
+		return
+	}
+	if result == nil || result.User == nil {
+		common.FailWithStatus(c, http.StatusBadRequest, "OIDC 回调结果无效")
+		return
+	}
+	if err := h.recordLoginAudit(c, result.User); err != nil {
 		common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
 		return
 	}
-	common.Success(c, dto.LoginResponse{Token: token, User: dto.UserBriefFromModel(user)})
+	common.Success(c, dto.LoginResponse{Token: result.Token, User: dto.UserBriefFromModel(result.User)})
+}
+
+// POST /v0/user/oidc/:provider/register — 使用 OIDC 回调票据补齐本地用户名密码账号。
+func (h *AuthHandler) OIDCRegister(c *gin.Context) {
+	provider := c.Param("provider")
+	var req dto.OIDCRegisterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.FailWithStatus(c, http.StatusBadRequest, "OIDC 注册参数无效")
+		return
+	}
+	result, err := h.svc.OIDCRegister(provider, req.RegistrationTicket, req.Username, req.Password, req.DisplayName, req.Email)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, service.ErrSelfRegistrationDisabled) ||
+			errors.Is(err, service.ErrUsernameRegistrationDisabled) ||
+			errors.Is(err, service.ErrRegistrationCaptchaRequired) ||
+			errors.Is(err, service.ErrOIDCRegistrationDisabled) ||
+			errors.Is(err, service.ErrOIDCProviderDisabled) {
+			status = http.StatusForbidden
+		} else if errors.Is(err, service.ErrOIDCIdentityAlreadyBound) {
+			status = http.StatusConflict
+		}
+		common.FailWithStatus(c, status, err.Error())
+		return
+	}
+	if result == nil || result.User == nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "OIDC 注册结果无效")
+		return
+	}
+	if err := h.recordIdentityBoundAudit(c, result.User.ID, result.Identity); err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
+		return
+	}
+	if err := h.recordLoginAudit(c, result.User); err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "写入审计日志失败")
+		return
+	}
+	common.Success(c, dto.LoginResponse{Token: result.Token, User: dto.UserBriefFromModel(result.User)})
 }
 
 // GET /v0/user/oidc/:provider/bind — 登录用户发起 OIDC 身份绑定。

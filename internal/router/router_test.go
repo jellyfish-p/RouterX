@@ -466,7 +466,7 @@ func isPublicUserOperation(path string) bool {
 	switch path {
 	case "/v0/user/register", "/v0/user/login",
 		"/v0/user/oauth/{provider}/login", "/v0/user/oauth/{provider}/callback", "/v0/user/oauth/{provider}/register", "/v0/user/oauth/{provider}/bind/callback",
-		"/v0/user/oidc/{provider}/login", "/v0/user/oidc/{provider}/callback", "/v0/user/oidc/{provider}/bind/callback":
+		"/v0/user/oidc/{provider}/login", "/v0/user/oidc/{provider}/callback", "/v0/user/oidc/{provider}/register", "/v0/user/oidc/{provider}/bind/callback":
 		return true
 	default:
 		return false
@@ -4180,6 +4180,153 @@ func TestOIDCCallbackLogsInBoundIdentityWithNonceAndSignedIDToken(t *testing.T) 
 	}
 }
 
+func TestOIDCCallbackRegistrationTicketCreatesPasswordAccount(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":          "true",
+		"auth.register.username.enabled": "true",
+		"auth.register.oidc.enabled":     "true",
+		"auth.register.captcha.required": "false",
+		"auth.register.default_quota":    "654",
+		"oidc.corp.register_enabled":     "true",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	key := newOIDCTestRSAKey(t)
+	var issuedNonce string
+	provider := newOIDCTestProvider(t, key, func(issuer string, req *http.Request) string {
+		if err := req.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if req.Form.Get("code") != "fresh-oidc-code" {
+			t.Fatalf("unexpected oidc code: %s", req.Form.Get("code"))
+		}
+		return signedOIDCIDTokenWithClaims(t, key, oidcTestKeyID, issuer, "routerx-oidc-client", "oidc-fresh-sub", issuedNonce, map[string]interface{}{
+			"email":              "fresh-oidc@example.com",
+			"preferred_username": "fresh-oidc",
+			"name":               "Fresh OIDC User",
+		})
+	})
+	defer provider.Close()
+	configureOIDCProvider(t, "corp", provider.URL)
+
+	loginResp := performJSON(r, http.MethodGet, "/v0/user/oidc/corp/login", "", nil)
+	if loginResp.Code != http.StatusFound {
+		t.Fatalf("oidc login should redirect to provider, got %d %s", loginResp.Code, loginResp.Body.String())
+	}
+	location, err := url.Parse(loginResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := location.Query().Get("state")
+	issuedNonce = location.Query().Get("nonce")
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v0/user/oidc/corp/callback?state="+url.QueryEscape(state)+"&code=fresh-oidc-code", nil)
+	for _, cookie := range loginResp.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
+	callbackResp := httptest.NewRecorder()
+	r.ServeHTTP(callbackResp, callbackReq)
+
+	var callbackPayload struct {
+		Data struct {
+			RegistrationRequired bool   `json:"registration_required"`
+			RegistrationTicket   string `json:"registration_ticket"`
+			Provider             string `json:"provider"`
+			SuggestedUsername    string `json:"suggested_username"`
+			Email                string `json:"email"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(callbackResp.Body.Bytes(), &callbackPayload); err != nil {
+		t.Fatal(err)
+	}
+	if callbackResp.Code != http.StatusOK ||
+		!callbackPayload.Data.RegistrationRequired ||
+		callbackPayload.Data.RegistrationTicket == "" ||
+		callbackPayload.Data.Provider != "corp" ||
+		callbackPayload.Data.SuggestedUsername != "fresh-oidc" ||
+		callbackPayload.Data.Email != "fresh-oidc@example.com" {
+		t.Fatalf("oidc callback should return registration ticket, got %d %s", callbackResp.Code, callbackResp.Body.String())
+	}
+	var earlyIdentityCount int64
+	if err := internal.DB.Model(&model.UserIdentity{}).
+		Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOIDC, "corp", "oidc-fresh-sub").
+		Count(&earlyIdentityCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if earlyIdentityCount != 0 {
+		t.Fatalf("oidc identity should not be created before registration is completed, got %d", earlyIdentityCount)
+	}
+
+	registerResp := performJSON(r, http.MethodPost, "/v0/user/oidc/corp/register", "", map[string]interface{}{
+		"registration_ticket": callbackPayload.Data.RegistrationTicket,
+		"username":            "fresh-oidc",
+		"password":            "password123",
+	})
+	var loginPayload struct {
+		Data struct {
+			Token string        `json:"token"`
+			User  dto.UserBrief `json:"user"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(registerResp.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatal(err)
+	}
+	if registerResp.Code != http.StatusOK || loginPayload.Data.Token == "" || loginPayload.Data.User.Username != "fresh-oidc" {
+		t.Fatalf("oidc registration should create password account and login, got %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	var registered model.User
+	if err := internal.DB.Where("username = ?", "fresh-oidc").First(&registered).Error; err != nil {
+		t.Fatal(err)
+	}
+	if registered.Quota != 654 || registered.Email == nil || *registered.Email != "fresh-oidc@example.com" || registered.DisplayName != "Fresh OIDC User" {
+		t.Fatalf("registered oidc user should inherit defaults and verified claims, got %+v", registered)
+	}
+	var identities []model.UserIdentity
+	if err := internal.DB.Where("user_id = ?", registered.ID).Find(&identities).Error; err != nil {
+		t.Fatal(err)
+	}
+	seenUsername, seenEmail, seenOIDC := false, false, false
+	for _, identity := range identities {
+		switch {
+		case identity.Method == model.UserIdentityMethodUsername && identity.Provider == model.UserIdentityProviderLocal && identity.Identifier == "fresh-oidc":
+			seenUsername = strings.TrimSpace(identity.PasswordHash) != ""
+		case identity.Method == model.UserIdentityMethodEmail && identity.Provider == model.UserIdentityProviderLocal && identity.Identifier == "fresh-oidc@example.com":
+			seenEmail = strings.TrimSpace(identity.PasswordHash) == ""
+		case identity.Method == model.UserIdentityMethodOIDC && identity.Provider == "corp" && identity.Identifier == "oidc-fresh-sub":
+			seenOIDC = identity.VerifiedAt != nil && identity.LastUsedAt != nil && strings.TrimSpace(identity.PasswordHash) == ""
+		}
+	}
+	if !seenUsername || !seenEmail || !seenOIDC {
+		t.Fatalf("oidc registration should create username/email/oidc identities, got %+v", identities)
+	}
+	var loginAuditCount int64
+	if err := internal.DB.Model(&model.AdminAuditLog{}).
+		Where("action = ? AND resource_type = ? AND resource_id = ?", "user.login", "user", uintString(registered.ID)).
+		Count(&loginAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if loginAuditCount == 0 {
+		t.Fatalf("oidc registration should write user.login audit log")
+	}
+	if loginBearer(t, r, "fresh-oidc", "password123") == "" {
+		t.Fatalf("oidc registered user should be able to login with password")
+	}
+}
+
 func TestOIDCCallbackRejectsTamperedOrMismatchedNonceIDToken(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -4495,6 +4642,10 @@ func newOIDCTestRSAKey(t *testing.T) *rsa.PrivateKey {
 }
 
 func signedOIDCIDToken(t *testing.T, key *rsa.PrivateKey, kid, issuer, audience, subject, nonce string) string {
+	return signedOIDCIDTokenWithClaims(t, key, kid, issuer, audience, subject, nonce, nil)
+}
+
+func signedOIDCIDTokenWithClaims(t *testing.T, key *rsa.PrivateKey, kid, issuer, audience, subject, nonce string, extra map[string]interface{}) string {
 	t.Helper()
 	header := map[string]interface{}{
 		"alg": "RS256",
@@ -4508,6 +4659,9 @@ func signedOIDCIDToken(t *testing.T, key *rsa.PrivateKey, kid, issuer, audience,
 		"nonce": nonce,
 		"iat":   time.Now().Add(-time.Minute).Unix(),
 		"exp":   time.Now().Add(time.Hour).Unix(),
+	}
+	for key, value := range extra {
+		claims[key] = value
 	}
 	signingInput := oidcJWTPart(t, header) + "." + oidcJWTPart(t, claims)
 	digest := sha256.Sum256([]byte(signingInput))

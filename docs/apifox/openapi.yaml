@@ -9,7 +9,7 @@ info:
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 缺少必填 image/file 文件字段时返回 400 multipart_file_required，单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态/危险扩展名、扩展名或文件头与图片/音频 API 不匹配或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，以上均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID。
-    - 充值码、充值码创建/兑换拒绝审计、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook/邮件/IM 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期、最近使用、额度、轮换和泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、订单创建拒绝审计与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知、易支付同步返回基础接口，以及 OAuth 基础登录、绑定和回调、OIDC Discovery、已绑定身份回调登录和登录用户绑定接口已注册；OIDC 首次补齐注册流程仍属目标扩展。
+    - 充值码、充值码创建/兑换拒绝审计、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook/邮件/IM 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期、最近使用、额度、轮换和泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、订单创建拒绝审计与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知、易支付同步返回基础接口，以及 OAuth 基础登录/绑定/首次补齐注册、OIDC Discovery、已绑定身份回调登录、登录用户绑定和首次补齐注册接口已注册。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -403,7 +403,7 @@ paths:
     get:
       tags: [User Auth]
       summary: 发起 OIDC 登录
-      description: 公开入口；检查全局 auth.login.oidc.enabled 和 oidc.{provider}.enabled 后读取 issuer 的 Discovery 文档，生成一次性 state 和 nonce，写入 HttpOnly Cookie，并 302 跳转到 authorization_endpoint。当前基础实现支持已绑定 OIDC subject 登录；首次补齐注册仍属后续增强。
+      description: 公开入口；检查全局 auth.login.oidc.enabled 和 oidc.{provider}.enabled 后读取 issuer 的 Discovery 文档，生成一次性 state 和 nonce，写入 HttpOnly Cookie，并 302 跳转到 authorization_endpoint。当前实现支持已绑定 OIDC subject 登录、登录用户绑定和首次补齐注册。
       parameters:
         - $ref: "#/components/parameters/OIDCProvider"
       responses:
@@ -425,8 +425,8 @@ paths:
   /v0/user/oidc/{provider}/callback:
     get:
       tags: [User Auth]
-      summary: OIDC 回调登录已绑定身份
-      description: 公开回调；校验 state Cookie 后使用 code 请求 token_endpoint，校验 ID Token 的 RS256 签名、iss、aud、exp 和 nonce，并以 sub 查询 user_identities(method=oidc, provider, identifier)。仅当身份已绑定且用户启用时签发 User JWT 并写 user.login 审计；相同 email 不会自动绑定或接管已有账号。
+      summary: OIDC 回调登录或返回注册票据
+      description: 公开回调；校验 state Cookie 和 nonce Cookie 后使用 code 请求 token_endpoint，校验 ID Token 的 RS256 签名、iss、aud、exp、nonce 和 sub，并以 sub 查询 user_identities(method=oidc, provider, identifier)。已绑定且用户启用时签发 User JWT 并写 user.login 审计；未绑定时不会按 email 自动绑定或接管已有账号。只有全局注册、用户名注册、OIDC 注册和 oidc.{provider}.register_enabled 均启用且验证码策略允许时，才返回 registration_required=true 和短期 registration_ticket，用于后续补齐用户名密码账号。
       parameters:
         - $ref: "#/components/parameters/OIDCProvider"
         - name: state
@@ -441,7 +441,7 @@ paths:
           description: OIDC provider 返回的 authorization code。
       responses:
         "200":
-          description: 已绑定 OIDC 身份登录成功。
+          description: 已绑定 OIDC 身份登录成功，或未绑定 subject 可继续补齐注册。
           content:
             application/json:
               schema:
@@ -450,7 +450,9 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/LoginResponse"
+                        oneOf:
+                          - $ref: "#/components/schemas/LoginResponse"
+                          - $ref: "#/components/schemas/OIDCRegistrationRequiredResponse"
         "400":
           description: state/nonce 缺失、不匹配、已过期，或 ID Token 签名、iss、aud、exp、nonce、sub 校验失败。
           content:
@@ -465,6 +467,49 @@ paths:
                 $ref: "#/components/schemas/StandardResponse"
         "502":
           description: Discovery、JWKS 或 token endpoint 请求失败。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+  /v0/user/oidc/{provider}/register:
+    post:
+      tags: [User Auth]
+      summary: OIDC 首次登录补齐注册
+      description: 公开入口；使用 OIDC callback 返回的短期 registration_ticket 创建本地有密码账号，并绑定 user_identities(method=oidc, provider, sub)。服务端会校验票据签名、过期时间、provider 路径、注册开关、用户名/邮箱去重和密码要求；成功后写 user.identity_bound 与 user.login 审计并返回 User JWT。不会根据 ID Token email 自动绑定已有账号。
+      parameters:
+        - $ref: "#/components/parameters/OIDCProvider"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OIDCRegisterRequest"
+      responses:
+        "200":
+          description: OIDC 首次注册成功并已登录。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: 参数无效、registration_ticket 无效或已过期，或用户名/密码/邮箱不符合要求。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "403":
+          description: 自助注册、OIDC 注册或 provider 注册开关关闭，或验证码策略阻断当前无验证码注册。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "409":
+          description: OIDC provider subject 已绑定其他或已有账号。
           content:
             application/json:
               schema:
@@ -4673,6 +4718,49 @@ components:
           type: string
           format: email
           description: 可选邮箱；若票据包含 provider 邮箱，服务端优先使用票据邮箱。
+    OIDCRegistrationRequiredResponse:
+      type: object
+      properties:
+        registration_required:
+          type: boolean
+          description: 固定为 true，表示需要补齐本地账号。
+        registration_ticket:
+          type: string
+          description: 短期签名票据，用于 POST /v0/user/oidc/{provider}/register。
+        provider:
+          type: string
+          description: OIDC provider 别名。
+        suggested_username:
+          type: string
+          description: 根据已校验 ID Token claim 生成的建议用户名，客户端可让用户修改。
+        email:
+          type: string
+          format: email
+          description: 已校验 ID Token 中的邮箱；不会用于自动绑定已有账号。
+    OIDCRegisterRequest:
+      type: object
+      required: [registration_ticket, username, password]
+      properties:
+        registration_ticket:
+          type: string
+          description: OIDC callback 返回的短期注册票据。
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+          description: 新本地账号用户名。
+        password:
+          type: string
+          minLength: 6
+          maxLength: 128
+          description: 新本地账号密码；RouterX 不创建无密码 OIDC 账号。
+        display_name:
+          type: string
+          description: 可选展示名，空时使用已校验 ID Token 中的 name 或 username。
+        email:
+          type: string
+          format: email
+          description: 可选邮箱；若票据包含 ID Token 邮箱，服务端优先使用票据邮箱。
     LoginRequest:
       type: object
       required: [password]

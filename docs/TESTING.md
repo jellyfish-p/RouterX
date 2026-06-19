@@ -134,6 +134,7 @@
 | `TestUserIdentityListAndUnbindOAuthIdentity` | 当前用户可列出 username/local 与 OAuth identity 且响应不含密码哈希；解绑 OAuth identity 后软删除、写 `user.identity_unbound` 审计，并禁止该 provider subject 继续登录 |
 | `TestUserIdentityUnbindRejectsPrimaryUsernameIdentity` | 当前用户解绑 `username/local` 主身份会被拒绝，主身份保持可用 |
 | `TestOIDCCallbackLogsInBoundIdentityWithNonceAndSignedIDToken` | OIDC 登录通过 Discovery 跳转并生成 state/nonce；回调用签名 ID Token 登录已绑定 subject，更新最近使用时间并写 `user.login` 审计 |
+| `TestOIDCCallbackRegistrationTicketCreatesPasswordAccount` | OIDC 未绑定 subject 在注册开关允许时返回短期注册票据；完成注册后创建有密码本地账号、email/local 和 OIDC identity，继承默认额度并写登录审计 |
 | `TestOIDCCallbackRejectsTamperedOrMismatchedNonceIDToken` | OIDC 回调拒绝签名不匹配或 nonce 不匹配的 ID Token，不允许绕过企业身份校验 |
 | `TestOIDCBindCallbackCreatesIdentityForLoggedInUser` | 登录用户 OIDC 绑定生成 state、nonce 和签名 bind Cookie；回调校验后创建 passwordless OIDC identity，更新最近使用时间，并写 `user.identity_bound` 审计 |
 | `TestOIDCBindCallbackRejectsIdentityBoundToAnotherUser` | OIDC 绑定回调中 provider subject 已属于其他用户时返回冲突，且不会给当前用户创建重复 identity |
@@ -583,7 +584,7 @@ Gemini-compatible 最小断言：
 | P1 | 运行模式 | 已覆盖 `REDIS_CONN` 为空不隐式连接本机 Redis、SQLite 单镜像无 Redis 可运行、外部数据库无 Redis 时 `/ready` 不就绪、迁移 dirty 状态阻止 ready |
 | P1 | 通道候选缓存 | 已覆盖进程内缓存命中、Redis 共享候选快照、主动 pub/sub 广播失效、`routing.channel_cache.preload` 启动预热/关闭 no-op/通道变更后预热、`routing.channel_cache.version` 变化后回源、默认 settings 和非法配置校验 |
 | P1 | 独立日志数据库 | 已覆盖 `LOG_SQL_DSN` 初始化、日志库副本写入、运行期写入失败时主库事实可恢复、主库 outbox 异步补写、管理日志列表读取日志库、查询失败回退主库、日志库健康指标和 outbox 积压指标；继续补冷热归档策略 |
-| P2 | 企业账号 | 本地密码成功登录审计、OAuth state、已绑定 subject 登录、OAuth 首次补齐注册、登录用户 subject 绑定、禁止 email 自动接管、身份列表、非主 OAuth identity 解绑、OIDC Discovery、nonce、ID Token 签名校验和登录用户 OIDC subject 绑定已覆盖；OIDC 首次补齐注册和 OAuth/OIDC 注销账号恢复待补 |
+| P2 | 企业账号 | 本地密码成功登录审计、OAuth state、已绑定 subject 登录、OAuth/OIDC 首次补齐注册、登录用户 subject 绑定、禁止 email 自动接管、身份列表、非主 OAuth identity 解绑、OIDC Discovery、nonce、ID Token 签名校验和登录用户 OIDC subject 绑定已覆盖；OAuth/OIDC 注销账号恢复待补 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、按环境/团队/应用/标签/服务账号主体过滤、脱敏 CSV 导出、批量禁用、批量过期、批量操作无筛选拒绝审计、基础风险视图、泄露风险基础轮换建议、单 Key 泄露窗口分析、单 Key 错误/限流事件统一视图、泄露上报管理员告警收件箱、告警确认处理、Webhook/邮件/IM 告警投递 outbox、列表、手动重放和脱敏 payload、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝、RPM/TPM 拒绝、基础 Redis 鉴权 lookup cache 命中/预热/禁用失效和 router Redis 兼容已覆盖 |
 | P2 | 支付充值 | 充值码批次/备注/过期策略、充值码创建拒绝、兑换成功与拒绝审计、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求及拒绝审计、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账和明确失败审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回及拒绝审计、支付人工退款落账及拒绝审计；更多 provider 自动退款适配待补 |
 | P2 | 观测审计 | 成功登录、API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status、可配置 HTTP/Panic JSON line 结构化日志和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis up 与错误计数/日志库/outbox 指标测试已覆盖；继续补更完整结构化失败事实、更多管理审计动作和生产 `/ready` |

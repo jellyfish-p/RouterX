@@ -37,6 +37,22 @@ type OAuthRegisterRequest struct {
 	Email              string `json:"email"`
 }
 
+type OIDCRegistrationRequiredResponse struct {
+	RegistrationRequired bool   `json:"registration_required"`
+	RegistrationTicket   string `json:"registration_ticket"`
+	Provider             string `json:"provider"`
+	SuggestedUsername    string `json:"suggested_username"`
+	Email                string `json:"email,omitempty"`
+}
+
+type OIDCRegisterRequest struct {
+	RegistrationTicket string `json:"registration_ticket" binding:"required"`
+	Username           string `json:"username" binding:"required,min=3,max=64"`
+	Password           string `json:"password" binding:"required,min=6,max=128"`
+	DisplayName        string `json:"display_name"`
+	Email              string `json:"email"`
+}
+
 // UserBrief 用户简要信息 (脱敏)
 type UserBrief struct {
 	ID          uint   `json:"id"`

@@ -20,10 +20,12 @@ import (
 )
 
 var (
-	ErrOIDCProviderDisabled     = errors.New("oidc provider is disabled")
-	ErrOIDCInvalidCallback      = errors.New("oidc callback is invalid")
-	ErrOIDCIdentityNotBound     = errors.New("oidc identity is not bound")
-	ErrOIDCIdentityAlreadyBound = errors.New("oidc identity is already bound")
+	ErrOIDCProviderDisabled          = errors.New("oidc provider is disabled")
+	ErrOIDCInvalidCallback           = errors.New("oidc callback is invalid")
+	ErrOIDCIdentityNotBound          = errors.New("oidc identity is not bound")
+	ErrOIDCIdentityAlreadyBound      = errors.New("oidc identity is already bound")
+	ErrOIDCRegistrationDisabled      = errors.New("oidc registration is disabled")
+	ErrOIDCRegistrationTicketInvalid = errors.New("oidc registration ticket is invalid")
 )
 
 type oidcProviderConfig struct {
@@ -42,8 +44,31 @@ type oidcDiscoveryDocument struct {
 }
 
 type oidcTokenClaims struct {
-	Issuer  string
-	Subject string
+	Issuer            string
+	Subject           string
+	Email             string
+	SuggestedUsername string
+	DisplayName       string
+}
+
+type OIDCCallbackResult struct {
+	User                 *model.User
+	Token                string
+	RegistrationRequired *OIDCRegistrationChallenge
+}
+
+type OIDCRegistrationChallenge struct {
+	Provider          string
+	Ticket            string
+	SuggestedUsername string
+	Email             string
+}
+
+type OIDCRegistrationResult struct {
+	User      *model.User
+	Token     string
+	Identity  *model.UserIdentity
+	Recovered bool
 }
 
 // OIDCLoginURL builds an Authorization Code Flow redirect from provider discovery.
@@ -77,26 +102,28 @@ func (s *AuthService) OIDCLoginURL(provider, state, nonce, redirectURI string) (
 	return parsed.String(), nil
 }
 
-// OIDCCallbackLogin validates the signed ID Token and logs in an already-bound OIDC identity.
-func (s *AuthService) OIDCCallbackLogin(provider, code, redirectURI, expectedNonce string) (*model.User, string, error) {
+// OIDCCallbackLogin validates the signed ID Token. It logs in an already-bound
+// OIDC identity, or returns a signed registration challenge when first-time
+// OIDC registration is explicitly enabled.
+func (s *AuthService) OIDCCallbackLogin(provider, code, redirectURI, expectedNonce string) (*OIDCCallbackResult, error) {
 	cfg, err := loadOIDCProviderConfig(provider)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if strings.TrimSpace(code) == "" || strings.TrimSpace(expectedNonce) == "" {
-		return nil, "", ErrOIDCInvalidCallback
+		return nil, ErrOIDCInvalidCallback
 	}
 	discovery, err := discoverOIDCProvider(cfg)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	idToken, err := exchangeOIDCCode(cfg, discovery, code, redirectURI)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	claims, err := validateOIDCIDToken(discovery, cfg, idToken, expectedNonce)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	var identity model.UserIdentity
@@ -104,21 +131,144 @@ func (s *AuthService) OIDCCallbackLogin(provider, code, redirectURI, expectedNon
 		Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOIDC, cfg.Provider, claims.Subject).
 		First(&identity).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, "", ErrOIDCIdentityNotBound
+		challenge, challengeErr := s.oidcRegistrationChallenge(cfg, claims)
+		if challengeErr != nil {
+			return nil, challengeErr
+		}
+		return &OIDCCallbackResult{RegistrationRequired: challenge}, nil
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if identity.User == nil || identity.User.Status != common.UserStatusEnabled {
-		return nil, "", ErrOIDCIdentityNotBound
+		return nil, ErrOIDCIdentityNotBound
 	}
 	now := time.Now()
 	_ = internal.DB.Model(&identity).Update("last_used_at", &now).Error
 	token, err := signUserLoginToken(identity.User.ID, identity.User.Role)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return identity.User, token, nil
+	return &OIDCCallbackResult{User: identity.User, Token: token}, nil
+}
+
+func (s *AuthService) oidcRegistrationChallenge(cfg oidcProviderConfig, claims oidcTokenClaims) (*OIDCRegistrationChallenge, error) {
+	if err := oidcRegistrationPolicyError(cfg.Provider); err != nil {
+		if errors.Is(err, ErrSelfRegistrationDisabled) ||
+			errors.Is(err, ErrUsernameRegistrationDisabled) ||
+			errors.Is(err, ErrRegistrationCaptchaRequired) ||
+			errors.Is(err, ErrOIDCRegistrationDisabled) {
+			return nil, ErrOIDCIdentityNotBound
+		}
+		return nil, err
+	}
+	email := normalizeEmail(claims.Email)
+	suggestedUsername := suggestedOAuthUsername(cfg.Provider, map[string]interface{}{
+		"preferred_username": claims.SuggestedUsername,
+	}, email, claims.Subject)
+	displayName := strings.TrimSpace(claims.DisplayName)
+	if displayName == "" {
+		displayName = suggestedUsername
+	}
+	ticketClaims := oauthRegistrationTicketClaims{
+		Type:              "oidc_register",
+		Provider:          cfg.Provider,
+		Identifier:        claims.Subject,
+		Email:             email,
+		SuggestedUsername: suggestedUsername,
+		DisplayName:       displayName,
+		IssuedAt:          time.Now().Unix(),
+		ExpiresAt:         time.Now().Add(10 * time.Minute).Unix(),
+	}
+	ticket, err := signOIDCRegistrationTicket(ticketClaims)
+	if err != nil {
+		return nil, err
+	}
+	return &OIDCRegistrationChallenge{
+		Provider:          cfg.Provider,
+		Ticket:            ticket,
+		SuggestedUsername: suggestedUsername,
+		Email:             email,
+	}, nil
+}
+
+func (s *AuthService) OIDCRegister(provider, ticket, username, password, displayName, email string) (*OIDCRegistrationResult, error) {
+	claims, err := parseOIDCRegistrationTicket(ticket)
+	if err != nil {
+		return nil, err
+	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" || claims.Provider != provider {
+		return nil, ErrOIDCRegistrationTicketInvalid
+	}
+	if err := oidcRegistrationPolicyError(provider); err != nil {
+		return nil, err
+	}
+	username = strings.TrimSpace(username)
+	email = normalizeEmail(email)
+	if claims.Email != "" {
+		email = claims.Email
+	}
+	if displayName = strings.TrimSpace(displayName); displayName == "" {
+		displayName = strings.TrimSpace(claims.DisplayName)
+	}
+	if displayName == "" {
+		displayName = username
+	}
+	if username == "" || password == "" {
+		return nil, errors.New("username and password are required")
+	}
+	if len(password) < 6 {
+		return nil, errors.New("password length must be at least 6")
+	}
+
+	var result *OIDCRegistrationResult
+	err = internal.DB.Transaction(func(tx *gorm.DB) error {
+		var existing model.UserIdentity
+		err := tx.Where("method = ? AND provider = ? AND identifier = ?", model.UserIdentityMethodOIDC, claims.Provider, claims.Identifier).First(&existing).Error
+		switch {
+		case err == nil:
+			return ErrOIDCIdentityAlreadyBound
+		case errors.Is(err, gorm.ErrRecordNotFound):
+		default:
+			return err
+		}
+
+		registered, err := registerPasswordUserTx(tx, username, password, displayName, email)
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		identity := model.UserIdentity{
+			UserID:     registered.User.ID,
+			Method:     model.UserIdentityMethodOIDC,
+			Provider:   claims.Provider,
+			Identifier: claims.Identifier,
+			VerifiedAt: &now,
+			LastUsedAt: &now,
+		}
+		if err := tx.Create(&identity).Error; err != nil {
+			return err
+		}
+		result = &OIDCRegistrationResult{
+			User:      registered.User,
+			Identity:  &identity,
+			Recovered: registered.Recovered,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.User == nil {
+		return nil, ErrOIDCInvalidCallback
+	}
+	token, err := signUserLoginToken(result.User.ID, result.User.Role)
+	if err != nil {
+		return nil, err
+	}
+	result.Token = token
+	return result, nil
 }
 
 // OIDCBindCallback binds a verified OIDC subject to an existing logged-in user.
@@ -196,6 +346,34 @@ func (s *AuthService) OIDCBindCallback(userID uint, provider, code, redirectURI,
 		return nil, ErrOIDCInvalidCallback
 	}
 	return bound, nil
+}
+
+func signOIDCRegistrationTicket(claims oauthRegistrationTicketClaims) (string, error) {
+	return signOAuthRegistrationTicket(claims)
+}
+
+func parseOIDCRegistrationTicket(ticket string) (*oauthRegistrationTicketClaims, error) {
+	claims, err := parseExternalRegistrationTicket(ticket)
+	if err != nil {
+		return nil, ErrOIDCRegistrationTicketInvalid
+	}
+	if claims.Type != "oidc_register" {
+		return nil, ErrOIDCRegistrationTicketInvalid
+	}
+	return claims, nil
+}
+
+func oidcRegistrationPolicyError(provider string) error {
+	if err := registrationPolicyError(); err != nil {
+		return err
+	}
+	if !loginBoolSettingDefault("auth.register.oidc.enabled", false) {
+		return ErrOIDCRegistrationDisabled
+	}
+	if !loginBoolSettingDefault("oidc."+provider+".register_enabled", false) {
+		return ErrOIDCRegistrationDisabled
+	}
+	return nil
 }
 
 func loadOIDCProviderConfig(provider string) (oidcProviderConfig, error) {
@@ -341,7 +519,24 @@ func validateOIDCIDToken(discovery oidcDiscoveryDocument, cfg oidcProviderConfig
 	if !ok || int64(exp) <= time.Now().Unix() {
 		return oidcTokenClaims{}, ErrOIDCInvalidCallback
 	}
-	return oidcTokenClaims{Issuer: issuer, Subject: subject}, nil
+	return oidcTokenClaims{
+		Issuer:            issuer,
+		Subject:           subject,
+		Email:             oidcStringClaim(claims, "email"),
+		SuggestedUsername: oidcStringClaim(claims, "preferred_username", "nickname", "username"),
+		DisplayName:       oidcStringClaim(claims, "name", "display_name"),
+	}, nil
+}
+
+func oidcStringClaim(claims map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := claims[key].(string); ok {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
 }
 
 func fetchOIDCRSAKey(jwksURI, keyID string) (*rsa.PublicKey, error) {
