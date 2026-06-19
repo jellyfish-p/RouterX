@@ -3183,7 +3183,7 @@ paths:
     post:
       tags: [Gemini Compatible]
       summary: Gemini streamGenerateContent
-      description: 基础实现；Gemini 请求会先转换为 OpenAI-compatible Chat Completions stream 请求，当前支持 OpenAI-compatible SSE 上游，并将 OpenAI data chunk 转为 Gemini SSE data 事件。usage 从 OpenAI SSE chunk 提取后写入 RouterX 日志并扣费；Gemini 原生上游流式、完整 chunk 字段保真和 usage fallback 仍以 docs/PROTOCOLS.md 为准。
+      description: 基础实现；命中 OpenAI-compatible 上游时，Gemini 请求会先转换为 Chat Completions stream 请求，并将 OpenAI data chunk 转为 Gemini SSE data 事件；命中 Gemini 上游时，会原生调用 /v1beta/models/{model}:streamGenerateContent 并透传 Gemini SSE。usage 会从 OpenAI SSE usage 或 Gemini usageMetadata 提取后写入 RouterX 日志并扣费；异常中断事件、完整 SDK 行为和 usage fallback 仍以 docs/PROTOCOLS.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:

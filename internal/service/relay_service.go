@@ -34,8 +34,9 @@ type RelayService struct {
 }
 
 type RelayStreamResult struct {
-	ContentType string
-	forward     func(write func([]byte) error, flush func()) (*relay.Usage, error)
+	ContentType    string
+	outputProtocol string
+	forward        func(write func([]byte) error, flush func()) (*relay.Usage, error)
 }
 
 type RelayRawResult struct {
@@ -453,7 +454,8 @@ func (s *RelayService) RelayAnthropicMessagesStream(ctx context.Context, token *
 	}
 	state := &anthropicStreamState{}
 	return &RelayStreamResult{
-		ContentType: "text/event-stream",
+		ContentType:    "text/event-stream",
+		outputProtocol: inputProtocolAnthropic,
 		forward: func(write func([]byte) error, flush func()) (*relay.Usage, error) {
 			return result.Forward(func(chunk []byte) error {
 				converted, ok, err := openAIStreamChunkToAnthropic(chunk, state)
@@ -531,8 +533,12 @@ func (s *RelayService) RelayGeminiGenerateContentStream(ctx context.Context, tok
 	if err != nil {
 		return nil, err
 	}
+	if result.outputProtocol == inputProtocolGemini {
+		return result, nil
+	}
 	return &RelayStreamResult{
-		ContentType: "text/event-stream",
+		ContentType:    "text/event-stream",
+		outputProtocol: inputProtocolGemini,
 		forward: func(write func([]byte) error, flush func()) (*relay.Usage, error) {
 			return result.Forward(func(chunk []byte) error {
 				converted, ok, err := openAIStreamChunkToGemini(chunk)
@@ -994,7 +1000,8 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if err := s.enforceChannelRateLimit(ctx, token, channel, reqInfo.Model, clientIP); err != nil {
 		return nil, err
 	}
-	if !supportsOpenAICompatibleStream(channel.Type) {
+	nativeGeminiStream := supportsGeminiNativeStream(ctx, apiType, channel.Type)
+	if !supportsOpenAICompatibleStream(channel.Type) && !nativeGeminiStream {
 		_ = s.recordLog(ctx, token, channel, reqInfo.Model, nil, common.LogStatusFailed, 0, "streaming is not supported for selected upstream channel", clientIP)
 		return nil, &HTTPError{Status: 502, Message: "streaming is not supported for selected upstream channel", Type: "upstream_error", Code: "unsupported_stream_channel"}
 	}
@@ -1031,7 +1038,8 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 		return nil, routerXHopHTTPError(err)
 	}
 
-	endpoint := adapter.GetAPIEndpoint(apiType, upstreamModel)
+	upstreamAPIType := relayStreamUpstreamAPIType(ctx, apiType, channel.Type)
+	endpoint := adapter.GetAPIEndpoint(upstreamAPIType, upstreamModel)
 	reqCtx, cancel := context.WithTimeout(ctx, s.relayTimeout())
 	reqCtx = relay.ContextWithUpstreamOptions(reqCtx, reqInfo.Upstream.Transport)
 	if forwardRouterXHop {
@@ -1079,14 +1087,21 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	}
 	s.recordUpstreamDuration(channel, "success", time.Since(start))
 	return &RelayStreamResult{
-		ContentType: contentType,
+		ContentType:    contentType,
+		outputProtocol: relayStreamOutputProtocol(ctx, apiType, channel.Type),
 		forward: func(write func([]byte) error, flush func()) (*relay.Usage, error) {
 			defer func() {
 				s.recordRelayDuration(apiType, channel, time.Since(relayStart))
 			}()
 			defer cancel()
 			defer resp.Body.Close()
-			usage, err := forwardOpenAIStream(resp.Body, write, flush)
+			var usage *relay.Usage
+			var err error
+			if nativeGeminiStream {
+				usage, err = forwardGeminiStream(resp.Body, write, flush)
+			} else {
+				usage, err = forwardOpenAIStream(resp.Body, write, flush)
+			}
 			latencyMs := int(time.Since(start).Milliseconds())
 			if err != nil {
 				_ = s.markChannelFailure(channel, latencyMs)
@@ -4193,6 +4208,32 @@ func forwardOpenAIStream(r io.Reader, write func([]byte) error, flush func()) (*
 	return usage, nil
 }
 
+func forwardGeminiStream(r io.Reader, write func([]byte) error, flush func()) (*relay.Usage, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2<<20)
+	var usage *relay.Usage
+	for scanner.Scan() {
+		line := append([]byte(nil), scanner.Bytes()...)
+		if parsed := usageFromGeminiStreamLine(line); parsed != nil {
+			usage = parsed
+		}
+		chunk := append(line, '\n')
+		if err := write(chunk); err != nil {
+			return usage, err
+		}
+		if len(bytes.TrimSpace(line)) == 0 && flush != nil {
+			flush()
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return usage, err
+	}
+	if flush != nil {
+		flush()
+	}
+	return usage, nil
+}
+
 func usageFromOpenAIStreamLine(line []byte) *relay.Usage {
 	line = bytes.TrimSpace(line)
 	if !bytes.HasPrefix(line, []byte("data:")) {
@@ -4214,6 +4255,37 @@ func usageFromOpenAIStreamLine(line []byte) *relay.Usage {
 	}
 	// Responses API streams carry final usage inside the response.completed event.
 	return usageFromOpenAIUsageRaw(envelope.Response.Usage)
+}
+
+func usageFromGeminiStreamLine(line []byte) *relay.Usage {
+	line = bytes.TrimSpace(line)
+	if !bytes.HasPrefix(line, []byte("data:")) {
+		return nil
+	}
+	payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+	if bytes.Equal(payload, []byte("[DONE]")) || !json.Valid(payload) {
+		return nil
+	}
+	var envelope struct {
+		UsageMetadata struct {
+			PromptTokenCount     int `json:"promptTokenCount"`
+			CandidatesTokenCount int `json:"candidatesTokenCount"`
+			TotalTokenCount      int `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
+	}
+	_ = json.Unmarshal(payload, &envelope)
+	usage := relay.Usage{
+		PromptTokens:     envelope.UsageMetadata.PromptTokenCount,
+		CompletionTokens: envelope.UsageMetadata.CandidatesTokenCount,
+		TotalTokens:      envelope.UsageMetadata.TotalTokenCount,
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.TotalTokens == 0 {
+		return nil
+	}
+	return &usage
 }
 
 func usageFromOpenAIUsageRaw(raw json.RawMessage) *relay.Usage {
@@ -4258,6 +4330,26 @@ func supportsOpenAICompatibleStream(channelType int) bool {
 	default:
 		return false
 	}
+}
+
+func supportsGeminiNativeStream(ctx context.Context, apiType relay.APIType, channelType int) bool {
+	return apiType == relay.APIChatCompletions &&
+		channelType == common.ChannelTypeGemini &&
+		strings.EqualFold(relayIngressProtocolFromContext(ctx), inputProtocolGemini)
+}
+
+func relayStreamUpstreamAPIType(ctx context.Context, apiType relay.APIType, channelType int) relay.APIType {
+	if supportsGeminiNativeStream(ctx, apiType, channelType) {
+		return relay.APIGeminiStreamGenerateContent
+	}
+	return apiType
+}
+
+func relayStreamOutputProtocol(ctx context.Context, apiType relay.APIType, channelType int) string {
+	if supportsGeminiNativeStream(ctx, apiType, channelType) {
+		return inputProtocolGemini
+	}
+	return relayIngressProtocolFromAPIType(apiType)
 }
 
 func clientStatusFromUpstream(status int) int {

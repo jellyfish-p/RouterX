@@ -192,6 +192,7 @@
 | `TestChatCompletionStreamCancelsUpstreamWhenClientWriteFails` | 客户端写入失败时取消上游 SSE 请求，失败日志不扣费 |
 | `TestChatCompletionStreamRejectsNonOpenAISSEUpstream` | 非 OpenAI SSE 通道在流式请求中被上游前拒绝 |
 | `TestGeminiStreamGenerateContentConvertsOpenAISSEAndDeductsUsage` | Gemini streamGenerateContent 转 OpenAI-compatible Chat SSE，上游 OpenAI chunk 转 Gemini SSE 事件，usage 扣费和日志 |
+| `TestGeminiStreamGenerateContentToGeminiUpstreamPreservesNativeSSEAndDeductsUsage` | Gemini streamGenerateContent 命中 Gemini 上游时调用原生 `:streamGenerateContent`，透传 Gemini SSE，不发送 OpenAI `messages`，保留原生 `generationConfig/safetySettings/tools`，并从 `usageMetadata` 扣费 |
 | `TestAnthropicMessagesStreamConvertsOpenAISSEAndDeductsUsage` | Anthropic Messages stream 转 OpenAI-compatible Chat SSE，上游 OpenAI chunk 转 Anthropic SSE 事件，usage 扣费和日志 |
 | `TestChatCompletionUpstreamBadRequestMapping` | 下游 400 错误映射、失败日志和密钥不泄露 |
 | `TestChatCompletionUpstreamErrorStatusMapping` | 下游 401/403/429/5xx 错误映射、失败日志、通道错误计数和不扣费 |
@@ -527,7 +528,7 @@ Gemini-compatible 最小断言：
 | 阶段 | 能力 | 测试重点 |
 |------|------|----------|
 | P0 | 开发者最小接入 | base URL + RouterX API Key、`/v1/models`、非流式 Chat、OpenAI Chat/Completions 基础 SSE、日志和扣费 |
-| P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 和 Legacy Completions 基础 chunk 转发、Anthropic Messages Stream/Gemini streamGenerateContent 到 OpenAI-compatible SSE、usage 扣费和客户端断开取消；继续补 Anthropic/Gemini 原生上游流式、usage fallback 和已输出后不切换通道的更多故障注入 |
+| P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 和 Legacy Completions 基础 chunk 转发、Anthropic Messages Stream/Gemini streamGenerateContent 到 OpenAI-compatible SSE、Gemini streamGenerateContent 到 Gemini 原生 SSE、usage 扣费和客户端断开取消；继续补 Anthropic 原生上游流式、usage fallback 和已输出后不切换通道的更多故障注入 |
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
 | P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Gemini generateContent 到 Gemini 上游的非流式原生字段保真、Anthropic/Gemini 基础流式、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为和 Anthropic/Gemini 原生流式路径 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |

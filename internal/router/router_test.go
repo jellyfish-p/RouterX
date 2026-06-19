@@ -8144,6 +8144,138 @@ func TestGeminiStreamGenerateContentConvertsOpenAISSEAndDeductsUsage(t *testing.
 	}
 }
 
+func TestGeminiStreamGenerateContentToGeminiUpstreamPreservesNativeSSEAndDeductsUsage(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamPath := ""
+	upstreamAPIKey := ""
+	var upstreamBody map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamPath = req.URL.Path
+		upstreamAPIKey = req.URL.Query().Get("key")
+		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
+			t.Errorf("Gemini upstream received invalid JSON: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"na\"}]},\"finishReason\":\"STOP\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"tive\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":4,\"totalTokenCount\":6}}\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "gemini-native-stream",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeGemini,
+		"name":     "gemini-native-stream",
+		"models":   "gemini-native-stream",
+		"base_url": upstream.URL,
+		"api_key":  "gemini-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create Gemini channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	streamResp := performJSON(r, http.MethodPost, "/v1/models/gemini-native-stream:streamGenerateContent", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{
+				"role":  "user",
+				"parts": []map[string]string{{"text": "hello"}},
+			},
+		},
+		"generationConfig": map[string]interface{}{
+			"temperature":      0.2,
+			"responseMimeType": "application/json",
+		},
+		"safetySettings": []map[string]string{
+			{
+				"category":  "HARM_CATEGORY_DANGEROUS_CONTENT",
+				"threshold": "BLOCK_ONLY_HIGH",
+			},
+		},
+		"tools": []map[string]interface{}{
+			{"functionDeclarations": []map[string]interface{}{{"name": "lookup"}}},
+		},
+	})
+	body := streamResp.Body.String()
+	if streamResp.Code != http.StatusOK || !strings.Contains(streamResp.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("Gemini native stream should return SSE, got %d %s %s", streamResp.Code, streamResp.Header().Get("Content-Type"), body)
+	}
+	if !strings.Contains(body, `"candidates"`) || !strings.Contains(body, `"text":"na"`) || !strings.Contains(body, `"text":"tive"`) || !strings.Contains(body, `"usageMetadata"`) || !strings.Contains(body, `"totalTokenCount":6`) {
+		t.Fatalf("Gemini native stream should preserve Gemini SSE chunks, got %s", body)
+	}
+	if strings.Contains(body, `"choices"`) || strings.Contains(body, `[DONE]`) {
+		t.Fatalf("Gemini native stream should not leak OpenAI stream shape, got %s", body)
+	}
+	if upstreamCalls != 1 || upstreamPath != "/v1beta/models/gemini-native-stream:streamGenerateContent" || upstreamAPIKey != "gemini-secret" {
+		t.Fatalf("Gemini native stream should call Gemini stream endpoint once, calls=%d path=%q key=%q", upstreamCalls, upstreamPath, upstreamAPIKey)
+	}
+	if _, ok := upstreamBody["messages"]; ok {
+		t.Fatalf("OpenAI messages should not be sent to Gemini native stream upstream: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx private field leaked to Gemini stream upstream: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["_routerx_source_protocol"]; ok {
+		t.Fatalf("RouterX source marker leaked to Gemini stream upstream: %#v", upstreamBody)
+	}
+	config, ok := upstreamBody["generationConfig"].(map[string]interface{})
+	if !ok || config["temperature"] != float64(0.2) || config["responseMimeType"] != "application/json" {
+		t.Fatalf("Gemini native stream should preserve generationConfig: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["safetySettings"].([]interface{}); !ok {
+		t.Fatalf("Gemini native stream should preserve safetySettings: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["tools"].([]interface{}); !ok {
+		t.Fatalf("Gemini native stream should preserve tools: %#v", upstreamBody)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 44 {
+		t.Fatalf("Gemini native stream usage should deduct token budget by 6, got %d", storedToken.RemainQuota)
+	}
+	var callLog model.Log
+	if err := internal.DB.Where("token_id = ? AND status = ?", tokenPayload.Data.ID, common.LogStatusSuccess).First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.QuotaUsed != 6 || callLog.TotalTokens != 6 || callLog.PromptTokens != 2 || callLog.CompletionTokens != 4 {
+		t.Fatalf("unexpected Gemini native stream success log: %+v", callLog)
+	}
+}
+
 func TestAnthropicMessagesStreamConvertsOpenAISSEAndDeductsUsage(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
