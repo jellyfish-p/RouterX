@@ -24,10 +24,10 @@ type AlertService struct {
 }
 
 const (
-	defaultAlertDeliveryListLimit     = 20
-	defaultAlertWebhookTimeoutSeconds = 5
-	defaultAlertWebhookMaxAttempts    = 3
-	maxAlertDeliveryReplayLimit       = 100
+	defaultAlertDeliveryListLimit      = 20
+	defaultAlertDeliveryTimeoutSeconds = 5
+	defaultAlertDeliveryMaxAttempts    = 3
+	maxAlertDeliveryReplayLimit        = 100
 )
 
 func NewAlertService() *AlertService {
@@ -66,12 +66,22 @@ type AlertDeliveryFilter struct {
 	PageSize int
 }
 
-type alertWebhookConfig struct {
+type alertDeliveryConfig struct {
+	Target      string
 	Enabled     bool
 	URL         string
 	Timeout     time.Duration
 	MaxAttempts int
+	UserAgent   string
 }
+
+var alertDeliveryTargets = []string{
+	model.AlertDeliveryTargetWebhook,
+	model.AlertDeliveryTargetEmail,
+	model.AlertDeliveryTargetIM,
+}
+
+var ErrInvalidAlertDeliveryTarget = errors.New("invalid alert delivery target")
 
 func (s *AlertService) Create(input CreateAlertInput) (*model.AlertEvent, error) {
 	input.Type = strings.TrimSpace(input.Type)
@@ -99,13 +109,15 @@ func (s *AlertService) Create(input CreateAlertInput) (*model.AlertEvent, error)
 		Message:      input.Message,
 		DetailsJSON:  model.NewJSONValue(input.Details),
 	}
-	enqueueWebhook := s.webhookDeliveryConfigured()
+	deliveryTargets := s.configuredAlertDeliveryTargets()
 	if err := internal.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&alert).Error; err != nil {
 			return err
 		}
-		if enqueueWebhook {
-			return enqueueAlertWebhookDelivery(tx, alert.ID)
+		for _, target := range deliveryTargets {
+			if err := enqueueAlertDelivery(tx, alert.ID, target); err != nil {
+				return err
+			}
 		}
 		return nil
 	}); err != nil {
@@ -217,12 +229,12 @@ func (s *AlertService) ListDeliveries(filter AlertDeliveryFilter) ([]model.Alert
 	return items, total, err
 }
 
-func (s *AlertService) StartWebhookDeliveryWorker(ctx context.Context) {
+func (s *AlertService) StartAlertDeliveryWorker(ctx context.Context) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	go func() {
-		s.replayWebhookDeliveryBatch(defaultAlertDeliveryListLimit)
+		s.replayAlertDeliveryBatch(defaultAlertDeliveryListLimit)
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for {
@@ -230,20 +242,17 @@ func (s *AlertService) StartWebhookDeliveryWorker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				s.replayWebhookDeliveryBatch(defaultAlertDeliveryListLimit)
+				s.replayAlertDeliveryBatch(defaultAlertDeliveryListLimit)
 			}
 		}
 	}()
 }
 
-func (s *AlertService) ReplayWebhookDeliveryOutbox(limit int) (int, error) {
-	cfg, err := s.alertWebhookConfig()
-	if err != nil {
-		return 0, err
-	}
-	if !cfg.Enabled {
-		return 0, nil
-	}
+func (s *AlertService) StartWebhookDeliveryWorker(ctx context.Context) {
+	s.StartAlertDeliveryWorker(ctx)
+}
+
+func (s *AlertService) ReplayAlertDeliveryOutbox(limit int, target string) (int, error) {
 	if limit <= 0 {
 		limit = defaultAlertDeliveryListLimit
 	}
@@ -251,9 +260,41 @@ func (s *AlertService) ReplayWebhookDeliveryOutbox(limit int) (int, error) {
 		limit = maxAlertDeliveryReplayLimit
 	}
 
+	configs, err := s.alertDeliveryConfigs(target)
+	if err != nil {
+		return 0, err
+	}
+	if len(configs) == 0 {
+		return 0, nil
+	}
+
+	replayed := 0
+	var firstErr error
+	for _, cfg := range configs {
+		if replayed >= limit {
+			break
+		}
+		count, err := s.replayAlertDeliveryTarget(cfg, limit-replayed)
+		replayed += count
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return replayed, firstErr
+}
+
+func (s *AlertService) ReplayWebhookDeliveryOutbox(limit int) (int, error) {
+	return s.ReplayAlertDeliveryOutbox(limit, model.AlertDeliveryTargetWebhook)
+}
+
+func (s *AlertService) replayAlertDeliveryTarget(cfg alertDeliveryConfig, limit int) (int, error) {
+	if !cfg.Enabled || limit <= 0 {
+		return 0, nil
+	}
+
 	var items []model.AlertDeliveryOutbox
 	if err := internal.DB.
-		Where("target = ? AND status = ? AND next_attempt_at <= ?", model.AlertDeliveryTargetWebhook, model.AlertDeliveryStatusPending, time.Now()).
+		Where("target = ? AND status = ? AND next_attempt_at <= ?", cfg.Target, model.AlertDeliveryStatusPending, time.Now()).
 		Order("id ASC").
 		Limit(limit).
 		Find(&items).Error; err != nil {
@@ -273,7 +314,7 @@ func (s *AlertService) ReplayWebhookDeliveryOutbox(limit int) (int, error) {
 			}
 			continue
 		}
-		if err := s.sendAlertWebhook(cfg, &alert); err != nil {
+		if err := s.sendAlertDelivery(cfg, &alert); err != nil {
 			if markErr := markAlertDeliveryFailed(item, cfg.MaxAttempts, err); markErr != nil && firstErr == nil {
 				firstErr = markErr
 			}
@@ -293,35 +334,66 @@ func (s *AlertService) ReplayWebhookDeliveryOutbox(limit int) (int, error) {
 	return replayed, firstErr
 }
 
-func enqueueAlertWebhookDelivery(tx *gorm.DB, alertID uint) error {
+func enqueueAlertDelivery(tx *gorm.DB, alertID uint, target string) error {
 	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.AlertDeliveryOutbox{
 		AlertID:       alertID,
-		Target:        model.AlertDeliveryTargetWebhook,
+		Target:        target,
 		Status:        model.AlertDeliveryStatusPending,
 		NextAttemptAt: time.Now(),
 	}).Error
 }
 
-func (s *AlertService) webhookDeliveryConfigured() bool {
-	cfg, err := s.alertWebhookConfig()
+func (s *AlertService) configuredAlertDeliveryTargets() []string {
+	configs, err := s.alertDeliveryConfigs("")
 	if err != nil {
-		stdlog.Printf("[AlertService] WARN: alert webhook setting read failed: %v", err)
-		return false
+		stdlog.Printf("[AlertService] WARN: alert delivery setting read failed: %v", err)
+		return nil
 	}
-	return cfg.Enabled
+	targets := make([]string, 0, len(configs))
+	for _, cfg := range configs {
+		targets = append(targets, cfg.Target)
+	}
+	return targets
 }
 
-func (s *AlertService) alertWebhookConfig() (alertWebhookConfig, error) {
-	cfg := alertWebhookConfig{
-		Timeout:     time.Duration(defaultAlertWebhookTimeoutSeconds) * time.Second,
-		MaxAttempts: defaultAlertWebhookMaxAttempts,
+func (s *AlertService) alertDeliveryConfigs(target string) ([]alertDeliveryConfig, error) {
+	target = strings.TrimSpace(target)
+	targets := alertDeliveryTargets
+	if target != "" {
+		normalized, ok := normalizeAlertDeliveryTarget(target)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidAlertDeliveryTarget, target)
+		}
+		targets = []string{normalized}
+	}
+
+	configs := make([]alertDeliveryConfig, 0, len(targets))
+	for _, item := range targets {
+		cfg, err := s.alertDeliveryConfig(item)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.Enabled {
+			configs = append(configs, cfg)
+		}
+	}
+	return configs, nil
+}
+
+func (s *AlertService) alertDeliveryConfig(target string) (alertDeliveryConfig, error) {
+	cfg := alertDeliveryConfig{
+		Target:      target,
+		Timeout:     time.Duration(defaultAlertDeliveryTimeoutSeconds) * time.Second,
+		MaxAttempts: defaultAlertDeliveryMaxAttempts,
+		UserAgent:   alertDeliveryUserAgent(target),
 	}
 	settingSvc := s.settingSvc
 	if settingSvc == nil {
 		settingSvc = NewSettingService()
 	}
+	prefix := "alert." + target
 
-	enabled, err := settingSvc.GetBool("alert.webhook.enabled")
+	enabled, err := settingSvc.GetBool(prefix + ".enabled")
 	if err != nil {
 		if isMissingSetting(err) {
 			return cfg, nil
@@ -329,7 +401,7 @@ func (s *AlertService) alertWebhookConfig() (alertWebhookConfig, error) {
 		return cfg, err
 	}
 	cfg.Enabled = enabled
-	urlValue, err := settingSvc.Get("alert.webhook.url")
+	urlValue, err := settingSvc.Get(prefix + ".url")
 	if err != nil {
 		if !isMissingSetting(err) {
 			return cfg, err
@@ -339,7 +411,7 @@ func (s *AlertService) alertWebhookConfig() (alertWebhookConfig, error) {
 	}
 	cfg.Enabled = cfg.Enabled && cfg.URL != ""
 
-	timeoutSeconds, err := settingSvc.GetInt("alert.webhook.timeout_seconds")
+	timeoutSeconds, err := settingSvc.GetInt(prefix + ".timeout_seconds")
 	if err != nil {
 		if !isMissingSetting(err) {
 			return cfg, err
@@ -348,7 +420,7 @@ func (s *AlertService) alertWebhookConfig() (alertWebhookConfig, error) {
 		cfg.Timeout = time.Duration(timeoutSeconds) * time.Second
 	}
 
-	maxAttempts, err := settingSvc.GetInt("alert.webhook.max_attempts")
+	maxAttempts, err := settingSvc.GetInt(prefix + ".max_attempts")
 	if err != nil {
 		if !isMissingSetting(err) {
 			return cfg, err
@@ -359,19 +431,41 @@ func (s *AlertService) alertWebhookConfig() (alertWebhookConfig, error) {
 	return cfg, nil
 }
 
-func (s *AlertService) replayWebhookDeliveryBatch(batchSize int) {
-	if replayed, err := s.ReplayWebhookDeliveryOutbox(batchSize); err != nil {
-		stdlog.Printf("[AlertService] WARN: alert webhook replay failed replayed=%d: %v", replayed, err)
+func normalizeAlertDeliveryTarget(target string) (string, bool) {
+	target = strings.ToLower(strings.TrimSpace(target))
+	for _, item := range alertDeliveryTargets {
+		if target == item {
+			return item, true
+		}
+	}
+	return "", false
+}
+
+func alertDeliveryUserAgent(target string) string {
+	switch target {
+	case model.AlertDeliveryTargetEmail:
+		return "RouterX-Alert-Email"
+	case model.AlertDeliveryTargetIM:
+		return "RouterX-Alert-IM"
+	default:
+		return "RouterX-Alert-Webhook"
 	}
 }
 
-func (s *AlertService) sendAlertWebhook(cfg alertWebhookConfig, alert *model.AlertEvent) error {
+func (s *AlertService) replayAlertDeliveryBatch(batchSize int) {
+	if replayed, err := s.ReplayAlertDeliveryOutbox(batchSize, ""); err != nil {
+		stdlog.Printf("[AlertService] WARN: alert delivery replay failed replayed=%d: %v", replayed, err)
+	}
+}
+
+func (s *AlertService) sendAlertDelivery(cfg alertDeliveryConfig, alert *model.AlertEvent) error {
 	if alert == nil || !cfg.Enabled {
 		return nil
 	}
 	// Rebuild the payload from the sanitized alert fact so the outbox never stores secrets.
 	payload := map[string]interface{}{
 		"event":         "routerx.alert",
+		"target":        cfg.Target,
 		"id":            alert.ID,
 		"type":          alert.Type,
 		"severity":      alert.Severity,
@@ -396,8 +490,9 @@ func (s *AlertService) sendAlertWebhook(cfg alertWebhookConfig, alert *model.Ale
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "RouterX-Alert-Webhook")
+	req.Header.Set("User-Agent", cfg.UserAgent)
 	req.Header.Set("X-RouterX-Alert-Type", alert.Type)
+	req.Header.Set("X-RouterX-Alert-Target", cfg.Target)
 
 	client := s.httpClient
 	if client == nil {
@@ -410,7 +505,7 @@ func (s *AlertService) sendAlertWebhook(cfg alertWebhookConfig, alert *model.Ale
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("alert webhook returned status %d", resp.StatusCode)
+		return fmt.Errorf("alert %s delivery returned status %d", cfg.Target, resp.StatusCode)
 	}
 	return nil
 }

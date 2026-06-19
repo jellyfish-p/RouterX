@@ -4,6 +4,8 @@ import "time"
 
 const (
 	AlertDeliveryTargetWebhook = "webhook"
+	AlertDeliveryTargetEmail   = "email"
+	AlertDeliveryTargetIM      = "im"
 
 	AlertDeliveryStatusPending   = "pending"
 	AlertDeliveryStatusCompleted = "completed"

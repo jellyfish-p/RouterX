@@ -240,7 +240,9 @@ func validateSettingValue(key, value string) error {
 		return validateServerModeSetting(key, value)
 	case "jwt.admin_expire_hours", "jwt.user_expire_hours",
 		"relay.timeout", "relay.error_ban_threshold", "relay.error_probe_batch_size", "relay.routerx_max_hops", "routing.channel_cache.version", "payment.order_expire_minutes",
-		"alert.webhook.timeout_seconds", "alert.webhook.max_attempts":
+		"alert.webhook.timeout_seconds", "alert.webhook.max_attempts",
+		"alert.email.timeout_seconds", "alert.email.max_attempts",
+		"alert.im.timeout_seconds", "alert.im.max_attempts":
 		return validatePositiveIntSetting(key, value)
 	case "rate_limit.global_per_min", "rate_limit.per_token_per_min", "rate_limit.per_ip_per_min", "rate_limit.per_user_per_min", "rate_limit.per_model_per_min", "rate_limit.per_channel_per_min":
 		return validateNonNegativeIntSetting(key, value)
@@ -259,7 +261,7 @@ func validateSettingValue(key, value string) error {
 		"ready.production_strict", "payment.epay.enabled", "payment.stripe.enabled",
 		"payment.refund.auto_deduct", "payment.refund.allow_negative_balance", "payment.dispute.auto_disable_tokens", "payment.manual_adjust.require_reason",
 		"observability.metrics_enabled", "observability.audit_enabled", "observability.structured_logs_enabled",
-		"alert.webhook.enabled":
+		"alert.webhook.enabled", "alert.email.enabled", "alert.im.enabled":
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {
 			return errors.New(key + " must be a boolean")
@@ -292,7 +294,8 @@ func validateSettingValue(key, value string) error {
 		if len(value) != 3 {
 			return errors.New("payment.currency must be a 3-letter currency code")
 		}
-	case "payment.epay.gateway", "payment.epay.notify_url", "payment.epay.return_url", "payment.epay.refund_url", "alert.webhook.url":
+	case "payment.epay.gateway", "payment.epay.notify_url", "payment.epay.return_url", "payment.epay.refund_url",
+		"alert.webhook.url", "alert.email.url", "alert.im.url":
 		return validateOptionalURLSetting(key, value)
 	}
 	return nil

@@ -60,8 +60,12 @@ func (h *AlertHandler) ListDeliveries(c *gin.Context) {
 
 func (h *AlertHandler) ReplayDeliveries(c *gin.Context) {
 	limit := queryInt(c, "limit", 20)
-	replayed, err := h.svc.ReplayWebhookDeliveryOutbox(limit)
+	replayed, err := h.svc.ReplayAlertDeliveryOutbox(limit, c.Query("target"))
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidAlertDeliveryTarget) {
+			common.FailWithStatus(c, 400, "无效告警投递目标")
+			return
+		}
 		common.FailWithStatus(c, 500, "重放告警投递失败")
 		return
 	}

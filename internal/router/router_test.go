@@ -1223,6 +1223,185 @@ func TestAPIKeyLeakAlertWebhookDeliveryReplay(t *testing.T) {
 	}
 }
 
+func TestAPIKeyLeakAlertEmailAndIMDeliveryReplay(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	var emailPayloads []map[string]interface{}
+	emailServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost {
+			t.Errorf("expected POST email request, got %s", req.Method)
+		}
+		if got := req.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected application/json content type, got %q", got)
+		}
+
+		var payload map[string]interface{}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			t.Errorf("decode email payload: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		emailPayloads = append(emailPayloads, payload)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer emailServer.Close()
+
+	var imPayloads []map[string]interface{}
+	imServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost {
+			t.Errorf("expected POST IM request, got %s", req.Method)
+		}
+		if got := req.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("expected application/json content type, got %q", got)
+		}
+
+		var payload map[string]interface{}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			t.Errorf("decode IM payload: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		imPayloads = append(imPayloads, payload)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer imServer.Close()
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"alert.email.enabled":         "true",
+		"alert.email.url":             emailServer.URL,
+		"alert.email.timeout_seconds": "5",
+		"alert.email.max_attempts":    "3",
+		"alert.im.enabled":            "true",
+		"alert.im.url":                imServer.URL,
+		"alert.im.timeout_seconds":    "5",
+		"alert.im.max_attempts":       "3",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "leak-multichannel-key",
+		"remain_quota": int64(100),
+	})
+	var createPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createPayload); err != nil {
+		t.Fatal(err)
+	}
+	if createResp.Code != http.StatusOK || createPayload.Data.ID == 0 || createPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+
+	reportResp := performJSON(r, http.MethodPost, "/v0/user/token/"+uintString(createPayload.Data.ID)+"/report-leak", rootJWT, map[string]interface{}{
+		"reason": "pasted_to_chat",
+	})
+	if reportResp.Code != http.StatusOK {
+		t.Fatalf("report leak failed: %d %s", reportResp.Code, reportResp.Body.String())
+	}
+
+	pendingResp := performJSON(r, http.MethodGet, "/v0/admin/alerts/deliveries?status=pending", rootJWT, nil)
+	var pendingPayload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				Target string `json:"target"`
+				Status string `json:"status"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(pendingResp.Body.Bytes(), &pendingPayload); err != nil {
+		t.Fatalf("pending delivery list should be json: %v", err)
+	}
+	if pendingResp.Code != http.StatusOK || pendingPayload.Data.Total != 2 || len(pendingPayload.Data.Data) != 2 {
+		t.Fatalf("expected two pending deliveries, got %d %s", pendingResp.Code, pendingResp.Body.String())
+	}
+	pendingTargets := map[string]bool{}
+	for _, item := range pendingPayload.Data.Data {
+		if item.Status != "pending" {
+			t.Fatalf("unexpected pending delivery status: %+v", item)
+		}
+		pendingTargets[item.Target] = true
+	}
+	if !pendingTargets[model.AlertDeliveryTargetEmail] || !pendingTargets[model.AlertDeliveryTargetIM] {
+		t.Fatalf("expected email and IM pending deliveries, got %#v", pendingTargets)
+	}
+
+	replayResp := performJSON(r, http.MethodPost, "/v0/admin/alerts/deliveries/replay?limit=10", rootJWT, nil)
+	var replayPayload struct {
+		Data struct {
+			Replayed int `json:"replayed"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(replayResp.Body.Bytes(), &replayPayload); err != nil {
+		t.Fatalf("replay response should be json: %v", err)
+	}
+	if replayResp.Code != http.StatusOK || replayPayload.Data.Replayed != 2 {
+		t.Fatalf("expected two replayed deliveries, got %d %s", replayResp.Code, replayResp.Body.String())
+	}
+	if len(emailPayloads) != 1 || len(imPayloads) != 1 {
+		t.Fatalf("expected one email and one IM payload, got email=%d im=%d", len(emailPayloads), len(imPayloads))
+	}
+
+	for target, payload := range map[string]map[string]interface{}{
+		model.AlertDeliveryTargetEmail: emailPayloads[0],
+		model.AlertDeliveryTargetIM:    imPayloads[0],
+	} {
+		if payload["event"] != "routerx.alert" || payload["target"] != target || payload["type"] != model.AlertTypeAPIKeyLeakReported {
+			t.Fatalf("unexpected %s payload event/target/type: %#v", target, payload)
+		}
+		if payload["severity"] != model.AlertSeverityCritical || payload["resource_type"] != "api_key" {
+			t.Fatalf("unexpected %s payload metadata: %#v", target, payload)
+		}
+		rawPayload, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal %s payload: %v", target, err)
+		}
+		if strings.Contains(string(rawPayload), createPayload.Data.Key) || strings.Contains(string(rawPayload), "sk-") {
+			t.Fatalf("%s payload leaked token secret: %s", target, string(rawPayload))
+		}
+	}
+
+	completedResp := performJSON(r, http.MethodGet, "/v0/admin/alerts/deliveries?status=completed", rootJWT, nil)
+	var completedPayload struct {
+		Data struct {
+			Total int64 `json:"total"`
+			Data  []struct {
+				Target      string     `json:"target"`
+				Status      string     `json:"status"`
+				CompletedAt *time.Time `json:"completed_at"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(completedResp.Body.Bytes(), &completedPayload); err != nil {
+		t.Fatalf("completed delivery list should be json: %v", err)
+	}
+	if completedResp.Code != http.StatusOK || completedPayload.Data.Total != 2 || len(completedPayload.Data.Data) != 2 {
+		t.Fatalf("expected two completed deliveries, got %d %s", completedResp.Code, completedResp.Body.String())
+	}
+	for _, item := range completedPayload.Data.Data {
+		if item.Status != "completed" || item.CompletedAt == nil {
+			t.Fatalf("expected completed delivery timestamp, got %+v", item)
+		}
+	}
+}
+
 func TestAPIKeyMetadataFiltersAndSanitizedExport(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	r := newTestRouter(t)

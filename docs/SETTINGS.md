@@ -88,6 +88,14 @@
 | `alert.webhook.url` | `alert` | string | `` | 否 | hot | alert | 空或绝对 URL |
 | `alert.webhook.timeout_seconds` | `alert` | int | `5` | 否 | hot | alert | `>0` |
 | `alert.webhook.max_attempts` | `alert` | int | `3` | 否 | hot | alert | `>0` |
+| `alert.email.enabled` | `alert` | bool | `false` | 否 | hot | alert | bool |
+| `alert.email.url` | `alert` | string | `` | 否 | hot | alert | 空或绝对 URL |
+| `alert.email.timeout_seconds` | `alert` | int | `5` | 否 | hot | alert | `>0` |
+| `alert.email.max_attempts` | `alert` | int | `3` | 否 | hot | alert | `>0` |
+| `alert.im.enabled` | `alert` | bool | `false` | 否 | hot | alert | bool |
+| `alert.im.url` | `alert` | string | `` | 否 | hot | alert | 空或绝对 URL |
+| `alert.im.timeout_seconds` | `alert` | int | `5` | 否 | hot | alert | `>0` |
+| `alert.im.max_attempts` | `alert` | int | `3` | 否 | hot | alert | `>0` |
 
 说明：
 
@@ -103,7 +111,7 @@
 - `relay.routerx_max_hops` 当前已在 RouterX-Compatible 上游转发路径生效，达到或超过上限时返回 `routerx_hop_exceeded` 且不调用上游。
 - `relay.log_body_max_bytes` 和 `log.body_max_bytes` 当前默认是 `0`，表示默认不记录请求/响应 body；显式开启 `log.request_body_enabled` / `log.response_body_enabled` 且配置正数上限后，非流式 Relay 日志会保存截断和脱敏后的请求/响应片段。
 - `billing.usage_missing_strategy` 当前支持 `minimum` 和 `reject`；`minimum` 保持最低计费兼容行为，`reject` 在上游成功但缺少 usage 时返回 `usage_missing` 且不扣费。
-- `alert.webhook.enabled=false` 时不会为新告警创建外部投递 outbox；开启且 `alert.webhook.url` 为绝对 URL 后，新告警会写入 `alert_delivery_outboxes`，后台 worker 或手动重放会发送脱敏 Webhook payload。
+- `alert.<target>.enabled=false` 时不会为新告警创建对应外部投递 outbox；当前 target 支持 `webhook`、`email` 和 `im`。开启且 `alert.<target>.url` 为绝对 URL 后，新告警会写入 `alert_delivery_outboxes`，后台 worker 或手动重放会发送脱敏告警 payload。
 
 ## P0 目标配置
 
@@ -202,6 +210,14 @@ P0 补齐这些配置时，应同时补测试：
 | `alert.webhook.url` | `` | P2 | 当前已校验；Webhook 接收地址，必须为空或绝对 URL |
 | `alert.webhook.timeout_seconds` | `5` | P2 | 当前已落地；单次 Webhook 请求超时时间，必须为正整数 |
 | `alert.webhook.max_attempts` | `3` | P2 | 当前已落地；失败后最大投递尝试次数，必须为正整数 |
+| `alert.email.enabled` | `false` | P2 | 当前已落地；是否启用邮件告警外部投递 |
+| `alert.email.url` | `` | P2 | 当前已校验；邮件网关 HTTP 接收地址，必须为空或绝对 URL |
+| `alert.email.timeout_seconds` | `5` | P2 | 当前已落地；单次邮件投递请求超时时间，必须为正整数 |
+| `alert.email.max_attempts` | `3` | P2 | 当前已落地；邮件投递失败后最大尝试次数，必须为正整数 |
+| `alert.im.enabled` | `false` | P2 | 当前已落地；是否启用 IM 告警外部投递 |
+| `alert.im.url` | `` | P2 | 当前已校验；IM 网关 HTTP 接收地址，必须为空或绝对 URL |
+| `alert.im.timeout_seconds` | `5` | P2 | 当前已落地；单次 IM 投递请求超时时间，必须为正整数 |
+| `alert.im.max_attempts` | `3` | P2 | 当前已落地；IM 投递失败后最大尝试次数，必须为正整数 |
 
 ### Payment
 
@@ -298,7 +314,7 @@ validate key exists
 - `payment.stripe.enabled=true` 但 `PAYMENT_STRIPE_SECRET_KEY` 或 `PAYMENT_STRIPE_WEBHOOK_SECRET` 不可用。
 - 迁移状态 dirty 或必要 settings 未加载。
 - `observability.structured_logs_enabled` 不是布尔值。
-- `alert.webhook.enabled` 不是布尔值，`alert.webhook.url` 不是绝对 URL，或 `alert.webhook.timeout_seconds` / `alert.webhook.max_attempts` 不是正整数。
+- `alert.<target>.enabled` 不是布尔值，`alert.<target>.url` 不是绝对 URL，或 `alert.<target>.timeout_seconds` / `alert.<target>.max_attempts` 不是正整数；当前 target 为 `webhook`、`email`、`im`。
 
 开发/演示模式可以降级启动，但必须给出明确警告，不能让用户误以为该状态适合生产。
 
