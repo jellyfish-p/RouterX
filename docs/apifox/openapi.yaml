@@ -2923,7 +2923,7 @@ paths:
     post:
       tags: [OpenAI Compatible]
       summary: 文本转语音转发
-      description: OpenAI-compatible Audio Speech 基础实现；JSON 请求体透传到上游 /v1/audio/speech，Azure OpenAI 通道转发到 /openai/v1/audio/speech?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 私有字段。response_format 省略或空字符串时交给上游默认策略，显式值只允许 mp3、opus、aac、flac、wav、pcm，非法返回 invalid_audio_response_format 且不调用上游、不扣费。上游音频字节流会保留 Content-Type 透传给客户端；OpenAI Audio Speech 响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算。完整时长限制和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Audio Speech 基础实现；JSON 请求体透传到上游 /v1/audio/speech，Azure OpenAI 通道转发到 /openai/v1/audio/speech?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 私有字段。本地要求 input 为 1-4096 字符字符串、voice 为非空字符串；response_format 省略或空字符串时交给上游默认策略，显式值只允许 mp3、opus、aac、flac、wav、pcm。非法请求返回 invalid_audio_speech_input、invalid_audio_speech_voice 或 invalid_audio_response_format，且不调用上游、不扣费。上游音频字节流会保留 Content-Type 透传给客户端；OpenAI Audio Speech 响应通常不携带 usage，P0 按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算。完整价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
@@ -3840,11 +3840,13 @@ components:
               input:
                 type: string
                 minLength: 1
-                description: 要合成的文本；RouterX 不在本地改写。
+                maxLength: 4096
+                description: 要合成的文本；RouterX 不在本地改写，空白字符串或超过 4096 字符时返回 invalid_audio_speech_input。
                 example: hello from RouterX
               voice:
                 type: string
-                description: 上游语音名称；合法值由上游模型决定。
+                minLength: 1
+                description: 上游语音名称；空字符串返回 invalid_audio_speech_voice，具体合法值由上游模型决定。
                 example: alloy
               response_format:
                 type: string
@@ -3975,7 +3977,7 @@ components:
           schema:
             $ref: "#/components/schemas/StandardResponse"
     OpenAIError:
-      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；Image Generations size 超出基础边界时返回 400 invalid_image_size；Audio Speech response_format 超出基础枚举时返回 400 invalid_audio_response_format；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
+      description: OpenAI-compatible /v1 错误。本地限流返回 rate_limit_error + rate_limit_exceeded；未知 /v1 路径在通过 API Key 鉴权后返回 404 unsupported_api；请求体超过 relay.max_request_body_bytes 时返回 413 request_body_too_large；Image Generations size 超出基础边界时返回 400 invalid_image_size；Audio Speech input/voice/response_format 超出基础契约时返回 400 invalid_audio_speech_input、invalid_audio_speech_voice 或 invalid_audio_response_format；OpenAI-compatible multipart 单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，路径形态、危险扩展名、扩展名或文件头与图片/音频 API 不匹配或可执行/脚本内容签名返回 400 unsafe_multipart_file；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type；非流式上游响应超过 relay.max_response_body_bytes 时返回 502 upstream_response_too_large。
       content:
         application/json:
           schema:

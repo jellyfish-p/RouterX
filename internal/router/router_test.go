@@ -17101,6 +17101,115 @@ func TestAudioSpeechRejectsInvalidResponseFormatBeforeUpstream(t *testing.T) {
 	}
 }
 
+func TestAudioSpeechRejectsInvalidRequestFieldsBeforeUpstream(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte{0x49, 0x44, 0x33})
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "audio-speech-fields",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "audio-speech-fields",
+		"models":   "tts-field-test",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	cases := []struct {
+		name     string
+		body     map[string]interface{}
+		wantCode string
+	}{
+		{
+			name: "empty input",
+			body: map[string]interface{}{
+				"model": "tts-field-test",
+				"input": "   ",
+				"voice": "alloy",
+			},
+			wantCode: "invalid_audio_speech_input",
+		},
+		{
+			name: "too long input",
+			body: map[string]interface{}{
+				"model": "tts-field-test",
+				"input": strings.Repeat("a", 4097),
+				"voice": "alloy",
+			},
+			wantCode: "invalid_audio_speech_input",
+		},
+		{
+			name: "empty voice",
+			body: map[string]interface{}{
+				"model": "tts-field-test",
+				"input": "hello",
+				"voice": "",
+			},
+			wantCode: "invalid_audio_speech_voice",
+		},
+	}
+	for _, tc := range cases {
+		resp := performJSON(r, http.MethodPost, "/v1/audio/speech", "Bearer "+tokenPayload.Data.Key, tc.body)
+		if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), `"code":"`+tc.wantCode+`"`) {
+			t.Fatalf("%s should return %s, got %d %s", tc.name, tc.wantCode, resp.Code, resp.Body.String())
+		}
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("invalid audio speech fields must not call upstream, got %d calls", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 50 {
+		t.Fatalf("invalid audio speech fields should not deduct token budget, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("invalid audio speech fields should not deduct user quota, got %d", root.Quota)
+	}
+}
+
 func TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

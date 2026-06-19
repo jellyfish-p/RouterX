@@ -406,11 +406,14 @@ var (
 	errEmbeddingBatchTooLarge = errors.New("embeddings input batch exceeds maximum size")
 	errInvalidImageSize       = errors.New("image size must be auto or WIDTHxHEIGHT within configured bounds")
 	errInvalidAudioFormat     = errors.New("audio response_format must be one of mp3, opus, aac, flac, wav, or pcm")
+	errInvalidAudioInput      = errors.New("audio speech input must be a non-empty string within configured bounds")
+	errInvalidAudioVoice      = errors.New("audio speech voice must be a non-empty string")
 )
 
 const maxEmbeddingBatchSize = 2048
 const maxImageGenerationDimension = 4096
 const maxImageGenerationPixels = 4194304
+const maxAudioSpeechInputRunes = 4096
 
 func (e *HTTPError) Error() string {
 	return e.Message
@@ -1329,6 +1332,7 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 		Stream  bool            `json:"stream"`
 		Input   json.RawMessage `json:"input"`
 		Size    json.RawMessage `json:"size"`
+		Voice   json.RawMessage `json:"voice"`
 		Format  json.RawMessage `json:"response_format"`
 		RouterX json.RawMessage `json:"routerx"`
 	}
@@ -1358,6 +1362,12 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 		}
 	}
 	if apiType == relay.APIAudioSpeech {
+		if err := validateAudioSpeechInput(payload.Input); err != nil {
+			return relayRequestInfo{}, err
+		}
+		if err := validateAudioSpeechVoice(payload.Voice); err != nil {
+			return relayRequestInfo{}, err
+		}
 		if err := validateAudioSpeechResponseFormat(payload.Format); err != nil {
 			return relayRequestInfo{}, err
 		}
@@ -1419,6 +1429,37 @@ func validateAudioSpeechResponseFormat(raw json.RawMessage) error {
 	default:
 		return errInvalidAudioFormat
 	}
+}
+
+// Audio Speech 的文本和 voice 是生成音频的必要输入，先在本地挡住空值和异常长文本。
+func validateAudioSpeechInput(raw json.RawMessage) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || isJSONNull(raw) {
+		return errInvalidAudioInput
+	}
+	var input string
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return errInvalidAudioInput
+	}
+	if strings.TrimSpace(input) == "" || len([]rune(input)) > maxAudioSpeechInputRunes {
+		return errInvalidAudioInput
+	}
+	return nil
+}
+
+func validateAudioSpeechVoice(raw json.RawMessage) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || isJSONNull(raw) {
+		return errInvalidAudioVoice
+	}
+	var voice string
+	if err := json.Unmarshal(raw, &voice); err != nil {
+		return errInvalidAudioVoice
+	}
+	if strings.TrimSpace(voice) == "" {
+		return errInvalidAudioVoice
+	}
+	return nil
 }
 
 // Embeddings 在本地验证 OpenAI 支持的 input 形态，避免无效批量请求进入会计费的上游链路。
@@ -1613,6 +1654,10 @@ func relayRequestErrorCode(err error) string {
 		return "invalid_image_size"
 	case errors.Is(err, errInvalidAudioFormat):
 		return "invalid_audio_response_format"
+	case errors.Is(err, errInvalidAudioInput):
+		return "invalid_audio_speech_input"
+	case errors.Is(err, errInvalidAudioVoice):
+		return "invalid_audio_speech_voice"
 	default:
 		return "invalid_request"
 	}
