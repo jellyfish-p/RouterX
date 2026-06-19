@@ -42,11 +42,20 @@ var (
 
 type AuthService struct{}
 
-const loginCodeRedisKeyPrefix = "auth:login_code:"
+const (
+	loginCodeRedisKeyPrefix       = "auth:login_code:"
+	registerCaptchaRedisKeyPrefix = "auth:register_captcha:"
+)
 
 type loginCodeRecord struct {
 	Method      string `json:"method"`
 	Account     string `json:"account"`
+	CodeHash    string `json:"code_hash"`
+	Attempts    int    `json:"attempts"`
+	MaxAttempts int    `json:"max_attempts,omitempty"`
+}
+
+type registerCaptchaRecord struct {
 	CodeHash    string `json:"code_hash"`
 	Attempts    int    `json:"attempts"`
 	MaxAttempts int    `json:"max_attempts,omitempty"`
@@ -61,9 +70,8 @@ type RegisterResult struct {
 	Recovered bool
 }
 
-// RegisterInput carries the unified self-registration payload. The captcha
-// fields are accepted for API compatibility but remain fail-closed until the
-// captcha verifier is implemented.
+// RegisterInput carries the unified self-registration payload. Captcha fields
+// are consumed from Redis when auth.register.captcha.required is enabled.
 type RegisterInput struct {
 	Username       string
 	Password       string
@@ -126,7 +134,7 @@ func (s *AuthService) Register(input RegisterInput) (*RegisterResult, error) {
 	if method == "" {
 		return nil, errors.New("register_method is invalid")
 	}
-	if err := registrationPolicyErrorForMethod(method); err != nil {
+	if err := registrationMethodPolicyErrorForMethod(method); err != nil {
 		return nil, err
 	}
 	username := strings.TrimSpace(input.Username)
@@ -148,6 +156,9 @@ func (s *AuthService) Register(input RegisterInput) (*RegisterResult, error) {
 	}
 	if method == "phone" && phone == "" {
 		return nil, errors.New("phone is required")
+	}
+	if err := registrationCaptchaPolicyError(input.CaptchaID, input.CaptchaCode); err != nil {
+		return nil, err
 	}
 
 	var result *RegisterResult
@@ -473,6 +484,13 @@ func registrationPolicyError() error {
 }
 
 func registrationPolicyErrorForMethod(method string) error {
+	if err := registrationMethodPolicyErrorForMethod(method); err != nil {
+		return err
+	}
+	return registrationCaptchaPolicyError("", "")
+}
+
+func registrationMethodPolicyErrorForMethod(method string) error {
 	settingSvc := NewSettingService()
 	if enabled, err := settingSvc.GetBool("auth.register.enabled"); err != nil || !enabled {
 		return ErrSelfRegistrationDisabled
@@ -493,11 +511,18 @@ func registrationPolicyErrorForMethod(method string) error {
 	default:
 		return errors.New("register_method is invalid")
 	}
-	// Captcha-backed self-registration is intentionally fail-closed until the captcha service lands.
-	if required, err := settingSvc.GetBool("auth.register.captcha.required"); err == nil && required {
+	return nil
+}
+
+func registrationCaptchaPolicyError(captchaID, captchaCode string) error {
+	required, err := NewSettingService().GetBool("auth.register.captcha.required")
+	if err != nil || !required {
+		return nil
+	}
+	if strings.TrimSpace(captchaID) == "" || strings.TrimSpace(captchaCode) == "" {
 		return ErrRegistrationCaptchaRequired
 	}
-	return nil
+	return verifyRegistrationCaptcha(captchaID, captchaCode)
 }
 
 func normalizeRegisterMethod(method string) string {
@@ -1297,6 +1322,67 @@ func invalidLocalCredentialError() error {
 	return errors.New("account or credential is invalid")
 }
 
+func verifyRegistrationCaptcha(captchaID, captchaCode string) error {
+	if internal.RDB == nil {
+		return ErrRegistrationCaptchaRequired
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	key := registerCaptchaRedisKey(captchaID)
+	raw, err := internal.RDB.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return ErrRegistrationCaptchaRequired
+	}
+	if err != nil {
+		return ErrRegistrationCaptchaRequired
+	}
+	var record registerCaptchaRecord
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		return ErrRegistrationCaptchaRequired
+	}
+	maxAttempts := record.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = captchaMaxAttempts()
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = 5
+	}
+
+	codeHash := common.SHA256Hex(strings.TrimSpace(captchaCode))
+	codeMatches := strings.TrimSpace(record.CodeHash) != "" && hmac.Equal([]byte(record.CodeHash), []byte(codeHash))
+	if !codeMatches {
+		return recordFailedRegistrationCaptchaAttempt(ctx, key, record, maxAttempts)
+	}
+	deleted, err := internal.RDB.Del(ctx, key).Result()
+	if err != nil || deleted == 0 {
+		return ErrRegistrationCaptchaRequired
+	}
+	return nil
+}
+
+func recordFailedRegistrationCaptchaAttempt(ctx context.Context, key string, record registerCaptchaRecord, maxAttempts int) error {
+	record.Attempts++
+	if record.Attempts >= maxAttempts {
+		if err := internal.RDB.Del(ctx, key).Err(); err != nil {
+			return ErrRegistrationCaptchaRequired
+		}
+		return ErrRegistrationCaptchaRequired
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return ErrRegistrationCaptchaRequired
+	}
+	if err := internal.RDB.Set(ctx, key, string(raw), redis.KeepTTL).Err(); err != nil {
+		return ErrRegistrationCaptchaRequired
+	}
+	return ErrRegistrationCaptchaRequired
+}
+
+func registerCaptchaRedisKey(captchaID string) string {
+	return registerCaptchaRedisKeyPrefix + strings.TrimSpace(captchaID)
+}
+
 func verifyLoginCode(method, account, captchaID, captchaCode string) error {
 	if internal.RDB == nil {
 		return ErrLoginCodeVerifierUnavailable
@@ -1319,7 +1405,7 @@ func verifyLoginCode(method, account, captchaID, captchaCode string) error {
 	}
 	maxAttempts := record.MaxAttempts
 	if maxAttempts <= 0 {
-		maxAttempts = loginCodeMaxAttempts()
+		maxAttempts = captchaMaxAttempts()
 	}
 	if maxAttempts <= 0 {
 		maxAttempts = 5
@@ -1363,7 +1449,7 @@ func loginCodeRedisKey(captchaID string) string {
 	return loginCodeRedisKeyPrefix + strings.TrimSpace(captchaID)
 }
 
-func loginCodeMaxAttempts() int {
+func captchaMaxAttempts() int {
 	value, err := NewSettingService().Get("auth.captcha.max_attempts")
 	if err != nil {
 		return 5

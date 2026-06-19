@@ -235,7 +235,7 @@ paths:
     post:
       tags: [User Auth]
       summary: 用户注册
-      description: 统一自助注册入口；默认关闭公开注册。register_method 省略时按 username 处理，也支持 email 和 phone；三种方法都必须提交 username/password，并分别要求 auth.register.username.enabled、auth.register.email.enabled 或 auth.register.phone.enabled 为 true。当前验证码服务未落地，auth.register.captcha.required=true 时 fail-closed 拒绝无验证码注册。新账号注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id；请求提供 email/phone 时会创建 email/local 或 phone/local 登录标识，但密码哈希只保存到 username/local 主身份；同名、同邮箱或同手机号 identity 命中已注销普通用户时会恢复原 users.id、启用账号、更新本地密码身份和展示名，补齐同用户本地登录标识，保留额度/分组/日志/历史流水，不自动启用旧 API Key，并写 user.recover 审计。
+      description: 统一自助注册入口；默认关闭公开注册。register_method 省略时按 username 处理，也支持 email 和 phone；三种方法都必须提交 username/password，并分别要求 auth.register.username.enabled、auth.register.email.enabled 或 auth.register.phone.enabled 为 true。auth.register.captcha.required=true 时必须提交 captcha_id/captcha_code，服务端读取 auth:register_captcha:<captcha_id> Redis 记录并比对 SHA256(captcha_code)，成功后一次性删除验证码；验证码缺失、过期、错误、超过尝试次数或 Redis 不可用会拒绝注册。新账号注册会应用 auth.register.default_quota 和可解析的 auth.register.default_group_id；请求提供 email/phone 时会创建 email/local 或 phone/local 登录标识，但密码哈希只保存到 username/local 主身份；同名、同邮箱或同手机号 identity 命中已注销普通用户时会恢复原 users.id、启用账号、更新本地密码身份和展示名，补齐同用户本地登录标识，保留额度/分组/日志/历史流水，不自动启用旧 API Key，并写 user.recover 审计。
       requestBody:
         required: true
         content:
@@ -257,7 +257,7 @@ paths:
         "400":
           $ref: "#/components/responses/StandardBadRequest"
         "403":
-          description: 公开注册关闭、用户名注册关闭，或当前无验证码请求但 auth.register.captcha.required=true。
+          description: 公开注册关闭、对应注册方法关闭，或 auth.register.captcha.required=true 但验证码不可用或不匹配。
           content:
             application/json:
               schema:
@@ -399,7 +399,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
         "403":
-          description: 自助注册、OAuth 注册或 provider 注册开关关闭，或验证码策略阻断当前无验证码注册。
+          description: 自助注册、OAuth 注册或 provider 注册开关关闭，或验证码策略阻断补齐注册。
           content:
             application/json:
               schema:
@@ -514,7 +514,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
         "403":
-          description: 自助注册、OIDC 注册或 provider 注册开关关闭，或验证码策略阻断当前无验证码注册。
+          description: 自助注册、OIDC 注册或 provider 注册开关关闭，或验证码策略阻断补齐注册。
           content:
             application/json:
               schema:
@@ -4748,10 +4748,10 @@ components:
           description: 本次自助注册入口；省略时按 username 处理。
         captcha_id:
           type: string
-          description: 预留验证码 ID；当前 auth.register.captcha.required=true 时仍 fail-closed。
+          description: 注册验证码 ID；auth.register.captcha.required=true 时必填，对应 Redis key 为 auth:register_captcha:<captcha_id>。
         captcha_code:
           type: string
-          description: 预留验证码答案；当前 auth.register.captcha.required=true 时仍 fail-closed。
+          description: 注册验证码答案；auth.register.captcha.required=true 时必填，服务端使用 SHA256(captcha_code) 与 Redis 记录比对。
     OAuthRegistrationRequiredResponse:
       type: object
       properties:

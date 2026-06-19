@@ -128,6 +128,8 @@
 | `TestAPIKeyAuthCacheWarmsAndClearsOnDisable` | API Key DB 鉴权成功后预热 Redis lookup cache，禁用 Key 后立即清理对应映射 |
 | `TestUserRegisterRespectsRegistrationSettings` | 自助注册默认关闭；开启后仍受用户名注册和验证码开关约束，并应用默认额度/分组；附带 email identity 不保存重复密码哈希且可复用主密码登录 |
 | `TestUserRegisterSupportsEmailAndPhoneMethods` | 统一注册入口支持 `register_method=email/phone`；分别受邮箱/手机号注册开关控制，仍创建有密码用户名账号，并写入无重复密码哈希的 email/phone 本地身份 |
+| `TestUserRegisterConsumesRedisCaptchaWhenRequired` | `auth.register.captcha.required=true` 时用户名、邮箱和手机号注册会消费 Redis 注册验证码，成功后验证码不可复用 |
+| `TestUserRegisterCaptchaTracksAttemptsAndExpiresCode` | 注册验证码错误尝试会累计，达到 `auth.captcha.max_attempts` 后删除 Redis 记录并拒绝后续正确验证码 |
 | `TestUserRegisterRestoresCancelledEmailAndPhoneIdentities` | 已注销普通用户通过同邮箱或同手机号重新注册时恢复原账号、更新本地密码和展示名，并写 `user.recover` 审计 |
 | `TestUserLoginRespectsLoginMethodSettings` | 用户名密码登录保持可用；email/phone 密码登录默认关闭，开启对应 setting 后已有本地身份可登录，且 email 身份可复用 `username/local` 主密码 |
 | `TestUserLoginCodeCredentialFailsClosedWithoutVerifier` | 统一登录显式提交 `credential_type=code` 时不会回退到密码登录；缺少 Redis 验证器时按对应开关 fail-closed 且不签发 JWT |

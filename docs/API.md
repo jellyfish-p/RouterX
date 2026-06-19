@@ -701,7 +701,7 @@ Provider 退款请求：
 
 - 注册和登录不需要 User JWT，但需要系统已初始化。
 - 用户名密码登录是当前本地登录基线；email/phone 密码登录只对已有本地身份生效，并分别受 `auth.login.email_password.enabled` 与 `auth.login.phone_password.enabled` 控制，默认关闭；本地 email/phone 身份复用同一用户的 `username/local` 主密码，不要求各自保存独立密码哈希。统一登录接口已经识别 `credential_type=password|code`；验证码登录支持 Redis 中的短期验证码记录校验和一次性消费，Redis 缺失或不可用时 fail-closed 返回 403，不会回退为密码登录。
-- 自部署商业级默认关闭公开自助注册；`POST /v0/user/register` 当前支持 `register_method=username/email/phone`，分别需要 `auth.register.enabled=true`、对应注册方法开关为 true 且 `auth.register.captcha.required=false` 才可用。完整验证码注册属于后续增强。
+- 自部署商业级默认关闭公开自助注册；`POST /v0/user/register` 当前支持 `register_method=username/email/phone`，分别需要 `auth.register.enabled=true`、对应注册方法开关为 true。`auth.register.captcha.required=true` 时必须提交 Redis 中存在且匹配的注册验证码；验证码发送接口仍属后续增强。
 - 管理员创建用户不受自助注册开关影响。
 - 个人信息、日志和账单需要 User JWT。
 
@@ -741,7 +741,7 @@ Provider 退款请求：
 }
 ```
 
-`register_method` 省略时按 `username` 处理；`email` 方法必须填写 email 并开启 `auth.register.email.enabled`，`phone` 方法必须填写 phone 并开启 `auth.register.phone.enabled`。注册策略拒绝返回 403，例如公开注册关闭、对应注册方法关闭，或当前无验证码请求但 `auth.register.captcha.required=true`。新账号注册成功时会应用 `auth.register.default_quota` 和可解析的 `auth.register.default_group_id`。如果请求提供 `email` 或 `phone`，服务端会规范化并创建对应 `email/local` 或 `phone/local` identity 作为可选登录标识，但密码哈希只保存到 `username/local` 主身份。若同名 `username/local`、同邮箱 `email/local` 或同手机号 `phone/local` identity 命中已注销的普通用户账号，当前接口会恢复原 `users.id`，把账号状态改回启用，更新本地密码身份和展示名；恢复请求附带未被其他账号占用的 `email` 或 `phone` 时，会补齐同用户的本地登录标识。恢复保留原额度、分组、日志和历史流水，不会自动启用旧 API Key，并写入 `user.recover` 审计。
+`register_method` 省略时按 `username` 处理；`email` 方法必须填写 email 并开启 `auth.register.email.enabled`，`phone` 方法必须填写 phone 并开启 `auth.register.phone.enabled`。注册策略拒绝返回 403，例如公开注册关闭、对应注册方法关闭，或 `auth.register.captcha.required=true` 但未提供有效验证码。启用注册验证码时，服务端读取 `auth:register_captcha:<captcha_id>` Redis 记录并比对 `SHA256(captcha_code)`，验证码正确后删除 Redis key；验证码缺失、过期、错误、超过尝试次数或 Redis 不可用都会拒绝注册。新账号注册成功时会应用 `auth.register.default_quota` 和可解析的 `auth.register.default_group_id`。如果请求提供 `email` 或 `phone`，服务端会规范化并创建对应 `email/local` 或 `phone/local` identity 作为可选登录标识，但密码哈希只保存到 `username/local` 主身份。若同名 `username/local`、同邮箱 `email/local` 或同手机号 `phone/local` identity 命中已注销的普通用户账号，当前接口会恢复原 `users.id`，把账号状态改回启用，更新本地密码身份和展示名；恢复请求附带未被其他账号占用的 `email` 或 `phone` 时，会补齐同用户的本地登录标识。恢复保留原额度、分组、日志和历史流水，不会自动启用旧 API Key，并写入 `user.recover` 审计。
 
 自助修改个人信息使用 `PUT /v0/user/self`。当前实现允许更新展示名、email 和 phone；email 会先规范化为小写去空格，phone 会去除首尾空格，再分别和同用户 `email/local` 或 `phone/local` identity 在同一事务中保持一致。这些 identity 不保存重复密码哈希，邮箱或手机号密码登录开启后仍复用同用户 `username/local` 主密码。目标 email 或 phone 如果已绑定其他用户身份，接口返回 400，用户资料和 identity 都不会部分落库。`GET /v0/user/self`、登录和注册响应中的 `UserBrief` 会返回当前主邮箱和主手机号。
 

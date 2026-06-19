@@ -2926,6 +2926,198 @@ func TestUserRegisterSupportsEmailAndPhoneMethods(t *testing.T) {
 	}
 }
 
+func TestUserRegisterConsumesRedisCaptchaWhenRequired(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":          "true",
+		"auth.register.username.enabled": "true",
+		"auth.register.email.enabled":    "true",
+		"auth.register.phone.enabled":    "true",
+		"auth.register.captcha.required": "true",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	oldRDB := internal.RDB
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = oldRDB
+	})
+
+	tests := []struct {
+		name   string
+		id     string
+		code   string
+		body   map[string]interface{}
+		lookup map[string]string
+	}{
+		{
+			name: "username",
+			id:   "register-username-captcha",
+			code: "111111",
+			body: map[string]interface{}{
+				"username":     "captcha-username-user",
+				"password":     "password123",
+				"display_name": "Captcha Username User",
+			},
+			lookup: map[string]string{"username": "captcha-username-user"},
+		},
+		{
+			name: "email",
+			id:   "register-email-captcha",
+			code: "222222",
+			body: map[string]interface{}{
+				"register_method": "email",
+				"username":        "captcha-email-user",
+				"password":        "password123",
+				"display_name":    "Captcha Email User",
+				"email":           "Captcha-Email@Example.COM",
+			},
+			lookup: map[string]string{"username": "captcha-email-user", "email": "captcha-email@example.com"},
+		},
+		{
+			name: "phone",
+			id:   "register-phone-captcha",
+			code: "333333",
+			body: map[string]interface{}{
+				"register_method": "phone",
+				"username":        "captcha-phone-user",
+				"password":        "password123",
+				"display_name":    "Captcha Phone User",
+				"phone":           " +15550003333 ",
+			},
+			lookup: map[string]string{"username": "captcha-phone-user", "phone": "+15550003333"},
+		},
+	}
+	for _, tc := range tests {
+		seedRouterRegisterCaptcha(t, rdb, tc.id, tc.code)
+		body := make(map[string]interface{}, len(tc.body)+2)
+		for key, value := range tc.body {
+			body[key] = value
+		}
+		body["captcha_id"] = tc.id
+		body["captcha_code"] = tc.code
+		resp := performJSON(r, http.MethodPost, "/v0/user/register", "", body)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("%s registration with captcha should succeed, got %d %s", tc.name, resp.Code, resp.Body.String())
+		}
+		if _, err := rdb.Get(context.Background(), routerRegisterCaptchaKey(tc.id)).Result(); !errors.Is(err, redis.Nil) {
+			t.Fatalf("%s captcha should be consumed after registration, err=%v", tc.name, err)
+		}
+		for field, value := range tc.lookup {
+			var count int64
+			if err := internal.DB.Model(&model.User{}).Where(field+" = ?", value).Count(&count).Error; err != nil {
+				t.Fatal(err)
+			}
+			if count != 1 {
+				t.Fatalf("%s registration should persist users.%s=%q, got count=%d", tc.name, field, value, count)
+			}
+		}
+	}
+
+	reusedResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "captcha-reuse-user",
+		"password":     "password123",
+		"display_name": "Captcha Reuse User",
+		"captcha_id":   "register-username-captcha",
+		"captcha_code": "111111",
+	})
+	if reusedResp.Code != http.StatusForbidden {
+		t.Fatalf("consumed registration captcha should not be reusable, got %d %s", reusedResp.Code, reusedResp.Body.String())
+	}
+	var reusedCount int64
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "captcha-reuse-user").Count(&reusedCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reusedCount != 0 {
+		t.Fatalf("reused registration captcha must not create user, got count=%d", reusedCount)
+	}
+}
+
+func TestUserRegisterCaptchaTracksAttemptsAndExpiresCode(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":          "true",
+		"auth.register.username.enabled": "true",
+		"auth.register.captcha.required": "true",
+		"auth.captcha.max_attempts":      "2",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	oldRDB := internal.RDB
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = oldRDB
+	})
+	seedRouterRegisterCaptcha(t, rdb, "register-attempt-captcha", "123456")
+
+	for i := 0; i < 2; i++ {
+		resp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+			"username":     fmt.Sprintf("register-wrong-captcha-%d", i),
+			"password":     "password123",
+			"display_name": "Wrong Captcha User",
+			"captcha_id":   "register-attempt-captcha",
+			"captcha_code": "000000",
+		})
+		if resp.Code != http.StatusForbidden {
+			t.Fatalf("wrong captcha attempt %d should fail, got %d %s", i+1, resp.Code, resp.Body.String())
+		}
+	}
+	if _, err := rdb.Get(context.Background(), routerRegisterCaptchaKey("register-attempt-captcha")).Result(); !errors.Is(err, redis.Nil) {
+		t.Fatalf("registration captcha should be deleted after max attempts, err=%v", err)
+	}
+	expiredResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "register-expired-captcha-user",
+		"password":     "password123",
+		"display_name": "Expired Captcha User",
+		"captcha_id":   "register-attempt-captcha",
+		"captcha_code": "123456",
+	})
+	if expiredResp.Code != http.StatusForbidden {
+		t.Fatalf("expired registration captcha should not register, got %d %s", expiredResp.Code, expiredResp.Body.String())
+	}
+	var count int64
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "register-expired-captcha-user").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expired registration captcha must not create user, got count=%d", count)
+	}
+}
+
 func TestUserRegisterRestoresCancelledEmailAndPhoneIdentities(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
@@ -4024,6 +4216,25 @@ func seedRouterLoginCode(t *testing.T, rdb *redis.Client, id, method, account, c
 
 func routerLoginCodeKey(id string) string {
 	return "auth:login_code:" + strings.TrimSpace(id)
+}
+
+func seedRouterRegisterCaptcha(t *testing.T, rdb *redis.Client, id, code string) {
+	t.Helper()
+	record := map[string]interface{}{
+		"code_hash": common.SHA256Hex(strings.TrimSpace(code)),
+		"attempts":  0,
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rdb.Set(context.Background(), routerRegisterCaptchaKey(id), string(raw), 5*time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func routerRegisterCaptchaKey(id string) string {
+	return "auth:register_captcha:" + strings.TrimSpace(id)
 }
 
 func TestUserLoginWritesAuditLogWithoutSecrets(t *testing.T) {
