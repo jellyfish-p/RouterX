@@ -545,6 +545,61 @@ func TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions(t *testing.T
 	}
 }
 
+func TestApifoxV1RequestBodyPropertiesHaveHumanReadableDescriptions(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := make([]string, 0)
+
+	for _, operation := range apifoxOperationsWithRequestBodies(doc) {
+		if !strings.Contains(operation, " /v1/") {
+			continue
+		}
+		rawRequestBody, _ := apifoxOperationRequestBody(doc, operation)
+		requestBody, ok := apifoxResolveMapRef(doc, rawRequestBody)
+		if !ok {
+			issues = append(issues, operation+" requestBody ref did not resolve to an object")
+			continue
+		}
+		content, ok := requestBody["content"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for mediaType, rawMedia := range content {
+			media, ok := rawMedia.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			rawSchema, ok := media["schema"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			schema, ok := apifoxResolveMapRef(doc, rawSchema)
+			if !ok {
+				issues = append(issues, operation+" requestBody "+mediaType+" schema ref did not resolve to an object")
+				continue
+			}
+			properties, ok := schema["properties"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			for name, rawProperty := range properties {
+				property, ok := rawProperty.(map[string]interface{})
+				if !ok {
+					issues = append(issues, operation+" requestBody property "+name+" is not an object")
+					continue
+				}
+				if strings.TrimSpace(apifoxSchemaDescription(doc, property)) == "" {
+					issues = append(issues, operation+" requestBody property "+name+" missing description")
+				}
+			}
+		}
+	}
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml /v1 request body properties need human-readable descriptions:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxOpenAPIInternalRefsResolve(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
@@ -792,6 +847,9 @@ func TestAcceptanceG0EvidenceNamesDocLinkCheck(t *testing.T) {
 	}
 	if !strings.Contains(evidence, "TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions") {
 		issues = append(issues, "G0 evidence must name TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions")
+	}
+	if !strings.Contains(evidence, "TestApifoxV1RequestBodyPropertiesHaveHumanReadableDescriptions") {
+		issues = append(issues, "G0 evidence must name TestApifoxV1RequestBodyPropertiesHaveHumanReadableDescriptions")
 	}
 	if strings.Contains(evidence, "文档链接检查") {
 		issues = append(issues, "G0 evidence still uses manual 文档链接检查 wording")

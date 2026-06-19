@@ -28,6 +28,7 @@
 | `TestApifoxOpenAPIParametersHaveHumanReadableDescriptions` | 检查每个 path/query/header 参数都有可读说明，避免 Apifox 导入后只显示字段名而缺少用途说明 |
 | `TestApifoxOpenAPIRequestBodiesHaveHumanReadableDescriptionsAndSchemas` | 检查每个 requestBody 都有可读说明、content 和 schema，避免 Apifox 导入后请求体节点只有空壳或缺少字段结构 |
 | `TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v0` 请求体顶层字段都有可读说明，避免管理端和用户端接口在 Apifox 中只有字段名而缺少用途、边界或安全语义 |
+| `TestApifoxV1RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v1` 模型入口请求体顶层字段都有可读说明，避免 OpenAI/Anthropic/Gemini 兼容接口在 Apifox 中缺少字段用途或转换语义 |
 | `TestApifoxOpenAPIInternalRefsResolve` | 递归检查 `docs/apifox/openapi.yaml` 内部 `$ref`，确保 requestBodies、responses、schemas、parameters 等组件引用都能解析，防止 Apifox 导入时出现断链 |
 | `TestApifoxOpenAPISecurityMatchesRouteGroups` | 检查 `/v1/*` operation 声明 `ApiKeyBearer`，`/v0/admin/*` 和除注册/登录/OAuth 公开入口及公开回调外的 `/v0/user/*` operation 声明 `UserJWT`，避免可导入文档遗漏鉴权要求 |
 | `TestApifoxOpenAPIOperationTagsAreDeclared` | 检查每个公开 operation 都带有非空 tags，且对应 tag 已在 OpenAPI 顶层声明并带说明，避免 Apifox 导入后接口分组缺失或漂移 |

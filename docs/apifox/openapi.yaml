@@ -4235,7 +4235,9 @@ components:
               model:
                 type: string
                 example: claude-3-5-sonnet-latest
+                description: Anthropic 模型名；当前 count_tokens 主要用于入口兼容和本地近似计数。
               system:
+                description: Anthropic system 提示；基础实现会统计文本内容。
                 oneOf:
                   - type: string
                     example: be concise
@@ -4253,6 +4255,7 @@ components:
               messages:
                 type: array
                 minItems: 1
+                description: Anthropic 消息数组；基础实现会统计 content 中的文本。
                 items:
                   type: object
                   required: [role, content]
@@ -4294,6 +4297,7 @@ components:
               contents:
                 type: array
                 minItems: 1
+                description: Gemini Content 数组；generateContent 和 streamGenerateContent 的主要输入。
                 items:
                   type: object
                   required: [parts]
@@ -4388,6 +4392,7 @@ components:
             properties:
               content:
                 type: object
+                description: Gemini 单条 embedding 内容；至少包含一个非空 text part。
                 required: [parts]
                 properties:
                   parts:
@@ -4547,6 +4552,7 @@ components:
                 description: OpenAI-compatible embedding 模型名；Azure OpenAI 通道会把该值作为 deployment 名。
                 example: text-embedding-3-small
               input:
+                description: OpenAI-compatible Embeddings 输入；可为单条文本、文本批量、token id 数组或 token id 数组批量。
                 oneOf:
                   - type: string
                     minLength: 1
@@ -4583,11 +4589,14 @@ components:
               encoding_format:
                 type: string
                 enum: [float, base64]
+                description: embedding 返回向量格式；默认由上游决定。
               dimensions:
                 type: integer
                 minimum: 1
+                description: 可选输出维度；支持的上游会按原样转发。
               user:
                 type: string
+                description: 上游 user 字段；按原样透传。
               routerx:
                 type: object
                 additionalProperties: true
@@ -4689,6 +4698,7 @@ components:
                 description: OpenAI-compatible 内容审核模型名；RouterX 使用该值选择通道。
                 example: omni-moderation-latest
               input:
+                description: 待审核内容；可为单条非空文本或非空文本数组。
                 oneOf:
                   - type: string
                     minLength: 1
@@ -4724,6 +4734,7 @@ components:
                 description: 客户端请求的模型名；RouterX 使用该值选择通道，Azure OpenAI 通道会保留为 deployment 名。
                 example: gpt-4.1-mini
               input:
+                description: Responses 输入；可为文本、原生输入数组或原生输入对象。
                 oneOf:
                   - type: string
                     description: 文本输入；命中 Anthropic/Gemini 上游时会映射为对应消息内容。
@@ -4778,6 +4789,7 @@ components:
                 description: 客户端请求的模型名；RouterX 使用该值选择通道，Azure OpenAI 通道会把该值作为 deployment 名。
                 example: text-davinci-003
               prompt:
+                description: Legacy Completions prompt；可为字符串、批量 prompt 或 token id。
                 oneOf:
                   - type: string
                     description: 单条文本 prompt。
@@ -4874,8 +4886,10 @@ components:
               temperature:
                 type: number
                 format: float
+                description: 采样温度；具体范围由上游模型决定。
               timestamp_granularities:
                 type: array
+                description: verbose_json 等响应格式下的时间戳粒度请求。
                 items:
                   type: string
                   enum: [word, segment]
@@ -4909,6 +4923,7 @@ components:
               n:
                 type: integer
                 minimum: 1
+                description: 生成图片数量；具体上限由上游模型决定。
               size:
                 type: string
                 description: 省略、空字符串或 auto 表示交给上游默认策略；WIDTHxHEIGHT 必须为正整数，单边不超过 4096，总像素不超过 4194304。非法值返回 invalid_image_size，且不调用上游、不扣费。
@@ -4916,8 +4931,10 @@ components:
               response_format:
                 type: string
                 enum: [url, b64_json]
+                description: OpenAI-compatible 图像响应格式；部分新模型可能忽略该字段。
               user:
                 type: string
+                description: 上游 user 字段；按原样透传。
               routerx:
                 type: string
                 description: RouterX 私有 JSON 字符串，例如 {"route":{"channel_group":"premium"},"upstream":{"headers":{"X-Upstream-Feature":"beta"}}}；发往真实上游前会被剥离，multipart 当前不合并 upstream.body 回文件表单。
@@ -7236,26 +7253,53 @@ components:
       type: object
       required: [model, messages]
       properties:
-        model: { type: string }
+        model:
+          type: string
+          description: OpenAI-compatible Chat 模型名；RouterX 用该值选择通道，Azure OpenAI 通道会把该值作为 deployment 名。
         messages:
           type: array
           minItems: 1
           description: 对话消息数组；缺失、null、空数组或非数组时返回 invalid_chat_messages，且不调用上游。
           items:
             $ref: "#/components/schemas/ChatMessage"
-        temperature: { type: number, format: double, nullable: true }
-        top_p: { type: number, format: double, nullable: true }
-        n: { type: integer, nullable: true }
+        temperature:
+          type: number
+          format: double
+          nullable: true
+          description: 采样温度；按原样转发给支持的上游。
+        top_p:
+          type: number
+          format: double
+          nullable: true
+          description: nucleus sampling 参数；按原样转发给支持的上游。
+        n:
+          type: integer
+          nullable: true
+          description: 生成候选数量；具体上限由上游模型决定。
         stream:
           type: boolean
           description: true 时返回 OpenAI-compatible SSE；当前仅支持 OpenAI SSE 形态通道。
         stop:
           type: array
           items: { type: string }
-        max_tokens: { type: integer, nullable: true }
-        presence_penalty: { type: number, format: double, nullable: true }
-        frequency_penalty: { type: number, format: double, nullable: true }
-        user: { type: string }
+          description: 停止序列列表。
+        max_tokens:
+          type: integer
+          nullable: true
+          description: 最大输出 token 数；按原样转发给支持的上游。
+        presence_penalty:
+          type: number
+          format: double
+          nullable: true
+          description: OpenAI-compatible presence penalty 参数；按原样转发给支持的上游。
+        frequency_penalty:
+          type: number
+          format: double
+          nullable: true
+          description: OpenAI-compatible frequency penalty 参数；按原样转发给支持的上游。
+        user:
+          type: string
+          description: 上游 user 字段；按原样透传。
         routerx:
           type: object
           description: RouterX 私有扩展字段；普通 OpenAI-compatible 上游不会透传。OpenAI-compatible Chat 命中 Gemini 上游时，可通过 provider.gemini.safetySettings 传递 Gemini 原生安全设置。
@@ -7475,25 +7519,39 @@ components:
       required: [model, messages]
       description: Anthropic-compatible Messages 请求；命中 Anthropic 上游时会保留列出的原生字段，命中 OpenAI-compatible 上游时会转换为 Chat 主链路并记录不可保真的字段降级。
       properties:
-        model: { type: string }
+        model:
+          type: string
+          description: Anthropic 模型名；RouterX 用该值选择通道。
         system:
           description: string 或 Anthropic system content blocks；命中 Anthropic 上游时按原生字段保留，命中 OpenAI-compatible 上游时文本合并为 system message。
         messages:
           type: array
+          description: Anthropic 消息数组；命中 Anthropic 上游时原样保留，命中 OpenAI-compatible 上游时转换为 Chat messages。
           items:
             type: object
             properties:
               role: { type: string, enum: [user, assistant] }
               content:
                 description: string 或 Anthropic content blocks；命中 Anthropic 上游时原样保留 content blocks，命中 OpenAI-compatible 上游时非文本 block 会 compact JSON 文本化并写降级摘要。
-        max_tokens: { type: integer }
-        temperature: { type: number }
-        top_p: { type: number }
-        top_k: { type: integer }
+        max_tokens:
+          type: integer
+          description: 最大输出 token 数；转换到 OpenAI-compatible 上游时映射为 max_tokens。
+        temperature:
+          type: number
+          description: 采样温度；支持的上游会按对应字段转发。
+        top_p:
+          type: number
+          description: nucleus sampling 参数；支持的上游会按对应字段转发。
+        top_k:
+          type: integer
+          description: Anthropic top_k 参数；命中非 Anthropic 上游时记录降级摘要。
         stop_sequences:
           type: array
+          description: Anthropic 停止序列；转换到 OpenAI-compatible 上游时映射为 stop。
           items: { type: string }
-        stream: { type: boolean }
+        stream:
+          type: boolean
+          description: true 时返回 Anthropic-compatible SSE。
         tools:
           type: array
           description: Anthropic tools；命中 Anthropic 上游时原生保留，命中 OpenAI-compatible 上游时当前记录 dropped 降级摘要。
