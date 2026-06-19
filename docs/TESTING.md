@@ -182,6 +182,7 @@
 | `TestRouterXOptionsHeaderRoutesMultipartRequest` | `X-RouterX-Options` header 为 multipart 请求提供路由偏好，且不向真实上游泄露 `routerx` 私有字段 |
 | `TestRouterXUpstreamOptionsSupplementRequest` | `routerx.upstream` 安全补充上游 header/query/JSON body，敏感鉴权字段、`model`、`stream` 和原请求已存在字段不会被覆盖，`routerx` 私有字段不会泄露 |
 | `TestRouterXProviderOptionsApplyOnlyToSelectedProvider` | `routerx.provider.<provider>` 只在选中 provider 匹配时补充 JSON body 字段，provider 专属补充值优先于通用 upstream 补充值，非选中 provider 参数不泄露 |
+| `TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings` | OpenAI-compatible Chat 命中 Gemini 上游时，`routerx.provider.gemini.safetySettings` 显式映射为 Gemini 原生 `safetySettings`，OpenAI 生成参数映射到 `generationConfig`，未支持的 Gemini provider 字段和其他 provider 字段不泄露 |
 | `TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop` | RouterX-Compatible 上游保留 `routerx` 私有字段，转发递增后的 `X-RouterX-Hop`，并追加 `X-RouterX-Chain` 链路摘要 |
 | `TestRouterXCompatibleUpstreamRejectsHopLimit` | RouterX-Compatible 上游在 `X-RouterX-Hop` 达到默认上限时本地拒绝且不调用上游 |
 | `TestRouterXCompatibleUpstreamUsesConfiguredHopLimit` | `relay.routerx_max_hops` 可收紧 RouterX-Compatible 循环保护上限，达到配置值时本地拒绝、不调用上游且不扣费 |

@@ -45,6 +45,7 @@ func (a *GeminiAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, er
 		Contents          []geminiContent        `json:"contents"`
 		SystemInstruction *geminiContent         `json:"systemInstruction,omitempty"`
 		GenerationConfig  map[string]interface{} `json:"generationConfig,omitempty"`
+		SafetySettings    json.RawMessage        `json:"safetySettings,omitempty"`
 	}{}
 	systemParts := make([]geminiPart, 0)
 	for _, message := range input.Messages {
@@ -84,6 +85,10 @@ func (a *GeminiAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, er
 	}
 	if len(config) > 0 {
 		output.GenerationConfig = config
+	}
+	if raw := bytes.TrimSpace(input.SafetySettings); len(raw) > 0 && string(raw) != "null" {
+		// Gemini safety settings are provider-native and intentionally live outside generationConfig.
+		output.SafetySettings = append(json.RawMessage(nil), raw...)
 	}
 	return json.Marshal(output)
 }

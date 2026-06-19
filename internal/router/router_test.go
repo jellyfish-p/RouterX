@@ -9743,6 +9743,120 @@ func TestRouterXProviderOptionsApplyOnlyToSelectedProvider(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstreamAPIKey := ""
+	var upstreamBody map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		upstreamAPIKey = req.URL.Query().Get("key")
+		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
+			t.Errorf("Gemini upstream received invalid json: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"safe ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5},"modelVersion":"gemini-provider"}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "gemini-provider-safety",
+		"remain_quota": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeGemini,
+		"name":     "gemini-provider-safety",
+		"models":   "gemini-provider",
+		"base_url": upstream.URL,
+		"api_key":  "gemini-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create Gemini channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	chatResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model":       "gemini-provider",
+		"max_tokens":  8,
+		"temperature": 0.3,
+		"messages": []map[string]string{
+			{"role": "system", "content": "follow the safety policy"},
+			{"role": "user", "content": "hello"},
+		},
+		"routerx": map[string]interface{}{
+			"provider": map[string]interface{}{
+				"gemini": map[string]interface{}{
+					"safetySettings": []map[string]string{
+						{
+							"category":  "HARM_CATEGORY_DANGEROUS_CONTENT",
+							"threshold": "BLOCK_ONLY_HIGH",
+						},
+					},
+					"ignoredExperimental": true,
+				},
+				"xai": map[string]interface{}{
+					"search_parameters": map[string]interface{}{"mode": "auto"},
+				},
+			},
+		},
+	})
+	if chatResp.Code != http.StatusOK || !strings.Contains(chatResp.Body.String(), `"content":"safe ok"`) {
+		t.Fatalf("OpenAI chat via Gemini upstream failed: %d %s", chatResp.Code, chatResp.Body.String())
+	}
+	if upstreamCalls != 1 || upstreamAPIKey != "gemini-secret" {
+		t.Fatalf("Gemini upstream should be called once with query key, calls=%d key=%q", upstreamCalls, upstreamAPIKey)
+	}
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx private field leaked to Gemini upstream: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["ignoredExperimental"]; ok {
+		t.Fatalf("unmapped Gemini provider field leaked to Gemini upstream: %#v", upstreamBody)
+	}
+	if _, ok := upstreamBody["search_parameters"]; ok {
+		t.Fatalf("xAI provider field leaked to Gemini upstream: %#v", upstreamBody)
+	}
+	config, ok := upstreamBody["generationConfig"].(map[string]interface{})
+	if !ok || config["maxOutputTokens"] != float64(8) || config["temperature"] != float64(0.3) {
+		t.Fatalf("OpenAI generation fields should map to Gemini generationConfig: %#v", upstreamBody)
+	}
+	systemInstruction, ok := upstreamBody["systemInstruction"].(map[string]interface{})
+	if !ok || !strings.Contains(fmt.Sprint(systemInstruction), "follow the safety policy") {
+		t.Fatalf("OpenAI system message should map to Gemini systemInstruction: %#v", upstreamBody)
+	}
+	settings, ok := upstreamBody["safetySettings"].([]interface{})
+	if !ok || len(settings) != 1 {
+		t.Fatalf("Gemini provider safetySettings should be preserved: %#v", upstreamBody)
+	}
+	setting, ok := settings[0].(map[string]interface{})
+	if !ok || setting["category"] != "HARM_CATEGORY_DANGEROUS_CONTENT" || setting["threshold"] != "BLOCK_ONLY_HIGH" {
+		t.Fatalf("unexpected Gemini safetySettings payload: %#v", upstreamBody)
+	}
+}
+
 func TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

@@ -5687,7 +5687,7 @@ components:
         user: { type: string }
         routerx:
           type: object
-          description: RouterX 私有扩展字段；普通 OpenAI-compatible 上游不会透传。
+          description: RouterX 私有扩展字段；普通 OpenAI-compatible 上游不会透传。命中 Gemini 上游时，可通过 provider.gemini.safetySettings 传递 Gemini 原生安全设置。
           properties:
             route:
               $ref: "#/components/schemas/RouterXRoutePreference"
@@ -5741,14 +5741,20 @@ components:
       additionalProperties: true
     RouterXProviderOptions:
       type: object
-      description: provider 专属 JSON body 补充参数；仅在最终选中的上游 provider 匹配时合并，provider 专属补充值优先于通用 upstream.body，但仍不覆盖原请求已有字段、model、routerx 或 stream。
+      description: provider 专属 JSON body 补充参数；仅在最终选中的上游 provider 匹配时合并，provider 专属补充值优先于通用 upstream.body，但仍不覆盖原请求已有字段、model、routerx 或 stream。OpenAI-compatible Chat 命中 Gemini 上游时，gemini.safetySettings 会映射到 Gemini 原生 safetySettings。
       properties:
         openai:
           $ref: "#/components/schemas/RouterXProviderBody"
         anthropic:
           $ref: "#/components/schemas/RouterXProviderBody"
         gemini:
-          $ref: "#/components/schemas/RouterXProviderBody"
+          allOf:
+            - $ref: "#/components/schemas/RouterXProviderBody"
+          description: Gemini 上游专属补充；OpenAI-compatible Chat 会把 safetySettings 映射为 Gemini 原生 safetySettings。
+          example:
+            safetySettings:
+              - category: HARM_CATEGORY_DANGEROUS_CONTENT
+                threshold: BLOCK_ONLY_HIGH
         xai:
           allOf:
             - $ref: "#/components/schemas/RouterXProviderBody"
