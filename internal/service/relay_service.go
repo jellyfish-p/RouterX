@@ -4563,13 +4563,14 @@ func userStatusSnapshot(status int) string {
 func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candidates []model.Channel, selected *model.Channel, retryAttempts []map[string]interface{}, filteredReasons map[string]int) string {
 	requestedModel := strings.TrimSpace(reqInfo.Model)
 	snapshot := map[string]interface{}{
-		"schema":          "routerx.snapshot.v1",
-		"kind":            "route",
-		"stage":           "p1",
-		"source":          "relay",
-		"redacted":        true,
-		"requested_model": requestedModel,
-		"candidate_count": len(candidates),
+		"schema":           "routerx.snapshot.v1",
+		"kind":             "route",
+		"stage":            "p1",
+		"source":           "relay",
+		"redacted":         true,
+		"requested_model":  requestedModel,
+		"normalized_model": requestedModel,
+		"candidate_count":  len(candidates),
 	}
 	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
 		snapshot["route_preference"] = preference

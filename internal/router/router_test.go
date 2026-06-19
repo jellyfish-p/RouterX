@@ -16906,6 +16906,9 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if routeSnapshot["requested_model"] != "gpt-test" || routeSnapshot["selected_channel_group"] != "paid" || routeSnapshot["candidate_count"] != float64(1) {
 		t.Fatalf("unexpected route snapshot: %+v", routeSnapshot)
 	}
+	if routeSnapshot["normalized_model"] != "gpt-test" {
+		t.Fatalf("route snapshot should include normalized model, got %+v", routeSnapshot)
+	}
 	if selectedChannelID, ok := routeSnapshot["selected_channel_id"].(float64); !ok || uint(selectedChannelID) != *callLog.ChannelID {
 		t.Fatalf("route snapshot should reference selected channel, snapshot=%+v log=%+v", routeSnapshot, callLog)
 	}

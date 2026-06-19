@@ -6785,7 +6785,7 @@ components:
           description: 脱敏策略快照 JSON 字符串；当前包含用户/Key 状态摘要、成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 no_available_channel 拒绝、breaker_snapshot，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝或依赖故障摘要和 rate_limit_snapshot。
         route_snapshot:
           type: string
-          description: 脱敏路由快照 JSON 字符串；当前包含请求模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要。
+          description: 脱敏路由快照 JSON 字符串；当前包含请求模型、归一化模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、模型重写摘要和非流式重试摘要。
         billing_snapshot:
           type: string
           description: 脱敏计费快照 JSON 字符串；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式、规则 ID/版本、倍率快照、最终扣费、Key 预算前后和用户余额前后摘要；扣费失败时记录 billing_status=failed、attempted_quota_used 和 deduction_error_code。
