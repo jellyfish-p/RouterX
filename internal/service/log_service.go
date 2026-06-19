@@ -427,11 +427,13 @@ func normalizeLogErrorSnapshot(log *model.Log) string {
 		"retryable":    logErrorRetryable(errorCode, upstreamStatus),
 		"charged":      log.QuotaUsed > 0,
 	}
+	snapshot["called_upstream"] = logErrorCalledUpstream(errorSource, upstreamStatus)
 	if requestID := strings.TrimSpace(log.RequestID); requestID != "" {
 		snapshot["request_id"] = requestID
 	}
 	enrichLogSnapshotEnvelope(snapshot, log)
 	if upstreamStatus > 0 {
+		snapshot["http_status"] = upstreamStatus
 		snapshot["upstream_status"] = upstreamStatus
 	}
 	if safeMessage := logErrorSafeMessage(log.ErrorMsg); safeMessage != "" {
@@ -442,6 +444,10 @@ func normalizeLogErrorSnapshot(log *model.Log) string {
 		return ""
 	}
 	return string(raw)
+}
+
+func logErrorCalledUpstream(errorSource string, upstreamStatus int) bool {
+	return strings.TrimSpace(errorSource) == common.LogErrorSourceUpstream || upstreamStatus > 0
 }
 
 func logErrorRetryable(errorCode string, upstreamStatus int) bool {

@@ -24166,6 +24166,8 @@ func TestRelayFailureLogPersistsRequestIDAndErrorCode(t *testing.T) {
 		errorSnapshot["request_id"] != requestID ||
 		errorSnapshot["error_code"] != "upstream_400" ||
 		errorSnapshot["error_source"] != "upstream" ||
+		errorSnapshot["called_upstream"] != true ||
+		errorSnapshot["http_status"] != float64(http.StatusBadRequest) ||
 		errorSnapshot["upstream_status"] != float64(http.StatusBadRequest) ||
 		errorSnapshot["retryable"] != false ||
 		errorSnapshot["charged"] != false ||

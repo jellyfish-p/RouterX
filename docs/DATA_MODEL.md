@@ -381,7 +381,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `error_code` | string | 失败时的稳定协议化错误 code，成功调用为空 |
 | `error_source` | string | 失败来源，例如 `upstream`、`quota`、`route` |
 | `upstream_status` | int | 上游 HTTP 状态；非上游错误为 `0` |
-| `error_snapshot` | text/json string | 脱敏错误快照；失败日志包含 request_id、created_at、稳定 code、失败来源、上游状态、可重试判断、扣费标记和安全摘要 |
+| `error_snapshot` | text/json string | 脱敏错误快照；失败日志包含 request_id、created_at、稳定 code、失败来源、是否已调用上游、RouterX 返回状态、上游状态、可重试判断、扣费标记和安全摘要 |
 | `request_snapshot` | text/json string | 脱敏请求快照；当前包含 request_id、created_at、入口协议、API 类型、请求模型、stream 标记和安全路由摘要 |
 | `policy_snapshot` | text/json string | 脱敏策略快照；当前包含 request_id、created_at、成功 allow、额度预检、基础 scope allow、API Key scope 拒绝、基础余额预检拒绝、用户分组 x 通道分组访问控制拒绝、无可用候选 `no_available_channel` 拒绝、含完整封套的熔断拒绝 `breaker_snapshot`，以及 Redis 全局/IP/Token/User/Model/Channel 限流拒绝摘要和含完整封套的 `rate_limit_snapshot` |
 | `access_rule_snapshot` | text/json string | 脱敏访问控制快照；当前包含 request_id、created_at，并从策略快照派生 access_decision、scope_result、token/user 状态、拒绝原因和选中通道分组 |
