@@ -3152,7 +3152,7 @@ paths:
         Gin 当前注册为 /v1/models/:model，可匹配 gemini-pro:generateContent 这一类单段路径。
         当前实现会转换到 OpenAI-compatible Chat 主链路，再返回 Gemini-compatible response。
         contents/systemInstruction 中的 text part 保留；非文本 parts 会以 compact JSON 文本降级。
-        generationConfig.maxOutputTokens、temperature、topP、stopSequences 会映射到 OpenAI-compatible 字段。
+        generationConfig.maxOutputTokens、temperature、topP、stopSequences 会映射到 OpenAI-compatible 字段；其他有值子字段会写入 request_snapshot.adapter_degradations 的 dropped 降级摘要。
         API Key、配额、本地限流、路由和基础下游错误均返回 Gemini-compatible error envelope；本地限流 status 为 RESOURCE_EXHAUSTED。
       security:
         - ApiKeyBearer: []

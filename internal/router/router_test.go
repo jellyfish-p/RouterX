@@ -7651,10 +7651,17 @@ func TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields(t *testing.
 			"parts": []map[string]string{{"text": "follow policy"}},
 		},
 		"generationConfig": map[string]interface{}{
-			"maxOutputTokens": 9,
-			"temperature":     0.1,
-			"topP":            0.8,
-			"stopSequences":   []string{"STOP"},
+			"maxOutputTokens":  9,
+			"temperature":      0.1,
+			"topP":             0.8,
+			"stopSequences":    []string{"STOP"},
+			"responseMimeType": "application/json",
+			"responseSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"answer": map[string]string{"type": "string"},
+				},
+			},
 		},
 	})
 	if geminiResp.Code != http.StatusOK || !strings.Contains(geminiResp.Body.String(), `"candidates"`) || !strings.Contains(geminiResp.Body.String(), `"text":"gemini ok"`) || !strings.Contains(geminiResp.Body.String(), `"finishReason":"STOP"`) || !strings.Contains(geminiResp.Body.String(), `"totalTokenCount":11`) {
@@ -7684,6 +7691,10 @@ func TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields(t *testing.
 	}
 	if !snapshotHasAdapterDegradation(geminiSnapshot, "gemini", "contents.parts.functionCall", "serialized_as_text") {
 		t.Fatalf("gemini request snapshot should explain non-text part degradation: %+v", geminiSnapshot)
+	}
+	if !snapshotHasAdapterDegradation(geminiSnapshot, "gemini", "generationConfig.responseMimeType", "dropped") ||
+		!snapshotHasAdapterDegradation(geminiSnapshot, "gemini", "generationConfig.responseSchema", "dropped") {
+		t.Fatalf("gemini request snapshot should explain unmapped generationConfig fields: %+v", geminiSnapshot)
 	}
 
 	var storedToken model.Token

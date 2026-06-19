@@ -2314,10 +2314,11 @@ func geminiGenerateAdapterDegradations(body []byte) []relayAdapterDegradation {
 		SystemInstruction *struct {
 			Parts []json.RawMessage `json:"parts"`
 		} `json:"systemInstruction"`
-		Tools          json.RawMessage `json:"tools"`
-		ToolConfig     json.RawMessage `json:"toolConfig"`
-		SafetySettings json.RawMessage `json:"safetySettings"`
-		CachedContent  json.RawMessage `json:"cachedContent"`
+		Tools            json.RawMessage            `json:"tools"`
+		ToolConfig       json.RawMessage            `json:"toolConfig"`
+		SafetySettings   json.RawMessage            `json:"safetySettings"`
+		CachedContent    json.RawMessage            `json:"cachedContent"`
+		GenerationConfig map[string]json.RawMessage `json:"generationConfig"`
 	}
 	if err := json.Unmarshal(body, &input); err != nil {
 		return nil
@@ -2333,6 +2334,18 @@ func geminiGenerateAdapterDegradations(body []byte) []relayAdapterDegradation {
 	degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "toolConfig", input.ToolConfig)
 	degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "safetySettings", input.SafetySettings)
 	degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "cachedContent", input.CachedContent)
+	degradations = appendGeminiGenerationConfigDegradations(degradations, input.GenerationConfig)
+	return degradations
+}
+
+func appendGeminiGenerationConfigDegradations(degradations []relayAdapterDegradation, config map[string]json.RawMessage) []relayAdapterDegradation {
+	for key, raw := range config {
+		switch key {
+		case "maxOutputTokens", "temperature", "topP", "stopSequences":
+			continue
+		}
+		degradations = appendDroppedFieldDegradation(degradations, inputProtocolGemini, "generationConfig."+key, raw)
+	}
 	return degradations
 }
 
