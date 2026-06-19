@@ -2608,7 +2608,7 @@ paths:
     get:
       tags: [Admin Logs]
       summary: 管理看板统计
-      description: 返回用户、通道、API Key、今日调用和今日额度统计；配置 LOG_SQL_DSN 时今日调用和今日额度优先来自独立日志数据库，基础用户/通道/API Key 数仍来自主业务数据库。
+      description: 返回用户、通道、API Key、今日调用、今日额度和 ready 状态统计；配置 LOG_SQL_DSN 时今日调用和今日额度优先来自独立日志数据库，基础用户/通道/API Key 数仍来自主业务数据库。dependencies 会暴露数据库、迁移、Redis、日志库和 settings 状态，供控制台解释当前可用性。
       security:
         - UserJWT: []
       responses:
@@ -5942,6 +5942,30 @@ components:
         today_call_count: { type: integer, format: int64 }
         today_quota_used: { type: integer, format: int64 }
         active_channel_count: { type: integer, format: int64 }
+        ready: { type: boolean }
+        ready_status:
+          type: string
+          enum: [ready, not_ready]
+        dependencies:
+          $ref: "#/components/schemas/DashboardDependencies"
+    DashboardDependencies:
+      type: object
+      properties:
+        database:
+          type: string
+          description: 数据库状态，例如 up 或 unavailable。
+        migration:
+          type: string
+          description: 迁移状态，例如 ok、dirty 或 unavailable。
+        redis:
+          type: string
+          description: Redis 状态，例如 up、required、unavailable 或 not_required。
+        log_db:
+          type: string
+          description: 日志库状态，例如 main_database、up 或 unavailable。
+        setting:
+          type: string
+          description: settings 状态；初始化后为 ok，异常时返回问题 key 或 not_initialized。
     Setting:
       type: object
       properties:

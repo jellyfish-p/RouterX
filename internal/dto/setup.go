@@ -15,12 +15,24 @@ type SetupInitRequest struct {
 
 // DashboardStats 仪表盘统计数据
 type DashboardStats struct {
-	UserCount          int64 `json:"user_count"`
-	ChannelCount       int64 `json:"channel_count"`
-	TokenCount         int64 `json:"token_count"`
-	TodayCallCount     int64 `json:"today_call_count"`
-	TodayQuotaUsed     int64 `json:"today_quota_used"`
-	ActiveChannelCount int64 `json:"active_channel_count"`
+	UserCount          int64                 `json:"user_count"`
+	ChannelCount       int64                 `json:"channel_count"`
+	TokenCount         int64                 `json:"token_count"`
+	TodayCallCount     int64                 `json:"today_call_count"`
+	TodayQuotaUsed     int64                 `json:"today_quota_used"`
+	ActiveChannelCount int64                 `json:"active_channel_count"`
+	Ready              bool                  `json:"ready"`
+	ReadyStatus        string                `json:"ready_status"`
+	Dependencies       DashboardDependencies `json:"dependencies"`
+}
+
+// DashboardDependencies exposes the readiness inputs a console needs to explain state.
+type DashboardDependencies struct {
+	Database  string `json:"database"`
+	Migration string `json:"migration"`
+	Redis     string `json:"redis"`
+	LogDB     string `json:"log_db"`
+	Setting   string `json:"setting"`
 }
 
 // PaginatedResult 分页结果

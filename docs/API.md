@@ -626,9 +626,35 @@ Provider 退款请求：
 | GET | `/v0/admin/log` | 已实现 | 调用日志列表；配置 `LOG_SQL_DSN` 时读取独立日志库 |
 | GET | `/v0/admin/log/export` | 基础实现 | 按日志查询条件导出脱敏 CSV；配置 `LOG_SQL_DSN` 时读取独立日志库，查询失败回退主库；成功后写 `log.export` 管理审计 |
 | DELETE | `/v0/admin/log` | 基础实现 | 按 `before` 清理日志；配置 `LOG_SQL_DSN` 时清理独立日志库；成功后写 `log.clear` 管理审计 |
-| GET | `/v0/admin/dashboard` | 基础实现 | 仪表盘统计；基础用户/通道/API Key 数来自主库，今日调用和额度在配置 `LOG_SQL_DSN` 时来自日志库 |
+| GET | `/v0/admin/dashboard` | 基础实现 | 仪表盘统计；基础用户/通道/API Key 数来自主库，今日调用和额度在配置 `LOG_SQL_DSN` 时来自日志库；同时返回 `ready`、`ready_status` 和数据库、迁移、Redis、日志库、settings 依赖状态，便于控制台解释当前可用性 |
 | GET | `/v0/admin/setting` | 已实现 | 获取系统设置，仅超级管理员 |
 | PUT | `/v0/admin/setting` | 已实现 | 批量更新系统设置，仅超级管理员，成功后按 key 写管理审计 |
+
+看板响应示例：
+
+```json
+{
+  "success": true,
+  "data": {
+    "user_count": 1,
+    "channel_count": 1,
+    "token_count": 1,
+    "today_call_count": 0,
+    "today_quota_used": 0,
+    "active_channel_count": 1,
+    "ready": true,
+    "ready_status": "ready",
+    "dependencies": {
+      "database": "up",
+      "migration": "ok",
+      "redis": "not_required",
+      "log_db": "main_database",
+      "setting": "ok"
+    }
+  },
+  "message": ""
+}
+```
 
 日志查询参数：
 

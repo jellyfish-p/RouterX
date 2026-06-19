@@ -94,7 +94,7 @@ func setupAdminRoutes(
 			authRequired.GET("/log", logH.AdminList)
 			authRequired.GET("/log/export", logH.AdminExport)
 			authRequired.DELETE("/log", logH.AdminClear)
-			authRequired.GET("/dashboard", logH.Dashboard)
+			authRequired.GET("/dashboard", dashboardHandler)
 
 			settingMgmt := authRequired.Group("/setting")
 			settingMgmt.Use(middleware.RequireSuperAdmin())

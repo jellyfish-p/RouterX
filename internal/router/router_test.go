@@ -211,6 +211,144 @@ func TestP0BackendFlow(t *testing.T) {
 	}
 }
 
+func TestConsoleCapabilityContractExposesStatusEvidenceAndBoundaries(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-console-contract-32")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	status := performJSON(r, http.MethodGet, "/v0/setup/status", "", nil)
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"initialized":false`) {
+		t.Fatalf("expected setup status before init, got %d %s", status.Code, status.Body.String())
+	}
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username":     "root",
+		"password":     "password123",
+		"display_name": "Root",
+		"email":        "root@example.com",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(1000)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "console-contract",
+		"remain_quota": 100,
+	})
+	var tokenPayload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || !tokenPayload.Success || !strings.HasPrefix(tokenPayload.Data.Key, "sk-") {
+		t.Fatalf("create api key failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	apiKeyAsUserJWT := performJSON(r, http.MethodGet, "/v0/user/self", "Bearer "+tokenPayload.Data.Key, nil)
+	if apiKeyAsUserJWT.Code != http.StatusUnauthorized {
+		t.Fatalf("api key must not authenticate user console APIs, got %d %s", apiKeyAsUserJWT.Code, apiKeyAsUserJWT.Body.String())
+	}
+	apiKeyAsAdminJWT := performJSON(r, http.MethodGet, "/v0/admin/dashboard", "Bearer "+tokenPayload.Data.Key, nil)
+	if apiKeyAsAdminJWT.Code != http.StatusUnauthorized {
+		t.Fatalf("api key must not authenticate admin console APIs, got %d %s", apiKeyAsAdminJWT.Code, apiKeyAsAdminJWT.Body.String())
+	}
+
+	tokenList := performJSON(r, http.MethodGet, "/v0/user/token", rootJWT, nil)
+	if tokenList.Code != http.StatusOK || !strings.Contains(tokenList.Body.String(), `"total":1`) {
+		t.Fatalf("expected user token list evidence, got %d %s", tokenList.Code, tokenList.Body.String())
+	}
+	if strings.Contains(tokenList.Body.String(), tokenPayload.Data.Key) || strings.Contains(tokenList.Body.String(), `"key":`) {
+		t.Fatalf("token list must not expose the one-time api key secret: %s", tokenList.Body.String())
+	}
+
+	upstreamSecret := "upstream-secret-console-contract"
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "console-contract",
+		"models":   "gpt-console",
+		"base_url": "http://127.0.0.1",
+		"api_key":  upstreamSecret,
+	})
+	if channelResp.Code != http.StatusOK || strings.Contains(channelResp.Body.String(), upstreamSecret) {
+		t.Fatalf("channel create failed or leaked secret: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+	channelList := performJSON(r, http.MethodGet, "/v0/admin/channel", rootJWT, nil)
+	if channelList.Code != http.StatusOK ||
+		!strings.Contains(channelList.Body.String(), `"total":1`) ||
+		!strings.Contains(channelList.Body.String(), `"api_key_count":1`) ||
+		strings.Contains(channelList.Body.String(), upstreamSecret) {
+		t.Fatalf("expected sanitized channel evidence, got %d %s", channelList.Code, channelList.Body.String())
+	}
+
+	selfResp := performJSON(r, http.MethodGet, "/v0/user/self", rootJWT, nil)
+	if selfResp.Code != http.StatusOK || !strings.Contains(selfResp.Body.String(), `"username":"root"`) {
+		t.Fatalf("expected self console evidence, got %d %s", selfResp.Code, selfResp.Body.String())
+	}
+	userLogResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
+	if userLogResp.Code != http.StatusOK || !strings.Contains(userLogResp.Body.String(), `"total":0`) {
+		t.Fatalf("expected empty user log state, got %d %s", userLogResp.Code, userLogResp.Body.String())
+	}
+	adminLogResp := performJSON(r, http.MethodGet, "/v0/admin/log", rootJWT, nil)
+	if adminLogResp.Code != http.StatusOK || !strings.Contains(adminLogResp.Body.String(), `"total":0`) {
+		t.Fatalf("expected empty admin log state, got %d %s", adminLogResp.Code, adminLogResp.Body.String())
+	}
+
+	readyResp := performJSON(r, http.MethodGet, "/ready", "", nil)
+	if readyResp.Code != http.StatusOK || !strings.Contains(readyResp.Body.String(), `"status":"ready"`) {
+		t.Fatalf("expected ready state, got %d %s", readyResp.Code, readyResp.Body.String())
+	}
+	dashboardResp := performJSON(r, http.MethodGet, "/v0/admin/dashboard", rootJWT, nil)
+	var dashboardPayload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			UserCount          int64             `json:"user_count"`
+			ChannelCount       int64             `json:"channel_count"`
+			TokenCount         int64             `json:"token_count"`
+			TodayCallCount     int64             `json:"today_call_count"`
+			ActiveChannelCount int64             `json:"active_channel_count"`
+			Ready              bool              `json:"ready"`
+			ReadyStatus        string            `json:"ready_status"`
+			Dependencies       map[string]string `json:"dependencies"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(dashboardResp.Body.Bytes(), &dashboardPayload); err != nil {
+		t.Fatal(err)
+	}
+	if dashboardResp.Code != http.StatusOK || !dashboardPayload.Success {
+		t.Fatalf("expected dashboard success, got %d %s", dashboardResp.Code, dashboardResp.Body.String())
+	}
+	if dashboardPayload.Data.UserCount != 1 ||
+		dashboardPayload.Data.ChannelCount != 1 ||
+		dashboardPayload.Data.TokenCount != 1 ||
+		dashboardPayload.Data.TodayCallCount != 0 ||
+		dashboardPayload.Data.ActiveChannelCount != 1 {
+		t.Fatalf("unexpected dashboard counts: %+v", dashboardPayload.Data)
+	}
+	expectedDependencies := map[string]string{
+		"database":  "up",
+		"migration": "ok",
+		"redis":     "not_required",
+		"log_db":    "main_database",
+		"setting":   "ok",
+	}
+	if !dashboardPayload.Data.Ready || dashboardPayload.Data.ReadyStatus != "ready" {
+		t.Fatalf("dashboard should expose ready state from /ready contract: %+v", dashboardPayload.Data)
+	}
+	for key, expected := range expectedDependencies {
+		if dashboardPayload.Data.Dependencies[key] != expected {
+			t.Fatalf("dashboard dependency %s = %q, want %q; payload=%+v", key, dashboardPayload.Data.Dependencies[key], expected, dashboardPayload.Data)
+		}
+	}
+}
+
 func TestApifoxOpenAPICoversRegisteredRoutes(t *testing.T) {
 	r := newTestRouter(t)
 	documented := loadApifoxOperationSet(t)

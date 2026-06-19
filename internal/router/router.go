@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"routerx/internal"
 	"routerx/internal/common"
+	"routerx/internal/dto"
 	"routerx/internal/handler"
 	"routerx/internal/middleware"
 	"routerx/internal/model"
@@ -121,6 +122,75 @@ func readyHandler(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ready"})
+}
+
+func dashboardHandler(c *gin.Context) {
+	userCount, channelCount, tokenCount, todayCalls, todayQuota, activeChannels, err := service.NewLogService().GetDashboardStats()
+	if err != nil {
+		common.FailWithStatus(c, http.StatusInternalServerError, "查询仪表盘失败")
+		return
+	}
+	ready, dependencies := dashboardReadinessSummary()
+	readyStatus := "not_ready"
+	if ready {
+		readyStatus = "ready"
+	}
+	common.Success(c, dto.DashboardStats{
+		UserCount:          userCount,
+		ChannelCount:       channelCount,
+		TokenCount:         tokenCount,
+		TodayCallCount:     todayCalls,
+		TodayQuotaUsed:     todayQuota,
+		ActiveChannelCount: activeChannels,
+		Ready:              ready,
+		ReadyStatus:        readyStatus,
+		Dependencies:       dependencies,
+	})
+}
+
+func dashboardReadinessSummary() (bool, dto.DashboardDependencies) {
+	ready := true
+	dependencies := dto.DashboardDependencies{
+		Database:  "up",
+		Migration: "ok",
+		Redis:     "not_required",
+		LogDB:     "main_database",
+		Setting:   "not_initialized",
+	}
+	if dbUp() == 0 {
+		dependencies.Database = "unavailable"
+		ready = false
+	}
+	if problem := readinessMigrationProblem(); problem != "" {
+		dependencies.Migration = problem
+		ready = false
+	}
+	if redisRequiredForCurrentMode() {
+		dependencies.Redis = "up"
+		if problem := readinessRedisProblem(); problem != "" {
+			dependencies.Redis = problem
+			ready = false
+		}
+	} else if internal.RDB != nil {
+		dependencies.Redis = "up"
+		if redisUp() == 0 {
+			dependencies.Redis = "unavailable"
+		}
+	}
+	if logDBConfigured() == 1 {
+		dependencies.LogDB = "up"
+		if logDBUp() == 0 {
+			dependencies.LogDB = "unavailable"
+		}
+	}
+	if internal.IsInitialized() {
+		dependencies.Setting = "ok"
+		if problem := readinessSettingProblem(); problem != "" {
+			dependencies.Setting = problem
+			ready = false
+		}
+	}
+	return ready, dependencies
 }
 
 func metricsHandler(c *gin.Context) {
