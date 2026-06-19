@@ -328,8 +328,8 @@ user submits code
 - Stripe webhook 已支持 `checkout.session.completed` 签名校验、金额/币种/metadata 校验、`payment_events` 幂等、入账审计和入账；`checkout.session.async_payment_failed` 会在快照校验通过且订单仍为 pending 时置为 `failed`，写 `payment_webhook.failed` 审计且不入账；`charge.refunded` 全额或部分退款事件可幂等记录订单退款状态，写入退款审计，并可按 settings 全额或比例扣回额度；`charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated` 可幂等更新 `payment_disputes` 争议事实，写入争议生命周期审计，并可在 created 阶段按 settings 禁用用户已启用 API Key。
 - 易支付异步通知已支持 MD5 签名校验、金额校验、`payment_events` 幂等记录、成功订单置为 `paid`、明确失败订单置为 `failed`、`quota_transactions` 入账、用户额度增加和基础 webhook/入账/失败审计；重复通知不重复入账。
 - 易支付同步返回页已支持本地订单状态只读展示，不作为入账依据。
-- 支付相关人工补账/扣回已支持 `POST /v0/admin/payment/adjustments`，会写 `manual_credit` 或 `manual_debit` 额度流水，并在同一事务中写 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 审计。
-- 管理员确认后的人工退款已支持 `POST /v0/admin/payment/refunds`，会校验 `paid` 订单，按退款额度写 `refund_deduct` 额度流水，将订单置为 `refunded` 或 `partially_refunded`，并写 `payment_refund.manual` 审计。
+- 支付相关人工补账/扣回已支持 `POST /v0/admin/payment/adjustments`，会写 `manual_credit` 或 `manual_debit` 额度流水，并在同一事务中写 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 审计；缺少原因、金额为 0、重复幂等键或关联订单/权限校验失败会写 `payment_manual_adjust.denied`。
+- 管理员确认后的人工退款已支持 `POST /v0/admin/payment/refunds`，会校验 `paid` 订单，按退款额度写 `refund_deduct` 额度流水，将订单置为 `refunded` 或 `partially_refunded`，并写 `payment_refund.manual` 审计；重复幂等键、订单状态不允许、退款额度非法或余额不足会写 `payment_refund.manual_denied`。
 - Stripe 和易支付 provider 侧退款请求已支持 `POST /v0/admin/payment/refund-requests`，会创建 provider refund、记录退款请求并将订单置为 `refund_pending`；本地参数、订单状态或幂等键拒绝会写 `payment_refund.request_denied` 且 `result=denied`，provider 调用失败会写同动作但 `result=failed`，摘要不保存 provider secret；Stripe 最终状态仍由 webhook 确认，易支付需等待可信后续通知或人工收尾。
 - 更多 provider 会话创建、更多 provider 自动退款适配和更多 provider 争议生命周期仍属于后续增强，不能把当前实现误写成完整支付闭环。
 
@@ -377,7 +377,7 @@ user submits code
 - 开启 `payment.refund.auto_deduct=true` 后，如果用户余额足够，写入 `quota_transactions(type=refund_deduct, source_type=refund)` 并扣回原订单额度或按退款金额比例扣回额度，同时写入 `payment_refund.deducted` 审计；重复退款事件不重复扣回。
 - `payment.refund.allow_negative_balance=false` 时余额不足不会自动扣成负数，需转人工处理。
 - 管理员可通过 `POST /v0/admin/payment/refunds` 对已经确认的退款事实做人工落账；接口要求 `order_no`、`refund_quota`、`reason` 和 `idempotency_key`，只接受 `paid` 订单，`refund_quota` 不能超过订单额度。
-- 人工退款成功后写入 `quota_transactions(type=refund_deduct, source_type=refund, source_id=<order_no>)`，全额退款将订单置为 `refunded`，部分退款置为 `partially_refunded`，并写入 `payment_refund.manual` 管理审计；重复 `idempotency_key` 不会重复扣回。
+- 人工退款成功后写入 `quota_transactions(type=refund_deduct, source_type=refund, source_id=<order_no>)`，全额退款将订单置为 `refunded`，部分退款置为 `partially_refunded`，并写入 `payment_refund.manual` 管理审计；重复 `idempotency_key` 不会重复扣回，并会写 `payment_refund.manual_denied` 拒绝审计。
 - Stripe `charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated` 争议生命周期事件会校验原订单金额和币种，写入 `payment_events` 幂等事实，并按 `provider_dispute_id` upsert `payment_disputes` 当前事实。
 - 争议生命周期审计会按事件写入 `payment_dispute.created`、`payment_dispute.updated`、`payment_dispute.closed` 或 `payment_dispute.funds_changed`，审计资源为 `payment_dispute`，便于按 Stripe dispute id 串联整个生命周期；created 事件也保留 `payment_event` 资源审计以兼容事件排障。
 - 默认 `payment.dispute.auto_disable_tokens=false`，争议只记录事实；开启后会在 created 阶段把该用户已启用的 API Key 置为禁用并记录 `revoked_reason=payment_dispute`，不直接修改用户额度或订单状态。
@@ -416,9 +416,9 @@ user submits code
 - `amount > 0` 写 `quota_transactions(type=manual_credit)`，`amount < 0` 写 `quota_transactions(type=manual_debit)`；扣回默认不允许余额扣成负数。
 - `reason` 默认必填，由 `payment.manual_adjust.require_reason=true` 控制；`idempotency_key` 必填，用于防止同一人工动作重复改变余额。
 - 传入 `order_no` 时会校验订单属于目标用户，并把流水来源记为 `source_type=payment_order`、`source_id=<order_no>`。
-- 成功后写 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 审计，摘要包含用户、订单号、金额、原因、前后余额、幂等键和来源。
+- 成功后写 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 审计，摘要包含用户、订单号、金额、原因、前后余额、幂等键和来源；本地拒绝写 `payment_manual_adjust.denied`，摘要不包含请求体之外的敏感信息。
 - 管理员可通过 `POST /v0/admin/payment/refunds` 对支付订单做人工退款落账；该路径使用 `refund_deduct` 表示退款扣回，不复用 `manual_debit`，便于财务和客服按退款口径追踪。
-- 人工退款遵循 `payment.manual_adjust.require_reason` 和 `payment.refund.allow_negative_balance`，成功后审计摘要包含订单、用户、退款额度、订单状态、原因、前后余额、幂等键和 provider 快照。
+- 人工退款遵循 `payment.manual_adjust.require_reason` 和 `payment.refund.allow_negative_balance`，成功后审计摘要包含订单、用户、退款额度、订单状态、原因、前后余额、幂等键和 provider 快照；本地拒绝写 `payment_refund.manual_denied`，使用稳定 `error_code` 区分重复幂等键、订单状态、额度和余额问题。
 - `payment.manual_adjust.large_amount_threshold` 已注册为非负整数配置，后续可用于二次确认或双人审批。
 
 ## 10. 订单创建接口契约
@@ -529,10 +529,10 @@ receive webhook
 - 支付入账。
 - 退款记录和扣回。
 - 充值码创建、作废、兑换。
-- 人工补账、扣回、人工退款落账、Stripe/易支付 provider 退款请求、provider 退款请求拒绝和争议生命周期。
+- 人工补账、扣回、人工调整拒绝、人工退款落账、人工退款拒绝、Stripe/易支付 provider 退款请求、provider 退款请求拒绝和争议生命周期。
 - 支付 settings 和密钥引用变更。
 
-当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建，Stripe/易支付 webhook 入账，Stripe async payment failed 与易支付明确失败通知审计，Stripe 全额/部分退款和扣回，Stripe 争议生命周期记录和可选 API Key 禁用，支付相关人工补账/扣回、人工退款落账、Stripe/易支付 provider 退款请求及本地拒绝审计，以及充值码生成、导入、批次/备注/过期策略、作废、兑换的成功审计；更多 provider 自动退款适配和更多失败分支审计仍需继续补齐。
+当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建，Stripe/易支付 webhook 入账，Stripe async payment failed 与易支付明确失败通知审计，Stripe 全额/部分退款和扣回，Stripe 争议生命周期记录和可选 API Key 禁用，支付相关人工补账/扣回及拒绝审计、人工退款落账及拒绝审计、Stripe/易支付 provider 退款请求及本地拒绝审计，以及充值码生成、导入、批次/备注/过期策略、作废、兑换的成功审计；更多 provider 自动退款适配和更多失败分支审计仍需继续补齐。
 
 审计字段：
 

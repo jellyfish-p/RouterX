@@ -3343,6 +3343,14 @@ func TestAdminPaymentManualAdjustmentRequiresReason(t *testing.T) {
 	if alice.Quota != 50 {
 		t.Fatalf("manual payment adjustment without reason must not change quota, got %d", alice.Quota)
 	}
+	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=user&resource_id="+uintString(alice.ID)+"&result=denied", rootJWT, nil)
+	deniedAuditBody := deniedAuditResp.Body.String()
+	if deniedAuditResp.Code != http.StatusOK ||
+		!strings.Contains(deniedAuditBody, `"action":"payment_manual_adjust.denied"`) ||
+		!strings.Contains(deniedAuditBody, `"error_code":"payment_manual_adjust_reason_required"`) ||
+		!strings.Contains(deniedAuditBody, "manual-missing-reason") {
+		t.Fatalf("manual payment adjustment denial should write audit, got %d %s", deniedAuditResp.Code, deniedAuditBody)
+	}
 }
 
 func TestAdminPaymentManualAdjustmentWritesManualTransactionAndAudit(t *testing.T) {
@@ -3539,6 +3547,14 @@ func TestAdminPaymentManualRefundMarksOrderAndDeductsQuota(t *testing.T) {
 	}
 	if txCount != 1 {
 		t.Fatalf("duplicate manual refund must not write duplicate transactions, got %d", txCount)
+	}
+	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo+"&result=denied", rootJWT, nil)
+	deniedAuditBody := deniedAuditResp.Body.String()
+	if deniedAuditResp.Code != http.StatusOK ||
+		!strings.Contains(deniedAuditBody, `"action":"payment_refund.manual_denied"`) ||
+		!strings.Contains(deniedAuditBody, `"error_code":"payment_manual_refund_idempotency_key_used"`) ||
+		!strings.Contains(deniedAuditBody, "manual-refund-1") {
+		t.Fatalf("duplicate manual refund should write denied audit, got %d %s", deniedAuditResp.Code, deniedAuditBody)
 	}
 }
 

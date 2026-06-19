@@ -361,6 +361,7 @@ func (h *UserHandler) CreatePaymentManualAdjustment(c *gin.Context) {
 	}
 	var req dto.PaymentManualAdjustmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		h.recordPaymentManualAdjustmentDenied(c, operator, req, "payment_manual_adjust_invalid_request")
 		common.FailWithStatus(c, 400, "人工修正参数无效")
 		return
 	}
@@ -374,6 +375,7 @@ func (h *UserHandler) CreatePaymentManualAdjustment(c *gin.Context) {
 		UserAgent:      c.GetHeader("User-Agent"),
 	}, c.GetString("request_id"))
 	if err != nil {
+		h.recordPaymentManualAdjustmentDenied(c, operator, req, paymentManualAdjustmentErrorCode(err))
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
@@ -389,6 +391,7 @@ func (h *UserHandler) CreatePaymentManualRefund(c *gin.Context) {
 	}
 	var req dto.PaymentManualRefundRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		h.recordPaymentManualRefundDenied(c, operator, req, "payment_manual_refund_invalid_request")
 		common.FailWithStatus(c, 400, "人工退款参数无效")
 		return
 	}
@@ -401,10 +404,109 @@ func (h *UserHandler) CreatePaymentManualRefund(c *gin.Context) {
 		UserAgent:      c.GetHeader("User-Agent"),
 	}, c.GetString("request_id"))
 	if err != nil {
+		h.recordPaymentManualRefundDenied(c, operator, req, paymentManualRefundErrorCode(err))
 		common.FailWithStatus(c, 400, err.Error())
 		return
 	}
 	common.Success(c, result)
+}
+
+func (h *UserHandler) recordPaymentManualAdjustmentDenied(c *gin.Context, operator *model.User, req dto.PaymentManualAdjustmentRequest, errorCode string) {
+	if operator == nil {
+		return
+	}
+	resourceType := "user"
+	resourceID := strconv.FormatUint(uint64(req.UserID), 10)
+	if strings.TrimSpace(req.OrderNo) != "" {
+		resourceType = common.QuotaSourceTypePaymentOrder
+		resourceID = strings.TrimSpace(req.OrderNo)
+	}
+	if resourceID == "" || resourceID == "0" {
+		resourceID = "payment_manual_adjust"
+	}
+	summary := map[string]interface{}{
+		"user_id":         req.UserID,
+		"order_no":        strings.TrimSpace(req.OrderNo),
+		"amount":          req.Amount,
+		"reason":          strings.TrimSpace(req.Reason),
+		"idempotency_key": strings.TrimSpace(req.IdempotencyKey),
+		"error_code":      errorCode,
+	}
+	_ = h.recordAdminAuditStringResult(c, operator, "payment_manual_adjust.denied", resourceType, resourceID, nil, summary, "denied", errorCode)
+}
+
+func (h *UserHandler) recordPaymentManualRefundDenied(c *gin.Context, operator *model.User, req dto.PaymentManualRefundRequest, errorCode string) {
+	if operator == nil {
+		return
+	}
+	orderNo := strings.TrimSpace(req.OrderNo)
+	if orderNo == "" {
+		orderNo = "payment_manual_refund"
+	}
+	summary := map[string]interface{}{
+		"order_no":        strings.TrimSpace(req.OrderNo),
+		"refund_quota":    req.RefundQuota,
+		"reason":          strings.TrimSpace(req.Reason),
+		"idempotency_key": strings.TrimSpace(req.IdempotencyKey),
+		"error_code":      errorCode,
+	}
+	_ = h.recordAdminAuditStringResult(c, operator, "payment_refund.manual_denied", common.QuotaSourceTypePaymentOrder, orderNo, nil, summary, "denied", errorCode)
+}
+
+func paymentManualAdjustmentErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "payment_manual_adjust_target_not_found"
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(msg, "reason is required"):
+		return "payment_manual_adjust_reason_required"
+	case strings.Contains(msg, "idempotency_key is required"):
+		return "payment_manual_adjust_idempotency_key_required"
+	case strings.Contains(msg, "idempotency_key has already been used"):
+		return "payment_manual_adjust_idempotency_key_used"
+	case strings.Contains(msg, "amount must not be zero"):
+		return "payment_manual_adjust_amount_zero"
+	case strings.Contains(msg, "permission denied"):
+		return "payment_manual_adjust_forbidden"
+	default:
+		return "payment_manual_adjust_rejected"
+	}
+}
+
+func paymentManualRefundErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "payment_manual_refund_order_not_found"
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(msg, "order_no is required"):
+		return "payment_manual_refund_order_required"
+	case strings.Contains(msg, "refund_quota must be positive"):
+		return "payment_manual_refund_quota_invalid"
+	case strings.Contains(msg, "reason is required"):
+		return "payment_manual_refund_reason_required"
+	case strings.Contains(msg, "idempotency_key is required"):
+		return "payment_manual_refund_idempotency_key_required"
+	case strings.Contains(msg, "idempotency_key has already been used"):
+		return "payment_manual_refund_idempotency_key_used"
+	case strings.Contains(msg, "not paid"):
+		return "payment_manual_refund_order_not_paid"
+	case strings.Contains(msg, "refund_quota exceeds"):
+		return "payment_manual_refund_quota_exceeds_order"
+	case strings.Contains(msg, "insufficient quota"):
+		return "payment_manual_refund_insufficient_quota"
+	case strings.Contains(msg, "permission denied"):
+		return "payment_manual_refund_forbidden"
+	default:
+		return "payment_manual_refund_rejected"
+	}
 }
 
 // POST /v0/admin/payment/refund-requests — 向支付 provider 发起退款请求

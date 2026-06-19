@@ -325,8 +325,8 @@ Gemini-compatible 错误示例：
 | PUT | `/v0/admin/payment/products/:id` | 基础实现 | 更新支付商品；已创建订单继续使用订单快照，成功后写管理审计 |
 | PATCH | `/v0/admin/payment/products/:id/disable` | 基础实现 | 禁用商品；禁用后用户侧不可见且不能创建新订单，成功后写管理审计 |
 | PATCH | `/v0/admin/payment/products/:id/enable` | 基础实现 | 启用商品，成功后写管理审计 |
-| POST | `/v0/admin/payment/adjustments` | 基础实现 | 支付相关人工补账或扣回；写 `manual_credit`/`manual_debit` 额度流水和 `payment_manual_adjust.*` 管理审计，默认必须填写原因 |
-| POST | `/v0/admin/payment/refunds` | 基础实现 | 管理员确认支付退款后扣回额度，订单置为 `refunded` 或 `partially_refunded`，写 `refund_deduct` 流水和 `payment_refund.manual` 审计 |
+| POST | `/v0/admin/payment/adjustments` | 基础实现 | 支付相关人工补账或扣回；写 `manual_credit`/`manual_debit` 额度流水和 `payment_manual_adjust.*` 管理审计，默认必须填写原因；本地拒绝写 `payment_manual_adjust.denied` |
+| POST | `/v0/admin/payment/refunds` | 基础实现 | 管理员确认支付退款后扣回额度，订单置为 `refunded` 或 `partially_refunded`，写 `refund_deduct` 流水和 `payment_refund.manual` 审计；本地拒绝写 `payment_refund.manual_denied` |
 | POST | `/v0/admin/payment/refund-requests` | 基础实现 | 向 Stripe 或易支付发起 provider 退款请求，写 `payment_refund_requests`，订单进入 `refund_pending`，最终状态等待可信 webhook 或后续人工收尾确认 |
 
 创建/更新支付商品请求：
@@ -358,7 +358,7 @@ Gemini-compatible 错误示例：
 }
 ```
 
-`amount` 为正数时写 `manual_credit`，负数时写 `manual_debit`；`order_no` 可关联原支付订单，`idempotency_key` 用于防止同一人工动作重复改变余额。
+`amount` 为正数时写 `manual_credit`，负数时写 `manual_debit`；`order_no` 可关联原支付订单，`idempotency_key` 用于防止同一人工动作重复改变余额。缺少原因、缺少幂等键、金额为 0、重复幂等键或关联订单/权限校验失败会写 `payment_manual_adjust.denied`，使用稳定 `error_code` 区分原因。
 
 支付人工退款请求：
 
@@ -371,7 +371,7 @@ Gemini-compatible 错误示例：
 }
 ```
 
-`refund_quota` 必须大于 0 且不能超过订单入账额度；仅支持对 `paid` 订单人工落账退款。全额退款会将订单置为 `refunded`，部分退款会置为 `partially_refunded`；接口会写 `quota_transactions(type=refund_deduct, source_type=refund, source_id=<order_no>)`，并通过 `idempotency_key` 防止重复扣回。
+`refund_quota` 必须大于 0 且不能超过订单入账额度；仅支持对 `paid` 订单人工落账退款。全额退款会将订单置为 `refunded`，部分退款会置为 `partially_refunded`；接口会写 `quota_transactions(type=refund_deduct, source_type=refund, source_id=<order_no>)`，并通过 `idempotency_key` 防止重复扣回。缺少订单号、退款额度非法、缺少原因、重复幂等键、订单状态不允许或余额不足会写 `payment_refund.manual_denied`。
 
 Provider 退款请求：
 
@@ -487,12 +487,14 @@ Provider 退款请求：
 | `payment_refund.processed` | `POST /v0/payment/stripe/webhook` 处理全额或部分退款事件 |
 | `payment_refund.deducted` | Stripe 全额或部分退款按 settings 自动扣回额度 |
 | `payment_refund.manual` | `POST /v0/admin/payment/refunds` 管理员人工确认退款并扣回额度 |
+| `payment_refund.manual_denied` | `POST /v0/admin/payment/refunds` 本地拒绝人工退款落账 |
 | `payment_dispute.created` | `POST /v0/payment/stripe/webhook` 处理 Stripe 争议/拒付事件，可按 settings 禁用 API Key |
 | `payment_dispute.updated` | `POST /v0/payment/stripe/webhook` 处理 Stripe 争议更新事件 |
 | `payment_dispute.closed` | `POST /v0/payment/stripe/webhook` 处理 Stripe 争议关闭事件 |
 | `payment_dispute.funds_changed` | `POST /v0/payment/stripe/webhook` 处理 Stripe 争议资金扣回或返还事件 |
 | `payment_manual_adjust.credit` | `POST /v0/admin/payment/adjustments` 人工补账 |
 | `payment_manual_adjust.debit` | `POST /v0/admin/payment/adjustments` 人工扣回 |
+| `payment_manual_adjust.denied` | `POST /v0/admin/payment/adjustments` 本地拒绝人工补账或扣回 |
 | `api_key.created` | `POST /v0/user/token` |
 | `api_key.updated` | `PUT /v0/user/token/:id` 编辑名称或过期时间 |
 | `api_key.disabled` | `PUT /v0/user/token/:id` 将 Key 状态改为禁用，或 `POST /v0/user/token/:id/disable` |

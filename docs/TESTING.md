@@ -84,9 +84,9 @@
 | `TestStripePartialRefundWebhookRecordsAndDeductsProportionally` | Stripe 部分退款 webhook 记录 `partially_refunded` 状态；开启自动扣回后按退款金额比例写 refund_deduct 流水和退款/扣回审计 |
 | `TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy` | Stripe 争议 webhook 幂等记录争议事件和 `payment_dispute.created` 审计；开启自动禁用策略后禁用用户已启用 API Key，且不直接改用户额度 |
 | `TestStripeDisputeLifecycleUpdatesDisputeFact` | Stripe 争议 created/closed 生命周期写入并更新 `payment_disputes`，按 dispute id 写 `payment_dispute.*` 审计，重复事件不重复审计 |
-| `TestAdminPaymentManualAdjustmentRequiresReason` | 支付人工补账/扣回默认要求填写原因，缺少原因不改变用户余额 |
+| `TestAdminPaymentManualAdjustmentRequiresReason` | 支付人工补账/扣回默认要求填写原因，缺少原因不改变用户余额，并写 `payment_manual_adjust.denied` 拒绝审计 |
 | `TestAdminPaymentManualAdjustmentWritesManualTransactionAndAudit` | 管理员通过支付人工修正接口扣回额度，写 `manual_debit` 流水、关联订单、记录操作者/原因/幂等键并写支付订单审计 |
-| `TestAdminPaymentManualRefundMarksOrderAndDeductsQuota` | 管理员通过支付人工退款接口扣回额度，订单置为 `partially_refunded` 或 `refunded`，写 `refund_deduct` 流水、原因、操作者、幂等键和 `payment_refund.manual` 审计 |
+| `TestAdminPaymentManualRefundMarksOrderAndDeductsQuota` | 管理员通过支付人工退款接口扣回额度，订单置为 `partially_refunded` 或 `refunded`，写 `refund_deduct` 流水、原因、操作者、幂等键和 `payment_refund.manual` 审计；重复幂等键拒绝写 `payment_refund.manual_denied` |
 | `TestAdminStripeRefundRequestCreatesProviderRefundAndPendingOrder` | 管理员向 Stripe 发起 provider 退款请求，调用 Refund API，写 `payment_refund_requests` 和 `payment_refund.requested` 审计，订单进入 `refund_pending`，后续退款 webhook 收尾为最终退款状态；缺少原因会拒绝、不会调用 provider，并写 `payment_refund.request_denied` |
 | `TestAdminEpayRefundRequestCreatesProviderRefundAndPendingOrder` | 管理员向易支付发起 provider 退款请求，签名调用配置的退款地址，写 `payment_refund_requests` 和 `payment_refund.requested` 审计，订单进入 `refund_pending`；重复幂等键不重复调用 provider，并写 `payment_refund.request_denied` |
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
@@ -535,7 +535,7 @@ Gemini-compatible 最小断言：
 | P1 | 独立日志数据库 | 已覆盖 `LOG_SQL_DSN` 初始化、日志库副本写入、运行期写入失败时主库事实可恢复、主库 outbox 异步补写、管理日志列表读取日志库、查询失败回退主库、日志库健康指标和 outbox 积压指标；继续补冷热归档策略 |
 | P2 | 企业账号 | 本地密码成功登录审计已覆盖；OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管待补 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、按环境/团队/应用/标签/服务账号主体过滤、脱敏 CSV 导出、批量禁用、批量过期、批量操作无筛选拒绝审计、基础风险视图、泄露风险基础轮换建议、单 Key 泄露窗口分析、单 Key 错误/限流事件统一视图、泄露上报管理员告警收件箱、告警确认处理、Webhook/邮件/IM 告警投递 outbox、列表、手动重放和脱敏 payload、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝、RPM/TPM 拒绝、基础 Redis 鉴权 lookup cache 命中/预热/禁用失效和 router Redis 兼容已覆盖 |
-| P2 | 支付充值 | 充值码批次/备注/过期策略、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求及拒绝审计、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账和明确失败审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回审计、支付人工退款落账审计；更多 provider 自动退款适配待补 |
+| P2 | 支付充值 | 充值码批次/备注/过期策略、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求及拒绝审计、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账和明确失败审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回及拒绝审计、支付人工退款落账及拒绝审计；更多 provider 自动退款适配待补 |
 | P2 | 观测审计 | 成功登录、API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status、可配置 HTTP/Panic JSON line 结构化日志和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis up 与错误计数/日志库/outbox 指标测试已覆盖；继续补更完整结构化失败事实、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
