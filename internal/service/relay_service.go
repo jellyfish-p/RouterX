@@ -405,6 +405,7 @@ var (
 	errInvalidRouterXRoute    = errors.New("invalid routerx route")
 	errInvalidEmbeddingInput  = errors.New("embeddings input must be a non-empty string, string array, token array, or token array batch")
 	errEmbeddingBatchTooLarge = errors.New("embeddings input batch exceeds maximum size")
+	errInvalidImagePrompt     = errors.New("image generation prompt must be a non-empty string")
 	errInvalidImageSize       = errors.New("image size must be auto or WIDTHxHEIGHT within configured bounds")
 	errInvalidAudioFormat     = errors.New("audio response_format is not supported for this API")
 	errInvalidAudioInput      = errors.New("audio speech input must be a non-empty string within configured bounds")
@@ -1333,6 +1334,7 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 		Model   string          `json:"model"`
 		Stream  bool            `json:"stream"`
 		Input   json.RawMessage `json:"input"`
+		Prompt  json.RawMessage `json:"prompt"`
 		Size    json.RawMessage `json:"size"`
 		Voice   json.RawMessage `json:"voice"`
 		Format  json.RawMessage `json:"response_format"`
@@ -1359,6 +1361,9 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 		}
 	}
 	if apiType == relay.APIImagesGenerations {
+		if err := validateImageGenerationPrompt(payload.Prompt); err != nil {
+			return relayRequestInfo{}, err
+		}
 		if err := validateImageGenerationSize(payload.Size); err != nil {
 			return relayRequestInfo{}, err
 		}
@@ -1380,6 +1385,22 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 		}
 	}
 	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream, Route: route, Upstream: upstream}, nil
+}
+
+// Image Generations 的 prompt 是生成图片的必要文本输入，先在本地挡住空值和非字符串。
+func validateImageGenerationPrompt(raw json.RawMessage) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || isJSONNull(raw) {
+		return errInvalidImagePrompt
+	}
+	var prompt string
+	if err := json.Unmarshal(raw, &prompt); err != nil {
+		return errInvalidImagePrompt
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return errInvalidImagePrompt
+	}
+	return nil
 }
 
 // Image Generations 在本地挡住明显异常的尺寸，避免无效请求进入上游和计费链路。
@@ -1749,6 +1770,8 @@ func relayRequestErrorCode(err error) string {
 		return "invalid_embedding_input"
 	case errors.Is(err, errEmbeddingBatchTooLarge):
 		return "embedding_batch_too_large"
+	case errors.Is(err, errInvalidImagePrompt):
+		return "invalid_image_prompt"
 	case errors.Is(err, errInvalidImageSize):
 		return "invalid_image_size"
 	case errors.Is(err, errInvalidAudioFormat):

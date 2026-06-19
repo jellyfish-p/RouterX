@@ -16781,6 +16781,90 @@ func TestImageGenerationsRejectsInvalidSizeBeforeUpstream(t *testing.T) {
 	}
 }
 
+func TestImageGenerationsRejectsInvalidPromptBeforeUpstream(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1710000000,"data":[{"url":"https://example.invalid/should-not-happen.png"}]}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":         "image-generation-prompt",
+		"remain_quota": 10,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "image-generation-prompt",
+		"models":   "gpt-image-prompt",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	for _, tc := range []struct {
+		name string
+		body map[string]interface{}
+	}{
+		{name: "missing prompt", body: map[string]interface{}{"model": "gpt-image-prompt"}},
+		{name: "null prompt", body: map[string]interface{}{"model": "gpt-image-prompt", "prompt": nil}},
+		{name: "numeric prompt", body: map[string]interface{}{"model": "gpt-image-prompt", "prompt": 123}},
+		{name: "blank prompt", body: map[string]interface{}{"model": "gpt-image-prompt", "prompt": "   "}},
+	} {
+		resp := performJSON(r, http.MethodPost, "/v1/images/generations", "Bearer "+tokenPayload.Data.Key, tc.body)
+		if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), `"code":"invalid_image_prompt"`) {
+			t.Fatalf("%s should return invalid_image_prompt, got %d %s", tc.name, resp.Code, resp.Body.String())
+		}
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("invalid image prompt must not call upstream, got %d calls", upstreamCalls)
+	}
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.RemainQuota != 10 {
+		t.Fatalf("invalid image prompt should not deduct token budget, got %d", storedToken.RemainQuota)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != 100 {
+		t.Fatalf("invalid image prompt should not deduct user quota, got %d", root.Quota)
+	}
+}
+
 func TestImageMultipartPassthroughUsesRouteAndMinimumCharge(t *testing.T) {
 	cases := []struct {
 		name         string
