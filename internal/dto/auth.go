@@ -28,6 +28,13 @@ type RegisterRequest struct {
 	CaptchaCode    string `json:"captcha_code"`
 }
 
+// RegisterCaptchaResponse 注册图片验证码响应。
+type RegisterCaptchaResponse struct {
+	CaptchaID       string `json:"captcha_id"`
+	CaptchaImageSVG string `json:"captcha_image_svg"`
+	TTLSeconds      int    `json:"ttl_seconds"`
+}
+
 type OAuthRegistrationRequiredResponse struct {
 	RegistrationRequired bool   `json:"registration_required"`
 	RegistrationTicket   string `json:"registration_ticket"`

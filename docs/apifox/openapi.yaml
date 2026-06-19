@@ -231,6 +231,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StandardResponse"
+  /v0/user/register/captcha:
+    post:
+      tags: [User Auth]
+      summary: 生成注册图片验证码
+      description: 公开入口；生成 6 位注册图片验证码，写入 Redis key auth:register_captcha:<captcha_id>，value 包含 SHA256(captcha_code)、attempts 和 max_attempts，并按 auth.captcha.ttl_seconds 设置 TTL。响应返回 captcha_id、可展示的 captcha_image_svg 和 ttl_seconds；Redis 不可用或公开注册/用户名注册关闭时 fail-closed。该验证码是注册防刷验证码，不等同于邮箱或手机号归属验证。
+      responses:
+        "200":
+          description: 注册验证码已生成。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RegisterCaptchaResponse"
+        "403":
+          description: 公开注册或用户名注册关闭。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+        "503":
+          description: Redis 验证码存储不可用，不能生成可消费验证码。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
   /v0/user/register:
     post:
       tags: [User Auth]
@@ -4752,6 +4781,18 @@ components:
         captcha_code:
           type: string
           description: 注册验证码答案；auth.register.captcha.required=true 时必填，服务端使用 SHA256(captcha_code) 与 Redis 记录比对。
+    RegisterCaptchaResponse:
+      type: object
+      properties:
+        captcha_id:
+          type: string
+          description: 注册验证码 ID；提交注册时作为 captcha_id 使用。
+        captcha_image_svg:
+          type: string
+          description: 可直接展示的 SVG 图片；用户从图片中读取 6 位数字验证码后提交为 captcha_code。
+        ttl_seconds:
+          type: integer
+          description: 验证码有效期秒数，来自 auth.captcha.ttl_seconds。
     OAuthRegistrationRequiredResponse:
       type: object
       properties:

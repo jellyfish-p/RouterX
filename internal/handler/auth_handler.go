@@ -26,6 +26,28 @@ func NewAuthHandler(svc *service.AuthService) *AuthHandler {
 	return &AuthHandler{svc: svc}
 }
 
+// POST /v0/user/register/captcha — 生成注册图片验证码。
+func (h *AuthHandler) RegisterCaptcha(c *gin.Context) {
+	challenge, err := h.svc.CreateRegisterCaptcha()
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrSelfRegistrationDisabled) ||
+			errors.Is(err, service.ErrUsernameRegistrationDisabled):
+			common.FailWithStatus(c, http.StatusForbidden, err.Error())
+		case errors.Is(err, service.ErrCaptchaStoreUnavailable):
+			common.FailWithStatus(c, http.StatusServiceUnavailable, err.Error())
+		default:
+			common.FailWithStatus(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	common.Success(c, dto.RegisterCaptchaResponse{
+		CaptchaID:       challenge.CaptchaID,
+		CaptchaImageSVG: challenge.CaptchaImageSVG,
+		TTLSeconds:      challenge.TTLSeconds,
+	})
+}
+
 // POST /v0/user/register — 用户注册
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req dto.RegisterRequest

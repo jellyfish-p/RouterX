@@ -20,6 +20,7 @@ func setupUserRoutes(
 	api := r.Group("/v0/user")
 	api.Use(middleware.SetupCheck())
 	{
+		api.POST("/register/captcha", authH.RegisterCaptcha)
 		api.POST("/register", authH.Register)
 		api.POST("/login", authH.UserLogin)
 		api.GET("/oauth/:provider/login", authH.OAuthLogin)

@@ -21,7 +21,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备受 settings 控制的用户名、邮箱、手机号自助注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认、注销隐私字段擦除、基础用户名/邮箱/手机号恢复账号、Redis-backed 注册验证码消费、Redis-backed 邮箱/手机号验证码登录，以及 OAuth 已绑定身份登录、OAuth 首次补齐注册、OAuth 注销账号恢复、登录用户绑定 OAuth identity、OIDC 已绑定身份登录、OIDC 首次补齐注册、OIDC 注销账号恢复、登录用户绑定 OIDC identity 和自助列出/解绑非主 identity 所需的账号能力。自助注册默认关闭；开启基础注册时，服务端会检查 `auth.register.enabled`、对应 `auth.register.{method}.enabled` 和 `auth.register.captcha.required`，需要验证码时会校验并一次性消费 Redis 注册验证码，新账号会应用默认额度/分组，命中已注销同名、同邮箱或同手机号身份时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，密码登录统一校验同一用户的 `username/local` 主密码，验证码登录会校验并一次性消费 Redis 中的短期验证码记录；当前本地 email/phone identity 不保存重复密码哈希。OAuth 当前支持授权跳转、state Cookie 校验、code 换 token、userinfo 稳定 id/sub 登录、恢复或绑定 `oauth/provider/identifier` 身份；当 `auth.register.oauth.enabled=true` 且 `oauth.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的身份会返回短期注册票据，用户提交用户名、密码，并在注册验证码开启时提交可消费验证码后创建本地有密码账号并绑定 OAuth identity，或恢复原账号并刷新该 OAuth identity 最近使用时间，同时明确禁止因相同 email 自动绑定或接管已有账号。OIDC 当前支持 Discovery、state/nonce、RS256 ID Token 签名、`iss/aud/exp/sub` 校验，并只用已验证 `sub` 登录、恢复、绑定或生成短期注册票据；当 `auth.register.oidc.enabled=true` 且 `oidc.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的 subject 可补齐用户名、密码，并在注册验证码开启时提交可消费验证码后创建本地有密码账号并绑定 OIDC identity，或恢复原账号并刷新 OIDC identity 最近使用时间。本文档中的验证码发送接口、绑定归属验证和更完整企业风控属于目标设计，需要按阶段继续实现。
+当前代码已经具备受 settings 控制的用户名、邮箱、手机号自助注册、统一登录、User JWT、登录审计、管理员角色校验、API Key 鉴权、自助注销保留账号、注销密码二次确认、注销隐私字段擦除、基础用户名/邮箱/手机号恢复账号、Redis-backed 注册图片验证码生成与消费、Redis-backed 邮箱/手机号验证码登录，以及 OAuth 已绑定身份登录、OAuth 首次补齐注册、OAuth 注销账号恢复、登录用户绑定 OAuth identity、OIDC 已绑定身份登录、OIDC 首次补齐注册、OIDC 注销账号恢复、登录用户绑定 OIDC identity 和自助列出/解绑非主 identity 所需的账号能力。自助注册默认关闭；开启基础注册时，服务端会检查 `auth.register.enabled`、对应 `auth.register.{method}.enabled` 和 `auth.register.captcha.required`，需要验证码时会校验并一次性消费 Redis 注册验证码，新账号会应用默认额度/分组，命中已注销同名、同邮箱或同手机号身份时会恢复原账号。已有本地 email/phone identity 在对应登录开关开启后可作为登录标识，密码登录统一校验同一用户的 `username/local` 主密码，验证码登录会校验并一次性消费 Redis 中的短期验证码记录；当前本地 email/phone identity 不保存重复密码哈希。OAuth 当前支持授权跳转、state Cookie 校验、code 换 token、userinfo 稳定 id/sub 登录、恢复或绑定 `oauth/provider/identifier` 身份；当 `auth.register.oauth.enabled=true` 且 `oauth.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的身份会返回短期注册票据，用户提交用户名、密码，并在注册验证码开启时提交可消费验证码后创建本地有密码账号并绑定 OAuth identity，或恢复原账号并刷新该 OAuth identity 最近使用时间，同时明确禁止因相同 email 自动绑定或接管已有账号。OIDC 当前支持 Discovery、state/nonce、RS256 ID Token 签名、`iss/aud/exp/sub` 校验，并只用已验证 `sub` 登录、恢复、绑定或生成短期注册票据；当 `auth.register.oidc.enabled=true` 且 `oidc.{provider}.register_enabled=true` 时，未绑定或已绑定到注销账号的 subject 可补齐用户名、密码，并在注册验证码开启时提交可消费验证码后创建本地有密码账号并绑定 OIDC identity，或恢复原账号并刷新 OIDC identity 最近使用时间。本文档中的登录验证码发送接口、绑定归属验证和更完整企业风控属于目标设计，需要按阶段继续实现。
 
 阶段边界：
 
@@ -420,11 +420,12 @@ POST /v0/user/login
 注册验证码规则：
 
 - 注册验证码是防刷验证码，不等同于邮箱或手机号归属验证。
+- `POST /v0/user/register/captcha` 当前生成基础图片验证码：服务端写入 Redis 后返回 `captcha_id`、可展示的 `captcha_image_svg` 和 `ttl_seconds`。
 - Redis key 约定为 `auth:register_captcha:<captcha_id>`，value 为 JSON：`code_hash`、`attempts` 和可选 `max_attempts`。
 - `code_hash` 使用 `SHA256(captcha_code)`；验证码正确后删除 Redis key 并继续注册。
 - 错误尝试会递增 `attempts`，达到 `auth.captcha.max_attempts` 或记录自带 `max_attempts` 后删除验证码。
 - Redis 缺失或不可用、验证码缺失、验证码过期、验证码错误都会拒绝注册。
-- 当前已落地注册消费侧，验证码生成/发送接口仍按阶段继续实现。
+- 当前已落地注册图片验证码生成和消费侧；登录验证码发送、邮件/短信投递和邮箱/手机号归属验证仍按阶段继续实现。
 
 ## 邮箱规则
 

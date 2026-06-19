@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -464,7 +465,7 @@ func TestApifoxOpenAPISecurityMatchesRouteGroups(t *testing.T) {
 
 func isPublicUserOperation(path string) bool {
 	switch path {
-	case "/v0/user/register", "/v0/user/login",
+	case "/v0/user/register/captcha", "/v0/user/register", "/v0/user/login",
 		"/v0/user/oauth/{provider}/login", "/v0/user/oauth/{provider}/callback", "/v0/user/oauth/{provider}/register", "/v0/user/oauth/{provider}/bind/callback",
 		"/v0/user/oidc/{provider}/login", "/v0/user/oidc/{provider}/callback", "/v0/user/oidc/{provider}/register", "/v0/user/oidc/{provider}/bind/callback":
 		return true
@@ -3047,6 +3048,109 @@ func TestUserRegisterConsumesRedisCaptchaWhenRequired(t *testing.T) {
 	}
 	if reusedCount != 0 {
 		t.Fatalf("reused registration captcha must not create user, got count=%d", reusedCount)
+	}
+}
+
+func TestUserRegisterCaptchaEndpointGeneratesConsumableRedisCaptcha(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":          "true",
+		"auth.register.username.enabled": "true",
+		"auth.register.captcha.required": "true",
+		"auth.captcha.ttl_seconds":       "120",
+		"auth.captcha.max_attempts":      "3",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+
+	redisServer := newRouterFakeRedisServer(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr(), Protocol: 2, DisableIdentity: true})
+	oldRDB := internal.RDB
+	internal.RDB = rdb
+	t.Cleanup(func() {
+		_ = rdb.Close()
+		internal.RDB = oldRDB
+	})
+
+	captchaResp := performJSON(r, http.MethodPost, "/v0/user/register/captcha", "", nil)
+	var captchaPayload struct {
+		Data struct {
+			CaptchaID       string `json:"captcha_id"`
+			CaptchaImageSVG string `json:"captcha_image_svg"`
+			TTLSeconds      int    `json:"ttl_seconds"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(captchaResp.Body.Bytes(), &captchaPayload); err != nil {
+		t.Fatal(err)
+	}
+	if captchaResp.Code != http.StatusOK ||
+		captchaPayload.Data.CaptchaID == "" ||
+		!strings.Contains(captchaPayload.Data.CaptchaImageSVG, "<svg") ||
+		captchaPayload.Data.TTLSeconds != 120 {
+		t.Fatalf("register captcha endpoint should return captcha challenge, got %d %s", captchaResp.Code, captchaResp.Body.String())
+	}
+	codeMatch := regexp.MustCompile(`>([0-9]{6})<`).FindStringSubmatch(captchaPayload.Data.CaptchaImageSVG)
+	if len(codeMatch) != 2 {
+		t.Fatalf("captcha SVG should contain a six digit challenge for the image renderer, got %q", captchaPayload.Data.CaptchaImageSVG)
+	}
+
+	registerResp := performJSON(r, http.MethodPost, "/v0/user/register", "", map[string]interface{}{
+		"username":     "generated-captcha-user",
+		"password":     "password123",
+		"display_name": "Generated Captcha User",
+		"captcha_id":   captchaPayload.Data.CaptchaID,
+		"captcha_code": codeMatch[1],
+	})
+	if registerResp.Code != http.StatusOK {
+		t.Fatalf("generated register captcha should be consumable, got %d %s", registerResp.Code, registerResp.Body.String())
+	}
+	if _, err := rdb.Get(context.Background(), routerRegisterCaptchaKey(captchaPayload.Data.CaptchaID)).Result(); !errors.Is(err, redis.Nil) {
+		t.Fatalf("generated register captcha should be consumed after registration, err=%v", err)
+	}
+}
+
+func TestUserRegisterCaptchaEndpointFailsClosedWithoutRedis(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret-with-at-least-32-bytes")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"auth.register.enabled":          "true",
+		"auth.register.username.enabled": "true",
+		"auth.register.captcha.required": "true",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatalf("set %s failed: %v", key, err)
+		}
+	}
+	oldRDB := internal.RDB
+	internal.RDB = nil
+	t.Cleanup(func() { internal.RDB = oldRDB })
+
+	resp := performJSON(r, http.MethodPost, "/v0/user/register/captcha", "", nil)
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("register captcha generation should fail closed without Redis, got %d %s", resp.Code, resp.Body.String())
 	}
 }
 

@@ -3,10 +3,13 @@ package service
 import (
 	"context"
 	"crypto/hmac"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math/big"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,6 +30,7 @@ var (
 	ErrEmailRegistrationDisabled      = errors.New("email registration is disabled")
 	ErrPhoneRegistrationDisabled      = errors.New("phone registration is disabled")
 	ErrRegistrationCaptchaRequired    = errors.New("registration captcha is required")
+	ErrCaptchaStoreUnavailable        = errors.New("captcha store is not available")
 	ErrLoginCodeDisabled              = errors.New("code login is disabled")
 	ErrLoginCodeUnsupported           = errors.New("code login only supports email or phone accounts")
 	ErrLoginCodeVerifierUnavailable   = errors.New("code login verifier is not available")
@@ -70,6 +74,12 @@ type RegisterResult struct {
 	Recovered bool
 }
 
+type RegisterCaptchaChallenge struct {
+	CaptchaID       string
+	CaptchaImageSVG string
+	TTLSeconds      int
+}
+
 // RegisterInput carries the unified self-registration payload. Captcha fields
 // are consumed from Redis when auth.register.captcha.required is enabled.
 type RegisterInput struct {
@@ -81,6 +91,43 @@ type RegisterInput struct {
 	RegisterMethod string
 	CaptchaID      string
 	CaptchaCode    string
+}
+
+func (s *AuthService) CreateRegisterCaptcha() (*RegisterCaptchaChallenge, error) {
+	if err := registrationMethodPolicyErrorForMethod("username"); err != nil {
+		return nil, err
+	}
+	if internal.RDB == nil {
+		return nil, ErrCaptchaStoreUnavailable
+	}
+	captchaID, err := common.GenerateRandomString(16)
+	if err != nil {
+		return nil, err
+	}
+	code, err := randomNumericCode(6)
+	if err != nil {
+		return nil, err
+	}
+	record := registerCaptchaRecord{
+		CodeHash:    common.SHA256Hex(code),
+		Attempts:    0,
+		MaxAttempts: captchaMaxAttempts(),
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return nil, err
+	}
+	ttl := captchaTTLSeconds()
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := internal.RDB.Set(ctx, registerCaptchaRedisKey(captchaID), string(raw), time.Duration(ttl)*time.Second).Err(); err != nil {
+		return nil, ErrCaptchaStoreUnavailable
+	}
+	return &RegisterCaptchaChallenge{
+		CaptchaID:       captchaID,
+		CaptchaImageSVG: renderRegisterCaptchaSVG(code),
+		TTLSeconds:      ttl,
+	}, nil
 }
 
 type OAuthCallbackResult struct {
@@ -1459,6 +1506,35 @@ func captchaMaxAttempts() int {
 		return 5
 	}
 	return common.ParsePositiveInt(value, 5)
+}
+
+func captchaTTLSeconds() int {
+	value, err := NewSettingService().Get("auth.captcha.ttl_seconds")
+	if err != nil {
+		return 300
+	}
+	return common.ParsePositiveInt(value, 300)
+}
+
+func randomNumericCode(length int) (string, error) {
+	if length <= 0 {
+		return "", errors.New("captcha length is invalid")
+	}
+	const digits = "0123456789"
+	var b strings.Builder
+	b.Grow(length)
+	for i := 0; i < length; i++ {
+		n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(len(digits))))
+		if err != nil {
+			return "", err
+		}
+		b.WriteByte(digits[n.Int64()])
+	}
+	return b.String(), nil
+}
+
+func renderRegisterCaptchaSVG(code string) string {
+	return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="160" height="48" viewBox="0 0 160 48" role="img" aria-label="registration captcha"><rect width="160" height="48" rx="6" fill="#f8fafc"/><path d="M8 34 C32 10, 58 44, 84 20 S132 12, 152 30" fill="none" stroke="#94a3b8" stroke-width="2"/><text x="80" y="31" text-anchor="middle" font-family="monospace" font-size="24" font-weight="700" letter-spacing="4" fill="#111827">%s</text></svg>`, code)
 }
 
 func identityExists(tx *gorm.DB, method, identifier string) (bool, error) {
