@@ -6483,11 +6483,19 @@ components:
     PaginatedResult:
       type: object
       properties:
-        total: { type: integer, format: int64 }
-        page: { type: integer }
-        page_size: { type: integer }
+        total:
+          type: integer
+          format: int64
+          description: 符合当前查询条件的总记录数。
+        page:
+          type: integer
+          description: 当前页码，从 1 开始。
+        page_size:
+          type: integer
+          description: 当前页大小。
         data:
           type: array
+          description: 当前页数据列表；具体元素类型由组合 schema 覆盖。
           items: {}
     UserPage:
       allOf:
@@ -7560,9 +7568,18 @@ components:
     BillingStats:
       type: object
       properties:
-        call_count: { type: integer, format: int64 }
-        total_quota: { type: integer, format: int64 }
-        total_tokens: { type: integer, format: int64 }
+        call_count:
+          type: integer
+          format: int64
+          description: 汇总窗口内调用次数。
+        total_quota:
+          type: integer
+          format: int64
+          description: 汇总窗口内累计消耗额度。
+        total_tokens:
+          type: integer
+          format: int64
+          description: 汇总窗口内累计模型 token 数。
     DashboardStats:
       type: object
       properties:
@@ -7797,6 +7814,7 @@ components:
         xai:
           allOf:
             - $ref: "#/components/schemas/RouterXProviderBody"
+          description: xAI 上游专属补充；命中 xAI/OpenAI-compatible 上游时按安全合并规则补充到上游 body。
           example:
             search_parameters:
               mode: auto
@@ -7813,7 +7831,9 @@ components:
         role:
           type: string
           enum: [system, user, assistant, tool]
+          description: 消息角色。
         content:
+          description: 消息内容；可为纯文本，也可为 OpenAI-compatible content part 数组。
           oneOf:
             - type: string
             - type: array
