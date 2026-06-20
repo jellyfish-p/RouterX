@@ -5,9 +5,13 @@ import (
 	crand "crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -21,13 +25,101 @@ import (
 const (
 	keySelectionRoundRobin = "round_robin"
 	keySelectionRandom     = "random"
+
+	channelCandidateCacheRedisHash                = "routing:channel_candidate_cache"
+	channelCandidateCacheRedisField               = "snapshot"
+	channelCandidateCacheInvalidationRedisChannel = "routing:channel_candidate_cache:invalidate"
+
+	routeFilterReasonAccessDenied    = "access_denied"
+	routeFilterReasonDisabled        = "disabled"
+	routeFilterReasonHealthBlocked   = "health_blocked"
+	routeFilterReasonModelMismatch   = "model_mismatch"
+	routeFilterReasonRoutePreference = "route_preference"
 )
 
-type ChannelService struct{}
+type ChannelService struct {
+	candidateCacheMu sync.Mutex
+	candidateCache   channelCandidateCache
+}
+
+type circuitBreakerConfig struct {
+	autoBan   bool
+	threshold int
+	cooldown  time.Duration
+}
+
+type breakerProbeConfig struct {
+	enabled   bool
+	interval  time.Duration
+	batchSize int
+}
+
+type ChannelProbeSummary struct {
+	Checked   int
+	Succeeded int
+	Failed    int
+}
+
+// ChannelHealthSummary is the operator-facing view of status plus breaker state.
+type ChannelHealthSummary struct {
+	Status                   string
+	Reason                   string
+	CooldownRemainingSeconds int64
+}
+
+type RouteSelectionFacts struct {
+	FilteredReasons map[string]int
+	BreakerSnapshot map[string]interface{}
+}
+
+type channelCandidateCache struct {
+	loaded    bool
+	version   int
+	expiresAt time.Time
+	channels  []model.Channel
+}
+
+type channelCandidateCacheConfig struct {
+	enabled bool
+	preload bool
+	version int
+	ttl     time.Duration
+}
+
+type channelCandidateCacheRedisSnapshot struct {
+	Version       int             `json:"version"`
+	ExpiresAtUnix int64           `json:"expires_at_unix"`
+	Channels      []model.Channel `json:"channels"`
+}
+
+type channelCandidateCacheInvalidationMessage struct {
+	Version    int   `json:"version"`
+	SentAtUnix int64 `json:"sent_at_unix"`
+}
 
 type ChannelUpstreamTarget struct {
-	BaseURL string
-	APIKey  string
+	BaseURL       string
+	APIKey        string
+	BaseURLSource string
+	BaseURLIndex  int
+}
+
+type ChannelSecretRotationResult struct {
+	ScannedChannels int
+	RotatedChannels int
+	ScannedSettings int
+	RotatedSettings int
+	RotatedSecrets  int
+	SkippedSecrets  int
+}
+
+// RoutePreference describes request-level routerx.route filters after policy checks.
+type RoutePreference struct {
+	ChannelGroup     string
+	ChannelID        uint
+	ChannelName      string
+	Provider         string
+	DisabledProvider []string
 }
 
 type channelUpstreamConfig struct {
@@ -41,33 +133,519 @@ func NewChannelService() *ChannelService {
 
 // SelectChannel 根据模型名 + 优先级 + 权重 + 健康状态选择最优上游通道。
 func (s *ChannelService) SelectChannel(modelName string) (*model.Channel, error) {
-	modelName = strings.TrimSpace(modelName)
-	var channels []model.Channel
-	if err := internal.DB.Where("status = ? AND error_count < ?", common.ChannelStatusEnabled, 10).
-		Order("priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC").
-		Find(&channels).Error; err != nil {
+	return s.SelectChannelWithRoute(modelName, RoutePreference{})
+}
+
+// SelectChannelWithRoute 在管理员允许的候选集中应用请求级 routerx.route 偏好。
+func (s *ChannelService) SelectChannelWithRoute(modelName string, route RoutePreference) (*model.Channel, error) {
+	candidates, err := s.SelectChannelCandidatesWithRoute(modelName, route)
+	if err != nil {
 		return nil, err
 	}
+	bestPriority := candidates[0].Priority
+	bestPriorityCandidates := make([]model.Channel, 0, len(candidates))
+	for _, channel := range candidates {
+		if channel.Priority != bestPriority {
+			break
+		}
+		bestPriorityCandidates = append(bestPriorityCandidates, channel)
+	}
+	return weightedPick(bestPriorityCandidates), nil
+}
+
+// SelectChannelCandidatesWithRoute 返回经过系统过滤和 routerx.route 收窄后的有序候选通道。
+func (s *ChannelService) SelectChannelCandidatesWithRoute(modelName string, route RoutePreference) ([]model.Channel, error) {
+	candidates, _, err := s.SelectChannelCandidatesWithRouteFacts(modelName, route)
+	return candidates, err
+}
+
+// SelectChannelCandidatesWithRouteFacts 同时返回候选和按首个过滤原因汇总的数量，供路由快照解释选择过程。
+func (s *ChannelService) SelectChannelCandidatesWithRouteFacts(modelName string, route RoutePreference) ([]model.Channel, map[string]int, error) {
+	candidates, facts, err := s.SelectChannelCandidatesWithRouteDetailedFacts(modelName, route)
+	return candidates, facts.FilteredReasons, err
+}
+
+// SelectChannelCandidatesWithRouteDetailedFacts 返回候选以及用于路由/策略快照的结构化过滤事实。
+func (s *ChannelService) SelectChannelCandidatesWithRouteDetailedFacts(modelName string, route RoutePreference) ([]model.Channel, RouteSelectionFacts, error) {
+	modelName = strings.TrimSpace(modelName)
+	breaker := s.circuitBreakerConfig()
+	channels, err := s.channelsForCandidateSelection()
+	if err != nil {
+		return nil, RouteSelectionFacts{}, err
+	}
+	now := time.Now()
+	facts := RouteSelectionFacts{FilteredReasons: map[string]int{}}
 	candidates := make([]model.Channel, 0, len(channels))
-	bestPriority := 0
-	hasPriority := false
 	for _, channel := range channels {
-		if !channelSupportsModel(channel.Models, modelName) {
+		if channel.Status != common.ChannelStatusEnabled {
+			addRouteFilterReason(facts.FilteredReasons, routeFilterReasonDisabled, 1)
 			continue
 		}
-		if !hasPriority || channel.Priority > bestPriority {
-			candidates = candidates[:0]
-			bestPriority = channel.Priority
-			hasPriority = true
+		if channelHealthBlocked(channel, breaker, now) {
+			addRouteFilterReason(facts.FilteredReasons, routeFilterReasonHealthBlocked, 1)
+			facts.addHealthBlockedChannel(channel, breaker, now)
+			continue
 		}
-		if channel.Priority == bestPriority {
-			candidates = append(candidates, channel)
+		if !channelSupportsModel(channel.Models, modelName) {
+			addRouteFilterReason(facts.FilteredReasons, routeFilterReasonModelMismatch, 1)
+			continue
 		}
+		if !channelMatchesRoute(channel, route) {
+			addRouteFilterReason(facts.FilteredReasons, routeFilterReasonRoutePreference, 1)
+			continue
+		}
+		candidates = append(candidates, channel)
 	}
 	if len(candidates) == 0 {
-		return nil, errors.New("no available channel")
+		return nil, facts, errors.New("no available channel")
 	}
-	return weightedPick(candidates), nil
+	return candidates, facts, nil
+}
+
+func (f *RouteSelectionFacts) addHealthBlockedChannel(channel model.Channel, breaker circuitBreakerConfig, now time.Time) {
+	if f == nil {
+		return
+	}
+	if f.BreakerSnapshot == nil {
+		f.BreakerSnapshot = map[string]interface{}{
+			"decision":              "deny",
+			"reason":                routeFilterReasonHealthBlocked,
+			"auto_ban":              breaker.autoBan,
+			"threshold":             breaker.threshold,
+			"cooldown_seconds":      int64(breaker.cooldown.Seconds()),
+			"blocked_channel_count": int64(0),
+			"blocked_channels":      []map[string]interface{}{},
+		}
+	}
+	blockedCount, _ := f.BreakerSnapshot["blocked_channel_count"].(int64)
+	blockedCount++
+	f.BreakerSnapshot["blocked_channel_count"] = blockedCount
+
+	blockedChannels, _ := f.BreakerSnapshot["blocked_channels"].([]map[string]interface{})
+	if len(blockedChannels) >= 10 {
+		f.BreakerSnapshot["blocked_channels_truncated"] = true
+		return
+	}
+	summary := map[string]interface{}{
+		"channel_id":    channel.ID,
+		"provider":      channelProviderName(channel.Type),
+		"channel_group": normalizeChannelGroupName(channel.ChannelGroup),
+		"error_count":   channel.ErrorCount,
+	}
+	if !channel.UpdatedAt.IsZero() {
+		summary["updated_at"] = channel.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	if breaker.cooldown > 0 && !channel.UpdatedAt.IsZero() {
+		remaining := breaker.cooldown - now.Sub(channel.UpdatedAt)
+		if remaining < 0 {
+			remaining = 0
+		}
+		summary["cooldown_remaining_seconds"] = int64(remaining.Seconds())
+	}
+	f.BreakerSnapshot["blocked_channels"] = append(blockedChannels, summary)
+}
+
+func (s *ChannelService) circuitBreakerConfig() circuitBreakerConfig {
+	cfg := circuitBreakerConfig{
+		autoBan:   true,
+		threshold: 10,
+	}
+	if internal.DB == nil {
+		return cfg
+	}
+	settingSvc := NewSettingService()
+	if enabled, err := settingSvc.GetBool("relay.error_auto_ban"); err == nil {
+		cfg.autoBan = enabled
+	}
+	if threshold, err := settingSvc.GetInt("relay.error_ban_threshold"); err == nil && threshold > 0 {
+		cfg.threshold = threshold
+	}
+	if cooldownSeconds, err := settingSvc.GetInt("relay.error_ban_cooldown_seconds"); err == nil && cooldownSeconds > 0 {
+		cfg.cooldown = time.Duration(cooldownSeconds) * time.Second
+	}
+	return cfg
+}
+
+func channelHealthBlocked(channel model.Channel, breaker circuitBreakerConfig, now time.Time) bool {
+	if !breaker.autoBan || channel.ErrorCount < breaker.threshold {
+		return false
+	}
+	if breaker.cooldown <= 0 || channel.UpdatedAt.IsZero() {
+		return true
+	}
+	return now.Sub(channel.UpdatedAt) < breaker.cooldown
+}
+
+func (s *ChannelService) ChannelHealthSummary(channel model.Channel) ChannelHealthSummary {
+	breaker := s.circuitBreakerConfig()
+	now := time.Now()
+	if channel.Status != common.ChannelStatusEnabled {
+		return ChannelHealthSummary{Status: "disabled", Reason: "manual_status"}
+	}
+	if !breaker.autoBan || channel.ErrorCount < breaker.threshold {
+		return ChannelHealthSummary{Status: "healthy", Reason: "ok"}
+	}
+	if channelHealthBlocked(channel, breaker, now) {
+		return ChannelHealthSummary{
+			Status:                   "tripped",
+			Reason:                   "error_count_threshold",
+			CooldownRemainingSeconds: channelCooldownRemainingSeconds(channel, breaker, now),
+		}
+	}
+	return ChannelHealthSummary{Status: "probing", Reason: "cooldown_elapsed"}
+}
+
+func channelCooldownRemainingSeconds(channel model.Channel, breaker circuitBreakerConfig, now time.Time) int64 {
+	if breaker.cooldown <= 0 || channel.UpdatedAt.IsZero() {
+		return 0
+	}
+	remaining := breaker.cooldown - now.Sub(channel.UpdatedAt)
+	if remaining <= 0 {
+		return 0
+	}
+	seconds := int64(remaining.Seconds())
+	if seconds == 0 {
+		return 1
+	}
+	return seconds
+}
+
+func (s *ChannelService) breakerProbeConfig() breakerProbeConfig {
+	cfg := breakerProbeConfig{
+		enabled:   true,
+		interval:  time.Minute,
+		batchSize: 20,
+	}
+	if internal.DB == nil {
+		return cfg
+	}
+	settingSvc := NewSettingService()
+	if enabled, err := settingSvc.GetBool("relay.error_probe_enabled"); err == nil {
+		cfg.enabled = enabled
+	}
+	if intervalSeconds, err := settingSvc.GetInt("relay.error_probe_interval_seconds"); err == nil {
+		cfg.interval = time.Duration(intervalSeconds) * time.Second
+	}
+	if batchSize, err := settingSvc.GetInt("relay.error_probe_batch_size"); err == nil && batchSize > 0 {
+		cfg.batchSize = batchSize
+	}
+	return cfg
+}
+
+// ProbeTrippedChannelsOnce tests channels whose breaker cooldown has elapsed.
+// It deliberately reuses Test so manual and background probes share accounting.
+func (s *ChannelService) ProbeTrippedChannelsOnce(ctx context.Context, limit int) (ChannelProbeSummary, error) {
+	summary := ChannelProbeSummary{}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if internal.DB == nil {
+		return summary, nil
+	}
+	breaker := s.circuitBreakerConfig()
+	probeCfg := s.breakerProbeConfig()
+	if !probeCfg.enabled || !breaker.autoBan || breaker.threshold <= 0 || breaker.cooldown <= 0 {
+		return summary, nil
+	}
+	if limit <= 0 {
+		limit = probeCfg.batchSize
+	}
+	cutoff := time.Now().Add(-breaker.cooldown)
+	var channels []model.Channel
+	if err := internal.DB.
+		Where("status = ? AND error_count >= ? AND updated_at <= ?", common.ChannelStatusEnabled, breaker.threshold, cutoff).
+		Order("updated_at ASC, error_count DESC, id ASC").
+		Limit(limit).
+		Find(&channels).Error; err != nil {
+		return summary, err
+	}
+	for _, channel := range channels {
+		select {
+		case <-ctx.Done():
+			return summary, ctx.Err()
+		default:
+		}
+		summary.Checked++
+		ok, _, _, err := s.Test(channel.ID)
+		if ok && err == nil {
+			summary.Succeeded++
+			recordChannelProbeResult(true)
+			continue
+		}
+		summary.Failed++
+		recordChannelProbeResult(false)
+	}
+	return summary, nil
+}
+
+func (s *ChannelService) StartBreakerProbeWorker(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		for {
+			cfg := s.breakerProbeConfig()
+			interval := cfg.interval
+			if interval <= 0 {
+				interval = time.Minute
+			}
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			cfg = s.breakerProbeConfig()
+			if !cfg.enabled || cfg.interval <= 0 {
+				continue
+			}
+			_, _ = s.ProbeTrippedChannelsOnce(ctx, cfg.batchSize)
+		}
+	}()
+}
+
+func (s *ChannelService) StartCandidateCacheInvalidationSubscriber(ctx context.Context) {
+	if s == nil || internal.RDB == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		pubsub := internal.RDB.Subscribe(ctx, channelCandidateCacheInvalidationRedisChannel)
+		defer pubsub.Close()
+		messages := pubsub.Channel()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-messages:
+				if !ok {
+					return
+				}
+				if msg != nil {
+					s.handleCandidateCacheInvalidationMessage(msg.Payload)
+				}
+			}
+		}
+	}()
+}
+
+func (s *ChannelService) channelsForCandidateSelection() ([]model.Channel, error) {
+	cfg := s.channelCandidateCacheConfig()
+	if !cfg.enabled {
+		return loadChannelsForCandidateSelection()
+	}
+
+	now := time.Now()
+	s.candidateCacheMu.Lock()
+	defer s.candidateCacheMu.Unlock()
+	if s.candidateCache.loaded &&
+		s.candidateCache.version == cfg.version &&
+		(cfg.ttl == 0 || now.Before(s.candidateCache.expiresAt)) {
+		return cloneChannels(s.candidateCache.channels), nil
+	}
+	if channels, expiresAt, ok := s.loadCandidateCacheFromRedis(cfg, now); ok {
+		s.candidateCache = channelCandidateCache{
+			loaded:    true,
+			version:   cfg.version,
+			expiresAt: expiresAt,
+			channels:  cloneChannels(channels),
+		}
+		return cloneChannels(channels), nil
+	}
+
+	channels, err := loadChannelsForCandidateSelection()
+	if err != nil {
+		return nil, err
+	}
+	s.candidateCache = channelCandidateCache{
+		loaded:    true,
+		version:   cfg.version,
+		expiresAt: now.Add(cfg.ttl),
+		channels:  cloneChannels(channels),
+	}
+	s.storeCandidateCacheInRedis(cfg, now, channels)
+	return channels, nil
+}
+
+func (s *ChannelService) channelCandidateCacheConfig() channelCandidateCacheConfig {
+	cfg := channelCandidateCacheConfig{
+		enabled: true,
+		preload: true,
+		version: 1,
+		ttl:     60 * time.Second,
+	}
+	if internal.DB == nil {
+		return cfg
+	}
+	settingSvc := NewSettingService()
+	if enabled, err := settingSvc.GetBool("routing.channel_cache.enabled"); err == nil {
+		cfg.enabled = enabled
+	}
+	if preload, err := settingSvc.GetBool("routing.channel_cache.preload"); err == nil {
+		cfg.preload = preload
+	}
+	if ttlSeconds, err := settingSvc.GetInt("routing.channel_cache.ttl_seconds"); err == nil && ttlSeconds >= 0 {
+		cfg.ttl = time.Duration(ttlSeconds) * time.Second
+	}
+	if version, err := settingSvc.GetInt("routing.channel_cache.version"); err == nil && version > 0 {
+		cfg.version = version
+	}
+	return cfg
+}
+
+func (s *ChannelService) PreloadCandidateCache() error {
+	if s == nil || internal.DB == nil {
+		return nil
+	}
+	cfg := s.channelCandidateCacheConfig()
+	if !cfg.enabled || !cfg.preload {
+		return nil
+	}
+	channels, err := loadChannelsForCandidateSelection()
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	s.candidateCacheMu.Lock()
+	defer s.candidateCacheMu.Unlock()
+	s.candidateCache = channelCandidateCache{
+		loaded:    true,
+		version:   cfg.version,
+		expiresAt: now.Add(cfg.ttl),
+		channels:  cloneChannels(channels),
+	}
+	s.storeCandidateCacheInRedis(cfg, now, channels)
+	return nil
+}
+
+func (s *ChannelService) loadCandidateCacheFromRedis(cfg channelCandidateCacheConfig, now time.Time) ([]model.Channel, time.Time, bool) {
+	if internal.RDB == nil {
+		return nil, time.Time{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	raw, err := internal.RDB.HGet(ctx, channelCandidateCacheRedisHash, channelCandidateCacheRedisField).Result()
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return nil, time.Time{}, false
+	}
+	var snapshot channelCandidateCacheRedisSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return nil, time.Time{}, false
+	}
+	if snapshot.Version != cfg.version {
+		return nil, time.Time{}, false
+	}
+	expiresAt := time.Unix(snapshot.ExpiresAtUnix, 0)
+	if cfg.ttl > 0 && (snapshot.ExpiresAtUnix <= 0 || !now.Before(expiresAt)) {
+		return nil, time.Time{}, false
+	}
+	if cfg.ttl == 0 {
+		expiresAt = time.Time{}
+	}
+	return cloneChannels(snapshot.Channels), expiresAt, true
+}
+
+func (s *ChannelService) storeCandidateCacheInRedis(cfg channelCandidateCacheConfig, now time.Time, channels []model.Channel) {
+	if internal.RDB == nil {
+		return
+	}
+	expiresAtUnix := int64(0)
+	if cfg.ttl > 0 {
+		expiresAtUnix = now.Add(cfg.ttl).Unix()
+	}
+	raw, err := json.Marshal(channelCandidateCacheRedisSnapshot{
+		Version:       cfg.version,
+		ExpiresAtUnix: expiresAtUnix,
+		Channels:      cloneChannels(channels),
+	})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = internal.RDB.HSet(ctx, channelCandidateCacheRedisHash, channelCandidateCacheRedisField, string(raw)).Err()
+}
+
+func (s *ChannelService) publishCandidateCacheInvalidation(version int) {
+	if internal.RDB == nil || version <= 0 {
+		return
+	}
+	raw, err := json.Marshal(channelCandidateCacheInvalidationMessage{
+		Version:    version,
+		SentAtUnix: time.Now().Unix(),
+	})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = internal.RDB.Publish(ctx, channelCandidateCacheInvalidationRedisChannel, string(raw)).Err()
+}
+
+func (s *ChannelService) handleCandidateCacheInvalidationMessage(raw string) {
+	if s == nil || strings.TrimSpace(raw) == "" {
+		return
+	}
+	var message channelCandidateCacheInvalidationMessage
+	if err := json.Unmarshal([]byte(raw), &message); err != nil || message.Version <= 0 {
+		return
+	}
+	s.candidateCacheMu.Lock()
+	defer s.candidateCacheMu.Unlock()
+	if !s.candidateCache.loaded {
+		return
+	}
+	if message.Version >= s.candidateCache.version {
+		s.candidateCache = channelCandidateCache{}
+	}
+}
+
+func loadChannelsForCandidateSelection() ([]model.Channel, error) {
+	var channels []model.Channel
+	err := internal.DB.Order("priority DESC, idx ASC, error_count ASC, response_ms ASC, id ASC").Find(&channels).Error
+	return channels, err
+}
+
+func cloneChannels(channels []model.Channel) []model.Channel {
+	if len(channels) == 0 {
+		return nil
+	}
+	cloned := make([]model.Channel, len(channels))
+	copy(cloned, channels)
+	return cloned
+}
+
+func (s *ChannelService) InvalidateCandidateCache() {
+	if s == nil {
+		return
+	}
+	s.candidateCacheMu.Lock()
+	defer s.candidateCacheMu.Unlock()
+	s.candidateCache = channelCandidateCache{}
+}
+
+func (s *ChannelService) touchCandidateCacheVersion() {
+	s.InvalidateCandidateCache()
+	if internal.DB == nil {
+		return
+	}
+	settingSvc := NewSettingService()
+	version, err := settingSvc.GetInt("routing.channel_cache.version")
+	if err != nil || version < 1 {
+		version = 1
+	}
+	nextVersion := version + 1
+	if err := settingSvc.Set("routing.channel_cache.version", strconv.Itoa(nextVersion)); err == nil {
+		s.publishCandidateCacheInvalidation(nextVersion)
+	}
+	// Preload is an optimization; request-time cache reload remains authoritative if warmup fails.
+	_ = s.PreloadCandidateCache()
 }
 
 // ResolveUpstream 解析某个通道本次请求应该使用的 base_url/api_key。
@@ -76,14 +654,17 @@ func (s *ChannelService) ResolveUpstream(channel *model.Channel) (*ChannelUpstre
 		return nil, errors.New("channel is required")
 	}
 	if upstreams := decodeUpstreamConfigs(channel.Upstreams); len(upstreams) > 0 {
-		upstream := upstreams[randomIndex(len(upstreams))]
+		upstreamIndex := randomIndex(len(upstreams))
+		upstream := upstreams[upstreamIndex]
 		apiKey, err := common.DecryptSecret(upstream.APIKey)
 		if err != nil {
 			return nil, err
 		}
 		return &ChannelUpstreamTarget{
-			BaseURL: normalizeBaseURL(upstream.BaseURL, channel.Type),
-			APIKey:  strings.TrimSpace(apiKey),
+			BaseURL:       normalizeBaseURL(upstream.BaseURL, channel.Type),
+			APIKey:        strings.TrimSpace(apiKey),
+			BaseURLSource: "upstreams",
+			BaseURLIndex:  upstreamIndex,
 		}, nil
 	}
 
@@ -101,12 +682,18 @@ func (s *ChannelService) ResolveUpstream(channel *model.Channel) (*ChannelUpstre
 	}
 	baseURLs := decodeStringSlice(channel.BaseURLs)
 	baseURL := channel.BaseURL
+	baseURLSource := "base_url"
+	baseURLIndex := -1
 	if len(baseURLs) > 0 {
-		baseURL = baseURLs[randomIndex(len(baseURLs))]
+		baseURLIndex = randomIndex(len(baseURLs))
+		baseURL = baseURLs[baseURLIndex]
+		baseURLSource = "base_urls"
 	}
 	return &ChannelUpstreamTarget{
-		BaseURL: normalizeBaseURL(baseURL, channel.Type),
-		APIKey:  strings.TrimSpace(apiKey),
+		BaseURL:       normalizeBaseURL(baseURL, channel.Type),
+		APIKey:        strings.TrimSpace(apiKey),
+		BaseURLSource: baseURLSource,
+		BaseURLIndex:  baseURLIndex,
 	}, nil
 }
 
@@ -149,7 +736,11 @@ func (s *ChannelService) Create(channel *model.Channel) error {
 	if err := encryptChannelSecrets(channel); err != nil {
 		return err
 	}
-	return internal.DB.Create(channel).Error
+	if err := internal.DB.Create(channel).Error; err != nil {
+		return err
+	}
+	s.touchCandidateCacheVersion()
+	return nil
 }
 
 // Update 编辑通道。
@@ -166,25 +757,41 @@ func (s *ChannelService) Update(id uint, updates map[string]interface{}) error {
 	if err := normalizeUpdateValues(allowed); err != nil {
 		return err
 	}
-	return internal.DB.Model(&model.Channel{}).Where("id = ?", id).Updates(allowed).Error
+	if err := internal.DB.Model(&model.Channel{}).Where("id = ?", id).Updates(allowed).Error; err != nil {
+		return err
+	}
+	s.touchCandidateCacheVersion()
+	return nil
 }
 
 // Delete 完全删除通道。历史日志保留，但解除 channel_id 引用。
 func (s *ChannelService) Delete(id uint) error {
-	return internal.DB.Transaction(func(tx *gorm.DB) error {
+	if err := internal.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.Log{}).Where("channel_id = ?", id).Update("channel_id", nil).Error; err != nil {
 			return err
 		}
 		return tx.Unscoped().Delete(&model.Channel{}, id).Error
-	})
+	}); err != nil {
+		return err
+	}
+	s.touchCandidateCacheVersion()
+	return nil
 }
 
 func (s *ChannelService) Disable(id uint) error {
-	return internal.DB.Model(&model.Channel{}).Where("id = ?", id).Update("status", common.ChannelStatusDisabled).Error
+	if err := internal.DB.Model(&model.Channel{}).Where("id = ?", id).Update("status", common.ChannelStatusDisabled).Error; err != nil {
+		return err
+	}
+	s.touchCandidateCacheVersion()
+	return nil
 }
 
 func (s *ChannelService) Enable(id uint) error {
-	return internal.DB.Model(&model.Channel{}).Where("id = ?", id).Update("status", common.ChannelStatusEnabled).Error
+	if err := internal.DB.Model(&model.Channel{}).Where("id = ?", id).Update("status", common.ChannelStatusEnabled).Error; err != nil {
+		return err
+	}
+	s.touchCandidateCacheVersion()
+	return nil
 }
 
 // Test 测试通道连通性：向厂商 API 发探测请求, 记录 response_ms + model_count。
@@ -199,14 +806,16 @@ func (s *ChannelService) Test(channelID uint) (bool, int64, int, error) {
 	if err != nil {
 		_ = internal.DB.Model(channel).Updates(map[string]interface{}{
 			"response_ms": responseMs,
-			"error_count": channel.ErrorCount + 1,
+			"error_count": gorm.Expr("error_count + ?", 1),
 		}).Error
+		s.InvalidateCandidateCache()
 		return false, responseMs, 0, err
 	}
 	_ = internal.DB.Model(channel).Updates(map[string]interface{}{
 		"response_ms": responseMs,
 		"error_count": 0,
 	}).Error
+	s.InvalidateCandidateCache()
 	return true, responseMs, len(models), nil
 }
 
@@ -229,6 +838,53 @@ func (s *ChannelService) FetchUpstreamModels(channelID uint) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return adapter.GetModelList(ctx, target.BaseURL, target.APIKey)
+}
+
+func (s *ChannelService) RotateEncryptedSecrets(previousKey string) (ChannelSecretRotationResult, error) {
+	result := ChannelSecretRotationResult{}
+	previousKey = strings.TrimSpace(previousKey)
+	currentKey := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
+	rotatedSettingValues := map[string]string{}
+	if previousKey == "" {
+		return result, errors.New("previous_encryption_key is required")
+	}
+	if currentKey == "" {
+		return result, errors.New("ENCRYPTION_KEY is required")
+	}
+	if previousKey == currentKey {
+		return result, errors.New("previous_encryption_key must differ from ENCRYPTION_KEY")
+	}
+
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		var channels []model.Channel
+		if err := tx.Select("id", "api_key", "api_keys", "upstreams").Find(&channels).Error; err != nil {
+			return err
+		}
+		result.ScannedChannels = len(channels)
+		for _, channel := range channels {
+			updates, counts, err := rotateChannelSecretFields(channel, previousKey, currentKey)
+			if err != nil {
+				return fmt.Errorf("channel %d secret rotation failed: %w", channel.ID, err)
+			}
+			result.RotatedSecrets += counts.rotated
+			result.SkippedSecrets += counts.skipped
+			if len(updates) == 0 {
+				continue
+			}
+			if err := tx.Model(&model.Channel{}).Where("id = ?", channel.ID).Updates(updates).Error; err != nil {
+				return err
+			}
+			result.RotatedChannels++
+		}
+		if err := rotateEncryptedProviderSettings(tx, previousKey, currentKey, &result, rotatedSettingValues); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err == nil {
+		refreshRotatedSettingCache(rotatedSettingValues)
+	}
+	return result, err
 }
 
 func (s *ChannelService) ListModels() ([]string, error) {
@@ -287,7 +943,7 @@ func normalizeChannel(channel *model.Channel, creating bool) error {
 	channel.Models = normalizeModels(channel.Models)
 	channel.BaseURL = normalizeBaseURL(channel.BaseURL, channel.Type)
 	channel.KeySelectionMode = normalizeKeySelectionMode(channel.KeySelectionMode)
-	channel.ChannelGroup = strings.TrimSpace(channel.ChannelGroup)
+	channel.ChannelGroup = normalizeChannelGroupName(channel.ChannelGroup)
 	channel.BaseURLs = normalizeStringSliceJSON(channel.BaseURLs, true)
 	channel.APIKeys = normalizeStringSliceJSON(channel.APIKeys, false)
 	channel.Upstreams = normalizeUpstreamsJSON(channel.Upstreams)
@@ -361,7 +1017,7 @@ func normalizeUpdateValues(updates map[string]interface{}) error {
 		updates["model_rewrites"] = normalizeJSONObject(v)
 	}
 	if v, ok := updates["channel_group"].(string); ok {
-		updates["channel_group"] = strings.TrimSpace(v)
+		updates["channel_group"] = normalizeChannelGroupName(v)
 	}
 	if v, ok := updates["upstream_options"].(model.JSONValue); ok {
 		updates["upstream_options"] = normalizeJSONObject(v)
@@ -393,6 +1049,143 @@ func encryptChannelSecrets(channel *model.Channel) error {
 	return nil
 }
 
+type channelSecretRotationCounts struct {
+	rotated int
+	skipped int
+}
+
+func rotateChannelSecretFields(channel model.Channel, previousKey, currentKey string) (map[string]interface{}, channelSecretRotationCounts, error) {
+	updates := map[string]interface{}{}
+	counts := channelSecretRotationCounts{}
+	if common.IsEncryptedSecret(channel.APIKey) {
+		rotated, err := rotateEncryptedSecretValue(channel.APIKey, previousKey, currentKey)
+		if err != nil {
+			return nil, counts, err
+		}
+		updates["api_key"] = rotated
+		counts.rotated++
+	} else if strings.TrimSpace(channel.APIKey) != "" {
+		counts.skipped++
+	}
+
+	if common.ContainsEncryptedSecret(string(channel.APIKeys)) {
+		rotated, nestedCounts, err := rotateEncryptedAPIKeysJSON(channel.APIKeys, previousKey, currentKey)
+		if err != nil {
+			return nil, counts, err
+		}
+		updates["api_keys"] = rotated
+		counts.rotated += nestedCounts.rotated
+		counts.skipped += nestedCounts.skipped
+	}
+	if common.ContainsEncryptedSecret(string(channel.Upstreams)) {
+		rotated, nestedCounts, err := rotateEncryptedUpstreamsJSON(channel.Upstreams, previousKey, currentKey)
+		if err != nil {
+			return nil, counts, err
+		}
+		updates["upstreams"] = rotated
+		counts.rotated += nestedCounts.rotated
+		counts.skipped += nestedCounts.skipped
+	}
+	return updates, counts, nil
+}
+
+func rotateEncryptedAPIKeysJSON(raw model.JSONValue, previousKey, currentKey string) (model.JSONValue, channelSecretRotationCounts, error) {
+	counts := channelSecretRotationCounts{}
+	var keys []string
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return nil, counts, err
+	}
+	for i, key := range keys {
+		if common.IsEncryptedSecret(key) {
+			rotated, err := rotateEncryptedSecretValue(key, previousKey, currentKey)
+			if err != nil {
+				return nil, counts, err
+			}
+			keys[i] = rotated
+			counts.rotated++
+			continue
+		}
+		if strings.TrimSpace(key) != "" {
+			counts.skipped++
+		}
+	}
+	return model.NewJSONValue(keys), counts, nil
+}
+
+func rotateEncryptedUpstreamsJSON(raw model.JSONValue, previousKey, currentKey string) (model.JSONValue, channelSecretRotationCounts, error) {
+	counts := channelSecretRotationCounts{}
+	var upstreams []channelUpstreamConfig
+	if err := json.Unmarshal(raw, &upstreams); err != nil {
+		return nil, counts, err
+	}
+	for i, upstream := range upstreams {
+		if common.IsEncryptedSecret(upstream.APIKey) {
+			rotated, err := rotateEncryptedSecretValue(upstream.APIKey, previousKey, currentKey)
+			if err != nil {
+				return nil, counts, err
+			}
+			upstreams[i].APIKey = rotated
+			counts.rotated++
+			continue
+		}
+		if strings.TrimSpace(upstream.APIKey) != "" {
+			counts.skipped++
+		}
+	}
+	return model.NewJSONValue(upstreams), counts, nil
+}
+
+func rotateEncryptedSecretValue(value, previousKey, currentKey string) (string, error) {
+	plain, err := common.DecryptSecretWithKey(value, previousKey)
+	if err != nil {
+		return "", err
+	}
+	return common.EncryptSecretWithKey(plain, currentKey)
+}
+
+func rotateEncryptedProviderSettings(tx *gorm.DB, previousKey, currentKey string, result *ChannelSecretRotationResult, rotatedSettingValues map[string]string) error {
+	var settings []model.Setting
+	if err := tx.Select("id", "key", "value").Find(&settings).Error; err != nil {
+		return err
+	}
+	for _, setting := range settings {
+		if !SettingKeyRequiresSecretEncryption(setting.Key) {
+			continue
+		}
+		result.ScannedSettings++
+		if !common.IsEncryptedSecret(setting.Value) {
+			if strings.TrimSpace(setting.Value) != "" {
+				result.SkippedSecrets++
+			}
+			continue
+		}
+		rotated, err := rotateEncryptedSecretValue(setting.Value, previousKey, currentKey)
+		if err != nil {
+			return fmt.Errorf("setting %s secret rotation failed: %w", setting.Key, err)
+		}
+		if err := tx.Model(&model.Setting{}).Where("id = ?", setting.ID).Update("value", rotated).Error; err != nil {
+			return err
+		}
+		result.RotatedSettings++
+		result.RotatedSecrets++
+		rotatedSettingValues[setting.Key] = rotated
+	}
+	return nil
+}
+
+func refreshRotatedSettingCache(values map[string]string) {
+	if internal.RDB == nil || len(values) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	args := make(map[string]interface{}, len(values))
+	for key, value := range values {
+		args[key] = value
+	}
+	_ = internal.RDB.HSet(ctx, "settings", args).Err()
+}
+
 func hasAnyChannelKey(channel *model.Channel) bool {
 	if strings.TrimSpace(channel.APIKey) != "" {
 		return true
@@ -420,6 +1213,52 @@ func channelSupportsModel(models, modelName string) bool {
 		}
 	}
 	return false
+}
+
+func channelMatchesRoute(channel model.Channel, route RoutePreference) bool {
+	if route.ChannelGroup != "" && channel.ChannelGroup != route.ChannelGroup {
+		return false
+	}
+	if route.ChannelID != 0 && channel.ID != route.ChannelID {
+		return false
+	}
+	if route.ChannelName != "" && channel.Name != route.ChannelName {
+		return false
+	}
+	if route.Provider != "" && !channelMatchesProvider(channel.Type, route.Provider) {
+		return false
+	}
+	for _, provider := range route.DisabledProvider {
+		if channelMatchesProvider(channel.Type, provider) {
+			return false
+		}
+	}
+	return true
+}
+
+func channelMatchesProvider(channelType int, provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return channelType == common.ChannelTypeOpenAI
+	case "openai-compatible", "openai_compatible", "openai-compat", "openai_compat", "compat":
+		return channelType == common.ChannelTypeOpenAICompat
+	case "azure", "azure-openai", "azure_openai":
+		return channelType == common.ChannelTypeAzure
+	case "anthropic", "claude":
+		return channelType == common.ChannelTypeClaude
+	case "gemini", "google":
+		return channelType == common.ChannelTypeGemini
+	case "qwen", "dashscope":
+		return channelType == common.ChannelTypeQwen
+	case "deepseek":
+		return channelType == common.ChannelTypeDeepSeek
+	case "xai", "grok":
+		return channelType == common.ChannelTypeXAI
+	case "routerx", "routerx-compatible", "routerx_compatible":
+		return channelType == common.ChannelTypeRouterX
+	default:
+		return false
+	}
 }
 
 func normalizeModels(models string) string {
@@ -465,6 +1304,14 @@ func normalizeBaseURL(baseURL string, channelType int) string {
 	default:
 		return baseURL
 	}
+}
+
+func normalizeChannelGroupName(group string) string {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return "default"
+	}
+	return group
 }
 
 func normalizeKeySelectionMode(mode string) string {

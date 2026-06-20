@@ -92,11 +92,91 @@ CREATE TABLE IF NOT EXISTS redem_codes (
     code VARCHAR(64) NOT NULL,
     quota BIGINT NOT NULL,
     status INT NOT NULL DEFAULT 0,
+    batch_no VARCHAR(64) NOT NULL DEFAULT '',
+    note VARCHAR(256) NOT NULL DEFAULT '',
+    expired_at DATETIME(3),
     used_by INT UNSIGNED,
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     used_at DATETIME(3),
     UNIQUE INDEX idx_redem_codes_code (code),
+    INDEX idx_redem_codes_batch_no (batch_no),
     FOREIGN KEY (used_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS quota_transactions (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id INT UNSIGNED NOT NULL,
+    type VARCHAR(32) NOT NULL,
+    amount BIGINT NOT NULL,
+    balance_before BIGINT NOT NULL,
+    balance_after BIGINT NOT NULL,
+    source_type VARCHAR(64) NOT NULL,
+    source_id VARCHAR(128) NOT NULL,
+    idempotency_key VARCHAR(191) NOT NULL,
+    reason TEXT NOT NULL,
+    actor_user_id INT UNSIGNED,
+    request_id VARCHAR(128),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE INDEX idx_quota_transactions_idempotency_key (idempotency_key),
+    INDEX idx_quota_transactions_user_id_created_at (user_id, created_at),
+    INDEX idx_quota_transactions_source (source_type, source_id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (actor_user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS payment_products (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    product_id VARCHAR(64) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    amount VARCHAR(32) NOT NULL,
+    currency VARCHAR(16) NOT NULL,
+    quota BIGINT NOT NULL,
+    bonus_quota BIGINT NOT NULL DEFAULT 0,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    provider_config_json JSON,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    UNIQUE INDEX idx_payment_products_product_id (product_id),
+    INDEX idx_payment_products_enabled (enabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS payment_orders (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    order_no VARCHAR(64) NOT NULL,
+    user_id INT UNSIGNED NOT NULL,
+    product_id VARCHAR(64) NOT NULL,
+    provider VARCHAR(32) NOT NULL,
+    amount VARCHAR(32) NOT NULL,
+    currency VARCHAR(16) NOT NULL,
+    quota BIGINT NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    provider_order_id VARCHAR(128),
+    provider_payment_id VARCHAR(128),
+    checkout_url TEXT,
+    paid_at DATETIME(3),
+    expired_at DATETIME(3),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    UNIQUE INDEX idx_payment_orders_order_no (order_no),
+    INDEX idx_payment_orders_user_id_created_at (user_id, created_at),
+    INDEX idx_payment_orders_provider_order_id (provider_order_id),
+    INDEX idx_payment_orders_status (status),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS payment_events (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    provider VARCHAR(32) NOT NULL,
+    provider_event_id VARCHAR(128) NOT NULL,
+    order_no VARCHAR(64) NOT NULL,
+    event_type VARCHAR(128) NOT NULL,
+    payload TEXT NOT NULL,
+    signature_valid BOOLEAN NOT NULL DEFAULT FALSE,
+    processed BOOLEAN NOT NULL DEFAULT FALSE,
+    processed_at DATETIME(3),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE INDEX idx_payment_events_provider_event_id (provider, provider_event_id),
+    INDEX idx_payment_events_order_no (order_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS settings (

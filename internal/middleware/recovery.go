@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"fmt"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -10,16 +12,40 @@ import (
 )
 
 // Recovery Gin 中间件：Panic 恢复。
-// 捕获 handler 中的 panic，记录堆栈，返回 500。
+// 捕获 handler 中的 panic，记录脱敏上下文和堆栈，并返回协议兼容的 500。
 func Recovery() gin.HandlerFunc {
-	// TODO: Phase 1 — 集成 Gin Recovery + 自定义错误日志
 	return func(c *gin.Context) {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Printf("[PANIC] %v", err)
 				path := c.Request.URL.Path
+				requestID := c.GetString("request_id")
+				panicType := fmt.Sprintf("%T", err)
+				stack := string(debug.Stack())
+				if common.StructuredLogsEnabled() {
+					entry := map[string]interface{}{
+						"event":      "panic",
+						"request_id": requestID,
+						"method":     c.Request.Method,
+						"path":       path,
+						"client_ip":  c.ClientIP(),
+						"panic_type": panicType,
+						"stack":      stack,
+					}
+					if traceID := c.GetString("trace_id"); traceID != "" {
+						entry["trace_id"] = traceID
+						entry["traceparent"] = c.GetString("traceparent")
+						if tracestate := c.GetString("tracestate"); tracestate != "" {
+							entry["tracestate"] = tracestate
+						}
+					}
+					writeStructuredLog(entry, func() {
+						writeTextPanicLog(requestID, c.Request.Method, path, c.ClientIP(), panicType, stack)
+					})
+				} else {
+					writeTextPanicLog(requestID, c.Request.Method, path, c.ClientIP(), panicType, stack)
+				}
 				if strings.HasPrefix(path, "/v1/") || path == "/v1" {
-					c.AbortWithStatusJSON(http.StatusInternalServerError, common.OpenAIError("internal server error", "server_error", "internal_error"))
+					abortV1Panic(c)
 					return
 				}
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
@@ -30,5 +56,28 @@ func Recovery() gin.HandlerFunc {
 		}()
 
 		c.Next()
+	}
+}
+
+func writeTextPanicLog(requestID, method, path, clientIP, panicType, stack string) {
+	log.Printf("[PANIC] request_id=%s method=%s path=%s client_ip=%s panic_type=%s stack=%s",
+		requestID,
+		method,
+		path,
+		clientIP,
+		panicType,
+		stack,
+	)
+}
+
+func abortV1Panic(c *gin.Context) {
+	const message = "internal server error"
+	switch entryProtocol(c) {
+	case "anthropic":
+		c.AbortWithStatusJSON(http.StatusInternalServerError, common.AnthropicError(message, "server_error"))
+	case "gemini":
+		c.AbortWithStatusJSON(http.StatusInternalServerError, common.GeminiError(http.StatusInternalServerError, message, geminiStatusText(http.StatusInternalServerError)))
+	default:
+		c.AbortWithStatusJSON(http.StatusInternalServerError, common.OpenAIError(message, "server_error", "internal_error"))
 	}
 }

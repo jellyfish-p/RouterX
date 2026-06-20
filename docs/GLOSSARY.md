@@ -19,6 +19,7 @@
 | 开箱路径 | open-box path | 空库初始化到第一次成功模型调用，并能看到日志和额度变化的最短用户路径。 | 不要求先接入支付、企业身份、完整价格表达式或全协议矩阵。 |
 | 调用方 | client | 使用 API Key 调用 RouterX `/v1/*` 的应用、SDK 或脚本。 | 不等同于 RouterX 管理后台用户。 |
 | 用户 | user | RouterX 账号主体，拥有额度、API Key、日志和账单。 | 通过 User JWT 访问 `/v0/user/*`，不能直接调用 `/v1/*`。 |
+| 服务账号主体 | service account principal | API Key 元数据中描述机器身份、工作负载或外部 IAM subject 的非登录主体。 | 不拥有 User JWT，不可登录后台，也不扩大 API Key 权限。 |
 | 管理员 | admin | 具备管理用户、通道、日志和配置权限的 RouterX 用户。 | 管理员的 API Key 也不能继承 `/v0/admin/*` 权限。 |
 | 超级管理员 | root admin | 首次初始化创建的最高权限管理员，可管理 settings 和管理员账号。 | 初始化后不可通过普通注册绕过权限边界。 |
 

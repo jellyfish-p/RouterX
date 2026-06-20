@@ -78,7 +78,7 @@ P0 成功保证：
 
 P0 明确不承诺：
 
-- `stream=true`。
+- Anthropic/Gemini 流式、客户端断开取消和完整流式 usage fallback。
 - 全量 OpenAI Responses、Images、Audio、Embeddings、Moderations。
 - Anthropic/Gemini 全量字段无损转换。
 - 自动重试和跨通道流式切换。
@@ -115,7 +115,7 @@ SDK 配置合同：
 | base URL | 指向 RouterX 的 `/v1` 前缀 |
 | API Key | 使用 RouterX 用户 API Key，不使用上游厂商 Key |
 | model | 使用 RouterX 对外模型名，可由通道做模型重写 |
-| stream | P0 使用 `false` 或不传；P1 后按流式契约开启 |
+| stream | OpenAI-compatible Chat 在 OpenAI SSE 形态通道上可设为 `true`；其他协议和通道按 `docs/PROTOCOLS.md` 能力矩阵处理 |
 | timeout | 调用方应设置业务可接受超时，RouterX 也有 `relay.timeout` |
 | retry | P0 调用方可以对本地网络错误和明确可重试错误做保守重试；不要对 400/401/403 盲目重试 |
 
@@ -225,9 +225,11 @@ API Key 是调用 `/v1/*` 的唯一模型调用凭据。User JWT 只用于控制
 - `routerx.route` 只能表达偏好，不能扩大权限。
 - 后台策略、安全过滤、用户状态、API Key 状态、额度、通道启用状态和访问控制永远优先。
 - 真实厂商上游调用前必须剥离 `routerx` 字段。
-- RouterX-Compatible 上游可以继续接收 `routerx`，但必须有 hop 限制，避免循环。
-- `routerx.upstream.headers` 不能覆盖 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`、`api-key` 等敏感鉴权字段。
-- 非 JSON 请求目标可通过 `routerx` 表单字段或 `X-RouterX-Options` 传递，但必须同样校验和脱敏。
+- RouterX-Compatible 上游当前可以继续接收 `routerx`；服务端会递增 `X-RouterX-Hop` 并追加 `X-RouterX-Chain`，达到 `relay.routerx_max_hops` 配置的上限时返回 `routerx_hop_exceeded`，默认上限为 `3`，避免循环。
+- `routerx.upstream.headers` 和 `routerx.upstream.query` 只能补充安全字段，不能覆盖 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`、`api-key`、provider API key query 等敏感鉴权字段。
+- `routerx.upstream.body` 只补充 JSON 请求体中原本不存在的字段，不能覆盖 `model`、`routerx`、`stream` 或调用方已经显式提交的字段。
+- `routerx.provider.<provider>` 只在最终选中对应上游 provider 时生效；当前基础实现把匹配 provider 下的 JSON 字段作为 body 缺省补充，适合 xAI `search_parameters` 这类 OpenAI-compatible 扩展。
+- 非 JSON 请求当前可通过 `routerx` 表单字段或 `X-RouterX-Options` header 传递路由偏好和安全 header/query 补充；body/form 中的 `routerx` 优先于 header，两者都必须校验和脱敏。
 
 调用方应预期：
 
@@ -248,20 +250,20 @@ API Key 是调用 `/v1/*` 的唯一模型调用凭据。User JWT 只用于控制
 
 | HTTP | code 示例 | 调用方动作 |
 |------|-----------|------------|
-| 400 | `invalid_json`、`model_required`、`unsupported_stream` | 修正请求，不重试 |
+| 400 | `invalid_json`、`model_required`、`unsupported_stream` | 修正请求或改用已支持的流式入口，不重试 |
 | 401 | `invalid_api_key` | 更换或重新创建 API Key，不重试 |
 | 403 | `user_disabled`、`route_forbidden` | 联系管理员或调整路由偏好 |
 | 429 | `insufficient_quota`、`rate_limit_exceeded` | 降低并发、等待窗口、充值或调整额度 |
-| 502 | `no_available_channel`、`upstream_secret_error` | 管理员检查通道、模型、密钥和上游 |
+| 502 | `no_available_channel`、`upstream_secret_error`、`unsupported_stream_channel`、`unsupported_api_type` | 管理员检查通道、模型、密钥、上游和 APIType 支持能力 |
 | 502/504 | `upstream_5xx`、`upstream_timeout` | 可按业务幂等性和阶段策略保守重试 |
 
 重试建议：
 
 - 400、401、403 默认不重试。
 - 429 需要区分本地限流、余额不足和上游限流。
-- P0 `relay.retry_count=0`，服务端默认不自动重试。
+- `relay.retry_count=0` 时服务端不自动重试；大于 0 时仅非流式对 `relay.retry_on_status` 白名单状态码（默认 429/500/502/503/504）、网络错误、超时和响应读取失败换候选通道。400/401/403 默认不重试。
 - 调用方如自行重试，应避免让非幂等业务产生重复消费。
-- P1 服务端重试开启后，日志必须记录 retry_count 和最终通道。
+- 服务端发生重试时，会留下失败尝试日志和最终成功/失败日志，便于追踪最终通道。
 
 错误响应不保证所有 provider message 原样透出。RouterX 可以返回脱敏摘要，以保护密钥、内部路径和上游敏感响应。
 
@@ -341,8 +343,8 @@ P0 计费事实：
 
 | 阶段 | 开发者体验承诺 |
 |------|----------------|
-| P0 | OpenAI-compatible Models 和 Chat 非流式闭环；API Key 鉴权；错误、日志和扣费可解释 |
-| P1 | 流式、更多入口协议、主流上游转换、`routerx` 扩展、访问控制、重试熔断和更完整日志，能力等级以 `docs/PROTOCOLS.md` 为准 |
+| P0 | OpenAI-compatible Models 和 Chat 基础闭环；OpenAI Chat 基础 SSE；API Key 鉴权；错误、日志和扣费可解释 |
+| P1 | 多协议流式、更多入口协议、主流上游转换、`routerx` 扩展、访问控制、重试熔断和更完整日志，能力等级以 `docs/PROTOCOLS.md` 为准 |
 | P2 | 高级 API、企业身份、支付运营、高级 API Key 管理、指标告警、审计和 KMS |
 
 阶段原则：
@@ -357,16 +359,25 @@ P0 验收：
 
 - 用 RouterX API Key 可以调用 `/v1/models`。
 - 用 RouterX API Key 可以完成非流式 `/v1/chat/completions`。
-- `stream=true` 返回明确错误，不调用上游。
+- OpenAI-compatible Chat `stream=true` 命中 OpenAI SSE 形态通道时可完成基础流式；未支持的流式协议或通道返回明确错误。
 - 无效 API Key、余额不足、无通道和上游密钥错误都有稳定 code。
 - 成功调用写日志并扣正确余额。
 - 响应、日志和错误不泄露密钥。
+
+当前 P0 证据：
+
+| 接入证据 | 回归测试 |
+|----------|----------|
+| API Key、通道、模型列表和基础开箱路径 | `TestP0BackendFlow` |
+| `/v1/models` OpenAI/Anthropic/Gemini 外形选择和模型详情错误 | `TestModelListSupportsRouterXProtocolSelector` |
+| 非流式 Chat HTTP 调用、request_id 透传、日志、用量和余额事实 | `TestChatCompletionSuccessLogsAndDeductsQuota` |
+| 失败日志中的 request_id、稳定错误 code 和上游失败事实 | `TestRelayFailureLogPersistsRequestIDAndErrorCode` |
 
 P1 验收：
 
 - 主流 SDK 可通过 RouterX 完成基础非流式和流式调用。
 - `routerx.route` 合法、非法、越权和无候选路径都有稳定行为。
-- 多协议入口错误外形分别兼容 OpenAI、Anthropic 和 Gemini。
+- 多协议入口成功和错误外形分别兼容 OpenAI、Anthropic 和 Gemini。
 - 重试和熔断行为能从日志解释。
 
 P2 验收：

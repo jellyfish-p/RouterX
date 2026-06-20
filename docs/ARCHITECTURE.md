@@ -50,7 +50,7 @@ internal/service
 | `internal/handler` | Gin HTTP 控制器 |
 | `internal/service` | 核心业务逻辑 |
 | `internal/model` | GORM 数据模型 |
-| `internal/relay` | 下游厂商适配器和注册表 |
+| `internal/relay` | 上游厂商适配器和注册表 |
 | `internal/dto` | 请求和响应 DTO |
 | `internal/common` | 常量、响应结构、密码和 Token 工具函数 |
 
@@ -85,7 +85,7 @@ main
 启动约束：
 
 - DB 连接或迁移失败必须终止启动。
-- `LOG_SQL_DSN` 未设置时日志使用主 DB；设置后日志 DB 初始化失败应按当前日志策略进入不就绪或 outbox 降级。
+- `LOG_SQL_DSN` 未设置时日志使用主 DB；设置后启动期会初始化独立日志 DB 的 `logs` schema，初始化失败终止启动；运行期写入失败时保留主库调用事实并记录告警。
 - `SQL_DSN` 未设置时进入 SQLite 单机模式，Redis 可省略，但不支持多实例。
 - `SQL_DSN` 指向 PostgreSQL/MySQL 等外部数据库时，必须配置可用 `REDIS_CONN`；只配置数据库但不配置 Redis 应启动失败或 `/ready` 不就绪。
 - `SERVER_PORT` 未设置时默认 `3000`。
@@ -103,7 +103,7 @@ main
 | User | `/v0/user` | `SetupCheck`、User JWT | 用户控制台 API |
 | Relay | `/v1` | `SetupCheck`、API Key Auth | OpenAI、Gemini、Anthropic 入口协议和多上游转发 API |
 
-当前 `/ready` 挂在公共路由上，已检查数据库连接和初始化后的 JWT 配置。目标生产版本应继续检查迁移状态、生产密钥、Redis 策略和关键 settings 格式；这些检查属于运维就绪，不应阻塞 `/health` 存活探测。
+当前 `/ready` 挂在公共路由上，已检查数据库连接、golang-migrate 的 `schema_migrations.dirty` 状态、外部数据库模式下 Redis 可用性、初始化后的 JWT 配置、关键 settings、支付 provider 环境密钥，以及存在 `enc:v1:` 通道密钥时的 `ENCRYPTION_KEY` 和逐条解密结果。目标生产版本应继续补 KMS provider/轮换任务和更多 Redis 集群策略；这些检查属于运维就绪，不应阻塞 `/health` 存活探测。
 
 全局中间件顺序：
 
@@ -128,14 +128,14 @@ Recovery
 
 | 中间件 | 当前状态 | 目标职责 |
 |--------|----------|----------|
-| `Recovery` | 已存在 | 捕获 panic，返回统一错误，记录堆栈 |
-| `Logger` | 已存在 | 记录 method/path/status/latency/ip，后续切结构化日志 |
+| `Recovery` | 已存在 | 捕获 panic，记录脱敏 request_id/method/path/client_ip/panic 类型/堆栈；管理 API 返回统一 500，`/v1` 返回入口协议兼容 500 |
+| `Logger` | 已存在 | 按 `observability.request_id_header` 读取或生成 request_id，写响应头并记录 method/path/status/latency/ip；`observability.structured_logs_enabled=true` 时输出 HTTP JSON line |
 | `SetupCheck` | 已存在 | 系统未初始化时拦截非 setup/health 请求 |
 | `AdminAuthRequired` | 已存在 | 校验 User JWT 和管理员角色 |
 | `RequireSuperAdmin` | 已存在 | 校验超级管理员权限 |
 | `UserJwtAuthRequired` | 已存在 | 校验用户端 JWT，写入 user 上下文 |
 | `ApiKeyAuthRequired` | 已存在 | 校验 `Authorization: Bearer sk-*`、`X-Api-Key` 或 query key，写入 user/token 上下文 |
-| `RateLimit` | 基础实现 | 基于配置和 Redis 的基础限流，后续扩展更多维度和 fail-open/fail-closed 策略，语义见 `docs/POLICIES.md` |
+| `RateLimit` | 基础实现 | 基于配置和 Redis 的基础限流；外部数据库或集群模式下 Redis 限流依赖不可用会 fail-closed，语义见 `docs/POLICIES.md` |
 
 ## Handler 层设计
 
@@ -220,7 +220,7 @@ POST /v0/setup/init
 |-----|------|------|
 | `current_user` | `*model.User` | User JWT/API Key 鉴权 |
 | `current_token` | `*model.Token` | API Key 鉴权 |
-| `request_id` | `string` | RequestID 中间件 |
+| `request_id` | `string` | Logger 中间件按 `observability.request_id_header` 写入 |
 | `auth_method` | `string` | `user_jwt`、`api_key` |
 
 ## 依赖装配
@@ -252,13 +252,14 @@ POST /v0/setup/init
 |------|----------------|----------|
 | API Key 校验 | `token:{sha256(key)}` | Token 更新、禁用、删除时删除缓存 |
 | settings | `settings` hash | 设置变更后刷新 hash |
-| 限流计数 | `rl:token:{id}:{minute}` | TTL 按窗口自动过期 |
+| 限流计数 | `rl:global:{minute}`、`rl:ip:{ip}:{minute}`、`rl:token:{id}:{minute}` | TTL 按窗口自动过期 |
 | 通道候选快照 | `route:candidates:{api_type}:{model}:{user_group}:{version}` | 通道、分组、价格、settings 或策略更新后递增版本并删除旧缓存 |
 | Admin Session | `session:admin:{id}` | 登录生成，退出删除，到期过期 |
 | OAuth State | `oauth:state:{state}` | 短 TTL，一次性消费 |
 
 通道候选预加载：
 
+- 当前实现已支持 ChannelService 进程内候选缓存，缓存排序后的通道表快照，并通过 `routing.channel_cache.version` 和 `routing.channel_cache.ttl_seconds` 失效。
 - 启动或缓存版本变化后，ChannelService 应按模型、APIType、通道分组、用户分组访问规则预构建候选索引。
 - API Key scope、`routerx.route` 和请求级约束在预加载候选集之后继续收窄，避免按每个 Key 生成高基数缓存。
 - 单机 SQLite 模式可使用进程内缓存和短 TTL。
@@ -276,7 +277,7 @@ POST /v0/setup/init
 - 如果下游不返回 usage，则使用 tokenizer 估算或按配置规则兜底。
 - 用户余额和 Key 预算计数必须在同一事务中完成。
 - 有限 Key 使用 `users.quota >= cost` 和 Key 剩余预算条件更新；任一更新失败时返回余额不足并不得调用或继续结算上游。
-- 如果 `LOG_SQL_DSN` 指向独立日志库，主库事务仍必须写入结算最小事实或 outbox，避免跨库日志失败导致账单不可解释。
+- 如果 `LOG_SQL_DSN` 指向独立日志库，主库事务仍必须写入结算最小事实或 outbox，避免跨库日志失败导致账单不可解释。当前实现采用主库完整调用事实 + `log_replication_outboxes` 补写队列 + 独立日志库副本的策略。
 
 ## 当前实现状态与差距
 
@@ -286,8 +287,8 @@ POST /v0/setup/init
 | Auth | User JWT、Admin、API Key 已接入真实校验；后续补验证码、OAuth/OIDC、多会话和登录审计 |
 | Relay | 已有 OpenAI-compatible 非流式基础链路；后续按 `docs/PROTOCOLS.md` 补流式、多协议转换矩阵、重试熔断和更完整 adapter |
 | Settings | 已有默认值写入、读写和缓存加载基础；后续补配置审计、分类校验和动态刷新策略 |
-| RateLimit | 已有基础中间件；后续补更多维度、Redis 不可用策略和指标 |
+| RateLimit | 已有基础中间件、全局/IP/Token/User/Model/Channel 维度和外部数据库模式 Redis 故障 fail-closed；后续补更多生产策略细节 |
 | Token 管理 | API Key CRUD 已注册；后续补 Redis 缓存失效、最近使用时间和更完整审计 |
 | RedemCode | 模型存在，充值码 API 尚未注册 |
-| Observability | 结构化日志、指标、追踪属于 P2 生产增强目标 |
-| Readiness | 已检查 DB 和 JWT；后续补迁移状态、`ENCRYPTION_KEY`/KMS、Redis 策略和 settings 校验 |
+| Observability | 可配置 HTTP/Panic 结构化 JSON line 日志、基础指标和审计查询已落地；追踪、告警和更完整事件字段属于 P2 生产增强目标 |
+| Readiness | 已检查 DB、迁移 dirty 状态、JWT、外部数据库 Redis、关键 settings、支付密钥和已有加密通道密钥的 `ENCRYPTION_KEY` 及逐条解密；后续补 KMS provider/轮换任务和更多 Redis 策略 |

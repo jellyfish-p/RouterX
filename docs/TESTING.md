@@ -20,18 +20,294 @@
 
 | 测试 | 已覆盖 |
 |------|--------|
-| `TestP0BackendFlow` | 初始化、登录、API Key 创建、用户禁止编辑 Key 额度、通道创建、模型列表、密钥脱敏、无效 Key、空额度 Key、禁用用户 |
+| `TestP0BackendFlow` | 初始化、登录、API Key 创建、用户禁止编辑 Key 额度、通道创建、模型列表、密钥脱敏、无效 Key、空额度 Key 的基础余额预检拒绝日志和 `policy_snapshot`、禁用用户 |
+| `TestConsoleCapabilityContractExposesStatusEvidenceAndBoundaries` | 控制台等价接口闭环：初始化状态、User JWT 登录、自助资料/API Key/日志空状态、管理端通道/日志/dashboard、API Key 不能访问控制台接口、API Key 明文只展示一次、通道密钥脱敏，以及 dashboard 暴露 ready 和依赖状态 |
+| `TestApifoxOpenAPICoversRegisteredRoutes` | 从 Gin 注册路由读取实际 `METHOD path`，解析 `docs/apifox/openapi.yaml` 的 OpenAPI paths，确保已注册公开 API 都有 Apifox 可导入的文档条目，且 Apifox 不宣传未注册公开 API；Gemini action wildcard 会展开为真实公开 action URL |
+| `TestApifoxOpenAPIOperationsHaveHumanReadableDocs` | 解析 `docs/apifox/openapi.yaml`，确保每个公开 operation 都包含 `summary`、`description` 和 `responses`，避免 Apifox 导入后出现只有路径、缺少人类可读说明的接口 |
+| `TestApifoxOpenAPIPathParametersAreDeclared` | 解析 `docs/apifox/openapi.yaml`，确保每个 `{path}` 变量都有匹配且 `required=true` 的 `in: path` 参数，防止 Apifox 导入后路径参数模板不可用 |
+| `TestApifoxOpenAPIParametersHaveHumanReadableDescriptions` | 检查每个 path/query/header 参数都有可读说明，避免 Apifox 导入后只显示字段名而缺少用途说明 |
+| `TestApifoxOpenAPIRequestBodiesHaveHumanReadableDescriptionsAndSchemas` | 检查每个 requestBody 都有可读说明、content 和 schema，避免 Apifox 导入后请求体节点只有空壳或缺少字段结构 |
+| `TestApifoxOpenAPIResponsesHaveHumanReadableDescriptionsAndSchemas` | 检查每个响应码都有非泛化可读说明，且声明了 content 时必须带 schema，避免 Apifox 导入后响应示例只显示 OK/Ready 等占位文本 |
+| `TestApifoxComponentSchemasHaveHumanReadableDescriptions` | 检查普通组件 schema 自身也有模型级说明，避免 Apifox 模型列表只显示结构名而缺少用途上下文 |
+| `TestApifoxCoreResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 `StandardResponse`、`HealthResponse` 和 `ReadyResponse` 的响应字段都有可读说明，保证 Apifox 导入后的基础响应结构不会只显示字段名 |
+| `TestApifoxAccountResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查初始化状态、登录响应、用户摘要、身份摘要和用户分组摘要字段都有可读说明，避免账号路径在 Apifox 中只展示裸字段名 |
+| `TestApifoxAPIKeyResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 API Key 摘要和用量摘要响应字段都有可读说明，避免 Key 生命周期接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxAPIKeyRiskResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 API Key 泄露窗口、事件窗口、风险视图、泄露上报和批量处置响应字段都有可读说明，避免安全运维接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxChannelResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查通道摘要、上游端点摘要、连通性测试和模型拉取响应字段都有可读说明，避免通道管理接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxObservabilityResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查审计日志、告警事件、告警投递和 dashboard 响应字段都有可读说明，避免运维观测接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxLogAndSettingResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查调用日志和设置项响应字段都有可读说明，避免运维排查和设置接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxPaymentResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查支付商品、支付订单、人工调整、退款请求、充值码和额度流水响应字段都有可读说明，避免支付与额度接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxModelPricingResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查用户模型目录、全局模型价格和通道模型价格响应字段都有可读说明，避免模型与价格配置接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxProtocolResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 OpenAI、Anthropic 和 Gemini 兼容响应、模型列表、错误封套和 usage 字段都有可读说明，避免协议兼容接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxCommonReusableSchemasHaveHumanReadablePropertyDescriptions` | 检查分页壳、汇总统计、Provider 扩展选项和 ChatMessage 等复用 schema 字段都有可读说明，避免复用结构在 Apifox 中只展示裸字段名 |
+| `TestApifoxReferencedObjectPropertiesHaveLocalDescriptions` | 检查 API Key metadata 和 provider 专属扩展等 `$ref` 字段在引用点也有本地说明，避免 Apifox 展示嵌套对象时缺少上下文 |
+| `TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v0` 请求体顶层字段都有可读说明，避免管理端和用户端接口在 Apifox 中只有字段名而缺少用途、边界或安全语义 |
+| `TestApifoxV1RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v1` 模型入口请求体顶层字段都有可读说明，避免 OpenAI/Anthropic/Gemini 兼容接口在 Apifox 中缺少字段用途或转换语义 |
+| `TestApifoxOpenAPIInternalRefsResolve` | 递归检查 `docs/apifox/openapi.yaml` 内部 `$ref`，确保 requestBodies、responses、schemas、parameters 等组件引用都能解析，防止 Apifox 导入时出现断链 |
+| `TestApifoxOpenAPISecurityMatchesRouteGroups` | 检查 `/v1/*` operation 声明 `ApiKeyBearer`，`/v0/admin/*` 和除注册/登录/OAuth 公开入口及公开回调外的 `/v0/user/*` operation 声明 `UserJWT`，避免可导入文档遗漏鉴权要求 |
+| `TestApifoxOpenAPIOperationTagsAreDeclared` | 检查每个公开 operation 都带有非空 tags，且对应 tag 已在 OpenAPI 顶层声明并带说明，避免 Apifox 导入后接口分组缺失或漂移 |
+| `TestApifoxOpenAPIOperationIDsAreStableAndUnique` | 检查每个公开 operation 都有 lowerCamel 且全局唯一的 `operationId`，避免 Apifox 导入后接口标识依赖工具临时生成 |
+| `TestDocsRelativeReferencesResolve` | 扫描 README 和顶层 docs 的 Markdown 相对链接及反引号中的 `docs/*.md`/`docs/apifox/openapi.yaml` 引用，确保设计稿和导入说明不指向缺失文件 |
+| `TestDocsAvoidLegacyTerminology` | 扫描 README 和顶层 docs 中由 `docs/GLOSSARY.md` 定义的不推荐术语，防止模型通道、上游厂商、settings、API Key 哈希存储等概念在设计稿中漂移 |
+| `TestApifoxOpenAITextEndpointsUseTypedRequestBodies` | 检查 OpenAI Responses 和 Legacy Completions 不再使用通用 JSON 占位 requestBody，确保 Apifox 导入后能展示字段级请求说明 |
+| `TestApifoxV1OperationsUseTypedRequestBodies` | 检查所有 `/v1` operation 的 requestBody 都使用专用 schema，避免新增模型入口时退回通用 JSON 占位 |
+| `TestTraceabilityP0RowsUseConcreteEvidence` | 检查 `docs/TRACEABILITY.md` 的 P0 行证据必须落到具体测试名，避免使用泛化占位描述替代可回归证据 |
+| `TestTraceabilityP1StreamEvidenceIncludesNativeUpstreamTests` | 检查 `P1-C1` 流式转发证据必须包含 Anthropic/Gemini 原生上游流式测试，并防止追踪表继续保留已过期的原生流式待补说明 |
+| `TestRoadmapP1ProtocolRowsUseCurrentNativeUpstreamEvidence` | 检查 `docs/ROADMAP.md` 的 P1 流式和多协议行必须列出当前 Anthropic/Gemini 原生上游流式与字段保真测试，防止路线图继续保留已完成事项的旧缺口描述 |
+| `TestTraceabilityP1EntryProtocolEvidenceIncludesConcreteMatrixTests` | 检查 `P1-C2` 多入口协议证据必须列出模型协议选择、Anthropic/Gemini 成功与降级、countTokens、Gemini Embeddings 和入口协议错误外形测试 |
+| `TestTraceabilityP1RouterXExtensionEvidenceIncludesProviderSpecificTests` | 检查 `P1-C4` 的 `routerx` 扩展参数证据必须列出 provider-specific body 补充、Gemini safetySettings 和 Anthropic/Gemini 原生字段保真测试 |
+| `TestTraceabilityP1AccessControlEvidenceIncludesErrorSnapshotTests` | 检查 `P1-C6` 访问控制证据必须列出 API Key scope 和无候选拒绝的具体错误快照测试，避免追踪表继续保留泛化待补说明 |
+| `TestTraceabilityP1UpstreamConversionEvidenceIncludesConcreteMatrixTests` | 检查 `P1-C3` 多上游转换证据必须列出 Azure deployment 路径和 Responses 到 Claude/Gemini 的具体转换测试 |
+| `TestTraceabilityP2EnterpriseIdentityEvidenceIncludesConcreteOAuthTests` | 检查 `P2-C1` 企业身份证据必须列出本地登录审计、OAuth 已绑定身份登录、OAuth 绑定和防 email 自动接管测试 |
+| `TestTraceabilityP2AdminAuditEvidenceIncludesConcreteAuditTests` | 检查 `P2-C2` 管理审计证据必须列出登录、API Key、用户/分组、通道、日志导出、settings 拒绝和超级管理员边界测试 |
+| `TestTraceabilityP2AdvancedAPIEvidenceIncludesConcreteEndpointTests` | 检查 `P2-C5` 高级 API 证据必须列出 Responses、Embeddings、Images、Audio、Moderations 和 multipart 防护的具体测试 |
+| `TestTraceabilityP2AdvancedAPIKeyEvidenceIncludesConcreteManagementTests` | 检查 `P2-C6` 高级 API Key 管理证据必须列出生命周期、元数据过滤、服务账号主体、批量操作、风险视图、泄露窗口、告警投递和指标测试 |
+| `TestModelListSupportsRouterXProtocolSelector` | `/v1/models` 和 `/v1/models/{model}` 支持 `routerx_protocol` query 和 `X-RouterX-Protocol` header 选择 OpenAI、Anthropic 或 Gemini 模型外形；Gemini 外形声明生成、计数和 Embeddings 方法；`format` 保持最高优先级，无效 API Key 和模型详情 `model_not_found` 错误也按所选入口协议返回 |
+| `TestUserAPIKeyManagementAuditLogs` | API Key 创建、编辑、用户端额度/无限标记编辑拒绝、禁用和删除写入 `api_key.*` 管理审计，审计摘要不泄露 `sk-` 明文，并覆盖审计 `result`/`error_code`/时间范围过滤 |
+| `TestUserAPIKeyAdvancedManagement` | 用户查看单 Key 用量摘要、轮换 Key、泄露上报禁用、轮换链路和禁用原因落库，相关审计不泄露明文 Key |
+| `TestAdminAPIKeyQueryAndBatchDisable` | 管理员跨用户脱敏查询 API Key；批量禁用必须带筛选条件，缺少筛选条件会写 `api_key.batch_disable_denied` 审计；批量禁用只影响命中 Key 并写 `api_key.batch_disabled` 审计 |
+| `TestAdminAPIKeyRiskViewSummarizesRiskyKeys` | 管理员风险视图按窗口聚合异常 Key，识别失败峰值和低剩余额度，返回风险等级、原因和建议动作，响应不包含明文 Key 或明文前缀 |
+| `TestAdminAPIKeyRiskViewRecommendsRotationForLeakedKeys` | 管理员风险视图识别泄露上报 Key，返回 `rotation_recommended=true`、`rotation_reason=leak_reported` 和 `rotate_key` 建议，响应不包含明文 Key |
+| `TestAdminAPIKeyBatchExpire` | 管理员批量过期必须带筛选条件，缺少筛选条件会写 `api_key.batch_expire_denied` 审计；只影响命中 Key，过期后 `/v1` 鉴权拒绝，并写 `api_key.batch_expired` 审计 |
+| `TestAPIKeyLeakReportCreatesAdminAlert` | API Key 泄露上报会创建管理员告警；告警列表不暴露明文 Key，确认接口会写入确认时间和确认人，并从 open 列表移除 |
+| `TestAPIKeyLeakAlertWebhookDeliveryReplay` | 启用 Webhook 告警后，API Key 泄露告警会写入 pending 投递 outbox；管理端可查询、手动重放，Webhook payload 只包含脱敏告警事实且成功后标记 completed |
+| `TestAPIKeyLeakAlertEmailAndIMDeliveryReplay` | 启用邮件和 IM 告警后，API Key 泄露告警会分别写入 pending 投递 outbox；管理端可查询、手动重放，外部 payload 只包含脱敏告警事实且成功后标记 completed |
+| `TestAPIKeyMetadataFiltersAndSanitizedExport` | API Key 创建/编辑可维护环境、团队、应用、标签等非安全元数据；管理员可按元数据过滤并导出脱敏 CSV，导出和审计不暴露明文 Key |
+| `TestAPIKeyServiceAccountPrincipalFiltersAndExport` | API Key 元数据可声明 `service_account` 主体；管理员可按 `principal_type` 和 `principal_id` 过滤并导出包含主体列的脱敏 CSV，审计不暴露明文 Key |
+| `TestAPIKeyLeakWindowSummarizesRecentUse` | 用户和管理员查询单 Key 最近窗口调用摘要；窗口外日志和其他 Key 日志不混入，响应包含模型、错误 code 和来源 IP 哈希计数且不泄露明文 Key 或原始 IP |
+| `TestAPIKeyEventWindowSummarizesErrorsAndRateLimits` | 用户和管理员查询单 Key 最近错误/限流事件聚合；窗口外日志、成功日志和其他 Key 日志不混入，响应包含错误 code、错误来源、上游状态和限流维度计数且不泄露原始 IP、错误正文或明文 Key |
+| `TestAPIKeyModelScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `allow_models` scope；允许模型成功转发，未允许模型返回 `model_not_allowed`，不调用上游、不额外扣费，并写失败日志、拒绝分支 `policy_snapshot` 和 `api_key.scope_updated` 审计 |
+| `TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `api_types` scope；允许 APIType 成功转发，未允许 APIType 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyChannelGroupScopeFiltersRelayCandidates` | 用户更新 API Key `channel_groups` scope；候选通道按允许分组过滤，越权 `routerx.route` 返回 `route_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyEntryProtocolScopeRejectsBeforeRelay` | 用户更新 API Key `entry_protocols` scope；允许入口协议成功转发，未允许入口协议按当前协议错误外形返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyEntryProtocolScopeAllowsGeminiEmbeddingActions` | `entry_protocols=["gemini"]` 允许 Gemini embedContent 和 batchEmbedContents，不会被误判为 OpenAI 入口 |
+| `TestUserGroupChannelGroupAccessFiltersRelayCandidates` | 默认用户分组只能访问 settings 允许的通道分组；更高优先级的未授权通道会被过滤，越权 `routerx.route` 返回 `route_forbidden` 且不调用上游，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyIPScopeRejectsBeforeRelay` | 用户更新 API Key `ip_cidrs` scope；允许 IP 成功转发，未允许 IP 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyMethodScopeRejectsBeforeRelay` | 用户更新 API Key `methods` scope；允许方法路径成功转发，未允许方法路径返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed` | 用户更新 API Key `daily_quota` scope；当日成功日志已消耗额度达到上限后返回 `insufficient_quota`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed` | 用户更新 API Key `monthly_quota` scope；当月成功日志已消耗额度达到上限后返回 `insufficient_quota`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight` | 用户更新 API Key `max_concurrency` scope；同一 Key 在途请求达到上限后返回 `rate_limit_exceeded`，不调用第二个上游、不额外扣费，原在途请求结束后可继续成功，并写拒绝分支 `policy_snapshot` |
+| `TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay` | 用户更新 API Key `rpm` scope；当前分钟请求数达到上限后返回 `rate_limit_exceeded`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed` | 用户更新 API Key `tpm` scope；当前分钟成功日志的模型 token 达到上限后返回 `rate_limit_exceeded`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAdminPrivilegeBoundaries` | 管理员和超级管理员权限边界、设置脱敏、管理员不能越权管理同级或自己 |
+| `TestAdminAccountManagementAuditLogs` | 超级管理员创建、编辑、禁用和删除管理员写入 `admin.*` 审计，普通管理员越权访问超级管理员接口写 `admin.denied`，审计摘要不泄露密码 |
+| `TestAdminUserManagementAuditLogs` | 管理员创建、编辑、禁用和删除普通用户写入 `user.*` 审计，用户接口拒绝角色变更写 `user.denied`，审计摘要不泄露密码 |
+| `TestAdminUserPhoneManagementMaintainsLocalIdentity` | 管理员创建/编辑普通用户 phone 时会规范化 `users.phone`、创建或更新 `phone/local` 登录标识且不保存重复密码哈希；用户列表支持手机号关键词搜索，目标手机号已被其他账号占用时资料和 identity 都不落库 |
+| `TestAdminRotateSecretsReencryptsWithCurrentKey` | 超级管理员可用旧 `ENCRYPTION_KEY` 将通道 `api_key`、`api_keys`、`upstreams.api_key` 和 OAuth/OIDC `client_secret` 重加密到当前主密钥；旧 key 不再可解，新 key 可恢复 readiness，轮换审计不泄露旧/新主密钥或密钥明文 |
+| `TestAdminUserGroupManagement` | 管理员创建、查询、更新和删除用户分组；`default` 分组和仍被用户引用的分组不能删除，成功变更写 `user_group.*` 管理审计 |
+| `TestUserRedeemsRedemCodeOnce` | 用户兑换未使用充值码、额度增加、充值码标记 used/used_by/used_at，写入幂等额度流水和 `redem_code.redeem` 管理审计；重复兑换不再入账，并写 `redem_code.redeem_denied` 拒绝审计 |
+| `TestRedemCodeBatchNoteAndExpirationPolicy` | 充值码支持 batch_no、note 和未来 expired_at；管理端可按 batch_no 筛选，过去 expired_at 拒绝创建并写 `redem_code.create_denied`，过期码不可兑换且不改变余额 |
+| `TestAdminQuotaAdjustmentWritesTransaction` | 管理员调整用户额度时写入额度流水和 `user.quota_update` 管理审计，记录 actor、reason、变更前后余额和幂等键 |
+| `TestQuotaTransactionListAPIs` | 用户查询自己的额度流水且不能看见其他用户流水；管理员可按 `user_id`、`type` 和 `source_type` 过滤额度流水，余额变更字段保持可追溯 |
+| `TestAdminManagesRedemCodes` | 管理员生成随机充值码、导入指定充值码、列表查询、作废未使用码，作废码不可兑换，并写入 `redem_code.*` 管理审计 |
+| `TestAdminManagesPaymentProducts` | 管理员创建、更新、启用和禁用支付商品；用户侧只展示启用商品，禁用商品不能创建订单 |
+| `TestAdminPaymentProductAuditLogs` | 支付商品创建、更新和禁用成功后写入 `admin_audit_logs`，超级管理员可按资源类型查询 |
+| `TestAdminAuditRequiresSuperAdmin` | 普通管理员不能查询管理审计日志，超级管理员边界由路由层拦截 |
+| `TestUserListsAvailableModels` | 用户查看当前启用通道的去重模型列表，禁用通道模型不可见，未配置系统价格时返回 `minimum_usage` 和 `pricing_ready=false` |
+| `TestAdminModelPriceManagementUpdatesUserModelPricing` | 管理员创建、更新、启用和禁用系统模型价格；用户侧模型列表随启用价格返回版本化 `price_rule`，禁用后回退 `minimum_usage`，并写 `model_price.*` 审计 |
+| `TestAdminChannelModelPriceControlsUserModelPricingAndVisibility` | 管理员创建、更新、启用和禁用通道模型价格覆盖；通道级价格优先于系统价格，`user_enabled=false` 会隐藏普通用户模型，并写 `channel_model_price.*` 审计 |
+| `TestChatCompletionUsesModelPriceExpressionForBilling` | Chat 成功调用后按启用系统模型价格表达式扣减用户余额和 Key 预算；选中通道存在启用覆盖时优先按通道级表达式扣费，并在 `billing_snapshot` 记录规则来源、表达式、变量和版本 |
+| `TestChatCompletionAppliesBillingMultipliers` | Chat 成功调用后在价格表达式之后应用倍率；用户分组 x 通道分组组合倍率命中时覆盖用户分组倍率和通道分组倍率乘积，未命中时再分别相乘，并在 `billing_snapshot` 记录倍率模式和最终 `effective_ratio` |
+| `TestChannelModelUserEnabledFiltersRelayCandidates` | 普通用户调用会过滤 `channel_model_prices.user_enabled=false` 的通道模型；显式路由到隐藏通道时上游不被调用，失败日志写 `channel_model=deny` policy 快照 |
+| `TestUserCreatesAndListsPaymentOrders` | 用户查看启用支付商品；未启用 provider 拒绝下单并写 `payment_order.create_denied` 拒绝审计，启用后创建本地 pending 订单并写 `payment_order.create` 管理审计，订单按 settings 过期且不入账 |
+| `TestUserCancelsPendingPaymentOrder` | 用户取消自己的 pending 支付订单，订单进入 `closed` 且不入账；重复取消不重复审计，已 paid 订单不能取消，并写 `payment_order.cancel_denied` 拒绝审计 |
+| `TestStripeOrderCreatesCheckoutSessionWhenConfigured` | Stripe secret、测试 API base 和绝对 return_url 齐全时创建 Checkout Session，表单 metadata/金额/货币可复核，并保存 session id/url |
+| `TestEpayOrderBuildsSignedCheckoutURL` | 易支付网关配置齐全时创建订单返回签名收银台 URL，参数和签名可复核 |
+| `TestEpayNotifyPaysOrderIdempotently` | 易支付同步返回只读展示本地状态；异步通知校验签名和金额，成功通知订单 paid、入账并写 webhook/入账审计，重复通知不重复增加额度或流水 |
+| `TestEpayFailedNotifyMarksOrderFailedAndAudits` | 易支付签名有效、金额匹配且明确失败的通知会把 pending 订单置为 failed，不入账并写 `payment_webhook.failed` 审计 |
+| `TestStripeWebhookPaysOrderIdempotently` | Stripe webhook 校验原始 body 签名、Checkout Session 金额和 metadata，成功事件 paid 入账并写 webhook/入账审计，重复事件不重复流水 |
+| `TestStripeAsyncPaymentFailedMarksOrderFailedAndAudits` | Stripe `checkout.session.async_payment_failed` 校验签名、金额和 metadata 后把 pending 订单置为 failed，不入账并写 `payment_webhook.failed` 审计 |
+| `TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota` | Stripe 全额退款 webhook 幂等记录订单退款状态；默认不扣额度，开启自动扣回后写 refund_deduct 流水和退款/扣回审计且不重复扣 |
+| `TestStripePartialRefundWebhookRecordsAndDeductsProportionally` | Stripe 部分退款 webhook 记录 `partially_refunded` 状态；开启自动扣回后按退款金额比例写 refund_deduct 流水和退款/扣回审计 |
+| `TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy` | Stripe 争议 webhook 幂等记录争议事件和 `payment_dispute.created` 审计；开启自动禁用策略后禁用用户已启用 API Key，且不直接改用户额度 |
+| `TestStripeDisputeLifecycleUpdatesDisputeFact` | Stripe 争议 created/closed 生命周期写入并更新 `payment_disputes`，按 dispute id 写 `payment_dispute.*` 审计，重复事件不重复审计 |
+| `TestAdminPaymentManualAdjustmentRequiresReason` | 支付人工补账/扣回默认要求填写原因，缺少原因不改变用户余额，并写 `payment_manual_adjust.denied` 拒绝审计 |
+| `TestAdminPaymentManualAdjustmentWritesManualTransactionAndAudit` | 管理员通过支付人工修正接口扣回额度，写 `manual_debit` 流水、关联订单、记录操作者/原因/幂等键并写支付订单审计 |
+| `TestAdminPaymentManualRefundMarksOrderAndDeductsQuota` | 管理员通过支付人工退款接口扣回额度，订单置为 `partially_refunded` 或 `refunded`，写 `refund_deduct` 流水、原因、操作者、幂等键和 `payment_refund.manual` 审计；重复幂等键拒绝写 `payment_refund.manual_denied` |
+| `TestAdminStripeRefundRequestCreatesProviderRefundAndPendingOrder` | 管理员向 Stripe 发起 provider 退款请求，调用 Refund API，写 `payment_refund_requests` 和 `payment_refund.requested` 审计，订单进入 `refund_pending`，后续退款 webhook 收尾为最终退款状态；缺少原因会拒绝、不会调用 provider，并写 `payment_refund.request_denied` |
+| `TestAdminEpayRefundRequestCreatesProviderRefundAndPendingOrder` | 管理员向易支付发起 provider 退款请求，签名调用配置的退款地址，写 `payment_refund_requests` 和 `payment_refund.requested` 审计，订单进入 `refund_pending`；重复幂等键不重复调用 provider，并写 `payment_refund.request_denied` |
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
+| `TestAdminChannelManagementAuditLogs` | 通道创建、测试、拉取模型、编辑、禁用、启用和删除写入 `channel.*` 管理审计，且审计摘要不泄露下游密钥 |
+| `TestAdminLogClearWritesAuditLog` | 管理员按 `before` 清理调用日志写入 `log.clear` 审计，并记录清理截止时间 |
+| `TestAdminLogExportWritesAuditLogAndRedactsSensitiveFields` | 管理员按过滤条件导出调用日志 CSV 写入 `log.export` 审计，导出内容不包含请求/响应体、IP、错误原文、snapshot 或密钥 |
+| `TestSetupBootstrapAdminQuotaAndSettingsDefaults` | 初始化管理员启动额度和 settings 默认值 |
+| `TestMetricsEndpointRequiresSettingAndExposesPrometheusText` | `/metrics` 默认关闭，启用 `observability.metrics_enabled` 后返回 Prometheus 文本和基础实例指标 |
+| `TestMetricsEndpointIncludesRelayPaymentAndInfrastructureSignals` | `/metrics` 输出 DB/Redis up、调用日志成功/失败计数、Relay 请求数、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、通道可用状态、逐通道错误计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标 |
+| `TestMetricsEndpointCountsInfrastructureErrors` | `/metrics` 输出 DB 迁移状态读取失败和 Redis ping 失败的低基数错误计数 |
+| `TestMetricsEndpointReportsIndependentLogDBHealth` | `/metrics` 输出独立日志库配置、ping 状态和日志补写 outbox 当前状态，日志库不可用时仍回退主库事实并保持指标可用 |
+| `TestRequestIDHeaderUsesConfiguredSetting` | `observability.request_id_header` 修改后，请求 ID 从配置 header 读取并通过同名响应头返回，缺失时生成新 ID |
+| `TestStructuredHTTPLogsUseJSONWhenEnabled` | `observability.structured_logs_enabled=true` 后 HTTP 访问日志输出可解析 JSON line，并包含 request_id、method、path_group、status、latency_ms 和 client_ip |
+| `TestTraceContextPropagatesToResponseStructuredLogAndUpstream` | 请求携带合法 W3C `traceparent`/`tracestate` 时，RouterX 响应回显 `Traceparent`/`Tracestate`，结构化 HTTP 日志和模型调用 `request_snapshot` 写入 `trace_id`/`traceparent`/`tracestate`，并在 `/v1` 真实上游请求中继续透传 |
+| `TestRecoveryStructuredPanicLogUsesJSONAndRedactsValue` | 结构化日志开启后 Recovery panic 日志输出 JSON line，包含请求上下文、合法 trace context 的 trace_id/traceparent/tracestate 和堆栈，且不记录原始 panic 值 |
+| `TestRecoveryLogsRequestContextAndRedactsPanicValue` | Recovery 捕获 panic 时返回统一 500，并在系统错误日志写入 request_id、method、path、client_ip 和堆栈，同时不记录原始 panic 值 |
+| `TestRecoveryUsesEntryProtocolErrorEnvelopeForV1Panics` | `/v1` panic 会按入口协议返回 Anthropic 或 Gemini 兼容 500，而不是固定 OpenAI 错误外形 |
+| `TestSettingsValidationAndReadiness` | settings 类型校验、`server.port`/`server.mode` 边界、request id header 名校验、限流阈值 `0` 禁用语义、JWT/生产 readiness、支付 provider 密钥和关键配置缺失 |
+| `TestAdminSettingUpdateWritesAuditLog` | 超级管理员批量更新 settings 后按 key 写 `setting.update` 审计，敏感 payment 配置值不完整泄露 |
+| `TestAdminSettingEncryptsOAuthOIDCClientSecrets` | 超级管理员写入 OAuth/OIDC `client_secret` 后数据库保存 `enc:v1:` 密文，设置服务读取会解密，管理响应和审计不泄露完整明文 |
+| `TestAdminSettingValidationFailureWritesDeniedAuditLog` | 超级管理员提交非法 settings 值时不落库，写 `setting.denied` 审计并脱敏敏感尝试值 |
+| `TestSettingDefaultsBackfillPreservesExistingValues` | 启动默认配置回填不会覆盖已有值 |
+| `TestSettingCacheRefreshesStaleRedisValues` | settings 读取缓存、单项更新和批量更新后的 Redis 刷新边界 |
+| `TestSettingLoadCacheAppliesRequestIDHeaderRuntimeConfig` | 启动加载 settings 时会把已有 `observability.request_id_header` 应用到进程内 request id header 配置 |
+| `TestValidateAndGetTokenResolvesFromRedisAuthCache` | API Key 鉴权 lookup cache 命中后通过 Redis 中的 `SHA256(api_key) -> token_id` 映射回源加载 Token/User，仍不缓存授权结论 |
+| `TestAPIKeyAuthCacheWarmsAndClearsOnDisable` | API Key DB 鉴权成功后预热 Redis lookup cache，禁用 Key 后立即清理对应映射 |
+| `TestUserRegisterRespectsRegistrationSettings` | 自助注册默认关闭；开启后仍受用户名注册和验证码开关约束，并应用默认额度/分组；附带 email identity 不保存重复密码哈希且可复用主密码登录 |
+| `TestUserRegisterSupportsEmailAndPhoneMethods` | 统一注册入口支持 `register_method=email/phone`；分别受邮箱/手机号注册开关控制，仍创建有密码用户名账号，并写入无重复密码哈希的 email/phone 本地身份 |
+| `TestUserRegisterCaptchaEndpointGeneratesConsumableRedisCaptcha` | 注册图片验证码接口写入 Redis 注册验证码记录，返回可展示 SVG、验证码 ID 和 TTL；用户读到的验证码可直接完成注册并一次性消费 Redis key |
+| `TestUserRegisterCaptchaEndpointFailsClosedWithoutRedis` | Redis 验证码存储不可用时，注册图片验证码生成接口 fail-closed 返回 503，不生成不可消费的验证码 |
+| `TestUserRegisterConsumesRedisCaptchaWhenRequired` | `auth.register.captcha.required=true` 时用户名、邮箱和手机号注册会消费 Redis 注册验证码，成功后验证码不可复用 |
+| `TestUserRegisterCaptchaTracksAttemptsAndExpiresCode` | 注册验证码错误尝试会累计，达到 `auth.captcha.max_attempts` 后删除 Redis 记录并拒绝后续正确验证码 |
+| `TestUserRegisterRestoresCancelledEmailAndPhoneIdentities` | 已注销普通用户通过同邮箱或同手机号重新注册时恢复原账号、更新本地密码和展示名，并写 `user.recover` 审计 |
+| `TestUserLoginRespectsLoginMethodSettings` | 用户名密码登录保持可用；email/phone 密码登录默认关闭，开启对应 setting 后已有本地身份可登录，且 email 身份可复用 `username/local` 主密码 |
+| `TestUserLoginCodeEndpointGeneratesConsumableRedisCode` | 登录验证码生成接口写入 Redis 登录验证码记录，显式开启调试响应时返回验证码 ID、投递方式、TTL 和调试验证码；返回验证码可直接完成验证码登录并一次性消费 Redis key |
+| `TestUserLoginCodeEndpointFailsClosedWithoutRedis` | Redis 验证码存储不可用时，登录验证码生成接口 fail-closed 返回 503，不返回调试验证码 |
+| `TestPublicUserAuthRoutesApplyIPRateLimit` | 公开登录、注册、验证码生成和 OAuth/OIDC 回调入口复用 Redis IP 分钟级限流；同一 IP 超过阈值返回 429 且不进入业务 handler |
+| `TestPublicUserAuthRateLimitFailsClosedWithoutRedisInExternalDatabaseMode` | 外部数据库模式下公开账号入口需要 Redis 支撑关键限流；Redis 缺失时 fail-closed 返回 503 |
+| `TestUserLoginCodeCredentialFailsClosedWithoutVerifier` | 统一登录显式提交 `credential_type=code` 时不会回退到密码登录；缺少 Redis 验证器时按对应开关 fail-closed 且不签发 JWT |
+| `TestUserLoginCodeCredentialConsumesRedisCode` | 邮箱/手机号验证码登录读取 Redis 记录、忽略请求体密码、成功签发 JWT 并一次性消费验证码 |
+| `TestUserLoginCodeCredentialTracksAttemptsAndExpiresCode` | 登录验证码错误尝试会累计，达到 `auth.captcha.max_attempts` 后删除 Redis 记录并拒绝后续正确验证码 |
+| `TestUserLoginWritesAuditLogWithoutSecrets` | 成功登录写入 `user.login` 管理审计，超级管理员可按动作和用户资源查询，审计摘要不包含密码或 JWT |
+| `TestUserChangePasswordWritesAuditLogWithoutSecrets` | 用户自助修改密码只更新 `username/local` 主密码；旧密码失效、新密码可登录，并写 `user.password_changed` 审计且不泄露旧/新密码 |
+| `TestOAuthCallbackLogsInBoundIdentityWithState` | OAuth 登录生成 state Cookie 并跳转 provider；回调校验 state、换取 token/userinfo 后只登录已绑定的 provider subject，并写 `user.login` 审计 |
+| `TestOAuthCallbackDoesNotAutoBindExistingEmail` | OAuth 回调中 provider email 命中已有本地账号时，不会自动创建第三方 identity 或签发登录态 |
+| `TestOAuthCallbackRegistrationTicketCreatesPasswordAccount` | OAuth 未绑定 subject 在注册开关允许时返回短期注册票据；完成注册后创建有密码本地账号、email/local 和 OAuth identity，继承默认额度并写登录审计 |
+| `TestOAuthRegistrationRequiresAndConsumesRedisCaptcha` | OAuth 首次补齐注册在开启注册验证码时仍可先返回短期注册票据；提交注册缺少验证码会拒绝，验证码正确后创建账号并一次性消费 Redis 注册验证码 |
+| `TestOAuthRegistrationRestoresSelfCancelledProviderIdentity` | OAuth subject 命中已注销普通用户时仍返回注册票据；补齐注册恢复原账号、更新本地密码、刷新 OAuth identity 最近使用时间、不恢复旧 API Key，并写 `user.recover` 与 `user.login` 审计 |
+| `TestOAuthBindCallbackCreatesIdentityForLoggedInUser` | 登录用户 OAuth 绑定生成 state 和签名 bind Cookie；回调校验后创建 passwordless OAuth identity、更新最近使用时间，并写 `user.identity_bound` 审计 |
+| `TestOAuthBindCallbackRejectsIdentityBoundToAnotherUser` | OAuth 绑定回调中 provider subject 已属于其他用户时返回冲突，且不会给当前用户创建重复 identity |
+| `TestUserIdentityListAndUnbindOAuthIdentity` | 当前用户可列出 username/local 与 OAuth identity 且响应不含密码哈希；解绑 OAuth identity 后软删除、写 `user.identity_unbound` 审计，并禁止该 provider subject 继续登录 |
+| `TestUserIdentityUnbindRejectsPrimaryUsernameIdentity` | 当前用户解绑 `username/local` 主身份会被拒绝，主身份保持可用 |
+| `TestOIDCCallbackLogsInBoundIdentityWithNonceAndSignedIDToken` | OIDC 登录通过 Discovery 跳转并生成 state/nonce；回调用签名 ID Token 登录已绑定 subject，更新最近使用时间并写 `user.login` 审计 |
+| `TestOIDCCallbackRegistrationTicketCreatesPasswordAccount` | OIDC 未绑定 subject 在注册开关允许时返回短期注册票据；完成注册后创建有密码本地账号、email/local 和 OIDC identity，继承默认额度并写登录审计 |
+| `TestOIDCRegistrationRequiresAndConsumesRedisCaptcha` | OIDC 首次补齐注册在开启注册验证码时仍可先返回短期注册票据；提交注册缺少验证码会拒绝，验证码正确后创建账号并一次性消费 Redis 注册验证码 |
+| `TestOIDCRegistrationRestoresSelfCancelledProviderIdentity` | OIDC subject 命中已注销普通用户时仍返回注册票据；补齐注册恢复原账号、更新本地密码、刷新 OIDC identity 最近使用时间、不恢复旧 API Key，并写 `user.recover` 与 `user.login` 审计 |
+| `TestOIDCCallbackRejectsTamperedOrMismatchedNonceIDToken` | OIDC 回调拒绝签名不匹配或 nonce 不匹配的 ID Token，不允许绕过企业身份校验 |
+| `TestOIDCBindCallbackCreatesIdentityForLoggedInUser` | 登录用户 OIDC 绑定生成 state、nonce 和签名 bind Cookie；回调校验后创建 passwordless OIDC identity，更新最近使用时间，并写 `user.identity_bound` 审计 |
+| `TestOIDCBindCallbackRejectsIdentityBoundToAnotherUser` | OIDC 绑定回调中 provider subject 已属于其他用户时返回冲突，且不会给当前用户创建重复 identity |
+| `TestUserSelfCancelDisablesAccountButPreservesIdentity` | 当前用户自助注销必须提供正确本地密码二次确认；缺少或错误密码不会禁用账号/API Key，会写 `user.self_cancel_denied` 拒绝审计且不泄露密码；确认通过后账号禁用、API Key 禁用，展示名、主邮箱和主手机号被清空，用户名、email/phone identity 及历史账号记录保留；同名重新注册恢复原账号、只更新主密码、不恢复旧 API Key，并写 `user.self_cancel` 与 `user.recover` 审计 |
+| `TestUserRecoveryCreatesEmailIdentity` | 无 email 的注销账号用同名注册恢复时，可补齐未占用的 `email/local` 登录标识；该 identity 不保存重复密码哈希，并可在邮箱登录开关开启后复用主密码登录 |
+| `TestUserSelfEmailUpdateMaintainsLocalIdentity` | 当前用户自助修改 email 时会规范化 `users.email`、创建或更新同用户 `email/local` 登录标识且不保存重复密码哈希；邮箱密码登录开启后复用主密码，目标邮箱已被其他账号占用时资料和 identity 都不落库 |
+| `TestUserSelfPhoneUpdateMaintainsLocalIdentity` | 当前用户自助修改 phone 时会规范化 `users.phone`、创建或更新同用户 `phone/local` 登录标识且不保存重复密码哈希；手机号密码登录开启后复用主密码，目标手机号已被其他账号占用时资料和 identity 都不落库 |
+| `TestInitRedisSkipsEmptyConfig` | `REDIS_CONN` 为空时不隐式连接本机 Redis，SQLite 单机模式保持可降级 |
+| `TestReadinessRequiresRedisForExternalDatabaseMode` | `SQL_DSN` 指向外部数据库且 Redis 不可用时 `/ready` 返回不就绪 |
+| `TestReadinessRejectsDirtyMigrationState` | `schema_migrations.dirty=true` 时 `/ready` 返回不就绪，清理 dirty 后恢复 ready |
+| `TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets` | 数据库已有 `enc:v1:` 通道密钥但缺少 `ENCRYPTION_KEY` 时 `/ready` 返回不就绪 |
+| `TestReadinessDecryptsEncryptedChannelSecrets` | 数据库已有 `enc:v1:` 通道密钥但当前 `ENCRYPTION_KEY` 无法解密时 `/ready` 返回不就绪，覆盖单 key、多 key 和 upstreams |
+| `TestReadinessDecryptsEncryptedExternalProviderSecrets` | settings 中 OAuth/OIDC `client_secret` 已加密但当前 `ENCRYPTION_KEY` 无法解密时 `/ready` 返回不就绪 |
+| `TestReadinessRejectsInvalidCriticalSettings` | 关键 auth/relay/rate-limit settings 即使被直接改库污染，`/ready` 也会复用注册表校验返回不就绪并指出问题 key |
+| `TestInitLogDBUsesConfiguredDSN` | 启动期读取 `LOG_SQL_DSN`，初始化独立日志数据库并迁移 `logs` schema |
+| `TestLogServiceWritesMainFactAndExternalLogDB` | 配置独立日志库时，`LogService` 先在主库保留调用/结算事实并更新 API Key 最近使用摘要，再写日志库副本 |
+| `TestLogServiceFallsBackWhenExternalLogDBWriteFails` | 独立日志库运行期写入失败时，主库调用事实和基础 `billing_snapshot` 仍可恢复 |
+| `TestLogServiceReplaysPendingExternalLogOutbox` | 独立日志库恢复后，LogService 可将 pending outbox 中的主库日志补写到日志库并标记完成 |
+| `TestLogServiceWorkerReplaysPendingExternalLogOutbox` | 服务后台补写 worker 会周期性重放 pending outbox |
+| `TestLogServiceListsFromExternalLogDBWhenConfigured` | 配置独立日志库时，管理日志列表读取日志库数据 |
+| `TestLogServiceListFallsBackToMainDBWhenExternalLogDBFails` | 独立日志库查询失败时，管理日志列表回退读取主库事实 |
+| `TestAPIKeyAuthErrorsUseEntryProtocolShape` | Anthropic/Gemini 入口 API Key 鉴权错误外形 |
+| `TestProtocolWrapperRequestErrorsUseStableCodes` | Anthropic/Gemini wrapper 本地解析失败复用稳定错误语义：非法 JSON 为 `invalid_json`，缺少 model 为 `model_required`，Gemini embedding 请求结构错误为 `invalid_gemini_embedding_request` |
+| `TestV1UnsupportedRouteUsesOpenAIErrorAndAuth` | 未知 `/v1` 路径仍经过 API Key 鉴权；鉴权通过后返回 OpenAI-compatible 404 `unsupported_api`，不落入 Gin 默认纯文本 404 |
+| `TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields` | Anthropic/Gemini 非流式成功响应、usage、扣费和非文本 content/parts 降级，并断言成功日志的 `request_snapshot.adapter_degradations` 记录脱敏降级原因；Gemini 未映射的 `generationConfig` 有值子字段也会记录 dropped 降级 |
+| `TestAnthropicCountTokensUsesPromptTextInsteadOfJSONEnvelope` | Anthropic count_tokens 本地近似计数只统计 `system` 和 `messages[].content` 的 prompt 文本，不把 JSON 字段名当作 token |
+| `TestAnthropicCountTokensRejectsInvalidJSON` | Anthropic count_tokens 非法 JSON 返回稳定 `invalid_json` 400 错误语义 |
+| `TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini embedContent 转 OpenAI-compatible Embeddings 上游，`outputDimensionality` 映射为 `dimensions`，返回 Gemini `embedding.values` 外形，usage 写日志和扣费；未映射的 `taskType/title` 会记录 dropped 降级 |
+| `TestGeminiEmbedContentToGeminiUpstreamPreservesNativeRequestFieldsAndDeductsUsage` | Gemini embedContent 命中 Gemini 上游时原生调用 `:embedContent`，保留 `content/taskType/title/outputDimensionality`，从 `usageMetadata` 写日志并扣费 |
+| `TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage` | Gemini batchEmbedContents 转 OpenAI-compatible Embeddings 批量 input，`outputDimensionality` 映射为 `dimensions`，上游 embedding list 返回 Gemini `embeddings[].values` 外形，usage 写日志和扣费；未映射的 `taskType/title` 会记录 dropped 降级 |
+| `TestGeminiBatchEmbedContentsToGeminiUpstreamPreservesNativeRequestsAndDeductsUsage` | Gemini batchEmbedContents 命中 Gemini 上游时原生调用 `:batchEmbedContents`，保留 `requests[].content/taskType/title/outputDimensionality`，从 `usageMetadata` 写日志并扣费 |
+| `TestGeminiEmbeddingOutputDimensionalityValidation` | Gemini embedding 请求拒绝非正数 `outputDimensionality`，batchEmbedContents 拒绝同批次维度不一致，调用方错误最终映射为 `invalid_gemini_embedding_request` |
+| `TestGeminiCountTokensUsesPromptTextInsteadOfJSONEnvelope` | Gemini countTokens 本地近似计数只统计 `contents` 和 `systemInstruction` 中的 prompt 文本，不把 JSON 字段名当作 token |
+| `TestGeminiCountTokensUsesGenerateContentRequestWhenPresent` | Gemini countTokens 在存在 `generateContentRequest` 时按 Gemini 语义忽略顶层 `contents`，只统计包裹请求内的 prompt 文本 |
+| `TestGeminiCountTokensRejectsInvalidJSON` | Gemini countTokens 非法 JSON 返回稳定 `invalid_json` 400 错误语义 |
+| `TestGeminiBatchEmbedContentsRejectsMismatchedEmbeddingCount` | Gemini batchEmbedContents 上游返回 embedding 数量与请求数量不一致时返回 Gemini 兼容 502/UNAVAILABLE，错误语义为 `upstream_conversion_failed` |
+| `TestRateLimitUsesSettingsAndEntryProtocolErrorShape` | Redis Token 限流读取 `rate_limit.*`，本地 429 不调用上游，返回入口协议兼容错误，并写失败日志、拒绝分支 `policy_snapshot` 和 `rate_limit_snapshot` |
+| `TestRateLimitRedisUnavailableFailsClosedInExternalDatabaseMode` | 外部数据库模式下 Redis 限流依赖运行期不可用时，本地 503 `rate_limit_unavailable` fail-closed，不调用上游、不扣额度，写系统来源失败日志、Redis 依赖快照和 `routerx_redis_errors_total{operation="rate_limit_incr"}` |
+| `TestRateLimitGlobalAndIPWriteSnapshotDetails` | Redis 全局/IP 限流命中时本地 429，不调用上游、不额外扣费，并在失败日志 `policy_snapshot` 中写 `scope_result` 和 `rate_limit_snapshot` 的维度、分钟窗口、阈值、当前计数、剩余量和拒绝决策 |
+| `TestRateLimitPerUserAppliesAcrossAPIKeys` | Redis 用户限流读取 `rate_limit.per_user_per_min`，同一用户跨多个 API Key 达到分钟阈值后本地 429，不调用上游、不扣第二个 Key，并写用户维度拒绝 `policy_snapshot` 和 `rate_limit_snapshot` |
+| `TestRateLimitPerModelRejectsBeforeUpstream` | Redis 模型限流读取 `rate_limit.per_model_per_min`，同一模型达到分钟阈值后本地 429，不调用上游、不额外扣费，并写模型维度拒绝 `policy_snapshot` 和 `rate_limit_snapshot` |
+| `TestRateLimitPerChannelRejectsBeforeUpstream` | Redis 通道限流读取 `rate_limit.per_channel_per_min`，同一通道达到分钟阈值后本地 429，不调用上游、不额外扣费，并写通道维度拒绝 `policy_snapshot` 和 `rate_limit_snapshot` |
+| `TestChatCompletionInvalidRequestDoesNotCallUpstream` | 非法 JSON、缺少 model、缺少或非法 messages 在本地失败且不污染通道和账单 |
+| `TestRelayMaxRequestBodyBytesRejectsBeforeUpstream` | `relay.max_request_body_bytes` 超限时本地返回 OpenAI-compatible 413 `request_body_too_large`，不调用上游、不扣用户额度或 API Key 预算 |
+| `TestMultipartRejectsMissingRequiredFileBeforeUpstream` | OpenAI-compatible Images/Audio multipart 缺少必填 `image` 或 `file` 文件字段时本地返回 400 `multipart_file_required`，不调用上游、不扣用户额度或 API Key 预算 |
+| `TestRelayMaxMultipartFileBytesRejectsBeforeUpstream` | OpenAI-compatible multipart 单个文件字段超过 `relay.max_multipart_file_bytes` 时本地返回 413 `request_file_too_large`，不调用上游、不扣用户额度或 API Key 预算 |
+| `TestRelayMultipartRejectsUnsafeFileNameBeforeUpstream` | OpenAI-compatible multipart 文件名命中路径形态或危险扩展名基础扫描时本地返回 400 `unsafe_multipart_file`，不调用上游、不扣用户额度或 API Key 预算 |
+| `TestRelayMultipartRejectsUnsafeFileContentBeforeUpstream` | OpenAI-compatible multipart 文件内容命中明显可执行签名时本地返回 400 `unsafe_multipart_file`，不调用上游、不扣用户额度或 API Key 预算 |
+| `TestRelayMultipartRejectsIncompatibleFileExtensionBeforeUpstream` | OpenAI-compatible multipart 文件扩展名与图片/音频 API 类型明显不匹配时本地返回 400 `unsafe_multipart_file`，不调用上游、不扣用户额度或 API Key 预算 |
+| `TestRelayMultipartRejectsMismatchedFileContentBeforeUpstream` | OpenAI-compatible multipart 文件扩展名合法但文件头与图片/音频 API 类型明显不匹配时本地返回 400 `unsafe_multipart_file`，不调用上游、不扣用户额度或 API Key 预算 |
+| `TestChannelRoutingConfigResolution` | `upstreams` 优先、密钥选择归一化、模型重写和真实 Relay 请求不泄密 |
+| `TestUserBillingMatchesLogs` | 多次成功/失败混合后，用户账单、日志、余额和 Key 预算一致 |
+| `TestUserBillingFiltersByAPIKey` | `/v0/user/billing?token_id=` 只聚合当前用户指定 API Key 的成功日志，其他 Key 和失败日志不混入 |
+| `TestChatCompletionSuccessLogsAndDeductsQuota` | Chat 非流式成功调用、request id 上游透传、body 日志默认关闭、基础 request_snapshot、基础 policy_snapshot、上游 usage_source、基础 route_snapshot、含 P0 回退表达式/倍率/预算前后摘要的基础 billing_snapshot、日志、用户额度、Key 预算和账单聚合 |
+| `TestRelayBodyLoggingRedactsAndTruncatesWhenEnabled` | 显式开启 body 日志并配置正数上限后，非流式 Relay 调用日志保存截断和脱敏后的请求/响应片段，不保留 API Key、Bearer token、上游密钥或响应中的 `sk-` 片段 |
+| `TestChatCompletionDeductionFailureWritesBillingSnapshot` | 上游成功但最终扣费失败时返回 `insufficient_quota`，不扣用户余额或 Key 预算，写零扣费失败日志，并在 `billing_snapshot` 记录试算额度、失败状态和扣减失败原因 |
+| `TestAzureChatCompletionUsesDeploymentPathAndAPIKey` | Azure OpenAI Chat 基础转发，deployment 路径、`api-version` query、`api-key` header、`model/routerx` 剥离、usage 日志和扣费 |
+| `TestAzureCompletionsUsesDeploymentPathAndAPIKey` | Azure OpenAI Legacy Completions 基础转发，deployment 路径、`api-version` query、`api-key` header、`model/routerx` 剥离、usage 日志和扣费 |
+| `TestAzureChannelFetchModelsUsesDeploymentsEndpoint` | Azure OpenAI 管理端模型拉取使用 `/openai/deployments`、`api-version` query 和 `api-key` header，并返回 deployment id |
+| `TestAzureResponsesUsesV1EndpointAndUsage` | Azure OpenAI Responses 基础转发，`/openai/v1/responses?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 剥离、`input_tokens/output_tokens/total_tokens` usage 日志和扣费 |
+| `TestAzureEmbeddingsUsesDeploymentPathAndAPIKey` | Azure OpenAI Embeddings 基础转发，deployment 路径、`api-version` query、`api-key` header、`model/routerx` 剥离、usage 日志和扣费 |
+| `TestAzureImageGenerationsUsesV1EndpointAndMinimumCharge` | Azure OpenAI Image Generations 基础转发，`/openai/v1/images/generations?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 剥离、无 usage 最低计费日志和扣费 |
+| `TestAzureImageEditsMultipartUsesV1EndpointAndMinimumCharge` | Azure OpenAI Image Edits multipart 基础转发，`/openai/v1/images/edits?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 表单字段剥离、图像/遮罩文件字段保留、无 usage 最低计费日志和扣费 |
+| `TestAzureImageVariationsMultipartUsesV1EndpointAndMinimumCharge` | Azure OpenAI Image Variations multipart 基础转发，`/openai/v1/images/variations?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 表单字段剥离、图像文件字段保留、无 usage 最低计费日志和扣费 |
+| `TestAzureAudioSpeechUsesV1EndpointAndMinimumCharge` | Azure OpenAI Audio Speech 基础转发，`/openai/v1/audio/speech?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 剥离、音频 Content-Type 透传、无 usage 最低计费日志和扣费 |
+| `TestAzureAudioMultipartUsesV1EndpointAndMinimumCharge` | Azure OpenAI Audio Transcriptions/Translations multipart 基础转发，`/openai/v1/audio/transcriptions|translations?api-version=preview`、`api-key` header、保留 `model` deployment 名、`routerx` 表单字段剥离、文件字段保留、无 usage 最低计费日志和扣费 |
+| `TestResponsesPassthroughExtractsUsageAndDeductsQuota` | Responses 基础 JSON 透传、`routerx` 剥离、`input_tokens/output_tokens` usage 映射、日志和扣费 |
+| `TestResponsesToClaudeUpstreamConvertsMessagesAndDeductsUsage` | Responses 命中 Claude/Anthropic 上游时转 Anthropic Messages，映射 `input/instructions/max_output_tokens` 和 Claude usage，返回 OpenAI Responses 外形并扣费 |
+| `TestResponsesToGeminiUpstreamConvertsGenerateContentAndDeductsUsage` | Responses 命中 Gemini 上游时转 `generateContent`，映射 `input/instructions/max_output_tokens` 和 Gemini `usageMetadata`，返回 OpenAI Responses 外形并扣费 |
+| `TestResponsesStreamForwardsSSEAndDeductsUsage` | Responses `stream=true` 命中 OpenAI SSE 形态通道时透传 SSE 事件，从 `response.completed.response.usage` 提取用量，写日志并扣费 |
+| `TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota` | Embeddings 基础 JSON 透传、`routerx` 剥离、`prompt_tokens/total_tokens` usage 映射、日志和扣费 |
+| `TestEmbeddingsRejectsInvalidInputBeforeUpstream` | Embeddings 在上游前拒绝空 `input` 和超过 2048 的批量输入，返回稳定错误码且不调用上游 |
+| `TestModerationsPassthroughUsesMinimumChargeWithoutUsage` | Moderations 基础 JSON 透传、`routerx` 剥离、上游无 usage 时按 P0 最低计费写日志、记录 minimum usage_source、minimum 表达式快照并扣费 |
+| `TestModerationsRejectsInvalidInputBeforeUpstream` | Moderations 在上游前拒绝缺失、空白或非字符串 `input`，返回 `invalid_moderation_input`，不调用上游且不扣用户额度或 API Key 预算 |
+| `TestAzureModerationsUnsupportedAPITypeDoesNotCallUpstream` | Azure OpenAI 当前未确认 Moderations 端点时返回 502 `unsupported_api_type`，不调用上游、不扣用户额度或 API Key 预算，并写通道能力失败日志 |
+| `TestUsageMissingStrategyRejectsWithoutDeductingQuota` | `billing.usage_missing_strategy=reject` 时，上游成功但缺少 usage 会返回 `usage_missing`、写 billing 失败日志且不扣费 |
+| `TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage` | Image Generations 基础 JSON 透传、`routerx` 剥离、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestImageGenerationsRejectsInvalidSizeBeforeUpstream` | Image Generations 在上游前拒绝超界 `size`，返回 `invalid_image_size`，不调用上游且不扣用户额度或 API Key 预算 |
+| `TestImageGenerationsRejectsInvalidPromptBeforeUpstream` | Image Generations 在上游前拒绝缺失、非字符串或空白 `prompt`，返回 `invalid_image_prompt`，不调用上游且不扣用户额度或 API Key 预算 |
+| `TestImageGenerationsRejectsInvalidCountBeforeUpstream` | Image Generations 在上游前拒绝 null、小于 1、非整数或非数字 `n`，返回 `invalid_image_count`，不调用上游且不扣用户额度或 API Key 预算 |
+| `TestImageMultipartPassthroughUsesRouteAndMinimumCharge` | Image Edits/Variations multipart 表单透传、`routerx` 表单字段剥离与路由偏好、图像/遮罩文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestImageMultipartRejectsInvalidSizeBeforeUpstream` | Image Edits/Variations 在上游前拒绝超界 `size`，返回 `invalid_image_size`，不调用上游且不扣用户额度或 API Key 预算 |
+| `TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge` | Audio Speech 基础 JSON 透传、`routerx` 剥离、二进制音频响应和 Content-Type 透传、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestAudioSpeechRejectsInvalidResponseFormatBeforeUpstream` | Audio Speech 在上游前拒绝非法 `response_format`，返回 `invalid_audio_response_format`，不调用上游且不扣用户额度或 API Key 预算 |
+| `TestAudioSpeechRejectsInvalidRequestFieldsBeforeUpstream` | Audio Speech 在上游前拒绝空输入、超长输入和空 voice，返回稳定错误码，不调用上游且不扣用户额度或 API Key 预算 |
+| `TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge` | Audio Transcriptions multipart 表单透传、`routerx` 表单字段剥离与路由偏好、文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestAudioMultipartRejectsInvalidResponseFormatBeforeUpstream` | Audio Transcriptions/Translations 在上游前拒绝非法 `response_format`，返回 `invalid_audio_response_format`，不调用上游且不扣用户额度或 API Key 预算 |
+| `TestRouterXOptionsHeaderRoutesMultipartRequest` | `X-RouterX-Options` header 为 multipart 请求提供路由偏好，且不向真实上游泄露 `routerx` 私有字段 |
+| `TestRouterXUpstreamOptionsSupplementRequest` | `routerx.upstream` 安全补充上游 header/query/JSON body，敏感鉴权字段、`model`、`stream` 和原请求已存在字段不会被覆盖，`routerx` 私有字段不会泄露 |
+| `TestRouterXProviderOptionsApplyOnlyToSelectedProvider` | `routerx.provider.<provider>` 只在选中 provider 匹配时补充 JSON body 字段，provider 专属补充值优先于通用 upstream 补充值，非选中 provider 参数不泄露 |
+| `TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings` | OpenAI-compatible Chat 命中 Gemini 上游时，`routerx.provider.gemini.safetySettings` 显式映射为 Gemini 原生 `safetySettings`，OpenAI 生成参数映射到 `generationConfig`，未支持的 Gemini provider 字段和其他 provider 字段不泄露 |
+| `TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields` | Gemini `generateContent` 入口命中 Gemini 上游时，真实上游 body 保留 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent`，不泄露 `routerx`，也不发送 OpenAI `messages/max_tokens`；成功日志保留 `ingress_protocol=gemini`，且不把已原生保真的字段误记为 dropped |
+| `TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop` | RouterX-Compatible 上游保留 `routerx` 私有字段，转发递增后的 `X-RouterX-Hop`，并追加 `X-RouterX-Chain` 链路摘要 |
+| `TestRouterXCompatibleUpstreamRejectsHopLimit` | RouterX-Compatible 上游在 `X-RouterX-Hop` 达到默认上限时本地拒绝且不调用上游 |
+| `TestRouterXCompatibleUpstreamUsesConfiguredHopLimit` | `relay.routerx_max_hops` 可收紧 RouterX-Compatible 循环保护上限，达到配置值时本地拒绝、不调用上游且不扣费 |
+| `TestChatCompletionStreamForwardsSSEAndDeductsUsage` | OpenAI-compatible Chat SSE chunk 转发、usage 提取、日志和扣费 |
+| `TestCompletionsStreamForwardsSSEAndDeductsUsage` | Legacy Completions SSE chunk 转发、`routerx` 剥离、usage 提取、日志和扣费 |
+| `TestChatCompletionStreamCancelsUpstreamWhenClientWriteFails` | 客户端写入失败时取消上游 SSE 请求，失败日志不扣费 |
+| `TestChatCompletionStreamRejectsNonOpenAISSEUpstream` | 非 OpenAI SSE 通道在流式请求中被上游前拒绝 |
+| `TestGeminiStreamGenerateContentConvertsOpenAISSEAndDeductsUsage` | Gemini streamGenerateContent 转 OpenAI-compatible Chat SSE，上游 OpenAI chunk 转 Gemini SSE 事件，usage 扣费和日志 |
+| `TestGeminiStreamGenerateContentToGeminiUpstreamPreservesNativeSSEAndDeductsUsage` | Gemini streamGenerateContent 命中 Gemini 上游时调用原生 `:streamGenerateContent`，透传 Gemini SSE，不发送 OpenAI `messages`，保留原生 `generationConfig/safetySettings/tools`，并从 `usageMetadata` 扣费 |
+| `TestAnthropicMessagesStreamConvertsOpenAISSEAndDeductsUsage` | Anthropic Messages stream 转 OpenAI-compatible Chat SSE，上游 OpenAI chunk 转 Anthropic SSE 事件，usage 扣费和日志 |
+| `TestChatCompletionUpstreamBadRequestMapping` | 下游 400 错误映射、失败日志和密钥不泄露 |
+| `TestChatCompletionUpstreamErrorStatusMapping` | 下游 401/403/429/5xx 错误映射、失败日志、通道错误计数和不扣费 |
+| `TestRelayMaxResponseBodyBytesRejectsOversizedUpstream` | `relay.max_response_body_bytes` 超限时返回 OpenAI-compatible 502 `upstream_response_too_large`，不反射下游响应体、不扣额度，并写失败日志 |
+| `TestChatCompletionUpstreamTimeoutMapping` | 下游超时错误映射、失败日志、通道错误计数和不扣费 |
+| `TestRelayFailureLogPersistsRequestIDAndErrorCode` | 下游失败时调用日志和用户日志接口持久化 `request_id`、稳定 `error_code`、`error_source` 和 `upstream_status`，并支持按 `error_code`、`error_source` 和 `upstream_status` 过滤用户日志和管理端 CSV 导出 |
+| `TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce` | 非流式默认可重试状态码按 `relay.retry_count` 换候选通道，最终只按成功 usage 扣费一次，并在 route_snapshot 记录实际通道和重试摘要 |
+| `TestChatCompletionUsesConfiguredRetryStatuses` | `relay.retry_on_status` 显式加入 400 后，非流式 400 可按 `relay.retry_count` 换候选通道并只按最终成功扣费一次 |
+| `TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus` | 默认白名单不含 400 时，下游 400 不触发候选通道重试 |
+| `TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold` | `relay.error_ban_threshold` 生效后跳过达到阈值的故障通道 |
+| `TestChatCompletionHonorsDisabledAutoBanSetting` | `relay.error_auto_ban=false` 时高 `error_count` 通道仍可参与候选并在成功后恢复计数 |
+| `TestChannelBreakerCooldownAllowsProbeAfterWindow` | 达到 `relay.error_ban_threshold` 的通道在 `relay.error_ban_cooldown_seconds` 冷却窗口内继续被过滤，冷却后可重新进入候选作为半开探测 |
+| `TestChannelBreakerProbeRecoversCooledTrippedChannel` | 后台探测的一击式服务方法只复测已过冷却窗口的熔断启用通道，成功后清零 `error_count` |
+| `TestMetricsEndpointIncludesAPIKeyLifecycleAndRiskSignals` | `/metrics` 暴露 API Key 鉴权成功/失败、启用/禁用/过期状态、最近使用年龄、可用有限额度、轮换和泄露事件指标 |
+| `TestMetricsEndpointIncludesChannelProbeCounters` | `/metrics` 暴露后台熔断探测 success/failed 低基数计数器 |
+| `TestAdminChannelListIncludesHealthStatus` | 管理端通道列表返回 `healthy`、`disabled`、`tripped` 和 `probing` 显式健康状态，并包含冷却剩余秒数 |
+| `TestNoAvailableChannelWritesBreakerSnapshot` | 所有候选都因 `health_blocked` 熔断过滤时不调用上游，返回 `no_available_channel`，失败日志 `policy_snapshot` 写 `breaker_snapshot` 的阈值、冷却窗口和被挡通道摘要 |
+| `TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol` | Anthropic/Gemini 入口下游错误按各自协议外形返回且不泄密、不扣费 |
+| `TestAnthropicMessagesToAnthropicUpstreamPreservesNativeRequestFieldsAndDeductsUsage` | Anthropic Messages 命中 Anthropic 上游时保留 content blocks、tools、tool_choice、thinking、metadata 和 stop_sequences，成功日志不再记录这些字段降级 |
+| `TestAnthropicMessagesStreamToAnthropicUpstreamPreservesNativeSSEAndDeductsUsage` | Anthropic Messages Stream 命中 Anthropic 上游时调用 `/v1/messages`，原样透传 Anthropic SSE，并从原生 usage 事件扣费 |
+| `TestRelayPrecheckRejectsBeforeUpstream` | 无效 Key、禁用 Key、额度不足、禁用通道不调用下游 |
+| `TestRouterXRoutePreferenceFiltersChannels` | `routerx.route` 被接受、未知字段忽略、非法结构拒绝和筛选后无候选；无候选返回 `no_available_channel` 且写拒绝分支 `policy_snapshot` |
 
 仍需优先补齐：
 
-- Chat 非流式成功调用、日志和扣费。
-- Chat 下游错误映射。
-- 预检拒绝时不调用下游。
-- 日志与用户账单聚合一致。
-- `upstreams` 优先级和模型重写在真实 Relay 请求中的效果。
-- settings 注册表默认值、类型校验、缓存刷新和生产 readiness。
+- 更完整的流式 usage fallback/估算策略。
+- Anthropic/Gemini 更完整 SDK 行为细节、更长尾原生字段和流式错误路径。
 
 ## 测试原则
 
@@ -99,7 +375,7 @@ P0 OpenAI-compatible Chat 成功响应示例：
 | `logs` | `user_id`、`token_id`、`channel_id` | 均指向本次调用实体 |
 | `logs` | `model` | 保存客户端请求模型；如有模型重写，后续目标字段保存上游模型 |
 | `logs` | `prompt_tokens`、`completion_tokens`、`total_tokens` | 与 usage fixture 一致 |
-| `logs` | `quota_used` | P0 等于 `total_tokens`，缺失 usage 时为最低值 `1` |
+| `logs` | `quota_used` | P0 等于 `total_tokens`；缺失 usage 时默认最低值 `1`，`billing.usage_missing_strategy=reject` 时失败且为 `0` |
 | `logs` | `status` | 成功为 `1`，失败为 `2` |
 | `tokens` | `remain_quota` / `quota_limit` / `quota_used` | 有限 API Key 按 `quota_used` 消耗预算 |
 | `users` | `quota` | 有限和无限 API Key 调用成功时均扣减用户额度 |
@@ -109,7 +385,7 @@ P0 OpenAI-compatible Chat 成功响应示例：
 
 - 预检失败时下游请求计数为 0。
 - 默认不增加 `quota_used`。
-- `logs.status=failed`，`error_msg` 是脱敏摘要。
+- `logs.status=failed`，`request_id` 可关联本次请求，`error_code` 为稳定错误 code，`error_msg` 是脱敏摘要。
 - 若尚未选中通道，`logs.channel_id` 可以为空。
 - 下游密钥、用户 API Key、数据库 DSN 不出现在 `content`、`response`、`error_msg` 或接口响应中。
 
@@ -184,7 +460,7 @@ Gemini-compatible 最小断言：
 - 如果配置 `billing.bootstrap_admin_quota > 0`，用户额度等于或大于该值。
 - 如果配置为 0，接口或文档必须给出明确额度调整路径。
 
-### `TestSettingsRegistryAndReadiness`
+### Settings registry/readiness/cache tests
 
 目的：证明 settings 不是散落字符串，而是有默认值、类型校验、缓存刷新和生产就绪边界的配置系统。
 
@@ -245,8 +521,11 @@ Gemini-compatible 最小断言：
 | 请求 | 期望 |
 |------|------|
 | 非法 JSON | 400 `invalid_json` |
-| 缺少 `model` | 400 `model_required` 或 `invalid_request` |
-| `stream=true` | 400 `unsupported_stream` |
+| 缺少 `model` | 400 `model_required` |
+| 缺少 `messages` | 400 `invalid_chat_messages` |
+| `messages` 为 null | 400 `invalid_chat_messages` |
+| `messages` 为空数组 | 400 `invalid_chat_messages` |
+| `messages` 不是数组 | 400 `invalid_chat_messages` |
 
 断言：
 
@@ -263,10 +542,10 @@ Gemini-compatible 最小断言：
 
 | 下游行为 | 期望 |
 |----------|------|
-| 400 | 返回兼容 400，不重试 |
+| 400 | 默认返回兼容 400，不重试；显式加入 `relay.retry_on_status` 后可按非流式重试规则换候选 |
 | 401/403 | 返回兼容 502 或配置错误摘要，不重试，增加通道错误计数 |
-| 429 | 可按策略换候选通道或返回兼容上游错误 |
-| 500/502/503/504 | 非流式未写出前可重试候选通道 |
+| 429 | 默认在 `relay.retry_on_status` 中，`relay.retry_count > 0` 时非流式可换候选通道，否则返回兼容上游错误 |
+| 500/502/503/504 | 默认在 `relay.retry_on_status` 中，`relay.retry_count > 0` 时非流式未写出前可重试候选通道 |
 | 超时 | 返回 504 或上游超时 code |
 | 非法响应 JSON | 返回 `upstream_conversion_failed` |
 
@@ -291,6 +570,10 @@ Gemini-compatible 最小断言：
 | 余额不足 | 429，下游计数 0 |
 | 禁用通道 | 502，下游计数 0 |
 | 模型不匹配 | 502，下游计数 0 |
+| API Key scope 未允许模型、APIType、通道分组、入口协议、IP 或方法路径 | 403，下游计数 0 |
+| API Key scope 达到日/月预算 | 429，下游计数 0 |
+| API Key scope 达到并发上限 | 429，下游计数 0 |
+| API Key scope 达到 RPM/TPM 上限 | 429，下游计数 0 |
 
 断言：
 
@@ -312,6 +595,7 @@ Gemini-compatible 最小断言：
 - `key_selection_mode=random` 时 key 来自候选集合。
 - 空值或未知 `key_selection_mode` 归一为 `round_robin`。
 - `model_rewrites` 将客户端模型改写为上游模型。
+- 调用日志 `route_snapshot.model_rewrite` 记录客户端模型和上游模型。
 - 明文密钥不会出现在响应、日志或错误中。
 
 ### `TestUserBillingMatchesLogs`
@@ -326,6 +610,7 @@ Gemini-compatible 最小断言：
 
 - `GET /v0/user/log` 只返回当前用户日志。
 - `GET /v0/user/billing` 的调用数、token 数和消耗额度与 `logs` 聚合一致。
+- `GET /v0/user/billing?token_id=` 只聚合当前用户指定 API Key 的成功调用日志。
 - 失败调用默认不增加 `quota_used`。
 - 有限额度 API Key 调用同时扣 `users.quota` 和 Key 预算。
 - 无限 Token 调用扣 `users.quota`，`tokens.remain_quota` 保持 `-1`。
@@ -336,21 +621,21 @@ Gemini-compatible 最小断言：
 
 | 阶段 | 能力 | 测试重点 |
 |------|------|----------|
-| P0 | 开发者最小接入 | base URL + RouterX API Key、`/v1/models`、非流式 Chat、日志和扣费 |
-| P1 | SSE 流式 | chunk 转发、客户端断开取消、流式 usage、已输出后不切换通道 |
+| P0 | 开发者最小接入 | base URL + RouterX API Key、`/v1/models`、非流式 Chat、OpenAI Chat/Completions 基础 SSE、日志和扣费 |
+| P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 和 Legacy Completions 基础 chunk 转发、Anthropic Messages Stream/Gemini streamGenerateContent 到 OpenAI-compatible SSE、Anthropic Messages Stream 到 Anthropic 原生 SSE、Gemini streamGenerateContent 到 Gemini 原生 SSE、usage 扣费和客户端断开取消；继续补 usage fallback 和已输出后不切换通道的更多故障注入 |
 | P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
-| P1 | 多协议入口 | 按 `docs/PROTOCOLS.md` 断言 OpenAI、Anthropic、Gemini 成功和错误格式分别兼容各自 SDK |
+| P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Anthropic Messages 到 Anthropic 上游的原生请求字段保真、Gemini generateContent 到 Gemini 上游的非流式原生字段保真、Anthropic/Gemini 基础流式、Anthropic/Gemini 原生 SSE 路径、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为和更长尾原生字段 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
-| P1 | 调用事实快照 | request、policy、route、usage、billing、error 快照脱敏且能解释历史调用 |
+| P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝、Redis 全局/IP/Token/User/Model/Channel 限流拒绝和 `rate_limit_snapshot`、usage 缺失拒绝和扣费失败分支 policy/billing 事实，基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/规则版本/倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
 | P1 | 计费规则 | 价格表达式、倍率、访问控制、规则快照和历史账单解释 |
-| P1 | 可靠性 | 重试、熔断、半开恢复、Redis 限流 fail-open/fail-closed |
-| P1 | 运行模式 | SQLite 单镜像无 Redis 可运行；外部数据库无 Redis 不就绪或启动失败 |
-| P1 | 通道候选缓存 | 预加载、缓存命中、管理员修改后版本失效、集群实例回源一致 |
-| P1 | 独立日志数据库 | `LOG_SQL_DSN` 写入、日志库故障降级、主库结算最小事实可恢复 |
-| P2 | 企业账号 | OAuth/OIDC state、nonce、subject 绑定、禁止 email 自动接管 |
-| P2 | 高级 API Key 管理 | 轮换、泄露上报、最近使用、作用域拒绝、批量禁用、审计和缓存失效 |
-| P2 | 支付充值 | Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水和人工修正审计 |
-| P2 | 观测审计 | Request ID、结构化日志、Prometheus 指标、管理审计日志、生产 `/ready` |
+| P1 | 可靠性 | 已覆盖非流式安全重试、Redis 全局/IP/Token/User/Model/Channel 基础限流和拒绝快照、外部数据库模式 Redis 限流故障 fail-closed、`error_count` 自动熔断候选过滤、冷却窗口后的半开候选探测、后台探测恢复、探测结果指标、管理端显式健康状态和熔断拒绝快照；继续补更细生产故障注入策略 |
+| P1 | 运行模式 | 已覆盖 `REDIS_CONN` 为空不隐式连接本机 Redis、SQLite 单镜像无 Redis 可运行、外部数据库无 Redis 时 `/ready` 不就绪、迁移 dirty 状态阻止 ready |
+| P1 | 通道候选缓存 | 已覆盖进程内缓存命中、Redis 共享候选快照、主动 pub/sub 广播失效、`routing.channel_cache.preload` 启动预热/关闭 no-op/通道变更后预热、`routing.channel_cache.version` 变化后回源、默认 settings 和非法配置校验 |
+| P1 | 独立日志数据库 | 已覆盖 `LOG_SQL_DSN` 初始化、日志库副本写入、运行期写入失败时主库事实可恢复、主库 outbox 异步补写、管理日志列表读取日志库、查询失败回退主库、日志库健康指标和 outbox 积压指标；继续补冷热归档策略 |
+| P2 | 企业账号 | 本地密码成功登录审计、OAuth state、已绑定 subject 登录、OAuth/OIDC 首次补齐注册、注册验证码消费、注销账号恢复、登录用户 subject 绑定、禁止 email 自动接管、身份列表、非主 OAuth identity 解绑、OIDC Discovery、nonce、ID Token 签名校验和登录用户 OIDC subject 绑定已覆盖；更多企业风控测试后续补齐 |
+| P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、按环境/团队/应用/标签/服务账号主体过滤、脱敏 CSV 导出、批量禁用、批量过期、批量操作无筛选拒绝审计、基础风险视图、泄露风险基础轮换建议、单 Key 泄露窗口分析、单 Key 错误/限流事件统一视图、泄露上报管理员告警收件箱、告警确认处理、Webhook/邮件/IM 告警投递 outbox、列表、手动重放和脱敏 payload、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝、RPM/TPM 拒绝、基础 Redis 鉴权 lookup cache 命中/预热/禁用失效和 router Redis 兼容已覆盖 |
+| P2 | 支付充值 | 充值码批次/备注/过期策略、充值码创建拒绝、兑换成功与拒绝审计、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求及拒绝审计、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账和明确失败审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回及拒绝审计、支付人工退款落账及拒绝审计；更多 provider 自动退款适配待补 |
+| P2 | 观测审计 | 成功登录、API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status、可配置 HTTP/Panic JSON line 结构化日志和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis up 与错误计数/日志库/outbox 指标测试已覆盖；继续补更完整结构化失败事实、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
 

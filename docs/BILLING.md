@@ -16,8 +16,8 @@
 - 支持通道/模型分组倍率，倍率存储在 `settings.value` JSON 字符串中，不直接拥有模型价格。
 - 支持通道/模型分组默认普通用户可用白名单数组配置。
 - 支持用户分组倍率。
-- 支持用户分组在使用指定通道分组时设置独立额外倍率、折扣或加价。
-- 支持指定用户分组通过系统配置额外启用或禁用通道/模型分组。
+- 支持用户分组在使用指定通道分组时设置独立组合倍率、折扣或加价；组合倍率命中时覆盖“用户分组倍率 x 通道分组倍率”的结果。
+- 支持指定用户分组通过系统配置额外允许或拒绝通道/模型分组。
 - 支持调用日志和账单统计一致。
 - 支持下游未返回 usage 时估算。
 - 支持后台配置计费规则和预扣 token 量。
@@ -27,9 +27,9 @@
 
 ## 当前实现边界
 
-当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减和用户账单统计接口。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；完整的价格表达式、规则版本、访问控制快照、支付订单和支付事件仍属于目标增强。
+当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口、用户/管理端额度流水查询接口、基于 settings 的用户分组 x 通道分组访问控制，系统模型价格表 `model_prices` 的管理端 API、规则版本和用户侧模型价格就绪状态展示，以及通道模型价格覆盖 `channel_model_prices` 的管理端 API、规则版本、普通用户可见性和用户侧通道级价格状态展示。`channel_model_prices.user_enabled=false` 已同时作用于 `/v0/user/models` 和普通用户调用候选过滤。成功调用后的扣费热路径已读取启用的通道级价格表达式，未命中时读取启用的系统模型价格表达式，并在表达式后应用 `billing.default_ratio`、用户分组倍率、通道分组倍率或组合覆盖倍率；实际执行表达式、变量、规则 ID、规则版本、倍率快照和最终 `quota_used` 会写入 `billing_snapshot`。无价格规则或表达式不可执行时回退 P0 usage/minimum 后仍应用倍率；上游成功响应缺少 usage 时由 `billing.usage_missing_strategy` 决定最低扣费或拒绝且不扣费。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；完整访问控制快照和更多事件仍属于目标增强。
 
-文档中的 `model_prices`、`channel_model_prices`、`billing_*_snapshot` 等字段是商业级目标设计，不应误读为当前迁移已经全部存在。实现时应按阶段先保证 P0 基础日志和扣费一致，再补 P1 价格规则和快照。调用事实快照的统一字段、脱敏和测试要求以 `docs/SNAPSHOTS.md` 为准。
+文档中的部分商业级 `billing_*_snapshot` 字段仍是目标设计，不应误读为当前迁移已经全部存在。`model_prices` 和 `channel_model_prices` 当前已经落库并用于管理端维护、`/v0/user/models` 价格状态/可见性展示，以及成功调用后的基础价格表达式执行；`multiplier_snapshot` 当前已记录默认倍率、用户分组倍率、通道分组倍率、组合倍率、倍率模式和最终 `effective_ratio`。调用事实快照的统一字段、脱敏和测试要求以 `docs/SNAPSHOTS.md` 为准。
 
 ## 额度单位
 
@@ -58,7 +58,7 @@ QuotaPerUnit = 100000000
 | `payment_orders` | `status` | 支付订单状态，如 `pending`、`paid`、`failed`、`closed`、`refunded` |
 | `payment_orders` | `quota` | 支付成功后应增加的基础额度单位 |
 | `payment_events` | `provider_event_id` | 支付渠道事件 ID，用于幂等处理 |
-| `quota_transactions` | `amount`、`idempotency_key` | 支付入账、充值码、退款、人工调整的额度流水目标字段 |
+| `quota_transactions` | `amount`、`idempotency_key` | 支付入账、充值码、退款、人工调整的额度流水核心字段 |
 | `settings` | `billing.user_group_ratios` | 用户分组倍率 JSON 配置 |
 | `model_prices` | `price_expression` | 系统模型价格表达式，返回倍率前的 `base_quota` |
 | `model_prices` | `variables_json` | 系统模型价格变量默认值 |
@@ -71,8 +71,8 @@ QuotaPerUnit = 100000000
 | `channel_model_prices` | `user_enabled` | 该通道模型是否允许普通用户使用 |
 | `settings` | `billing.channel_group_ratios` / `billing.model_group_ratios` | 通道/模型分组倍率 JSON 配置 |
 | `settings` | `billing.default_user_channel_group_access` | 默认普通用户可用通道/模型分组白名单数组配置 |
-| `settings` | `billing.user_group_channel_ratios` | 用户分组 x 通道/模型分组额外倍率 JSON 配置 |
-| `settings` | `billing.user_group_channel_group_access` | 用户分组额外启用/禁用通道/模型分组 JSON 配置 |
+| `settings` | `billing.user_group_channel_ratios` | 用户分组 x 通道/模型分组组合覆盖倍率 JSON 配置 |
+| `settings` | `billing.user_group_channel_group_access` | 用户分组额外允许/拒绝通道/模型分组 JSON 配置 |
 | `logs` | `prompt_tokens` | 输入 token 数 |
 | `logs` | `completion_tokens` | 输出 token 数 |
 | `logs` | `total_tokens` | 总 token 数 |
@@ -82,9 +82,11 @@ QuotaPerUnit = 100000000
 | `logs` | `billing_expression_version` | 本次请求使用的表达式版本 |
 | `logs` | `billing_expression_source` | 表达式来源，如 `model_prices`、`channel_model_prices` |
 | `logs` | `billing_expression_snapshot` | 实际执行的计费表达式快照 |
-| `logs` | `multiplier_snapshot` | 用户分组、通道分组、用户分组 x 通道分组倍率快照 |
+| `logs` | `multiplier_snapshot` | 默认倍率、用户分组倍率、通道分组倍率、用户分组 x 通道分组组合覆盖倍率和最终倍率快照 |
 | `logs` | `access_rule_snapshot` | 通道模型和用户分组访问控制快照 |
 | `logs` | `usage_source` | usage 来源，如 `upstream`、`adapter`、`tokenizer`、`estimate` |
+
+`/v0/user/quota-transactions` 和 `/v0/admin/quota-transactions` 已用于查询 `quota_transactions` 中的余额变更流水；模型调用消费查询仍使用调用日志和账单聚合接口。
 
 ## 计费事实链
 
@@ -111,16 +113,16 @@ QuotaPerUnit = 100000000
 | 3 | 使用量事实 | 上游 usage、Adapter usage、本地估算 | 必须记录 `usage_source`，不能无声使用 0 usage 免费放行。 |
 | 4 | 价格事实 | `model_prices`、`channel_model_prices`、`settings` 倍率 | 必须保存表达式、变量、倍率和访问控制快照。 |
 | 5 | 扣费事实 | 用户余额和 Key 预算条件更新事务 | 并发场景不能透支，失败时必须可判断是否已调用下游。 |
-| 6 | 账单事实 | `logs` 和账单聚合 | 聚合结果只能来自日志或明确的账本事实表，不能重新解释历史规则。 |
+| 6 | 账单事实 | `logs`、`quota_transactions` 和账单聚合 | 模型消费来自调用日志，余额变更来自额度流水；聚合结果不能重新解释历史规则。 |
 
-如果启用 `LOG_SQL_DSN` 独立日志数据库，主业务数据库仍必须保留扣费事务所需的最小结算事实，或在同事务中写入 outbox。独立日志库可以承载高流量调用日志、诊断快照和清理归档，但不能成为余额扣减后的唯一账单证据。
+如果启用 `LOG_SQL_DSN` 独立日志数据库，主业务数据库仍必须保留扣费事务所需的最小结算事实，或在同事务中写入 outbox。当前实现采用主库完整调用事实 + `log_replication_outboxes` 补写队列 + 独立日志库副本：余额扣减后的账单解释不依赖日志库唯一副本，独立日志库可以承载高流量调用日志、诊断快照和清理归档；运行期日志库不可用时，后台 worker 会在恢复后重放 pending outbox。
 
 拒绝路径：
 
 - API Key 无效、用户禁用、Token 禁用或过期：返回 401/403，不调用下游。
 - 余额不足、预留额度不足或访问控制不通过：返回 429/403，不调用下游。
 - 通道不可用、模型不匹配、provider 不支持：返回当前入口协议兼容错误，不扣费；provider 能力等级和阶段以 `docs/PROTOCOLS.md` 为准。
-- 下游已调用但 usage 缺失：按配置使用 tokenizer 估算或最低计费规则，并记录 `usage_source`。
+- 下游已调用但 usage 缺失：当前可通过 `billing.usage_missing_strategy=minimum` 使用最低计费并记录 `usage_source=minimum`，或通过 `reject` 返回 `usage_missing`、写失败日志且不扣费；tokenizer/estimate 仍属后续增强。
 - 扣费事务失败：必须写失败日志；非流式响应在返回前发现失败时应返回错误，流式响应已输出时需按后续补偿策略处理。
 
 ### P0 扣费事务边界
@@ -144,7 +146,7 @@ P0 扣费顺序：
 3. 计算 quota_used
 4. 在数据库事务中扣减用户余额，并更新 API Key 预算计数
 5. 扣费成功后写 success 日志
-6. 扣费失败时写 failed 日志并返回 429
+6. 扣费失败时写 failed 日志并返回 429；日志 `quota_used=0`，`billing_snapshot.billing_status=failed`，并记录 `attempted_quota_used` 和 `deduction_error_code`
 ```
 
 额度扣减规则：
@@ -168,7 +170,7 @@ P0 扣费顺序：
 
 ## 后台配置
 
-模型价格表达式存储在专用 SQL 表中：系统模型价格存储在 `model_prices`，通道级模型价格覆盖存储在 `channel_model_prices`，它们不是 JSON blob。运行时开关、全局默认值、全局默认 tokenizer、用户分组倍率、通道/模型分组倍率、用户分组 x 通道/模型分组额外倍率、默认普通用户通道/模型分组可用白名单、用户分组通道/模型分组访问覆盖存储在 `settings.value` 的 JSON 字符串中。倍率和可用性配置不是模型价格实体。
+模型价格表达式存储在专用 SQL 表中：系统模型价格存储在 `model_prices`，通道级模型价格覆盖存储在 `channel_model_prices`，它们不是 JSON blob。运行时开关、全局默认值、全局默认 tokenizer、用户分组倍率、通道/模型分组倍率、用户分组 x 通道/模型分组组合覆盖倍率、默认普通用户通道/模型分组可用白名单、用户分组通道/模型分组访问覆盖存储在 `settings.value` 的 JSON 字符串中。倍率和可用性配置不是模型价格实体。
 
 | 配置键 | 示例值 | 说明 |
 |--------|--------|------|
@@ -179,7 +181,7 @@ P0 扣费顺序：
 
 配置要求：
 
-- 系统模型价格、通道级模型价格覆盖、普通用户可用开关、通道分组倍率、用户分组 x 通道分组倍率、用户分组通道/模型分组访问配置、计费规则版本变更都必须记录审计日志。
+- 系统模型价格创建、更新、启用和禁用当前已写入 `model_price.*` 管理审计；通道级模型价格覆盖创建、更新、启用和禁用当前已写入 `channel_model_price.*` 管理审计，`user_enabled` 变更随更新审计记录；通道分组倍率、用户分组 x 通道分组倍率、用户分组通道/模型分组访问配置、计费规则版本变更也必须记录审计日志。
 - 每次计费规则变更必须生成新的 `rule_version` 或表达式版本，已完成请求不受新规则影响。
 - `billing.bootstrap_admin_quota` 只解决开箱验证体验，不代表正式运营赠送策略；生产运营应通过商品、充值码、管理员额度调整或支付入账管理用户额度。
 
@@ -192,6 +194,8 @@ P0 扣费顺序：
 #### `model_prices`
 
 系统模型价格表，提供模型全局默认价格表达式。
+
+当前已实现后台管理 API：`GET/POST /v0/admin/model-prices`、`PUT /v0/admin/model-prices/:id`、`PATCH /v0/admin/model-prices/:id/disable|enable`。启用规则会让 `/v0/user/models` 对应模型返回 `pricing_ready=true` 和 `model_price:<price_mode>:v<rule_version>`；成功调用后若没有命中通道级覆盖，热路径会执行该表达式并写入 `billing_snapshot`。禁用或未配置时返回 `minimum_usage`，调用扣费回退 P0 usage/minimum。
 
 | 字段 | 说明 |
 |------|------|
@@ -209,6 +213,8 @@ P0 扣费顺序：
 #### `channel_model_prices`
 
 通道级模型价格覆盖表，优先级高于 `model_prices`。
+
+当前已实现后台管理 API：`GET/POST /v0/admin/channel-model-prices`、`PUT /v0/admin/channel-model-prices/:id`、`PATCH /v0/admin/channel-model-prices/:id/disable|enable`。当默认可见通道存在启用覆盖时，`/v0/user/models` 返回 `channel_model_price:<price_mode>:v<rule_version>`；`user_enabled=false` 时该通道不再向普通用户贡献该模型可见性，也不会进入普通用户调用候选。成功调用后如果选中的通道存在启用覆盖，热路径优先执行该通道级表达式并写入 `billing_snapshot`。
 
 | 字段 | 说明 |
 |------|------|
@@ -247,9 +253,9 @@ P0 扣费顺序：
 |--------|------|
 | `billing.user_group_ratios` | 用户分组倍率，例如 `{ "vip": 0.8, "default": 1 }` |
 | `billing.channel_group_ratios` / `billing.model_group_ratios` | 通道/模型分组倍率，例如 `{ "premium": 1.2, "default": 1 }` |
-| `billing.user_group_channel_ratios` | 用户分组 x 通道/模型分组额外倍率，例如 `{ "vip": { "premium": 0.9 } }` |
+| `billing.user_group_channel_ratios` | 用户分组 x 通道/模型分组组合覆盖倍率，例如 `{ "vip": { "premium": 0.9 } }` |
 | `billing.default_user_channel_group_access` | 默认普通用户可用通道/模型分组白名单数组，例如 `["default", "standard"]` |
-| `billing.user_group_channel_group_access` | 用户分组额外启用/禁用通道/模型分组，例如 `{ "vip": { "enable": ["premium"], "disable": ["experimental"] }}` |
+| `billing.user_group_channel_group_access` | 用户分组额外允许/拒绝通道/模型分组，例如 `{ "vip": { "allow": ["premium"], "deny": ["experimental"] }}` |
 
 倍率配置从 `settings.value` 读取，不再维护为 `groups.ratio`、`channel_groups.ratio` 或 `user_group_channel_ratios.ratio` 等独立 SQL 列，除非未来实现明确选择该 schema。
 
@@ -266,9 +272,9 @@ if channel_model_prices.user_enabled == false:
     普通用户请求拒绝或跳过该通道模型
 
 access = settings["billing.user_group_channel_group_access"][user_group]
-if channel_group in access.disable:
+if channel_group in access.deny:
     拒绝或跳过该通道/模型分组
-else if channel_group in access.enable:
+else if channel_group in access.allow:
     额外允许该通道/模型分组
 else if channel_group in settings["billing.default_user_channel_group_access"]:
     默认普通用户允许该通道/模型分组
@@ -280,9 +286,9 @@ else:
 
 - `channel_model_prices.user_enabled` 控制某个通道下某个模型是否允许普通用户使用，不影响管理员测试、内部任务或后台显式授权流程。
 - `billing.default_user_channel_group_access` 控制普通用户默认可用的通道/模型分组，使用数组表达，是默认白名单。
-- `billing.user_group_channel_group_access` 只控制指定用户分组对通道/模型分组的额外启用或禁用，不参与价格表达式，也不参与倍率计算。
-- 默认白名单和用户分组配置都命中时，用户分组配置优先；用户分组配置中同时命中 `enable` 和 `disable` 时，`disable` 优先。
-- 未配置用户分组访问覆盖时，按默认白名单判断；未配置默认白名单时，不额外限制默认可用性。
+- `billing.user_group_channel_group_access` 只控制指定用户分组对通道/模型分组的额外允许或拒绝，不参与价格表达式，也不参与倍率计算。
+- 默认白名单和用户分组配置都命中时，用户分组配置继续合成；用户分组配置中同时命中 `allow` 和 `deny` 时，`deny` 优先。
+- 未配置用户分组访问覆盖时，按默认白名单判断；默认白名单缺失或格式非法时，服务端回退到 `["default"]`，避免静默放开全部通道分组。
 - 最终日志应记录 `access_rule_snapshot`，便于审计为什么某次请求可以或不可以使用某个通道分组。
 
 ### 计费规则层级与优先级
@@ -295,10 +301,10 @@ else:
 | 2 | 系统模型价格 | 全局表达式、价格模式、`unit_tokens`、版本和启用状态 | 存储在 `model_prices` |
 | 3 | 通道模型普通用户可用性 | 普通用户是否可以使用指定通道模型 | 存储在 `channel_model_prices.user_enabled`；不是价格表达式的一部分 |
 | 4 | 默认普通用户通道/模型分组可用性 | 普通用户默认可用的通道/模型分组白名单数组 | 从 `settings.value` 的 `billing.default_user_channel_group_access` 读取；不是价格表达式的一部分 |
-| 5 | 用户分组通道/模型分组访问覆盖 | 指定用户分组额外启用或禁用通道/模型分组 | 从 `settings.value` 的 `billing.user_group_channel_group_access` 读取；不是价格表达式的一部分 |
+| 5 | 用户分组通道/模型分组访问覆盖 | 指定用户分组额外允许或拒绝通道/模型分组 | 从 `settings.value` 的 `billing.user_group_channel_group_access` 读取；不是价格表达式的一部分 |
 | 6 | 用户分组倍率 | 用户分组倍率 | 从 `settings.value` 的 `billing.user_group_ratios` 读取；不是价格表达式的一部分 |
 | 7 | 通道/模型分组倍率 | 通道/模型分组倍率 | 从 `settings.value` 的 `billing.channel_group_ratios` 或 `billing.model_group_ratios` 读取；不是价格表达式的一部分 |
-| 8 | 用户分组 x 通道/模型分组倍率 | 指定用户分组使用指定通道/模型分组时的额外倍率 | 从 `settings.value` 的 `billing.user_group_channel_ratios` 读取；不是价格表达式的一部分 |
+| 8 | 用户分组 x 通道/模型分组倍率 | 指定用户分组使用指定通道/模型分组时的组合覆盖倍率 | 从 `settings.value` 的 `billing.user_group_channel_ratios` 读取；不是价格表达式的一部分 |
 
 解析规则：
 
@@ -307,7 +313,7 @@ else:
 - 通道级规则不存在或未启用时，读取 `model_prices` 作为系统模型价格。
 - 普通用户请求必须先通过 `channel_model_prices.user_enabled`、`billing.default_user_channel_group_access` 和 `billing.user_group_channel_group_access` 可用性判断，未通过的通道不参与后续计费和路由选择。
 - `request`、`second`、`token`、`tiered` 都只是模板类型，最终执行的是 SQL 中保存的 `price_expression` 和 `variables_json`。
-- 倍率字段独立于价格表达式，服务代码不得把用户分组倍率、通道分组倍率或用户分组 x 通道分组倍率嵌入 `price_expression`。
+- 倍率字段独立于价格表达式，服务代码不得把用户分组倍率、通道分组倍率或用户分组 x 通道分组组合倍率嵌入 `price_expression`。
 
 可解释性要求：
 
@@ -322,12 +328,15 @@ else:
 
 ```text
 base_quota = expression_engine.evaluate(price_expression, variables)
-effective_ratio = user_group_ratio * channel_group_ratio * user_group_channel_ratio
+if user_group_channel_ratio is configured:
+    effective_ratio = default_ratio * user_group_channel_ratio
+else:
+    effective_ratio = default_ratio * user_group_ratio * channel_group_ratio
 quota_used = ceil(base_quota * effective_ratio)
 quota_used = max(min_charge_quota, quota_used) 仅当 billable 且 base_quota > 0
 ```
 
-倍率组合是账单聚合规则，不是价格表达式的一部分。价格表达式不得引用倍率变量，也不得把倍率计算硬编码到表达式文本中。
+倍率组合是账单聚合规则，不是价格表达式的一部分。`billing.user_group_channel_ratios` 表示指定用户分组使用指定通道/模型分组时的最终业务倍率覆盖值，不会再额外乘一次用户分组倍率和通道分组倍率。价格表达式不得引用倍率变量，也不得把倍率计算硬编码到表达式文本中。
 
 示例表达式：
 
@@ -390,7 +399,7 @@ ceil(duration_seconds * second_price)
 
 在线支付用于购买用户额度。支付金额、货币、赠送额度和最终入账额度必须由服务端商品配置决定，客户端不能直接提交要增加的 `quota`。支付 provider、充值码、退款、人工补账和额度流水的完整契约以 `docs/PAYMENTS.md` 为准；本文保留计费事实和入账口径摘要。
 
-支付模块是可选插件式能力。未启用支付时，系统仍应能通过管理员额度调整、API Key 预算控制和后续充值码完成基础运营；启用支付后必须满足签名校验、金额校验、幂等入账和审计要求。
+支付模块是可选插件式能力。未启用支付时，系统仍应能通过管理员额度调整、API Key 预算控制和充值码完成基础运营；启用支付后必须满足签名校验、金额校验、幂等入账和审计要求。
 
 支持渠道：
 

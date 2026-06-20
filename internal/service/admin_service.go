@@ -19,6 +19,18 @@ func NewAdminService() *AdminService {
 	return &AdminService{}
 }
 
+// GetAdminByID 读取管理员账户，用于编辑前后审计摘要。
+func (s *AdminService) GetAdminByID(id uint) (*model.User, error) {
+	var user model.User
+	if err := internal.DB.First(&user, id).Error; err != nil {
+		return nil, err
+	}
+	if user.Role < common.RoleAdmin {
+		return nil, errors.New("target is not an admin account")
+	}
+	return &user, nil
+}
+
 // ListAdmins 列出所有管理员账户 (role >= 1)。
 func (s *AdminService) ListAdmins(operatorRole int, page, pageSize int) ([]model.User, int64, error) {
 	if operatorRole < common.RoleAdmin {

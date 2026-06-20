@@ -20,6 +20,7 @@ import (
 )
 
 var DB *gorm.DB
+var LogDB *gorm.DB
 
 // InitDB 初始化数据库连接并执行版本化迁移。
 // 通过 SQL_DSN 环境变量配置连接，自动检测驱动类型。
@@ -35,30 +36,11 @@ var DB *gorm.DB
 func InitDB() error {
 	dsn := os.Getenv("SQL_DSN")
 
-	dialector, driverName, dsnClean, err := resolveDialector(dsn)
+	db, driverName, _, err := openGormDB(dsn, nil)
 	if err != nil {
 		return err
 	}
-
-	log.Printf("[DB] connecting to %s: %s", driverName, maskDSN(dsnClean))
-
-	DB, err = gorm.Open(dialector, &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to connect %s: %w", driverName, err)
-	}
-
-	// SQLite 不需要设置连接池参数
-	if driverName != "SQLite" {
-		sqlDB, err := DB.DB()
-		if err != nil {
-			return fmt.Errorf("failed to get sql.DB: %w", err)
-		}
-		sqlDB.SetMaxIdleConns(10)
-		sqlDB.SetMaxOpenConns(100)
-		sqlDB.SetConnMaxLifetime(time.Hour)
-	}
+	DB = db
 
 	log.Printf("[DB] %s connected", driverName)
 
@@ -67,6 +49,69 @@ func InitDB() error {
 	}
 
 	log.Println("[DB] migrations completed")
+	return nil
+}
+
+// InitLogDB 初始化可选的独立日志数据库。
+// LOG_SQL_DSN 为空时日志继续使用主业务数据库；非空时仅迁移调用日志表。
+func InitLogDB() error {
+	dsn := strings.TrimSpace(os.Getenv("LOG_SQL_DSN"))
+	if dsn == "" {
+		LogDB = nil
+		return nil
+	}
+	if dsn == strings.TrimSpace(os.Getenv("SQL_DSN")) {
+		LogDB = nil
+		log.Println("[DB] LOG_SQL_DSN matches SQL_DSN; using main database for logs")
+		return nil
+	}
+
+	db, driverName, _, err := openGormDB(dsn, &gorm.Config{
+		Logger:                                   logger.Default.LogMode(logger.Warn),
+		DisableForeignKeyConstraintWhenMigrating: true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to connect log database: %w", err)
+	}
+	if err := db.AutoMigrate(&model.Log{}); err != nil {
+		return fmt.Errorf("failed to migrate log database: %w", err)
+	}
+	LogDB = db
+	log.Printf("[DB] log database connected: %s", driverName)
+	return nil
+}
+
+func openGormDB(dsn string, config *gorm.Config) (*gorm.DB, string, string, error) {
+	dialector, driverName, dsnClean, err := resolveDialector(dsn)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if config == nil {
+		config = &gorm.Config{Logger: logger.Default.LogMode(logger.Warn)}
+	}
+
+	log.Printf("[DB] connecting to %s: %s", driverName, maskDSN(dsnClean))
+	db, err := gorm.Open(dialector, config)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("failed to connect %s: %w", driverName, err)
+	}
+	if err := configureConnectionPool(db, driverName); err != nil {
+		return nil, "", "", err
+	}
+	return db, driverName, dsnClean, nil
+}
+
+func configureConnectionPool(db *gorm.DB, driverName string) error {
+	if driverName == "SQLite" {
+		return nil
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get sql.DB: %w", err)
+	}
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetConnMaxLifetime(time.Hour)
 	return nil
 }
 

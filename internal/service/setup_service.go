@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -119,6 +120,16 @@ func (s *SetupService) Init(username, password, displayName, email string) (*mod
 				}
 			}
 		}
+		bootstrapQuota, err := bootstrapAdminQuota(tx)
+		if err != nil {
+			return err
+		}
+		if bootstrapQuota > 0 {
+			if err := tx.Model(user).Update("quota", bootstrapQuota).Error; err != nil {
+				return err
+			}
+			user.Quota = bootstrapQuota
+		}
 
 		created = user
 		return nil
@@ -150,24 +161,124 @@ func buildDefaultSettings() map[string]map[string]string {
 			"jwt.admin_expire_hours": "24",
 			"jwt.user_expire_hours":  "168",
 		},
+		"auth": {
+			"auth.login.username_password.enabled": "true",
+			"auth.login.email_password.enabled":    "false",
+			"auth.login.phone_password.enabled":    "false",
+			"auth.login.email_code.enabled":        "false",
+			"auth.login.phone_code.enabled":        "false",
+			"auth.login.oauth.enabled":             "false",
+			"auth.login.oidc.enabled":              "false",
+			"auth.captcha.ttl_seconds":             "300",
+			"auth.captcha.max_attempts":            "5",
+			"auth.captcha.debug_response.enabled":  "false",
+			"auth.register.enabled":                "false",
+			"auth.register.username.enabled":       "true",
+			"auth.register.email.enabled":          "false",
+			"auth.register.phone.enabled":          "false",
+			"auth.register.oauth.enabled":          "false",
+			"auth.register.oidc.enabled":           "false",
+			"auth.register.captcha.required":       "true",
+			"auth.register.default_quota":          "0",
+			"auth.register.default_group_id":       "default",
+		},
 		"rate_limit": {
-			"rate_limit.enabled":           "true",
-			"rate_limit.global_per_min":    "1000",
-			"rate_limit.per_token_per_min": "60",
-			"rate_limit.per_ip_per_min":    "30",
+			"rate_limit.enabled":             "true",
+			"rate_limit.global_per_min":      "1000",
+			"rate_limit.per_token_per_min":   "60",
+			"rate_limit.per_ip_per_min":      "30",
+			"rate_limit.per_user_per_min":    "0",
+			"rate_limit.per_model_per_min":   "0",
+			"rate_limit.per_channel_per_min": "0",
 		},
 		"relay": {
-			"relay.timeout":             "120",
-			"relay.retry_count":         "0",
-			"relay.error_auto_ban":      "true",
-			"relay.error_ban_threshold": "10",
-			"relay.log_body_max_bytes":  "0",
+			"relay.timeout":                      "120",
+			"relay.retry_count":                  "0",
+			"relay.retry_on_status":              "[429,500,502,503,504]",
+			"relay.error_auto_ban":               "true",
+			"relay.error_ban_threshold":          "10",
+			"relay.error_ban_cooldown_seconds":   "300",
+			"relay.error_probe_enabled":          "true",
+			"relay.error_probe_interval_seconds": "60",
+			"relay.error_probe_batch_size":       "20",
+			"relay.max_request_body_bytes":       "10485760",
+			"relay.max_multipart_file_bytes":     "10485760",
+			"relay.max_response_body_bytes":      "10485760",
+			"relay.routerx_max_hops":             "3",
+			"relay.log_body_max_bytes":           "0",
+		},
+		"routing": {
+			"routing.channel_cache.enabled":     "true",
+			"routing.channel_cache.preload":     "true",
+			"routing.channel_cache.ttl_seconds": "60",
+			"routing.channel_cache.version":     "1",
 		},
 		"billing": {
-			"billing.default_ratio": "1.0",
+			"billing.default_ratio":                     "1.0",
+			"billing.bootstrap_admin_quota":             "100000000",
+			"billing.default_user_channel_group_access": `["default"]`,
+			"billing.user_group_ratios":                 `{}`,
+			"billing.channel_group_ratios":              `{}`,
+			"billing.model_group_ratios":                `{}`,
+			"billing.user_group_channel_ratios":         `{}`,
+			"billing.user_group_channel_group_access":   `{}`,
+			"billing.usage_missing_strategy":            "minimum",
+		},
+		"payment": {
+			"payment.stripe.enabled":                       "false",
+			"payment.epay.enabled":                         "false",
+			"payment.epay.gateway":                         "",
+			"payment.epay.pid":                             "",
+			"payment.epay.notify_url":                      "",
+			"payment.epay.return_url":                      "",
+			"payment.epay.refund_url":                      "",
+			"payment.currency":                             "usd",
+			"payment.order_expire_minutes":                 "30",
+			"payment.refund.auto_deduct":                   "false",
+			"payment.refund.allow_negative_balance":        "false",
+			"payment.dispute.auto_disable_tokens":          "false",
+			"payment.manual_adjust.require_reason":         "true",
+			"payment.manual_adjust.large_amount_threshold": "0",
 		},
 		"log": {
-			"log.body_max_bytes": "0",
+			"log.body_max_bytes":        "0",
+			"log.request_body_enabled":  "false",
+			"log.response_body_enabled": "false",
+		},
+		"observability": {
+			"observability.metrics_enabled":         "false",
+			"observability.audit_enabled":           "true",
+			"observability.request_id_header":       "X-Request-Id",
+			"observability.structured_logs_enabled": "false",
+		},
+		"alert": {
+			"alert.webhook.enabled":         "false",
+			"alert.webhook.url":             "",
+			"alert.webhook.timeout_seconds": "5",
+			"alert.webhook.max_attempts":    "3",
+			"alert.email.enabled":           "false",
+			"alert.email.url":               "",
+			"alert.email.timeout_seconds":   "5",
+			"alert.email.max_attempts":      "3",
+			"alert.im.enabled":              "false",
+			"alert.im.url":                  "",
+			"alert.im.timeout_seconds":      "5",
+			"alert.im.max_attempts":         "3",
+		},
+		"ready": {
+			"ready.production_strict": "true",
 		},
 	}
+}
+
+func bootstrapAdminQuota(tx *gorm.DB) (int64, error) {
+	var setting model.Setting
+	if err := tx.Where("key = ?", "billing.bootstrap_admin_quota").First(&setting).Error; err != nil {
+		return 0, err
+	}
+	quota, err := strconv.ParseInt(strings.TrimSpace(setting.Value), 10, 64)
+	if err != nil || quota < 0 {
+		return 0, errors.New("billing.bootstrap_admin_quota must be a non-negative integer")
+	}
+	return quota, nil
 }

@@ -41,6 +41,17 @@ func main() {
 		&model.Channel{},
 		&model.Log{},
 		&model.RedemCode{},
+		&model.QuotaTransaction{},
+		&model.ModelPrice{},
+		&model.ChannelModelPrice{},
+		&model.PaymentProduct{},
+		&model.PaymentOrder{},
+		&model.PaymentEvent{},
+		&model.PaymentRefundRequest{},
+		&model.PaymentDispute{},
+		&model.AdminAuditLog{},
+		&model.AlertEvent{},
+		&model.AlertDeliveryOutbox{},
 		&model.Setting{},
 	)
 	if err != nil {

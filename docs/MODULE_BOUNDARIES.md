@@ -43,7 +43,7 @@ router
 
 ## P0 调用链边界
 
-P0 Chat 非流式闭环的责任链：
+P0 Chat 闭环的责任链：
 
 ```text
 router/user_router

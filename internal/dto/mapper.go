@@ -19,16 +19,69 @@ func UserBriefFromModel(user *model.User) UserBrief {
 	if user.Email != nil {
 		email = *user.Email
 	}
+	phone := ""
+	if user.Phone != nil {
+		phone = *user.Phone
+	}
 	return UserBrief{
 		ID:          user.ID,
 		Username:    username,
 		DisplayName: user.DisplayName,
 		Email:       email,
+		Phone:       phone,
 		Role:        user.Role,
 		Quota:       user.Quota,
 		Status:      user.Status,
 		GroupID:     user.GroupID,
 	}
+}
+
+func UserGroupInfoFromModel(group *model.Group) UserGroupInfo {
+	if group == nil {
+		return UserGroupInfo{}
+	}
+	return UserGroupInfo{
+		ID:        group.ID,
+		Name:      group.Name,
+		Ratio:     group.Ratio,
+		CreatedAt: group.CreatedAt,
+	}
+}
+
+func UserGroupInfosFromModels(groups []model.Group) []UserGroupInfo {
+	items := make([]UserGroupInfo, 0, len(groups))
+	for i := range groups {
+		items = append(items, UserGroupInfoFromModel(&groups[i]))
+	}
+	return items
+}
+
+func QuotaTransactionInfoFromModel(tx *model.QuotaTransaction) QuotaTransactionInfo {
+	if tx == nil {
+		return QuotaTransactionInfo{}
+	}
+	return QuotaTransactionInfo{
+		ID:            tx.ID,
+		UserID:        tx.UserID,
+		Type:          tx.Type,
+		Amount:        tx.Amount,
+		BalanceBefore: tx.BalanceBefore,
+		BalanceAfter:  tx.BalanceAfter,
+		SourceType:    tx.SourceType,
+		SourceID:      tx.SourceID,
+		Reason:        tx.Reason,
+		ActorUserID:   tx.ActorUserID,
+		RequestID:     tx.RequestID,
+		CreatedAt:     tx.CreatedAt,
+	}
+}
+
+func QuotaTransactionInfosFromModels(transactions []model.QuotaTransaction) []QuotaTransactionInfo {
+	items := make([]QuotaTransactionInfo, 0, len(transactions))
+	for i := range transactions {
+		items = append(items, QuotaTransactionInfoFromModel(&transactions[i]))
+	}
+	return items
 }
 
 func ChannelInfoFromModel(channel *model.Channel) ChannelInfo {

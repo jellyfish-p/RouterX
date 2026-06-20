@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"time"
 
 	"routerx/internal"
 	"routerx/internal/handler"
@@ -14,6 +16,9 @@ func main() {
 	// 1. 初始化数据库 (GORM + PostgreSQL)
 	if err := internal.InitDB(); err != nil {
 		log.Fatalf("[FATAL] database init failed: %v", err)
+	}
+	if err := internal.InitLogDB(); err != nil {
+		log.Fatalf("[FATAL] log database init failed: %v", err)
 	}
 
 	// 2. 初始化 Redis
@@ -29,9 +34,19 @@ func main() {
 	channelSvc := service.NewChannelService()
 	tokenSvc := service.NewTokenService()
 	logSvc := service.NewLogService()
+	alertSvc := service.NewAlertService()
 	setupSvc := service.NewSetupService(userSvc, settingSvc)
 	relaySvc := service.NewRelayService(channelSvc, tokenSvc, logSvc, settingSvc)
-	_ = settingSvc.LoadCache()
+	if err := settingSvc.EnsureDefaults(); err != nil {
+		log.Fatalf("[FATAL] settings defaults failed: %v", err)
+	}
+	if err := channelSvc.PreloadCandidateCache(); err != nil {
+		log.Printf("[WARN] channel candidate cache preload failed: %v", err)
+	}
+	logSvc.StartLogReplicationWorker(context.Background(), time.Minute, 100)
+	alertSvc.StartAlertDeliveryWorker(context.Background())
+	channelSvc.StartBreakerProbeWorker(context.Background())
+	channelSvc.StartCandidateCacheInvalidationSubscriber(context.Background())
 
 	// 4. 依赖注入: Handler 层
 	adminH := handler.NewAdminHandler(adminSvc)
@@ -41,11 +56,12 @@ func main() {
 	channelH := handler.NewChannelHandler(channelSvc)
 	relayH := handler.NewRelayHandler(relaySvc)
 	logH := handler.NewLogHandler(logSvc)
+	alertH := handler.NewAlertHandler(alertSvc)
 	settingH := handler.NewSettingHandler(settingSvc)
 	setupH := handler.NewSetupHandler(setupSvc)
 
 	// 5. 配置路由
-	r := router.SetupRouter(authH, userH, tokenH, adminH, channelH, relayH, logH, settingH, setupH)
+	r := router.SetupRouter(authH, userH, tokenH, adminH, channelH, relayH, logH, alertH, settingH, setupH)
 
 	// 6. 启动服务
 	port := os.Getenv("SERVER_PORT")

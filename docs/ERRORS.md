@@ -85,8 +85,15 @@
 | `service_not_initialized` | 503 | `server_error` / `UNAVAILABLE` | 初始化中间件 | 否 | 否 | 否 | request_id、path | 先完成 `/v0/setup/init` |
 | `invalid_request` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 请求转换或通用参数错误 | 否 | 否 | 否 | 解析失败摘要 | 修正请求 |
 | `invalid_json` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | JSON 解析失败 | 否 | 否 | 否 | body 读取或解析摘要，不保存完整 body | 修正 JSON |
+| `invalid_multipart` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | multipart 表单解析失败 | 否 | 否 | 否 | content-type、boundary 和字段摘要，不保存完整文件内容 | 修正表单边界、字段或文件 |
+| `unsafe_multipart_file` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | multipart 文件名命中路径形态或危险扩展名基础扫描 | 否 | 否 | 否 | 字段名和文件名摘要，不保存完整文件内容 | 使用不带路径的真实图片/音频文件名重新上传 |
 | `model_required` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 缺少模型 | 否 | 否 | 否 | 缺少字段 | 补充 model |
-| `unsupported_stream` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | P0 流式未开启 | 否 | 否 | 否 | stream=true | 使用非流式或等 P1 |
+| `invalid_embedding_input` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | Embeddings `input` 类型或内容非法 | 否 | 否 | 否 | input 类型、空值或混合类型摘要 | 使用非空 string、非空 string 数组、token id 数组或 token id 数组批量 |
+| `embedding_batch_too_large` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | Embeddings 字符串批量或 token 数组批量超过 2048 | 否 | 否 | 否 | batch_size、limit | 拆分批量请求 |
+| `unsupported_stream` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 当前入口或 APIType 尚未开启流式 | 否 | 否 | 否 | stream=true | 使用非流式或等待对应协议流式实现 |
+| `unsupported_stream_channel` | 502 | `upstream_error` / `UNAVAILABLE` | 流式请求命中非 OpenAI SSE 形态通道 | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用 OpenAI-compatible 流式通道或等待对应 provider chunk 转换 |
+| `unsupported_multipart_channel` | 502 | `upstream_error` / `UNAVAILABLE` | multipart 请求命中暂不支持文件表单透传的上游 adapter | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用 OpenAI-compatible 通道或等待对应 provider multipart 转换 |
+| `unsupported_api_type` | 502 | `upstream_error` / `UNAVAILABLE` | 选中上游 adapter 不支持该 APIType | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用支持该 APIType 的通道或等待对应 provider adapter |
 | `invalid_routerx_options` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | `routerx` 结构非法 | 否 | 否 | 否 | 私有字段解析摘要 | 修正 `routerx` |
 | `invalid_routerx_route` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 路由偏好格式非法 | 否 | 否 | 否 | route 摘要 | 修正路由偏好 |
 | `unsupported_api` | 404 | `invalid_request_error` / `NOT_FOUND` | 已知前缀下不支持的 API | 否 | 否 | 否 | api_type、path | 换用支持的接口 |
@@ -98,6 +105,7 @@
 | `token_forbidden` | 403 | `permission_error` / `PERMISSION_DENIED` | Token 禁用、软删除或策略禁止 | 否 | 否 | 否 | token_id、原因 | 启用或重建 API Key |
 | `route_forbidden` | 403 | `permission_error` / `PERMISSION_DENIED` | `routerx.route` 越权 | 否 | 否 | 否 | route 摘要、拒绝原因 | 移除偏好或调整权限 |
 | `rate_limit_exceeded` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 限流 | 否 | 客户端可稍后重试 | 否 | 限流维度和 key 摘要 | 降低并发或等待窗口 |
+| `rate_limit_unavailable` | 503 | `server_error` / `UNAVAILABLE` | 外部数据库或集群模式下 Redis 限流依赖不可用 | 否 | 可在 Redis 恢复后重试 | 否 | 限流维度、Redis 依赖状态、request_id | 检查 Redis 连接、实例就绪状态和 `routerx_redis_errors_total` |
 | `insufficient_quota` | 429 | `insufficient_quota` 或 `rate_limit_error` / `RESOURCE_EXHAUSTED` | 预检余额或 Key 预算不足，或扣费失败 | 预检失败时否 | 否 | 预检失败不扣；已调用后按事务结果 | user quota、key budget、quota_used | 充值、调整额度或提高 Key 预算 |
 | `no_available_channel` | 502 | `upstream_error` / `UNAVAILABLE` | 没有候选通道 | 否 | 否 | 否 | model、候选过滤摘要 | 检查通道启用、模型、熔断和访问控制 |
 | `unsupported_channel` | 502 | `upstream_error` / `UNAVAILABLE` | 通道类型无 Adapter | 否 | 否 | 否 | channel_id、type | 补 Adapter 或禁用通道 |
@@ -105,27 +113,28 @@
 | `upstream_request_failed` | 502 | `upstream_error` / `UNAVAILABLE` | 网络错误或请求发送失败 | 可能未到达上游 | 非流式可按策略重试 | 否 | channel_id、耗时、错误摘要 | 检查网络和上游可用性 |
 | `upstream_response_failed` | 502 | `upstream_error` / `UNAVAILABLE` | 响应读取失败 | 是 | 非流式可按策略重试 | 否，除非已有 usage | channel_id、状态、读取错误 | 检查上游和响应大小 |
 | `upstream_conversion_failed` | 502 | `upstream_error` / `UNAVAILABLE` | 上游响应无法转换 | 是 | 否 | 否，除非已有 usage | adapter、api_type、脱敏摘要 | 修复 Adapter 或降级字段 |
+| `usage_missing` | 502 | `upstream_error` / `UNAVAILABLE` | 上游成功响应缺少 usage，且 `billing.usage_missing_strategy=reject` | 是 | 否 | 否 | channel_id、api_type、usage 策略 | 检查上游 usage、Adapter 或改回最低计费策略 |
 | `upstream_timeout` | 504 | `upstream_error` / `DEADLINE_EXCEEDED` | 上游超时 | 不确定 | 非流式可按策略重试 | 否，除非已有 usage | channel_id、timeout、耗时 | 检查超时和上游状态 |
 | `upstream_400` | 502 或 400 | `upstream_error` / `INVALID_ARGUMENT` | 上游认为请求错误 | 是 | 否 | 否 | 上游状态、脱敏摘要 | 检查转换和请求参数 |
 | `upstream_401` | 502 | `upstream_error` / `UNAVAILABLE` | 上游认证失败 | 是 | 否 | 否 | channel_id、provider | 检查上游密钥 |
 | `upstream_403` | 502 | `upstream_error` / `UNAVAILABLE` | 上游权限不足 | 是 | 否 | 否 | channel_id、provider | 检查上游账号权限 |
-| `upstream_429` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 上游限流 | 是 | P1 可换候选通道 | 否，除非已有 usage | channel_id、provider、上游状态 | 降低并发或切换通道 |
-| `upstream_5xx` | 502 | `upstream_error` / `UNAVAILABLE` | 上游临时故障 | 是 | 非流式可重试 | 否，除非已有 usage | status、channel_id、重试次数 | 检查上游健康和熔断 |
+| `upstream_429` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 上游限流 | 是 | 非流式可按 `relay.retry_count` 和 `relay.retry_on_status` 换候选通道 | 否，除非已有 usage | channel_id、provider、上游状态 | 降低并发或切换通道 |
+| `upstream_5xx` | 502 | `upstream_error` / `UNAVAILABLE` | 上游临时故障 | 是 | 默认 500/502/503/504 可按白名单重试 | 否，除非已有 usage | status、channel_id、重试次数 | 检查上游健康和熔断 |
 | `billing_failed` | 500 | `server_error` / `INTERNAL` | 扣费事务或日志事实异常 | 可能已调用 | 否 | 按事务结果 | quota_used、事务错误 | 人工核对账单 |
 | `insufficient_quota_after_usage` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 实际 usage 超过可扣额度 | 是 | 否 | 按事务结果 | usage、quota_used、余额 | 调整预留和并发策略 |
 | `model_list_failed` | 500 | `server_error` / `INTERNAL` | 模型列表聚合失败 | 不一定 | 否 | 否 | provider、channel 摘要 | 检查通道模型列表 |
-| `internal_error` | 500 | `server_error` / `INTERNAL` | 未分类内部错误或 panic | 不确定 | 否 | 按日志事实 | request_id、脱敏错误 | 查看系统日志 |
+| `internal_error` | 500 | `server_error` / `INTERNAL` | 未分类内部错误或 panic | 不确定 | 否 | 按日志事实 | request_id、脱敏错误、panic 类型、堆栈 | 查看系统日志 |
 
 ## 当前代码事实和目标收敛
 
-当前代码已经使用 `service.HTTPError` 表达 `/v1` 错误，并通过 `common.OpenAIError` 输出 OpenAI-compatible 结构。以下差异需要在后续收敛时保持兼容：
+当前代码已经使用 `service.HTTPError` 表达 `/v1` 主链路错误；API Key 鉴权、用户禁用、配额预检查、Recovery panic 和基础下游错误会按入口协议输出 OpenAI-compatible、Anthropic 或 Gemini 错误结构。以下记录已收敛事实和仍需在后续处理的差异：
 
 | 当前事实 | 目标口径 |
 |----------|----------|
-| Anthropic/Gemini wrapper 转换失败当前可能返回 `response_conversion_failed`。 | 统一归入 `upstream_conversion_failed`，可保留 `response_conversion_failed` 作为兼容别名。 |
-| `parseRelayRequest` 对缺少 model 当前可能走 `invalid_request`。 | 对外目标使用 `model_required`，日志可保留原始解析错误摘要。 |
-| 上游 400/401/403 当前多以 502 + `upstream_<status>` 返回。 | P1 可按入口协议细化，但 401/403 仍应归因通道配置且不重试。 |
-| 超时当前可能落入 `upstream_request_failed`。 | 目标拆成 `upstream_timeout`，便于告警和客户端重试判断。 |
+| Anthropic/Gemini wrapper 转换失败已返回 `upstream_conversion_failed`，响应文案为 `upstream response conversion failed`。 | 由 `TestGeminiBatchEmbedContentsRejectsMismatchedEmbeddingCount` 覆盖，旧 `response_conversion_failed` 不再作为主口径。 |
+| OpenAI 主链路和 Anthropic/Gemini wrapper 本地解析错误已统一：非法 JSON 使用 `invalid_json`，缺少 model 使用 `model_required`。 | 由 `TestChatCompletionInvalidRequestDoesNotCallUpstream` 和 `TestProtocolWrapperRequestErrorsUseStableCodes` 覆盖；日志可保留原始解析错误摘要。 |
+| 上游 400/401/403 当前多以 502 + `upstream_<status>` 返回。 | P1 可按入口协议细化；默认不重试，只有管理员显式加入 `relay.retry_on_status` 时才会换候选，401/403 仍应优先归因通道配置。 |
+| 超时已拆分为 `upstream_timeout`。 | 由 `TestChatCompletionUpstreamTimeoutMapping` 覆盖，便于告警和客户端重试判断。 |
 | `/v0` 统一响应当前没有稳定 code 字段。 | 若增加 code，需要保持旧字段并更新 API 文档和测试。 |
 
 ## `/v0` 错误语义
@@ -150,10 +159,10 @@
 | 鉴权或权限错误 | 否 | 否 | 重试会扩大风险。 |
 | 余额不足 | 否 | 否 | 需要充值或调整额度。 |
 | 限流 | 可延迟重试 | 可按策略换候选通道 | 需要保留 Retry-After 或日志摘要。 |
-| 上游 400 | 否 | 否 | 多数是转换或参数问题。 |
-| 上游 401/403 | 否 | 否 | 通道密钥或权限问题，不应放大请求。 |
-| 上游 429 | 可延迟重试 | P1 可换候选通道 | 注意供应商风控。 |
-| 上游 5xx/网络错误/超时 | 可重试 | 非流式未输出前可重试 | 流式输出后不能切换通道。 |
+| 上游 400 | 否 | 默认否；显式加入 `relay.retry_on_status` 后非流式可换候选 | 多数是转换或参数问题，只有确认多通道差异时才建议放开。 |
+| 上游 401/403 | 否 | 默认否；生产环境不建议加入 `relay.retry_on_status` | 通道密钥或权限问题，不应放大请求。 |
+| 上游 429 | 可延迟重试 | 非流式可按 `relay.retry_count` 和 `relay.retry_on_status` 换候选通道 | 注意供应商风控。 |
+| 上游 5xx/网络错误/超时 | 可重试 | 非流式未输出前可按 `relay.retry_count` 重试；HTTP 状态码由 `relay.retry_on_status` 控制 | 流式输出后不能切换通道。 |
 | 计费失败 | 否 | 否 | 需要保护账单事实。 |
 
 ## 日志字段要求
@@ -169,7 +178,7 @@
 | `error_code` | 目标字段，用于结构化统计。 |
 | `error_source` | request、auth、quota、route、channel、upstream、billing、system。 |
 | `upstream_status` | 上游已返回 HTTP 时记录。 |
-| `retry_count` | 发生重试时记录。 |
+| `retry_count` | 发生重试时记录；当前基础实现以多条失败/成功日志表示每次尝试。 |
 | `quota_used` | 失败默认 0；已有 usage 或补偿扣费时必须可解释。 |
 | `error_msg` | 脱敏摘要，不包含密钥、DSN、完整 prompt 或完整响应。 |
 

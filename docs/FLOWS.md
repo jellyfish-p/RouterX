@@ -62,7 +62,7 @@ L0 体验要求：
 | 403 `user_disabled` | 联系管理员 | 启用用户或解释封禁原因 | user status |
 | 429 `insufficient_quota` | 充值或联系管理员加额度 | 检查用户额度、Key 预算和有限/无限口径 | user quota、key budget |
 | 400 `model_required` | 补充 model 字段 | 不需要介入，除非大量出现 | request parse error |
-| 400 `unsupported_stream` | 改为非流式或等待 P1 | 确认 P0 暂不支持流式 | request stream=true |
+| 400 `unsupported_stream` / 502 `unsupported_stream_channel` | 改为非流式，或切换到 OpenAI SSE 形态通道 | 确认入口协议、APIType 和通道是否支持当前流式请求 | request stream=true、channel type |
 | 502 `no_available_channel` | 换模型或联系管理员 | 检查通道启用、模型匹配、熔断和 provider adapter | 候选过滤摘要 |
 | 502 `upstream_secret_error` | 联系管理员 | 检查 `ENCRYPTION_KEY` 和通道密钥 | channel id、provider、解密错误摘要 |
 | 504 `upstream_timeout` | 稍后重试 | 检查下游耗时和超时设置 | duration、timeout、channel id |
@@ -185,7 +185,7 @@ P0 usage.total_tokens -> quota_used
 | 用户路径 | 测试 |
 |----------|------|
 | 初始化和启动额度 | `TestSetupBootstrapAdminQuota` |
-| settings 默认值和 readiness | `TestSettingsRegistryAndReadiness` |
+| settings 默认值和 readiness | `TestSettingsValidationAndReadiness` |
 | Chat 成功调用 | `TestChatCompletionSuccessLogsAndDeductsQuota` |
 | 请求错误不调用下游 | `TestChatCompletionInvalidRequestDoesNotCallUpstream` |
 | 下游错误映射 | `TestChatCompletionUpstreamErrorMapping` |

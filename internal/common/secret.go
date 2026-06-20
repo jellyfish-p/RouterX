@@ -14,9 +14,30 @@ import (
 
 const encryptedSecretPrefix = "enc:v1:"
 
+// IsEncryptedSecret reports whether value is a complete RouterX encrypted
+// secret payload. It is stricter than ContainsEncryptedSecret, which is useful
+// for scanning serialized JSON before parsing it.
+func IsEncryptedSecret(value string) bool {
+	return strings.HasPrefix(value, encryptedSecretPrefix)
+}
+
+// ContainsEncryptedSecret reports whether a plain string or serialized JSON
+// payload contains at least one RouterX encrypted secret marker.
+func ContainsEncryptedSecret(value string) bool {
+	return strings.Contains(value, encryptedSecretPrefix)
+}
+
 func EncryptSecret(plain string) (string, error) {
 	key := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
-	if key == "" || plain == "" || strings.HasPrefix(plain, encryptedSecretPrefix) {
+	return EncryptSecretWithKey(plain, key)
+}
+
+// EncryptSecretWithKey encrypts a secret with an explicit master key. It is
+// used by rotation jobs that need to re-encrypt existing database secrets while
+// keeping the normal request path tied to ENCRYPTION_KEY.
+func EncryptSecretWithKey(plain, key string) (string, error) {
+	key = strings.TrimSpace(key)
+	if key == "" || plain == "" || IsEncryptedSecret(plain) {
 		return plain, nil
 	}
 
@@ -35,10 +56,18 @@ func EncryptSecret(plain string) (string, error) {
 }
 
 func DecryptSecret(value string) (string, error) {
-	if !strings.HasPrefix(value, encryptedSecretPrefix) {
+	key := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
+	return DecryptSecretWithKey(value, key)
+}
+
+// DecryptSecretWithKey decrypts a RouterX secret with an explicit master key.
+// Plain values are returned unchanged so callers can safely scan mixed legacy
+// rows without leaking or rewriting non-encrypted values.
+func DecryptSecretWithKey(value, key string) (string, error) {
+	if !IsEncryptedSecret(value) {
 		return value, nil
 	}
-	key := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
+	key = strings.TrimSpace(key)
 	if key == "" {
 		return "", errors.New("ENCRYPTION_KEY is required to decrypt secret")
 	}

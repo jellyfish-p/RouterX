@@ -33,7 +33,7 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 | S0 | 多数请求失败或账单不可信 | DB 不可用、计费事务异常、生产密钥丢失 | 停止接收真实流量，优先保护账单和密钥 |
 | S1 | 核心路径大面积异常 | `/v1` 大量 502、所有通道不可用、`/ready` 不就绪 | 降级或切换通道，保留证据 |
 | S2 | 单用户或单通道异常 | 单个 Token 余额不足、某个上游 401 | 修正配置或额度 |
-| S3 | 可解释的使用错误 | `stream=true` 在 P0 被拒绝、模型名不存在 | 返回明确提示，不告警 |
+| S3 | 可解释的使用错误 | 不支持的流式入口/通道、模型名不存在 | 返回明确提示，不告警 |
 
 ## 2. 必备证据
 
@@ -133,7 +133,7 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 检查顺序：
 
 1. 确认请求头是 `Authorization: Bearer sk-...`。
-2. 确认使用的是用户 API Key，不是管理员登录 JWT，也不是下游厂商 API Key。
+2. 确认使用的是用户 API Key，不是管理员登录 JWT，也不是上游厂商 API Key。
 3. 确认 API Key 没被禁用、删除、过期或复制时缺字符。
 4. 确认 API Key 明文只在创建时展示；忘记后只能新建或轮换。
 
@@ -177,32 +177,39 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 - 预检余额不足时上游调用次数为 0。
 - 成功调用后 `quota_used`、用户账单和 Token 余额一致。
 
-### RB-005 返回 `unsupported_stream`
+### RB-005 返回 `unsupported_stream` / `unsupported_stream_channel` / `unsupported_api_type`
 
 症状：
 
 - 请求体包含 `stream=true`。
-- P0 返回 400，code 为 `unsupported_stream`。
+- 当前入口或 APIType 未开放流式时，返回 400，code 为 `unsupported_stream`。
+- OpenAI Chat 流式请求命中非 OpenAI SSE 通道时，返回 502，code 为 `unsupported_stream_channel`。
+- 选中通道 adapter 尚未支持该 APIType 时，返回 502，code 为 `unsupported_api_type`。
 
 用户含义：
 
-- 当前 P0 只承诺非流式 Chat Completions 闭环，流式在 P1 扩展。
+- OpenAI Chat 基础 SSE 只支持 OpenAI-compatible SSE 形态通道。
+- Anthropic/Gemini 原生流式转换、断开取消断言和 usage 兜底仍属于 P1 增强。
+- 某些 provider 端点需要逐项确认，不能把未确认 APIType 伪装成可用上游。
 
 检查顺序：
 
 1. 确认客户端 SDK 或业务代码是否默认打开 streaming。
-2. 临时改为非流式请求。
-3. 如果必须流式，按 P1 Relay 设计补 SSE 转发、错误中断和账单策略。
+2. 如果需要 OpenAI Chat 流式，确认路由命中 OpenAI、OpenAI-compatible、xAI、Qwen、DeepSeek 或 RouterX-compatible 通道。
+3. 如果当前只能使用 Anthropic/Gemini 原生流式，临时改为非流式请求，直到对应 chunk 转换器落地。
+4. 如果 code 为 `unsupported_api_type`，检查 `docs/PROTOCOLS.md` 中该 provider 与 APIType 的能力等级，或把请求路由到支持该 APIType 的通道。
 
 安全动作：
 
-- P0 不应该默默降级为假流式。
-- 不调用上游，避免用户误以为功能已经支持。
+- 不应该把非 OpenAI SSE 的上游流伪装成 OpenAI SSE。
+- 非 OpenAI SSE 通道被拒绝时，不调用上游，避免误扣费和误导用户。
+- adapter 明确不支持的 APIType 被拒绝时，不调用上游，不扣费，日志应归因到通道能力。
 
 验收信号：
 
-- `stream=true` 在 P0 稳定返回 `unsupported_stream`。
-- 不写成功账单，不扣费。
+- OpenAI Chat 基础流式测试通过，能透传 SSE 并按 usage 扣费。
+- 非 OpenAI SSE 通道拒绝测试通过，不写成功账单，不扣费。
+- `unsupported_api_type` 回归测试通过，不调用上游、不扣费，并写失败日志。
 
 ### RB-006 返回 `no_available_channel`
 
@@ -318,6 +325,25 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 - 本地限流和上游限流 code 可区分。
 - 通道健康指标能体现限流增长。
 
+### RB-102A 本地返回 `rate_limit_unavailable`
+
+症状：
+
+- `/v1/*` 返回 503。
+- OpenAI-compatible code 为 `rate_limit_unavailable`，Anthropic/Gemini 为对应协议的服务不可用外形。
+
+检查顺序：
+
+1. 检查当前是否为外部数据库或集群模式；SQLite 单镜像通常可降级运行。
+2. 检查 `/ready` 是否因 Redis 返回 not ready。
+3. 检查 `routerx_redis_errors_total{operation="rate_limit_required|rate_limit_incr|rate_limit_expire"}`。
+4. 恢复 Redis 连接后重试同一请求。
+
+验收信号：
+
+- 故障期间请求未调用上游、未扣模型消费额度。
+- 调用日志写入 `error_code=rate_limit_unavailable`，且 `policy_snapshot.rate_limit_snapshot.dependency=redis`。
+
 ### RB-103 下游 5xx 或超时
 
 症状：
@@ -329,8 +355,9 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 1. 检查下游状态页、网络连通性、DNS 和代理配置。
 2. 检查 `relay.timeout` 是否过短。
 3. 检查是否只有单个通道异常，还是所有 provider 异常。
-4. P0 默认 `relay.retry_count=0`，先保证日志、扣费和归因稳定。
-5. P1 后非流式可以按错误分类重试；流式写出后不能跨通道切换。
+4. 检查 `relay.retry_count` 是否仍为 `0`；大于 0 时非流式会按候选通道进行有限重试。
+5. 检查 `relay.retry_on_status` 是否包含该上游 HTTP 状态码；默认只包含 429/500/502/503/504。
+6. 确认失败是否属于可重试错误；400/401/403 默认不重试，流式写出后不能跨通道切换。
 
 安全动作：
 
@@ -341,7 +368,7 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 验收信号：
 
 - 超时和 5xx 可观测。
-- 重试次数、最终通道和失败原因可追踪。
+- 非流式重试会留下失败尝试日志和最终成功/失败日志，最终通道和失败原因可追踪。
 
 ### RB-104 账单和日志不一致
 
@@ -556,11 +583,11 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 
 | Runbook | 对应能力 | 主要文档 | 建议测试 |
 |---------|----------|----------|----------|
-| RB-001 | 生产 readiness | `SETTINGS`、`OPERATIONS`、`ARCHITECTURE` | `TestSettingsRegistryAndReadiness` |
+| RB-001 | 生产 readiness | `SETTINGS`、`OPERATIONS`、`ARCHITECTURE` | `TestSettingsValidationAndReadiness`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets` |
 | RB-002 | 初始化闭环 | `DESIGN`、`FLOWS`、`API` | `TestSetupBootstrapAdminQuota` |
 | RB-003 | API Key 鉴权 | `API_KEYS`、`ACCOUNTS`、`SECURITY`、`API` | `TestRelayPrecheckRejectsBeforeUpstream` |
 | RB-004 | 额度预检 | `BILLING`、`ERRORS`、`RELAY` | `TestRelayPrecheckRejectsBeforeUpstream` |
-| RB-005 | P0 流式边界 | `RELAY`、`ERRORS` | `TestChatCompletionInvalidRequestDoesNotCallUpstream` |
+| RB-005 | 流式边界 | `RELAY`、`ERRORS` | `TestChatCompletionStreamForwardsSSEAndDeductsUsage`、`TestChatCompletionStreamRejectsNonOpenAISSEUpstream` |
 | RB-006 | 通道路由 | `RELAY`、`DATA_MODEL` | `TestChannelRoutingConfigResolution` |
 | RB-007 | 下游密钥安全 | `SECURITY`、`DATA_MODEL` | `TestChannelExtendedManagement` |
 | RB-101 | 上游配置错误 | `ERRORS`、`RELAY` | `TestChatCompletionUpstreamErrorMapping` |

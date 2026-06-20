@@ -56,21 +56,22 @@ RouterX 运行时
 | ID | 威胁 | 风险场景 | 默认控制 | 验收证据 |
 |----|------|----------|----------|----------|
 | S1 | API Key 泄露 | 用户 API Key 出现在日志、管理响应、缓存键或错误信息中。 | 明文只返回一次；数据库保存 SHA256；日志和响应脱敏；缓存键使用哈希或内部 ID。 | `TestP0BackendFlow`、敏感词日志扫描、API Key 列表不返回明文。 |
-| S2 | 上游密钥泄露 | 通道密钥被管理列表、测试接口、错误响应或调用日志暴露。 | 使用 `ENCRYPTION_KEY` 或 KMS 加密；管理响应只返回脱敏摘要；错误摘要不含密钥。 | `TestChannelExtendedManagement`、通道响应和日志不包含测试密钥。 |
-| S3 | JWT 伪造或跨实例失效 | 多实例各自生成 `jwt.secret`，或弱密钥导致伪造。 | 生产必须显式配置一致 `JWT_SECRET` 或数据库 `jwt.secret`；`/ready` 检查关键配置。 | `TestSettingsRegistryAndReadiness`、生产 readiness 缺关键密钥时不就绪。 |
+| S2 | 上游密钥泄露 | 通道密钥被管理列表、测试接口、错误响应或调用日志暴露。 | 使用 `ENCRYPTION_KEY` 或 KMS 加密；管理响应只返回脱敏摘要；错误摘要不含密钥；已有加密通道密钥但缺少主密钥或无法解密时 `/ready` 不就绪。 | `TestChannelExtendedManagement`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、`TestReadinessDecryptsEncryptedChannelSecrets`、`TestAdminRotateSecretsReencryptsWithCurrentKey`、通道响应和日志不包含测试密钥。 |
+| S3 | JWT 伪造或跨实例失效 | 多实例各自生成 `jwt.secret`，或弱密钥导致伪造。 | 生产必须显式配置一致 `JWT_SECRET` 或数据库 `jwt.secret`；`/ready` 检查关键配置。 | `TestSettingsValidationAndReadiness`、生产 readiness 缺关键密钥时不就绪。 |
 | S4 | 管理权限越权 | 普通用户调用管理员接口，或普通管理员修改超级管理员配置。 | User JWT + role 校验；超级管理员能力单独判断；API Key 不继承管理权限。 | `TestAdminPrivilegeBoundaries`、权限矩阵接口测试。 |
 | S5 | API Key 越权调用管理接口 | 管理员的 API Key 被拿来调用 `/v0/admin/*`。 | API Key 只在 `/v1/*` 生效；管理接口只看 User JWT。 | API 鉴权边界测试，API Key 调 `/v0` 返回未登录或权限错误。 |
-| S6 | 路由偏好越权 | 调用方通过 `routerx.route` 强制使用无权通道、禁用通道或高价通道。 | 先做后台硬性过滤和访问控制，再应用偏好；拒绝原因写日志。 | `TestChannelRoutingConfigResolution`、`routerx.route` 合法/拒绝路径测试。 |
-| S7 | 额度透支 | 并发请求同时通过余额检查，导致用户余额或 API Key 预算为负。 | 扣费使用事务或条件更新；成功日志与扣费事务一致。 | `TestUserBillingMatchesLogs`、并发扣费测试。 |
+| S6 | 路由或 scope 越权 | 调用方通过 `routerx.route` 强制使用无权通道、禁用通道或高价通道，或通过 API Key 调用 scope 未允许模型/APIType/通道分组/入口协议/IP/方法路径，或超过 Key 日/月预算/并发上限/RPM/TPM。 | 先做后台硬性过滤、用户分组访问控制、API Key scope 和访问控制，再应用偏好；拒绝原因写日志。 | `TestChannelRoutingConfigResolution`、`TestUserGroupChannelGroupAccessFiltersRelayCandidates`、`TestAPIKeyModelScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyChannelGroupScopeFiltersRelayCandidates`、`TestAPIKeyEntryProtocolScopeRejectsBeforeRelay`、`TestAPIKeyIPScopeRejectsBeforeRelay`、`TestAPIKeyMethodScopeRejectsBeforeRelay`、`TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed`、`TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed`、`TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight`、`TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay`、`TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed`、`routerx.route` 合法/拒绝路径测试。 |
+| S7 | 额度透支 | 并发请求同时通过余额检查，导致用户余额或 API Key 预算为负。 | 扣费使用事务或条件更新；`max_concurrency` 可在凭据层收窄单 Key 同时在途请求；成功日志与扣费事务一致。 | `TestUserBillingMatchesLogs`、`TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight`、并发扣费测试。 |
 | S8 | API Key 预算和余额不同步 | 创建有限 API Key 时误扣用户余额，或调用时只扣用户余额/只扣 Key 预算。 | 创建有限 API Key 只设置预算上限；成功调用同事务扣用户余额并消耗 Key 预算。 | `TestUserBillingMatchesLogs`、有限和无限 API Key 扣费断言。 |
 | S9 | 失败调用误扣 | 本地请求错误、无通道、余额不足或上游未调用时仍计费。 | 预检拒绝发生在上游前；失败默认 `quota_used=0`；如启用失败成本需写 settings 和快照。 | `TestRelayPrecheckRejectsBeforeUpstream`、失败日志断言。 |
 | S10 | `/v1` 错误泄露内部细节 | 错误响应暴露 DSN、密钥、堆栈或原始上游敏感响应。 | 错误映射为入口协议兼容格式；内部错误只保存脱敏摘要。 | `TestChatCompletionUpstreamErrorMapping`、敏感词扫描。 |
-| S11 | 请求/响应体日志泄露 | prompt、响应、Authorization、Cookie 或密钥被完整记录。 | body 日志默认关闭；开启后截断和脱敏；敏感 header 不记录。 | `relay.log_body_max_bytes=0` 默认检查、日志脱敏测试。 |
-| S12 | settings 被错误修改 | 配置类型错误、敏感值明文返回、关键配置误改后无审计。 | settings 注册表校验类型和敏感级别；变更先校验再写 DB；写审计摘要。 | `TestSettingsRegistryAndReadiness`、配置修改审计测试。 |
+| S11 | 请求/响应体日志泄露 | prompt、响应、Authorization、Cookie 或密钥被完整记录。 | body 日志默认关闭；开启后截断和脱敏；敏感 header 不记录。 | `TestChatCompletionSuccessLogsAndDeductsQuota`、`TestRelayBodyLoggingRedactsAndTruncatesWhenEnabled`。 |
+| S12 | settings 被错误修改 | 配置类型错误、敏感值明文返回、关键配置误改后无审计。 | settings 注册表校验类型和敏感级别；外部登录 client secret 加密存储；`/ready` 检查其密文可解；变更先校验再写 DB；写审计摘要。 | `TestSettingsValidationAndReadiness`、`TestAdminSettingEncryptsOAuthOIDCClientSecrets`、`TestReadinessDecryptsEncryptedExternalProviderSecrets`、配置修改审计测试。 |
 | S13 | 支付伪造入账 | 客户端提交额度、伪造 webhook、金额不一致或重复通知。 | 服务端商品决定额度；校验签名、金额、货币、订单状态；幂等写事件。 | 支付签名和幂等测试、重复通知只入账一次。 |
 | S14 | OAuth/OIDC 账号接管 | 第三方 provider 返回相同 email 时自动绑定已有账号。 | 不因 email 自动接管；以 provider 稳定身份标识做 identity；绑定需已登录或明确恢复流程。 | 企业身份绑定和恢复测试。 |
 | S15 | 上游不可用扩大故障 | 401/403 被无限重试，或流式输出后切换通道造成协议混乱。 | 401/403 归因通道配置不重试；流式写出后不跨通道重试；熔断和错误计数可解释。 | 上游错误映射、重试和熔断测试。 |
 | S16 | Redis 缺失隐藏安全问题 | 外部数据库或集群模式下 Redis 不可用导致限流、API Key 禁用状态、settings 变化或通道候选缓存不一致。 | SQLite 单机可用进程内缓存；外部数据库或集群模式 Redis 缺失时不就绪；关键缓存更新失败可感知。 | Redis 缺失/故障测试、生产 readiness 策略测试。 |
+| S17 | 上传文件伪装危险内容 | Images/Audio multipart 使用安全扩展名包裹错误类型、可执行或脚本内容，诱导上游或后续处理链消费危险文件。 | Relay 在上游前执行单文件大小、路径/扩展名、API 类型文件头和可执行/脚本内容签名基础扫描；命中时返回 `unsafe_multipart_file` 且不调用上游、不扣费。 | `TestRelayMultipartRejectsUnsafeFileNameBeforeUpstream`、`TestRelayMultipartRejectsUnsafeFileContentBeforeUpstream`、`TestRelayMultipartRejectsIncompatibleFileExtensionBeforeUpstream`、`TestRelayMultipartRejectsMismatchedFileContentBeforeUpstream`。 |
 
 ## 默认控制点
 
@@ -84,13 +85,13 @@ RouterX 运行时
 
 - API Key 明文只在创建时返回一次。
 - API Key 数据库长期保存 SHA256 哈希，兼容早期明文存量时验证成功后迁移为哈希。
-- 上游密钥、OAuth/OIDC client secret 和支付敏感密钥使用 `ENCRYPTION_KEY`、KMS 或环境变量注入。
+- 上游密钥、OAuth/OIDC client secret 和支付敏感密钥使用 `ENCRYPTION_KEY`、KMS 或环境变量注入；当前 settings 中的 `oauth.*.client_secret` 和 `oidc.*.client_secret` 会在配置 `ENCRYPTION_KEY` 时加密落库。
 - 管理响应只返回脱敏摘要，不返回可直接调用的上游密钥。
 - 日志和错误响应不能包含 API Key、上游密钥、Cookie、数据库 DSN、支付密钥和内部堆栈。
 
 ### Relay 和路由
 
-- Relay 先做鉴权、用户状态、API Key 状态、额度、限流和基础请求校验，再选择通道。
+- Relay 先做鉴权、用户状态、API Key 状态、额度、限流、基础请求校验和 API Key scope 检查，再选择通道。
 - 通道候选必须经过启用状态、模型匹配、Adapter 可用、熔断、访问控制和余额策略过滤。
 - `routerx.route` 只能在已允许候选集中收窄；格式非法返回入口协议兼容 400；越权返回 403 或无可用通道错误。
 - 真实上游调用前必须剥离 RouterX 私有字段，除非上游通道类型是 RouterX-Compatible。
@@ -136,7 +137,7 @@ RouterX 运行时
 |----------|----------|
 | 鉴权边界 | User JWT 不能调用 `/v1`；API Key 不能调用 `/v0`；普通用户不能调用管理员接口。 |
 | 密钥脱敏 | 响应、日志、错误和审计不包含用户 API Key 明文、上游密钥、DSN 或支付密钥。 |
-| 预检拒绝 | 无效 Key、禁用用户、禁用 API Key、余额不足、禁用通道不会调用上游。 |
+| 预检拒绝 | 无效 Key、禁用用户、禁用 API Key、余额不足、用户分组未允许通道分组、scope 未允许模型/APIType/通道分组/入口协议/IP/方法路径、达到日/月预算、达到并发上限、达到 RPM/TPM、禁用通道不会调用上游。 |
 | 路由越权 | `routerx.route` 不能启用无权通道或绕过通道分组。 |
 | 计费一致 | 成功调用的 `logs.quota_used`、用户余额和 Key 预算一致；失败调用不误扣。 |
 | 支付幂等 | 重复 webhook、金额不一致、签名失败和订单状态不匹配不会入账。 |
@@ -148,7 +149,7 @@ RouterX 运行时
 |------|----------|----------|
 | API Key 泄露 | 禁用或删除对应 API Key，清理缓存，检查近期日志和额度消耗。 | 引导用户重建 Key，增加泄露来源审计。 |
 | 上游密钥泄露 | 禁用对应通道或移除密钥，在上游 provider 后台轮换密钥。 | 检查日志和响应脱敏，补回归测试。 |
-| `ENCRYPTION_KEY` 丢失 | 停止写入新密钥，评估可解密数据范围。 | 从备份或 KMS 恢复；无法恢复时逐通道重新配置密钥。 |
+| `ENCRYPTION_KEY` 丢失 | 停止写入新密钥，评估可解密数据范围。 | 从备份或 KMS 恢复；恢复旧主密钥后由超级管理员调用 `POST /v0/admin/security/rotate-secrets` 将通道密文和外部登录 client secret 重加密到当前 `ENCRYPTION_KEY`；无法恢复时逐通道和逐 provider 重新配置密钥。 |
 | 支付伪造尝试 | 拒绝入账，保留 payment event 和签名摘要。 | 检查 provider 配置、回调来源和幂等键。 |
 | 额度异常透支 | 暂停相关用户或 API Key，导出日志和扣费记录。 | 修复事务条件更新，按日志事实修正账本。 |
 | 日志泄露 | 立即关闭 body 日志，限制导出，清理或加密敏感日志。 | 补脱敏规则和保留策略，回溯受影响用户。 |

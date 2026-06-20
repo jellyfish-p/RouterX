@@ -46,10 +46,63 @@ const (
 	LogStatusFailed  = 2
 )
 
+// 模型调用 usage 来源。
+const (
+	LogUsageSourceUpstream = "upstream"
+	LogUsageSourceMinimum  = "minimum"
+)
+
+// 模型调用失败来源。
+const (
+	LogErrorSourceRequest  = "request"
+	LogErrorSourceAuth     = "auth"
+	LogErrorSourceQuota    = "quota"
+	LogErrorSourceRoute    = "route"
+	LogErrorSourceChannel  = "channel"
+	LogErrorSourceUpstream = "upstream"
+	LogErrorSourceBilling  = "billing"
+	LogErrorSourceSystem   = "system"
+)
+
 // 充值码状态
 const (
-	RedemCodeStatusUnused = 0
-	RedemCodeStatusUsed   = 1
+	RedemCodeStatusUnused   = 0
+	RedemCodeStatusUsed     = 1
+	RedemCodeStatusDisabled = 2
+)
+
+// 额度流水类型
+const (
+	QuotaTransactionTypePaymentGrant = "payment_grant"
+	QuotaTransactionTypeRedemRedeem  = "redem_redeem"
+	QuotaTransactionTypeAdminAdjust  = "admin_adjust"
+	QuotaTransactionTypeRefundDeduct = "refund_deduct"
+	QuotaTransactionTypeManualCredit = "manual_credit"
+	QuotaTransactionTypeManualDebit  = "manual_debit"
+)
+
+// 额度流水来源类型
+const (
+	QuotaSourceTypePaymentOrder = "payment_order"
+	QuotaSourceTypePaymentEvent = "payment_event"
+	QuotaSourceTypeRedemCode    = "redem_code"
+	QuotaSourceTypeAdminAction  = "admin_action"
+	QuotaSourceTypeRefund       = "refund"
+)
+
+// 支付 provider 和订单状态
+const (
+	PaymentProviderStripe = "stripe"
+	PaymentProviderEpay   = "epay"
+
+	PaymentOrderStatusPending           = "pending"
+	PaymentOrderStatusPaid              = "paid"
+	PaymentOrderStatusFailed            = "failed"
+	PaymentOrderStatusClosed            = "closed"
+	PaymentOrderStatusRefundPending     = "refund_pending"
+	PaymentOrderStatusRefundFailed      = "refund_failed"
+	PaymentOrderStatusRefunded          = "refunded"
+	PaymentOrderStatusPartiallyRefunded = "partially_refunded"
 )
 
 // 未限制额度标记

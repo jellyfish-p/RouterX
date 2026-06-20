@@ -18,6 +18,15 @@ import (
 // Gemini API 格式与 OpenAI 不同，需要双向转换。
 type GeminiAdapter struct{}
 
+type geminiPart struct {
+	Text string `json:"text"`
+}
+
+type geminiContent struct {
+	Role  string       `json:"role,omitempty"`
+	Parts []geminiPart `json:"parts"`
+}
+
 func init() {
 	Register(common.ChannelTypeGemini, func() Adapter { return &GeminiAdapter{} })
 }
@@ -27,24 +36,33 @@ func (a *GeminiAdapter) GetChannelType() int {
 }
 
 func (a *GeminiAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, error) {
-	if apiType != APIChatCompletions && apiType != APIGeminiGenerateContent && apiType != APIGeminiStreamGenerateContent {
+	if apiType != APIChatCompletions && apiType != APIResponses && apiType != APIGeminiGenerateContent && apiType != APIGeminiStreamGenerateContent && apiType != APIEmbeddings && apiType != APIGeminiBatchEmbedContents {
+		return nil, errors.New("unsupported api type")
+	}
+	if apiType == APIResponses {
+		return geminiResponsesRequest(body)
+	}
+	if native, ok := geminiNativeGenerateRequest(apiType, body); ok {
+		return json.Marshal(native)
+	}
+	if native, ok := geminiNativeBatchEmbedContentsRequest(apiType, body); ok {
+		return json.Marshal(native)
+	}
+	if native, ok := geminiNativeEmbedContentRequest(apiType, body); ok {
+		return json.Marshal(native)
+	}
+	if apiType == APIEmbeddings || apiType == APIGeminiBatchEmbedContents {
 		return nil, errors.New("unsupported api type")
 	}
 	var input openAIChatRequest
 	if err := json.Unmarshal(body, &input); err != nil {
 		return nil, err
 	}
-	type geminiPart struct {
-		Text string `json:"text"`
-	}
-	type geminiContent struct {
-		Role  string       `json:"role,omitempty"`
-		Parts []geminiPart `json:"parts"`
-	}
 	output := struct {
 		Contents          []geminiContent        `json:"contents"`
 		SystemInstruction *geminiContent         `json:"systemInstruction,omitempty"`
 		GenerationConfig  map[string]interface{} `json:"generationConfig,omitempty"`
+		SafetySettings    json.RawMessage        `json:"safetySettings,omitempty"`
 	}{}
 	systemParts := make([]geminiPart, 0)
 	for _, message := range input.Messages {
@@ -85,17 +103,217 @@ func (a *GeminiAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, er
 	if len(config) > 0 {
 		output.GenerationConfig = config
 	}
+	if raw := bytes.TrimSpace(input.SafetySettings); len(raw) > 0 && string(raw) != "null" {
+		// Gemini safety settings are provider-native and intentionally live outside generationConfig.
+		output.SafetySettings = append(json.RawMessage(nil), raw...)
+	}
 	return json.Marshal(output)
+}
+
+func geminiResponsesRequest(body []byte) ([]byte, error) {
+	var input struct {
+		Input           json.RawMessage `json:"input"`
+		Instructions    json.RawMessage `json:"instructions"`
+		MaxOutputTokens *int            `json:"max_output_tokens,omitempty"`
+		Temperature     *float64        `json:"temperature,omitempty"`
+		TopP            *float64        `json:"top_p,omitempty"`
+		Stop            json.RawMessage `json:"stop,omitempty"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, err
+	}
+	output := struct {
+		Contents          []geminiContent        `json:"contents"`
+		SystemInstruction *geminiContent         `json:"systemInstruction,omitempty"`
+		GenerationConfig  map[string]interface{} `json:"generationConfig,omitempty"`
+	}{}
+	output.Contents = geminiResponsesContents(input.Input)
+	if len(output.Contents) == 0 {
+		output.Contents = []geminiContent{{Role: "user", Parts: []geminiPart{{Text: ""}}}}
+	}
+	if instruction := strings.TrimSpace(geminiResponsesText(input.Instructions)); instruction != "" {
+		output.SystemInstruction = &geminiContent{Parts: []geminiPart{{Text: instruction}}}
+	}
+	config := map[string]interface{}{}
+	if input.MaxOutputTokens != nil && *input.MaxOutputTokens > 0 {
+		config["maxOutputTokens"] = *input.MaxOutputTokens
+	}
+	if input.Temperature != nil {
+		config["temperature"] = *input.Temperature
+	}
+	if input.TopP != nil {
+		config["topP"] = *input.TopP
+	}
+	if stops := parseStopStrings(input.Stop); len(stops) > 0 {
+		config["stopSequences"] = stops
+	}
+	if len(config) > 0 {
+		output.GenerationConfig = config
+	}
+	return json.Marshal(output)
+}
+
+// Responses has a broad item schema; the Gemini bridge keeps the P1 path
+// text-first and leaves tool/vision/reasoning items to the protocol matrix.
+func geminiResponsesText(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.EqualFold(raw, []byte("null")) {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	return messageContentText(raw)
+}
+
+func geminiResponsesContents(raw json.RawMessage) []geminiContent {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.EqualFold(raw, []byte("null")) {
+		return nil
+	}
+	if raw[0] == '"' {
+		var text string
+		if err := json.Unmarshal(raw, &text); err == nil {
+			return []geminiContent{{Role: "user", Parts: []geminiPart{{Text: text}}}}
+		}
+	}
+	var items []struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &items); err != nil {
+		text := strings.TrimSpace(messageContentText(raw))
+		if text == "" {
+			return nil
+		}
+		return []geminiContent{{Role: "user", Parts: []geminiPart{{Text: text}}}}
+	}
+	contents := make([]geminiContent, 0, len(items))
+	for _, item := range items {
+		text := strings.TrimSpace(messageContentText(item.Content))
+		if text == "" {
+			continue
+		}
+		role := "user"
+		if strings.EqualFold(strings.TrimSpace(item.Role), "assistant") {
+			role = "model"
+		}
+		contents = append(contents, geminiContent{Role: role, Parts: []geminiPart{{Text: text}}})
+	}
+	return contents
+}
+
+func geminiNativeGenerateRequest(apiType APIType, body []byte) (map[string]json.RawMessage, bool) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, false
+	}
+	if apiType == APIChatCompletions && !geminiNativeSourceProtocol(payload) {
+		return nil, false
+	}
+	if !geminiRawFieldPresent(payload["contents"]) {
+		return nil, false
+	}
+	fields := []string{
+		"contents",
+		"systemInstruction",
+		"generationConfig",
+		"safetySettings",
+		"tools",
+		"toolConfig",
+		"cachedContent",
+	}
+	output := make(map[string]json.RawMessage, len(fields))
+	for _, field := range fields {
+		raw, ok := payload[field]
+		if !ok || !geminiRawFieldPresent(raw) {
+			continue
+		}
+		output[field] = append(json.RawMessage(nil), raw...)
+	}
+	return output, true
+}
+
+func geminiNativeEmbedContentRequest(apiType APIType, body []byte) (map[string]json.RawMessage, bool) {
+	if apiType != APIEmbeddings {
+		return nil, false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, false
+	}
+	var source string
+	if err := json.Unmarshal(payload["_routerx_source_protocol"], &source); err != nil ||
+		!strings.EqualFold(strings.TrimSpace(source), "gemini_embed_content") {
+		return nil, false
+	}
+	if !geminiRawFieldPresent(payload["content"]) {
+		return nil, false
+	}
+	fields := []string{
+		"content",
+		"taskType",
+		"title",
+		"outputDimensionality",
+	}
+	output := make(map[string]json.RawMessage, len(fields))
+	for _, field := range fields {
+		raw, ok := payload[field]
+		if !ok || !geminiRawFieldPresent(raw) {
+			continue
+		}
+		output[field] = append(json.RawMessage(nil), raw...)
+	}
+	return output, true
+}
+
+func geminiNativeBatchEmbedContentsRequest(apiType APIType, body []byte) (map[string]json.RawMessage, bool) {
+	if apiType != APIGeminiBatchEmbedContents {
+		return nil, false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, false
+	}
+	var source string
+	if err := json.Unmarshal(payload["_routerx_source_protocol"], &source); err != nil ||
+		!strings.EqualFold(strings.TrimSpace(source), "gemini_batch_embed_contents") {
+		return nil, false
+	}
+	if !geminiRawFieldPresent(payload["requests"]) {
+		return nil, false
+	}
+	return map[string]json.RawMessage{
+		"requests": append(json.RawMessage(nil), payload["requests"]...),
+	}, true
+}
+
+func geminiNativeSourceProtocol(payload map[string]json.RawMessage) bool {
+	var source string
+	if err := json.Unmarshal(payload["_routerx_source_protocol"], &source); err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(source), "gemini")
+}
+
+func geminiRawFieldPresent(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.EqualFold(trimmed, []byte("null"))
 }
 
 func (a *GeminiAdapter) GetAPIEndpoint(apiType APIType, model string) string {
 	model = strings.TrimPrefix(strings.TrimSpace(model), "models/")
 	escapedModel := url.PathEscape(model)
 	switch apiType {
-	case APIChatCompletions, APIGeminiGenerateContent:
+	case APIChatCompletions, APIResponses, APIGeminiGenerateContent:
 		return "/v1beta/models/" + escapedModel + ":generateContent"
 	case APIGeminiStreamGenerateContent:
 		return "/v1beta/models/" + escapedModel + ":streamGenerateContent"
+	case APIEmbeddings:
+		return "/v1beta/models/" + escapedModel + ":embedContent"
+	case APIGeminiBatchEmbedContents:
+		return "/v1beta/models/" + escapedModel + ":batchEmbedContents"
 	case APIModels:
 		return "/v1beta/models"
 	default:
@@ -125,14 +343,25 @@ func (a *GeminiAdapter) DoRequest(ctx context.Context, baseURL, endpoint, apiKey
 	if err != nil {
 		return nil, err
 	}
+	SetRequestIDHeader(req)
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	ApplyUpstreamOptions(req)
 	return http.DefaultClient.Do(req)
 }
 
 func (a *GeminiAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *Usage, error) {
+	if apiType == APIGeminiBatchEmbedContents {
+		return geminiBatchEmbeddingToOpenAI(body)
+	}
+	if apiType == APIEmbeddings {
+		return geminiEmbeddingToOpenAI(body)
+	}
+	if apiType == APIResponses {
+		return geminiGenerateToResponses(body)
+	}
 	if apiType != APIChatCompletions && apiType != APIGeminiGenerateContent && apiType != APIGeminiStreamGenerateContent {
 		return nil, nil, errors.New("unsupported api type")
 	}
@@ -184,6 +413,151 @@ func (a *GeminiAdapter) ConvertResponse(apiType APIType, body []byte) ([]byte, *
 		"model":   input.ModelVersion,
 		"choices": choices,
 		"usage":   usage,
+	}
+	converted, err := json.Marshal(output)
+	return converted, usage, err
+}
+
+func geminiGenerateToResponses(body []byte) ([]byte, *Usage, error) {
+	var input struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+		UsageMetadata struct {
+			PromptTokenCount     int `json:"promptTokenCount"`
+			CandidatesTokenCount int `json:"candidatesTokenCount"`
+			TotalTokenCount      int `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
+		ModelVersion string `json:"modelVersion"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, nil, err
+	}
+	content := make([]map[string]interface{}, 0)
+	for _, candidate := range input.Candidates {
+		for _, part := range candidate.Content.Parts {
+			if part.Text == "" {
+				continue
+			}
+			content = append(content, map[string]interface{}{
+				"type": "output_text",
+				"text": part.Text,
+			})
+		}
+	}
+	usage := &Usage{
+		PromptTokens:     input.UsageMetadata.PromptTokenCount,
+		CompletionTokens: input.UsageMetadata.CandidatesTokenCount,
+		TotalTokens:      input.UsageMetadata.TotalTokenCount,
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	output := map[string]interface{}{
+		"id":         "resp_gemini",
+		"object":     "response",
+		"created_at": time.Now().Unix(),
+		"model":      input.ModelVersion,
+		"status":     "completed",
+		"output": []map[string]interface{}{
+			{
+				"id":      "msg_gemini",
+				"type":    "message",
+				"status":  "completed",
+				"role":    "assistant",
+				"content": content,
+			},
+		},
+		"usage": map[string]interface{}{
+			"input_tokens":  usage.PromptTokens,
+			"output_tokens": usage.CompletionTokens,
+			"total_tokens":  usage.TotalTokens,
+		},
+	}
+	converted, err := json.Marshal(output)
+	return converted, usage, err
+}
+
+func geminiEmbeddingToOpenAI(body []byte) ([]byte, *Usage, error) {
+	var input struct {
+		Embedding struct {
+			Values []float64 `json:"values"`
+		} `json:"embedding"`
+		UsageMetadata struct {
+			PromptTokenCount int `json:"promptTokenCount"`
+			TotalTokenCount  int `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, nil, err
+	}
+	if len(input.Embedding.Values) == 0 {
+		return nil, nil, errors.New("embedding response is empty")
+	}
+	usage := &Usage{
+		PromptTokens: input.UsageMetadata.PromptTokenCount,
+		TotalTokens:  input.UsageMetadata.TotalTokenCount,
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens
+	}
+	output := map[string]interface{}{
+		"object": "list",
+		"data": []map[string]interface{}{
+			{
+				"object":    "embedding",
+				"index":     0,
+				"embedding": input.Embedding.Values,
+			},
+		},
+		"usage": usage,
+	}
+	converted, err := json.Marshal(output)
+	return converted, usage, err
+}
+
+func geminiBatchEmbeddingToOpenAI(body []byte) ([]byte, *Usage, error) {
+	var input struct {
+		Embeddings []struct {
+			Values []float64 `json:"values"`
+		} `json:"embeddings"`
+		UsageMetadata struct {
+			PromptTokenCount int `json:"promptTokenCount"`
+			TotalTokenCount  int `json:"totalTokenCount"`
+		} `json:"usageMetadata"`
+	}
+	if err := json.Unmarshal(body, &input); err != nil {
+		return nil, nil, err
+	}
+	if len(input.Embeddings) == 0 {
+		return nil, nil, errors.New("embedding response is empty")
+	}
+	data := make([]map[string]interface{}, 0, len(input.Embeddings))
+	for idx, embedding := range input.Embeddings {
+		if len(embedding.Values) == 0 {
+			return nil, nil, errors.New("embedding response is empty")
+		}
+		data = append(data, map[string]interface{}{
+			"object":    "embedding",
+			"index":     idx,
+			"embedding": embedding.Values,
+		})
+	}
+	usage := &Usage{
+		PromptTokens: input.UsageMetadata.PromptTokenCount,
+		TotalTokens:  input.UsageMetadata.TotalTokenCount,
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.PromptTokens
+	}
+	output := map[string]interface{}{
+		"object": "list",
+		"data":   data,
+		"usage":  usage,
 	}
 	converted, err := json.Marshal(output)
 	return converted, usage, err

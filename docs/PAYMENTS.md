@@ -116,7 +116,7 @@ pending
 |------|------|----------|
 | `pending` | 已创建，等待支付 | 否 |
 | `paid` | provider 成功且已入账 | 是 |
-| `failed` | provider 失败或校验失败 | 否 |
+| `failed` | provider 明确失败；签名、金额或订单快照校验失败只拒绝入账，不直接改订单 | 否 |
 | `closed` | 用户取消、过期或管理员关闭 | 否 |
 | `refunded` | 全额退款已记录 | 按退款策略处理 |
 | `partially_refunded` | 部分退款已记录 | 按退款策略处理 |
@@ -124,6 +124,7 @@ pending
 状态转换规则：
 
 - `pending -> paid` 必须在同一事务内完成订单状态更新、额度入账和额度流水写入。
+- `pending -> closed` 可由当前用户取消自己的未支付订单触发，不能增加额度；重复取消已关闭订单应幂等返回当前状态。
 - `paid -> refunded` 或 `paid -> partially_refunded` 不应删除原始入账事实，只追加退款事实。
 - `failed`、`closed` 不能直接转 `paid`，除非 provider 后续给出可信成功事件，并保留状态修正审计。
 - 重复成功回调只能返回已处理结果，不重复加额度。
@@ -174,6 +175,7 @@ epay:{out_trade_no}:{trade_no}:{trade_status}:{money}
 - `idempotency_key` 应唯一，防止同一来源重复改变额度。
 - 写额度流水和更新 `users.quota` 必须在同一事务内完成。
 - 模型消费日志 `logs.quota_used` 不等同于充值流水；两者可以共同构成账务报表，但不能混为同一类事实。
+- 当前后端已提供 `GET /v0/user/quota-transactions` 和 `GET /v0/admin/quota-transactions` 查询该流水；用户侧强制只看自己，管理侧可按用户、类型、来源和时间过滤。
 
 ## 4. Provider 插件接口
 
@@ -232,6 +234,9 @@ receive raw body + Stripe-Signature
     -> if event is checkout.session.completed or trusted success:
         verify order_no, amount_total, currency, status
         mark order paid and grant quota in one transaction
+    -> if event is charge.refunded or charge.dispute.*:
+        verify original order amount and currency
+        record refund/dispute fact and configured risk action
 ```
 
 Stripe 要求：
@@ -241,6 +246,11 @@ Stripe 要求：
 - `amount_total`、`currency`、`product_id` 和订单快照必须一致。
 - 非成功事件可以记录为 `ignored`，不能入账。
 - 退款事件先记录为 refund fact；是否扣回额度由退款策略决定。
+- 争议/拒付事件先记录为 dispute fact；是否冻结 API Key 由风控策略决定。
+
+当前基础实现已支持创建 Stripe Checkout Session：当 `PAYMENT_STRIPE_SECRET_KEY` 和绝对 `return_url` 齐全时，用户创建订单会向 Stripe 写入 Checkout Session，metadata 包含 `order_no`、`user_id`、`product_id`，本地订单保存 `provider_order_id=session.id` 和 `checkout_url=session.url`；配置不足时仍返回本地安全 checkout 占位链接，便于开发演示但不适合作为生产收银台。`POST /v0/payment/stripe/webhook` 支持 `checkout.session.completed` 成功事件、`Stripe-Signature` 校验、订单 metadata 校验、金额/币种快照校验、`payment_events` 幂等、`quota_transactions` 入账，并写入 `payment_webhook.processed` 和 `payment_order.paid` 审计摘要。`charge.refunded` 全额或部分退款事件会记录 `payment_refund.processed`，自动扣回成功时额外记录 `payment_refund.deducted`；`charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated` 会更新 `payment_disputes` 并记录 `payment_dispute.*` 生命周期审计，created 阶段可按 settings 禁用该用户已启用的 API Key。
+
+Stripe `checkout.session.async_payment_failed` 当前也会在签名、金额、币种和 metadata 校验通过且本地订单仍为 `pending` 时，把订单置为 `failed`，写 `payment_webhook.failed` 审计且不增加额度。
 
 ## 6. 易支付契约
 
@@ -276,6 +286,7 @@ receive notify
 - 签名时排除 `sign`、`sign_type` 和空值字段。
 - 金额必须和本地订单一致。
 - 同步返回页只展示本地订单状态，不作为入账依据。
+- 管理端向易支付发起退款请求时必须使用独立的 `payment.epay.refund_url`，携带 `pid`、`out_trade_no`、`money`、`reason`、`idempotency_key` 和 MD5 签名；返回成功只代表 provider 已受理，本地订单先进入 `refund_pending`。
 - 不同易支付实现的参数名和签名规则可能不同，适配器必须把差异限制在 provider 层。
 
 ## 7. 充值码契约
@@ -303,6 +314,25 @@ user submits code
     -> write audit
 ```
 
+当前实现：
+
+- 用户可通过 `POST /v0/user/redem` 兑换未使用充值码。
+- 兑换在同一数据库事务内完成过期校验、`redem_codes.status/used_by/used_at` 更新、`users.quota` 增加和 `quota_transactions` 写入。
+- 同一个充值码只能成功兑换一次；已使用、已作废、已过期或不存在的充值码不会写入额度流水，重复兑换不会重复入账，并写入 `redem_code.redeem_denied` 拒绝审计。
+- 兑换成功会写入 `redem_code.redeem` 管理审计，摘要记录脱敏兑换码、额度、使用人和兑换后余额，不保存完整兑换码；兑换拒绝摘要同样只保存脱敏兑换码和稳定 `error_code`。
+- 管理员额度调整已写入 `quota_transactions`，记录 `actor_user_id`、`reason`、变更前后余额和幂等键。
+- 用户可通过 `POST /v0/user/payment/orders/:order_no/cancel` 取消自己的 `pending` 订单，订单置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付、退款中或已退款订单不能取消，并写 `payment_order.cancel_denied` 拒绝审计，`error_code` 可用于区分非 pending、订单不存在或不属于当前用户。
+- 管理员可通过 `/v0/admin/redem` 生成随机充值码或导入指定充值码，可写入 `batch_no`、`note` 和未来 `expired_at`，并可作废未使用充值码；这些管理操作会写入 `redem_code.*` 管理审计，创建请求被本地拒绝时写 `redem_code.create_denied`，完整兑换码只进入脱敏摘要。
+- 管理员可通过 `/v0/admin/payment/products` 创建、更新、启用和禁用支付商品；用户侧只展示启用商品，禁用商品不能创建新订单；支付商品管理成功操作会写入 `admin_audit_logs`。
+- 用户侧支付商品列表和本地 `pending` 订单创建/查询已具备基础实现；创建订单要求对应 provider 已在 settings 启用，成功会写 `payment_order.create` 管理审计，摘要不保存 checkout URL；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，使用稳定 `error_code` 区分原因。Stripe secret 和绝对 `return_url` 齐全时会创建 Stripe Checkout Session；易支付网关、商户号、回调 URL 和 `PAYMENT_EPAY_KEY` 配置齐全时会返回签名收银台 URL；pending 订单不会入账。
+- Stripe webhook 已支持 `checkout.session.completed` 签名校验、金额/币种/metadata 校验、`payment_events` 幂等、入账审计和入账；`checkout.session.async_payment_failed` 会在快照校验通过且订单仍为 pending 时置为 `failed`，写 `payment_webhook.failed` 审计且不入账；`charge.refunded` 全额或部分退款事件可幂等记录订单退款状态，写入退款审计，并可按 settings 全额或比例扣回额度；`charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated` 可幂等更新 `payment_disputes` 争议事实，写入争议生命周期审计，并可在 created 阶段按 settings 禁用用户已启用 API Key。
+- 易支付异步通知已支持 MD5 签名校验、金额校验、`payment_events` 幂等记录、成功订单置为 `paid`、明确失败订单置为 `failed`、`quota_transactions` 入账、用户额度增加和基础 webhook/入账/失败审计；重复通知不重复入账。
+- 易支付同步返回页已支持本地订单状态只读展示，不作为入账依据。
+- 支付相关人工补账/扣回已支持 `POST /v0/admin/payment/adjustments`，会写 `manual_credit` 或 `manual_debit` 额度流水，并在同一事务中写 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 审计；缺少原因、金额为 0、重复幂等键或关联订单/权限校验失败会写 `payment_manual_adjust.denied`。
+- 管理员确认后的人工退款已支持 `POST /v0/admin/payment/refunds`，会校验 `paid` 订单，按退款额度写 `refund_deduct` 额度流水，将订单置为 `refunded` 或 `partially_refunded`，并写 `payment_refund.manual` 审计；重复幂等键、订单状态不允许、退款额度非法或余额不足会写 `payment_refund.manual_denied`。
+- Stripe 和易支付 provider 侧退款请求已支持 `POST /v0/admin/payment/refund-requests`，会创建 provider refund、记录退款请求并将订单置为 `refund_pending`；本地参数、订单状态或幂等键拒绝会写 `payment_refund.request_denied` 且 `result=denied`，provider 调用失败会写同动作但 `result=failed`，摘要不保存 provider secret；Stripe 最终状态仍由 webhook 确认，易支付需等待可信后续通知或人工收尾。
+- 更多 provider 会话创建、更多 provider 自动退款适配和更多 provider 争议生命周期仍属于后续增强，不能把当前实现误写成完整支付闭环。
+
 要求：
 
 - 同一个充值码只能成功兑换一次。
@@ -322,7 +352,7 @@ user submits code
 | 用户余额足够扣回 | 可按配置自动扣回，写 `refund_deduct` 流水 |
 | 用户余额不足 | 不自动产生负余额，转人工处理或风控冻结 |
 | 部分退款 | 按比例或固定额度策略记录，必须可解释 |
-| 争议或拒付 | 记录 dispute event，按风控策略冻结用户或 API Key |
+| 争议或拒付 | 记录 dispute lifecycle，按风控策略冻结用户或 API Key |
 
 退款状态：
 
@@ -337,6 +367,20 @@ user submits code
 - 原支付订单和原额度入账流水不可删除。
 - 自动扣回策略必须进入 settings，并在审计中保留策略快照。
 - 人工处理必须记录操作者、原因、前后余额和关联订单。
+
+当前基础实现：
+
+- Stripe `charge.refunded` 退款事件会校验原订单金额和币种，写入 `payment_events` 幂等事实；全额退款将订单置为 `refunded`，部分退款将订单置为 `partially_refunded`，并可收尾此前由管理端发起后进入 `refund_pending` 的订单。
+- 管理员可通过 `POST /v0/admin/payment/refund-requests` 向 Stripe 或易支付发起 provider 退款请求；接口会调用 Stripe Refund API 或配置的易支付退款地址，写入 `payment_refund_requests`，订单进入 `refund_pending`，并写 `payment_refund.requested` 审计。缺少原因、重复幂等键、订单不存在、订单未支付、退款金额非法或 provider 发起失败会写 `payment_refund.request_denied` 审计，使用稳定 `error_code` 区分拒绝原因。退款是否最终成功仍以后续可信 provider 事件或人工收尾为准。
+- 默认 `payment.refund.auto_deduct=false`，退款只记录订单状态，不扣用户额度。
+- 退款处理成功会写入 `payment_refund.processed` 管理审计，摘要记录 provider、event_id、订单号、金额、币种、额度和扣回策略快照。
+- 开启 `payment.refund.auto_deduct=true` 后，如果用户余额足够，写入 `quota_transactions(type=refund_deduct, source_type=refund)` 并扣回原订单额度或按退款金额比例扣回额度，同时写入 `payment_refund.deducted` 审计；重复退款事件不重复扣回。
+- `payment.refund.allow_negative_balance=false` 时余额不足不会自动扣成负数，需转人工处理。
+- 管理员可通过 `POST /v0/admin/payment/refunds` 对已经确认的退款事实做人工落账；接口要求 `order_no`、`refund_quota`、`reason` 和 `idempotency_key`，只接受 `paid` 订单，`refund_quota` 不能超过订单额度。
+- 人工退款成功后写入 `quota_transactions(type=refund_deduct, source_type=refund, source_id=<order_no>)`，全额退款将订单置为 `refunded`，部分退款置为 `partially_refunded`，并写入 `payment_refund.manual` 管理审计；重复 `idempotency_key` 不会重复扣回，并会写 `payment_refund.manual_denied` 拒绝审计。
+- Stripe `charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated` 争议生命周期事件会校验原订单金额和币种，写入 `payment_events` 幂等事实，并按 `provider_dispute_id` upsert `payment_disputes` 当前事实。
+- 争议生命周期审计会按事件写入 `payment_dispute.created`、`payment_dispute.updated`、`payment_dispute.closed` 或 `payment_dispute.funds_changed`，审计资源为 `payment_dispute`，便于按 Stripe dispute id 串联整个生命周期；created 事件也保留 `payment_event` 资源审计以兼容事件排障。
+- 默认 `payment.dispute.auto_disable_tokens=false`，争议只记录事实；开启后会在 created 阶段把该用户已启用的 API Key 置为禁用并记录 `revoked_reason=payment_dispute`，不直接修改用户额度或订单状态。
 
 ## 9. 人工补账和扣回
 
@@ -366,6 +410,17 @@ user submits code
 - 用人工补账掩盖支付签名失败。
 - 把模型消费扣费和人工调整混在同一日志口径。
 
+当前基础实现：
+
+- 管理员可通过 `POST /v0/admin/payment/adjustments` 做支付相关人工补账或扣回。
+- `amount > 0` 写 `quota_transactions(type=manual_credit)`，`amount < 0` 写 `quota_transactions(type=manual_debit)`；扣回默认不允许余额扣成负数。
+- `reason` 默认必填，由 `payment.manual_adjust.require_reason=true` 控制；`idempotency_key` 必填，用于防止同一人工动作重复改变余额。
+- 传入 `order_no` 时会校验订单属于目标用户，并把流水来源记为 `source_type=payment_order`、`source_id=<order_no>`。
+- 成功后写 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 审计，摘要包含用户、订单号、金额、原因、前后余额、幂等键和来源；本地拒绝写 `payment_manual_adjust.denied`，摘要不包含请求体之外的敏感信息。
+- 管理员可通过 `POST /v0/admin/payment/refunds` 对支付订单做人工退款落账；该路径使用 `refund_deduct` 表示退款扣回，不复用 `manual_debit`，便于财务和客服按退款口径追踪。
+- 人工退款遵循 `payment.manual_adjust.require_reason` 和 `payment.refund.allow_negative_balance`，成功后审计摘要包含订单、用户、退款额度、订单状态、原因、前后余额、幂等键和 provider 快照；本地拒绝写 `payment_refund.manual_denied`，使用稳定 `error_code` 区分重复幂等键、订单状态、额度和余额问题。
+- `payment.manual_adjust.large_amount_threshold` 已注册为非负整数配置，后续可用于二次确认或双人审批。
+
 ## 10. 订单创建接口契约
 
 用户创建支付订单时：
@@ -379,7 +434,7 @@ POST /v0/user/payment/orders
 1. 校验用户登录态。
 2. 查询服务端商品。
 3. 校验商品启用、provider 可用、金额和币种。
-4. 创建 `payment_orders(pending)`，保存商品快照。
+4. 创建 `payment_orders(pending)`，保存商品快照，并按 `payment.order_expire_minutes` 写入 `expired_at`。
 5. 调用 provider 创建支付会话或跳转参数。
 6. 保存 provider_order_id 和 checkout_url。
 7. 返回安全响应。
@@ -450,7 +505,7 @@ receive webhook
 
 - 不返回给控制台。
 - 不写入日志、审计和支付事件明文。
-- 生产开启 provider 时 `/ready` 目标检查应确认必需密钥可用。
+- 生产开启 provider 时 `/ready` 会确认必需密钥可用。
 - 轮换时保留短窗口双密钥或按 provider 支持方式处理。
 
 ## 13. 观测和审计
@@ -460,7 +515,7 @@ receive webhook
 | 指标 | 标签 | 说明 |
 |------|------|------|
 | `routerx_payment_orders_total` | provider、status | 支付订单数 |
-| `routerx_payment_events_total` | provider、event_type、result | 支付事件处理数 |
+| `routerx_payment_events_total` | provider、event_type、processed | 支付事件处理状态 |
 | `routerx_payment_grants_total` | provider、source_type | 入账次数 |
 | `routerx_payment_quota_granted_total` | provider | 入账额度 |
 | `routerx_payment_failures_total` | provider、reason | 支付处理失败 |
@@ -473,9 +528,11 @@ receive webhook
 - 接收和处理 webhook。
 - 支付入账。
 - 退款记录和扣回。
-- 充值码创建、作废、兑换。
-- 人工补账和扣回。
+- 充值码创建、创建拒绝、作废、兑换和兑换拒绝。
+- 人工补账、扣回、人工调整拒绝、人工退款落账、人工退款拒绝、订单创建拒绝、Stripe/易支付 provider 退款请求、provider 退款请求拒绝和争议生命周期。
 - 支付 settings 和密钥引用变更。
+
+当前基础实现已覆盖支付商品创建、修改、启用、禁用，支付订单创建和本地拒绝审计，Stripe/易支付 webhook 入账，Stripe async payment failed 与易支付明确失败通知审计，Stripe 全额/部分退款和扣回，Stripe 争议生命周期记录和可选 API Key 禁用，支付相关人工补账/扣回及拒绝审计、人工退款落账及拒绝审计、Stripe/易支付 provider 退款请求及本地拒绝审计，以及充值码生成、导入、创建拒绝、批次/备注/过期策略、作废、兑换成功和兑换拒绝审计；更多 provider 自动退款适配和更多失败分支审计仍需继续补齐。
 
 审计字段：
 
@@ -512,7 +569,9 @@ receive webhook
 |------|------|
 | 创建订单 | 保存商品快照，返回安全 checkout 信息 |
 | Stripe 成功 webhook | 签名正确、金额一致、订单 paid、额度增加、流水写入 |
+| Stripe 失败 webhook | 签名正确、金额一致、订单 failed、额度不增加、写失败审计 |
 | 易支付成功通知 | 签名正确、金额一致、返回 success、额度只入账一次 |
+| 易支付失败通知 | 签名正确、金额一致、返回 success、订单 failed、额度不增加、写失败审计 |
 | 重复 webhook | payment_event 幂等，用户额度不重复增加 |
 | 签名失败 | 拒绝入账，记录脱敏事件 |
 | 金额不匹配 | 拒绝入账，订单不变，触发失败指标 |

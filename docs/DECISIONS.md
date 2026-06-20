@@ -37,7 +37,7 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 | RXD-008 | 下游通道密钥使用 `ENCRYPTION_KEY` 或 KMS 加密 | Active | 已定 | `DATA_MODEL`、`OPERATIONS` |
 | RXD-009 | 有最大消耗额度的 API Key 是预算上限，不在创建时划拨用户余额 | Active | 已定 | `API_KEYS`、`BILLING`、`API`、`TESTING` |
 | RXD-010 | API Key 调用成功后始终扣用户余额；有限 Key 还要同时消耗自身预算上限 | Active | 已定 | `API_KEYS`、`BILLING`、`API`、`TESTING` |
-| RXD-011 | P0 `relay.retry_count=0`，先保证无重试闭环稳定 | Confirm | P0 gate | `SETTINGS`、`RELAY`、`IMPLEMENTATION` |
+| RXD-011 | `relay.retry_count=0` 默认单次调用；大于 0 按 `relay.retry_on_status` 开启非流式安全重试 | Active | 已定 | `SETTINGS`、`RELAY`、`IMPLEMENTATION` |
 | RXD-012 | P0 默认不记录请求和响应 body | Active | 已定 | `SETTINGS`、`OPERATIONS`、`RELAY` |
 | RXD-013 | `/v1` 必须返回入口协议兼容响应和错误格式 | Active | 已定 | `API`、`PROTOCOLS`、`RELAY`、`TESTING` |
 | RXD-014 | `routerx.route` 只能表达偏好，不能绕过管理员策略 | Active | 已定 | `RELAY`、`API`、`DESIGN` |
@@ -81,24 +81,25 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 - 扣费事务必须同时更新用户余额和 Key 预算计数，保证并发下二者都不透支。
 - 旧的划拨式 `remain_quota` 存量如存在，需要迁移或在文档和代码中标记为 legacy 语义。
 
-### RXD-011：P0 默认不自动重试
+### RXD-011：默认不自动重试
 
 默认设计：
 
 - 当前 `relay.retry_count=0`。
-- P0 只做一次明确的下游调用，先保证错误归因、日志、扣费和排障稳定。
-- P1 再开启可配置重试、熔断和半开恢复。
+- 默认只做一次明确的下游调用，先保证错误归因、日志、扣费和排障稳定。
+- 当前已支持通过 `relay.retry_count > 0` 为非流式请求开启有限候选通道重试，HTTP 状态码由 `relay.retry_on_status` 白名单控制。
+- `error_count` 熔断、基础限流、冷却窗口后的半开候选探测和后台探测恢复已进入 P1；限流拒绝已写入基础 `rate_limit_snapshot`，熔断无候选拒绝已写入基础 `breaker_snapshot`。
 
 为什么这样选：
 
 - P0 更容易证明“是否调用了下游、是否扣费、失败属于谁处理”。
-- 避免重试导致多次下游请求、重复 usage、错误归因和账单解释复杂化。
+- 避免默认重试导致多次下游请求、重复 usage、错误归因和账单解释复杂化。
 - 商业级开箱体验首先需要稳定可解释，而不是一开始追求自动容灾。
 
 代价：
 
-- 单个上游临时故障时，P0 不会自动换通道重试。
-- 管理员需要通过多通道、监控和 P1 重试能力继续增强可用性。
+- 默认配置下，单个上游临时故障不会自动换通道重试。
+- 管理员需要显式设置 `relay.retry_count`，必要时调整 `relay.retry_on_status`，并继续通过多通道、监控、熔断和限流增强可用性。
 
 ### RXD-019：生产 readiness 严格化
 
@@ -238,6 +239,7 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 - `LOG_SQL_DSN` 可选；为空时模型调用日志写入主数据库。
 - 配置 `LOG_SQL_DSN` 时，高流量调用日志、诊断快照和可清理历史日志可写入独立日志数据库。
 - 扣费事务所需的最小结算事实必须保留在主数据库同事务内，或先写主库 outbox，再异步投递到日志数据库。
+- 当前实现会启动期初始化独立日志库的 `logs` schema，并在每次记录时先写主库完整调用事实和 `log_replication_outboxes`，再写入日志库副本；运行期日志库写失败不会删除主库事实，后台 worker 会在恢复后重放 pending outbox。
 
 为什么这样选：
 
@@ -247,8 +249,8 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 
 代价：
 
-- LogService 需要支持双连接和降级策略。
-- 查询日志时需要知道当前实例是否启用独立日志库。
+- LogService 需要维护主库和日志库两条连接语义，并负责 outbox 状态更新、异步投递和重放。
+- 查询日志时需要知道当前实例是否启用独立日志库；当前管理日志列表、清理和看板今日调用/额度会优先使用日志库，列表查询失败时回退主库事实。
 
 ### RXD-028：通道候选预加载和缓存
 

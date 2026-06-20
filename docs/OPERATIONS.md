@@ -25,6 +25,7 @@ RouterX 支持两类基础运行方式，并可在第二类上扩展高可用。
 | `ENCRYPTION_KEY` | 空 | 加密下游 API Key、OAuth/OIDC client secret 的主密钥；生产必须显式指定或由 KMS 提供 |
 | `PAYMENT_STRIPE_SECRET_KEY` | 空 | Stripe Secret Key，启用 Stripe 时必填 |
 | `PAYMENT_STRIPE_WEBHOOK_SECRET` | 空 | Stripe Webhook 签名密钥，启用 Stripe Webhook 时必填 |
+| `PAYMENT_STRIPE_API_BASE` | `https://api.stripe.com` | 可选 Stripe API 基础地址；仅测试、私有代理或受控网络出口场景覆盖 |
 | `PAYMENT_EPAY_KEY` | 空 | 易支付商户签名密钥，启用易支付时必填 |
 | `SERVER_PORT` | `3000` | HTTP 服务端口 |
 
@@ -83,13 +84,21 @@ rediss://:password@redis.example.com:6379/0
 | `jwt.admin_expire_hours` | `24` | 管理员 JWT 过期小时数 |
 | `jwt.user_expire_hours` | `168` | User JWT 过期小时数，管理端和用户端共用 |
 | `rate_limit.enabled` | `true` | 是否启用限流 |
-| `rate_limit.global_per_min` | `1000` | 全局每分钟限制 |
-| `rate_limit.per_token_per_min` | `60` | Token 每分钟限制 |
-| `rate_limit.per_ip_per_min` | `30` | IP 每分钟限制 |
+| `rate_limit.global_per_min` | `1000` | 全局每分钟限制；`0` 表示关闭该维度 |
+| `rate_limit.per_token_per_min` | `60` | Token 每分钟限制；`0` 表示关闭该维度 |
+| `rate_limit.per_ip_per_min` | `30` | IP 每分钟限制；`0` 表示关闭该维度 |
+| `rate_limit.per_user_per_min` | `0` | 用户每分钟限制；`0` 表示关闭该维度 |
+| `rate_limit.per_model_per_min` | `0` | 模型每分钟限制；`0` 表示关闭该维度 |
+| `rate_limit.per_channel_per_min` | `0` | 通道每分钟限制；`0` 表示关闭该维度 |
 | `relay.timeout` | `120` | 下游超时秒数 |
-| `relay.retry_count` | `0` | 当前默认不自动重试；开启重试必须补错误分类和测试 |
-| `relay.error_auto_ban` | `true` | 自动熔断 |
-| `relay.error_ban_threshold` | `10` | 熔断阈值 |
+| `relay.retry_count` | `0` | 默认不自动重试；大于 0 时非流式仅对可安全重试错误换候选 |
+| `relay.retry_on_status` | `[429,500,502,503,504]` | 非流式可重试 HTTP 状态码白名单 |
+| `relay.error_auto_ban` | `true` | 是否按 `error_count` 自动排除故障通道 |
+| `relay.error_ban_threshold` | `10` | 自动排除通道的连续错误阈值 |
+| `relay.error_ban_cooldown_seconds` | `300` | 熔断通道半开探测冷却秒数，`0` 表示不自动探测 |
+| `relay.error_probe_enabled` | `true` | 是否启用后台熔断通道探测 worker |
+| `relay.error_probe_interval_seconds` | `60` | 后台探测间隔秒数，`0` 表示关闭后台探测 |
+| `relay.error_probe_batch_size` | `20` | 每轮最多探测的已过冷却窗口熔断通道数量 |
 | `relay.log_body_max_bytes` | `0` | Relay 请求/响应 body 日志上限，`0` 表示不记录 |
 | `billing.default_ratio` | `1.0` | 默认计费倍率 |
 | `log.body_max_bytes` | `0` | 通用日志 body 上限，`0` 表示不记录 |
@@ -108,7 +117,7 @@ rediss://:password@redis.example.com:6379/0
 2. 初始化或迁移只补缺失 key，不覆盖已有管理员配置。
 3. 管理端修改配置时先做类型和业务校验，校验失败不得写入 DB。
 4. 写入成功后刷新 Redis 缓存；缓存刷新失败时返回可感知错误或进入明确降级状态。
-5. 关键配置变更写入管理审计日志，审计内容只保存变更摘要和脱敏值。
+5. 关键配置变更写入管理审计日志；当前 `PUT /v0/admin/setting` 成功后会按 key 写入脱敏摘要。
 6. 需要重启的配置必须在响应中标记 `restart_required=true`，不能让用户误以为已经热生效。
 
 配置审计建议字段：
@@ -217,10 +226,11 @@ volumes:
 日志数据库：
 
 - `LOG_SQL_DSN` 为空时，模型调用日志写入主业务数据库。
-- `LOG_SQL_DSN` 非空时，模型调用日志、诊断快照和可清理历史日志可以写入独立日志数据库。
+- `LOG_SQL_DSN` 非空时，启动流程会初始化独立日志数据库并迁移 `logs` schema；初始化失败会阻止服务启动，避免流量进入不可解释状态。
+- `LOG_SQL_DSN` 非空时，模型调用日志、诊断快照和可清理历史日志会通过主库 `log_replication_outboxes` 补写到独立日志数据库；管理端日志列表、日志清理和看板今日调用/额度优先使用日志库，列表与看板查询失败时回退读取主库事实。
 - 独立日志数据库适合单独备份、冷热分层、按周期归档和清理。
-- 扣费事务、用户余额变化和 Key 预算消耗的最小结算事实必须保留在主业务数据库或主库 outbox 中，不能只依赖日志数据库。
-- 日志数据库不可用时，系统应能进入明确降级状态：要么拒绝产生不可解释账单，要么先写主库 outbox 并异步补写日志。
+- 扣费事务、用户余额变化和 Key 预算消耗的最小结算事实必须保留在主业务数据库或主库 outbox 中，不能只依赖日志数据库；当前实现会在主库事务中保留完整调用事实，并同事务创建日志补写 outbox。
+- 日志数据库运行期不可用时，当前实现保留主库事实、记录 pending outbox 并写应用告警；后台 worker 默认每分钟重放 pending outbox，`/metrics` 通过 `routerx_log_db_configured`、`routerx_log_db_up` 和 `routerx_log_replication_outbox_items{status}` 暴露配置状态、ping 状态和补写积压状态。
 
 日志类型：
 
@@ -228,15 +238,17 @@ volumes:
 |------|------|------|
 | HTTP 访问日志 | 应用日志 | method、path、status、latency、ip、request_id |
 | 模型调用日志 | `logs` 表 | user、token、channel、model、usage、quota、错误 |
-| 管理审计日志 | 建议新增表 | 管理员操作、目标资源、变更前后摘要 |
+| 管理审计日志 | `admin_audit_logs` 表 | 管理员操作、目标资源、变更前后摘要 |
 | 系统错误日志 | 应用日志 | panic、DB、Redis、下游错误 |
 
-结构化日志字段建议：
+结构化日志字段：
 
 | 字段 | 说明 |
 |------|------|
 | `request_id` | 请求 ID |
-| `trace_id` | 链路追踪 ID |
+| `trace_id` | 链路追踪 ID；请求携带合法 `traceparent` 时从其中提取 |
+| `traceparent` | W3C Trace Context 原始传播头；只在请求提供合法值时记录 |
+| `tracestate` | W3C Trace Context 厂商状态；只在 `traceparent` 合法且自身格式合法时记录 |
 | `method` | HTTP method |
 | `path` | 请求路径 |
 | `status` | HTTP 状态 |
@@ -246,6 +258,8 @@ volumes:
 | `channel_id` | 通道 ID |
 | `model` | 模型 |
 | `error` | 错误摘要 |
+
+当前 `observability.structured_logs_enabled=false` 时保留原文本 HTTP/Panic 日志；开启后 HTTP 访问日志输出 `event=http_request` 的 JSON line，字段包含 `request_id`、method、path、path_group、status、latency_ms 和 client_ip；请求携带合法 `traceparent` 时还会记录 `trace_id`、`traceparent` 和可用的 `tracestate`，响应回显 `Traceparent`/`Tracestate`，`/v1` 真实上游请求也会透传。Recovery panic 日志输出 `event=panic` 的 JSON line，字段包含 request_id、method、path、client_ip、panic_type 和 stack；请求携带合法 trace context 时同样写入 `trace_id`、`traceparent` 和可用的 `tracestate`，仍不记录原始 panic 值。
 
 脱敏规则：
 
@@ -259,7 +273,7 @@ volumes:
 
 完整指标目录、标签控制和告警建议以 `docs/OBSERVABILITY.md` 为准。
 
-建议暴露 Prometheus `/metrics`。
+当前基础实现已提供 Prometheus 文本 `/metrics`，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、DB/Redis 错误计数、日志补写 outbox 状态、HTTP 请求量/耗时、调用日志状态、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露指标、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标，后续继续补更细错误维度。
 
 核心指标：
 
@@ -269,13 +283,29 @@ volumes:
 | `routerx_http_request_duration_seconds` | histogram | HTTP 请求耗时 |
 | `routerx_relay_requests_total` | counter | 模型转发请求数 |
 | `routerx_relay_errors_total` | counter | 转发错误数 |
+| `routerx_logs_total` | counter | 当前调用日志状态计数 |
 | `routerx_relay_duration_seconds` | histogram | 下游调用耗时 |
+| `routerx_upstream_duration_seconds` | histogram | 上游调用耗时 |
 | `routerx_tokens_used_total` | counter | token 用量 |
-| `routerx_quota_used_total` | counter | 额度消耗 |
+| `routerx_quota_used_total` | counter | 按模型、供应商和用户组统计的额度消耗 |
+| `routerx_api_key_auth_total` | counter | API Key 鉴权成功和失败趋势 |
+| `routerx_api_key_active_total` | gauge | API Key 启用、禁用和过期状态 |
+| `routerx_api_key_last_used_age_seconds` | histogram | API Key 距离上次使用的秒数 |
+| `routerx_api_key_quota_remaining` | gauge | 可用有限额度 API Key 的剩余额度；无限额度 Key 不混入 |
+| `routerx_api_key_rotation_total` | counter | API Key 轮换记录计数 |
+| `routerx_api_key_leak_events_total` | counter | API Key 泄露相关禁用事件 |
 | `routerx_channel_available` | gauge | 通道可用状态 |
 | `routerx_channel_error_count` | gauge | 通道连续错误数 |
-| `routerx_redis_errors_total` | counter | Redis 错误数 |
-| `routerx_db_errors_total` | counter | DB 错误数 |
+| `routerx_channel_probe_total` | counter | 后台熔断探测结果计数，标签为 `result=success|failed` |
+| `routerx_payment_orders_total` | gauge | 支付订单状态计数 |
+| `routerx_payment_events_total` | gauge | 支付事件处理状态 |
+| `routerx_db_up` | gauge | 数据库 ping 状态 |
+| `routerx_redis_up` | gauge | Redis ping 状态 |
+| `routerx_log_db_configured` | gauge | 独立日志库配置状态 |
+| `routerx_log_db_up` | gauge | 日志存储 ping 状态 |
+| `routerx_log_replication_outbox_items` | gauge | 日志补写 outbox 当前状态计数 |
+| `routerx_redis_errors_total` | counter | Redis 错误数，当前使用 `operation=ping|rate_limit_required|rate_limit_incr|rate_limit_expire` 标记健康探测和限流依赖失败 |
+| `routerx_db_errors_total` | counter | DB 错误数，当前使用 `operation=ping|log_ping|migration_status` 标记主库、日志库和迁移状态读取失败 |
 
 ## 健康检查
 
@@ -289,20 +319,28 @@ volumes:
 |------|------|--------|
 | `/health` | 存活检查 | 进程是否存活 |
 | `/ready` | 就绪检查 | DB、迁移状态、必要配置 |
-| `/metrics` | 指标 | Prometheus metrics |
+| `/metrics` | 指标 | Prometheus metrics，受 `observability.metrics_enabled` 控制 |
 
-当前 `/ready` 已检查数据库连通性，以及初始化后 `jwt.secret` 是否可用。目标生产就绪检查应继续补充：
+当前 `/ready` 已检查数据库连通性、`schema_migrations.dirty` 迁移状态、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、关键 auth/relay/rate-limit settings 的注册表校验、已启用支付 provider 的必需密钥，以及已有加密通道密钥或外部登录 client secret 时的主密钥可用性和密文可解性：
 
-- 迁移状态不是 dirty。
+- `payment.epay.enabled=true` 时必须存在 `PAYMENT_EPAY_KEY`。
+- `payment.stripe.enabled=true` 时必须存在 `PAYMENT_STRIPE_SECRET_KEY` 和 `PAYMENT_STRIPE_WEBHOOK_SECRET`。
+- 数据库中存在 `enc:v1:` 通道密钥时必须存在 `ENCRYPTION_KEY`，且单 key、多 key、upstreams 中的密文必须能被当前主密钥解开。
+- `settings` 中存在 `enc:v1:` 形态的 `oauth.*.client_secret` 或 `oidc.*.client_secret` 时，也必须能被当前主密钥解开。
+- 如果 golang-migrate 的 `schema_migrations` 表存在且最新记录 `dirty=true`，`/ready` 会返回 `not_ready` 并在 `migration` 字段返回 `dirty`。
+- 如果关键 settings 因直接改库、迁移漂移或人工修复变成非法值，`/ready` 会返回 `not_ready` 并在 `setting` 字段指出问题 key。
+
+目标生产就绪检查应继续补充：
+
 - 生产模式下 `JWT_SECRET` 或数据库 `jwt.secret` 可用且跨实例一致。
-- 生产模式下 `ENCRYPTION_KEY` 或 KMS 可用，且能解密已有 `enc:v1:` 密文。
+- KMS provider 可用性、`enc:v*` 版本升级、OAuth/OIDC client secret 等更多敏感字段轮换流程。
 - Redis 策略符合当前模式：SQLite 单镜像可无 Redis；外部数据库和集群模式必须 Redis 可用。
-- 必要 settings 已加载，关键配置值格式合法。
+- 更完整的必要 settings 覆盖和跨模块配置巡检。
 
 Redis 失败处理：
 
 - `/health` 可以仍然健康。
-- `/ready` 在外部数据库、生产或集群模式下应返回不就绪，避免流量进入功能受限实例。
+- `/ready` 在外部数据库模式下已返回不就绪；生产或集群模式后续可在同一策略上扩展，避免流量进入功能受限实例。
 - 如果当前是 SQLite 单镜像模式，Redis 不可用不影响 `/ready`，但相关缓存和限流只能使用进程内策略。
 
 ## 安全基线
@@ -326,7 +364,7 @@ Redis 失败处理：
 - `jwt.secret` 初始化后不可为空。
 - `jwt.secret` 必须支持由 `JWT_SECRET` 环境变量指定；生产和多实例必须显式配置，禁止各实例启动时各自随机生成。
 - 下游 API Key、OAuth/OIDC client secret 应加密存储，主密钥来自 `ENCRYPTION_KEY` 环境变量或 KMS。
-- 当前加密格式使用 `enc:v1:` 前缀；未配置 `ENCRYPTION_KEY` 时新密钥可能以兼容方式保存，生产必须通过发布检查和 `/ready` 目标检查阻止这种状态接收流量。
+- 当前加密格式使用 `enc:v1:` 前缀；未配置 `ENCRYPTION_KEY` 时新密钥可能以兼容方式保存，已有 `enc:v1:` 通道密钥或外部登录 client secret 且缺少或无法通过当前 `ENCRYPTION_KEY` 解密时 `/ready` 会阻止实例接收流量。
 - 支付密钥应通过环境变量、KMS 或加密配置提供，禁止写入前端响应、日志或明文配置文件。
 - API Key 明文只返回一次，数据库保存 SHA256 哈希；后续重点是存量明文迁移兜底、缓存失效和审计。
 - 管理端任何响应不得返回完整下游 API Key。
@@ -336,7 +374,7 @@ Redis 失败处理：
 | 密钥 | 创建 | 轮换 | 丢失影响 |
 |------|------|------|----------|
 | `jwt.secret` | 初始化或 `JWT_SECRET` 注入 | 支持双签或短窗口强制重新登录 | 旧 JWT 失效，跨实例登录异常 |
-| `ENCRYPTION_KEY` | 环境变量或 KMS 注入 | 目标支持逐条解密后重加密，更新 `enc:v*` 版本 | 已加密下游密钥不可解密 |
+| `ENCRYPTION_KEY` | 环境变量或 KMS 注入 | 通道 `api_key`、`api_keys`、`upstreams.api_key` 和外部登录 `client_secret` 已支持用旧主密钥逐条解密后重加密到当前 `ENCRYPTION_KEY`，并写 `security.secret_rotate` 审计；KMS provider 和 `enc:v*` 版本升级继续演进 | 已加密密钥不可解密 |
 | API Key 明文 | 用户创建时生成一次 | 用户重新创建或禁用旧 key | 明文不可恢复，只能重建 |
 | 下游 API Key | 管理员配置 | 新旧通道或同通道多 key 灰度切换 | 影响对应通道调用 |
 | 支付密钥 | 支付 provider 后台生成 | 按 provider 规则双密钥或短暂停机切换 | 回调校验失败，不能入账 |
@@ -348,7 +386,7 @@ Redis 失败处理：
 - 生产启用 HTTPS。
 - 管理端和用户端共用 User JWT，前端需要采用统一安全存储策略。
 - 限制请求体大小。
-- 对登录、注册、验证码、OAuth callback 添加限流。
+- 当前公开登录、注册、验证码生成、OAuth/OIDC 登录和回调入口已复用 Redis 分钟级 `rate_limit.global_per_min` 与 `rate_limit.per_ip_per_min` 限流；命中返回 429，外部数据库或集群模式下 Redis 限流依赖不可用时返回 503 fail-closed。
 
 ### 数据安全
 
@@ -357,7 +395,7 @@ Redis 失败处理：
 - 密码使用 bcrypt，成本值可配置。
 - 日志默认不存完整提示词和响应。
 - 支持按用户删除或匿名化日志中的敏感内容。
-- 管理端导出数据需要审计。
+- 管理端导出数据需要审计；当前调用日志导出已写入 `log.export`，摘要记录过滤条件、导出上限和导出条数，导出的 CSV 不包含请求/响应体、IP、错误原文或 snapshot。
 
 ## 故障处理
 
@@ -366,7 +404,7 @@ Redis 失败处理：
 | 故障 | 处理 |
 |------|------|
 | DB 不可用 | 服务启动失败；运行中返回 500/503，触发告警 |
-| Redis 不可用 | SQLite 单镜像可降级；外部数据库或集群模式应不就绪，关键限流 fail-closed |
+| Redis 不可用 | SQLite 单镜像可降级；外部数据库或集群模式应不就绪；关键限流在请求期返回 `rate_limit_unavailable` 并 fail-closed |
 | 下游 401/403 | 标记通道配置错误，不重试，通知管理员 |
 | 下游 429 | 可切换其他通道；增加通道错误统计 |
 | 下游 5xx | 非流式可重试其他通道；流式已输出则结束并记录错误 |
@@ -376,10 +414,10 @@ Redis 失败处理：
 
 开箱故障定位顺序：
 
-1. 看 `/ready`：确认 DB、初始化状态、JWT 和关键 settings 可用。
+1. 看 `/ready`：确认 DB、迁移状态、初始化状态、JWT 和关键 settings 可用。
 2. 看用户和 API Key：确认用户启用、Token 未禁用或过期、额度足够。
-3. 看通道和协议矩阵：确认通道启用、模型匹配、provider adapter 存在、能力等级支持该 APIType、密钥可解密。
-4. 看下游桩或真实上游：区分通道配置错误、上游 401/403、上游 429/5xx 和超时。
+3. 看通道和协议矩阵：确认通道启用、模型匹配、provider adapter 存在、能力等级支持该 APIType、密钥可解密；管理端 `/v0/admin/channel` 的 `health_status`、`health_reason` 和 `cooldown_remaining_seconds` 可直接判断通道是正常、手工禁用、熔断中还是冷却后待探测。
+4. 看下游桩或真实上游：区分通道配置错误、上游 401/403、`relay.retry_on_status` 覆盖的状态码、上游 429/5xx 和超时。
 5. 看日志账单：确认失败是否应扣费、成功是否写入 usage 和 `quota_used`。
 6. 看脱敏：确认错误响应、调用日志和应用日志不包含 API Key、下游密钥或 DSN。
 

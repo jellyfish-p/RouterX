@@ -13,10 +13,12 @@ func setupAdminRoutes(
 	r *gin.Engine,
 	authH *handler.AuthHandler,
 	userH *handler.UserHandler,
+	tokenH *handler.TokenHandler,
 	adminH *handler.AdminHandler,
 	channelH *handler.ChannelHandler,
 	relayH *handler.RelayHandler,
 	logH *handler.LogHandler,
+	alertH *handler.AlertHandler,
 	settingH *handler.SettingHandler,
 ) {
 	admin := r.Group("/v0/admin")
@@ -31,6 +33,44 @@ func setupAdminRoutes(
 			authRequired.PUT("/user/:id", userH.Update)
 			authRequired.DELETE("/user/:id", userH.Delete)
 			authRequired.PATCH("/user/:id/quota", userH.UpdateQuota)
+			authRequired.GET("/quota-transactions", userH.ListQuotaTransactionsAdmin)
+			authRequired.GET("/groups", userH.ListGroups)
+			authRequired.POST("/groups", userH.CreateGroup)
+			authRequired.PUT("/groups/:id", userH.UpdateGroup)
+			authRequired.DELETE("/groups/:id", userH.DeleteGroup)
+			authRequired.GET("/redem", userH.ListRedemCodes)
+			authRequired.POST("/redem", userH.CreateRedemCodes)
+			authRequired.PATCH("/redem/:id/disable", userH.DisableRedemCode)
+			authRequired.GET("/audit", middleware.RequireSuperAdmin(), userH.ListAdminAuditLogs)
+			authRequired.GET("/payment/products", userH.ListPaymentProductsAdmin)
+			authRequired.POST("/payment/products", userH.CreatePaymentProduct)
+			authRequired.PUT("/payment/products/:id", userH.UpdatePaymentProduct)
+			authRequired.PATCH("/payment/products/:id/disable", userH.DisablePaymentProduct)
+			authRequired.PATCH("/payment/products/:id/enable", userH.EnablePaymentProduct)
+			authRequired.GET("/model-prices", userH.ListModelPricesAdmin)
+			authRequired.POST("/model-prices", userH.CreateModelPrice)
+			authRequired.PUT("/model-prices/:id", userH.UpdateModelPrice)
+			authRequired.PATCH("/model-prices/:id/disable", userH.DisableModelPrice)
+			authRequired.PATCH("/model-prices/:id/enable", userH.EnableModelPrice)
+			authRequired.GET("/channel-model-prices", userH.ListChannelModelPricesAdmin)
+			authRequired.POST("/channel-model-prices", userH.CreateChannelModelPrice)
+			authRequired.PUT("/channel-model-prices/:id", userH.UpdateChannelModelPrice)
+			authRequired.PATCH("/channel-model-prices/:id/disable", userH.DisableChannelModelPrice)
+			authRequired.PATCH("/channel-model-prices/:id/enable", userH.EnableChannelModelPrice)
+			authRequired.POST("/payment/adjustments", userH.CreatePaymentManualAdjustment)
+			authRequired.POST("/payment/refunds", userH.CreatePaymentManualRefund)
+			authRequired.POST("/payment/refund-requests", userH.CreatePaymentProviderRefundRequest)
+			authRequired.GET("/token", tokenH.AdminList)
+			authRequired.GET("/token/export", tokenH.AdminExport)
+			authRequired.GET("/token/risk", tokenH.AdminRisk)
+			authRequired.GET("/token/:id/leak-window", tokenH.AdminLeakWindow)
+			authRequired.GET("/token/:id/events", tokenH.AdminEventWindow)
+			authRequired.POST("/token/batch-disable", tokenH.BatchDisable)
+			authRequired.POST("/token/batch-expire", tokenH.BatchExpire)
+			authRequired.GET("/alerts", alertH.List)
+			authRequired.GET("/alerts/deliveries", alertH.ListDeliveries)
+			authRequired.POST("/alerts/deliveries/replay", alertH.ReplayDeliveries)
+			authRequired.POST("/alerts/:id/ack", alertH.Ack)
 
 			// 管理员账户查看 (Admin+)；写操作仅 SuperAdmin。
 			authRequired.GET("/admin", adminH.List)
@@ -50,10 +90,12 @@ func setupAdminRoutes(
 			authRequired.PATCH("/channel/:id/enable", channelH.Enable)
 			authRequired.POST("/channel/:id/test", channelH.Test)
 			authRequired.GET("/channel/:id/models", channelH.FetchModels)
+			authRequired.POST("/security/rotate-secrets", middleware.RequireSuperAdmin(), channelH.RotateSecrets)
 
 			authRequired.GET("/log", logH.AdminList)
+			authRequired.GET("/log/export", logH.AdminExport)
 			authRequired.DELETE("/log", logH.AdminClear)
-			authRequired.GET("/dashboard", logH.Dashboard)
+			authRequired.GET("/dashboard", dashboardHandler)
 
 			settingMgmt := authRequired.Group("/setting")
 			settingMgmt.Use(middleware.RequireSuperAdmin())

@@ -56,16 +56,16 @@ P0 可以宣称完成时，必须同时满足以下门禁。
 
 | 门禁 | 必须证明 | 主要证据 |
 |------|----------|----------|
-| G0 文档一致 | 主设计稿、路线图、API、数据模型、Relay、计费、测试不互相冲突。 | 旧术语扫描、`git diff --check`、文档链接检查。 |
+| G0 文档一致 | 主设计稿、路线图、API、数据模型、Relay、计费、测试不互相冲突；已注册公开 API 必须出现在 Apifox 可导入文档中，且每个公开 operation 都有人类可读说明、可用且有说明的参数、可读且带 schema 和字段说明的请求体、可解析组件引用、明确鉴权要求、稳定唯一 `operationId` 和可维护的 Apifox 分组。 | `TestApifoxOpenAPICoversRegisteredRoutes`、`TestApifoxOpenAPIOperationsHaveHumanReadableDocs`、`TestApifoxOpenAPIPathParametersAreDeclared`、`TestApifoxOpenAPIParametersHaveHumanReadableDescriptions`、`TestApifoxOpenAPIRequestBodiesHaveHumanReadableDescriptionsAndSchemas`、`TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions`、`TestApifoxV1RequestBodyPropertiesHaveHumanReadableDescriptions`、`TestApifoxOpenAPIInternalRefsResolve`、`TestApifoxOpenAPISecurityMatchesRouteGroups`、`TestApifoxOpenAPIOperationTagsAreDeclared`、`TestApifoxOpenAPIOperationIDsAreStableAndUnique`、`TestDocsRelativeReferencesResolve`、`TestDocsAvoidLegacyTerminology` 和 `git diff --check`。 |
 | G1 空库初始化 | 空库能创建超级管理员、默认 settings 和本地身份。 | `TestSetupBootstrapAdminQuota`、`TestP0BackendFlow`。 |
-| G2 就绪状态 | `/ready` 能反映数据库、初始化、JWT 和关键配置状态。 | `TestSettingsRegistryAndReadiness`、ready 接口断言。 |
+| G2 就绪状态 | `/ready` 能反映数据库、迁移 dirty 状态、初始化、JWT、密钥和关键配置状态。 | `TestSettingsValidationAndReadiness`、`TestReadinessRejectsDirtyMigrationState`、`TestReadinessRequiresEncryptionKeyForEncryptedChannelSecrets`、`TestReadinessDecryptsEncryptedChannelSecrets`、ready 接口断言。 |
 | G3 账号和权限 | 普通用户、管理员、超级管理员边界正确。 | `TestAdminPrivilegeBoundaries`。 |
 | G4 API Key 安全 | API Key 明文只返回一次，数据库保存哈希，禁用/过期/删除立即生效。 | `TestP0BackendFlow`、API Key 列表脱敏断言。 |
 | G5 通道安全 | 管理员能创建可用通道，下游密钥加密或脱敏，响应和日志不泄露密钥。 | `TestChannelExtendedManagement`、敏感词扫描。 |
 | G6 模型列表 | 有效 API Key 可调用 `/v1/models`，无效或禁用凭据失败。 | `TestP0BackendFlow`、OpenAI-compatible 错误断言。 |
 | G7 Chat 非流式 | `/v1/chat/completions` 非流式成功返回兼容响应，写日志并扣费。 | `TestChatCompletionSuccessLogsAndDeductsQuota`。 |
 | G8 预检拒绝 | 无效 Key、禁用用户、禁用 API Key、余额不足、禁用通道不调用上游。 | `TestRelayPrecheckRejectsBeforeUpstream`。 |
-| G9 错误兼容 | 非法 JSON、缺少 model、`stream=true`、无通道和下游错误返回稳定 code。 | `TestChatCompletionInvalidRequestDoesNotCallUpstream`、`TestChatCompletionUpstreamErrorMapping`。 |
+| G9 错误兼容 | 非法 JSON、缺少 model、未支持流式通道、无通道和下游错误返回稳定 code。 | `TestChatCompletionInvalidRequestDoesNotCallUpstream`、流式通道拒绝测试、`TestChatCompletionUpstreamErrorMapping`。 |
 | G10 日志账单一致 | 成功调用的 usage、`quota_used`、用户余额、Key 预算和账单聚合一致。 | `TestUserBillingMatchesLogs`。 |
 | G11 开箱不被高级能力阻塞 | 支付、OAuth/OIDC、流式、多协议完整矩阵和高级价格表达式未配置时，不影响 P0。 | P0 测试环境不依赖这些模块。 |
 
@@ -80,7 +80,7 @@ P0 可以宣称完成时，必须同时满足以下门禁。
 - 余额不足、权限不足或请求非法时仍调用上游。
 - API Key、下游密钥、数据库 DSN、支付密钥或内部堆栈进入响应或日志。
 - `/v1` 错误返回 RouterX 管理端 `{success,data,message}` 包装。
-- `stream=true` 在 P0 被静默转发或静默忽略。
+- 不支持的流式入口或通道被静默转发或静默忽略。
 - 通道选择依赖不可解释的随机组合，例如把 `upstreams` 与外层 `api_keys`、`base_urls` 任意交叉。
 - 文档把已注册高级路由写成完整兼容。
 
@@ -90,15 +90,15 @@ P1 可以宣称完成时，必须在 P0 全部通过后再满足：
 
 | 门禁 | 必须证明 | 主要证据 |
 |------|----------|----------|
-| G12 流式 | SSE/chunk 不缓存完整响应，客户端断开取消下游，流式 usage 可结算或估算。 | 流式集成测试、断开取消测试。 |
-| G13 多入口协议 | OpenAI、Anthropic、Gemini 基础入口成功和错误外形分别兼容。 | 协议矩阵测试、SDK 行为断言。 |
+| G12 流式 | SSE/chunk 不缓存完整响应，客户端断开取消下游，流式 usage 可结算或估算。 | OpenAI Chat 基础 SSE 测试、流式集成测试、断开取消测试。 |
+| G13 多入口协议 | OpenAI、Anthropic、Gemini 基础入口成功和错误外形分别兼容。 | 基础非流式测试、协议矩阵测试、SDK 行为断言。 |
 | G14 多上游转换 | 主要上游 provider 的请求、响应、usage 和错误映射符合能力等级。 | `docs/PROTOCOLS.md` 对应矩阵测试。 |
 | G15 路由偏好 | `routerx.route` 合法、非法、越权和无候选路径都有稳定行为。 | 路由策略测试、调用事实快照。 |
-| G16 访问控制 | API Key scope、用户分组、通道分组和模型权限只能收窄，不能放大权限。 | 访问允许/拒绝测试。 |
+| G16 访问控制 | API Key scope、用户分组、通道分组、入口协议、来源 IP、方法路径、日/月预算、并发上限、RPM/TPM 和模型/APIType 权限只能收窄，不能放大权限。 | `TestUserGroupChannelGroupAccessFiltersRelayCandidates`、`TestAPIKeyModelScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyChannelGroupScopeFiltersRelayCandidates`、`TestAPIKeyEntryProtocolScopeRejectsBeforeRelay`、`TestAPIKeyIPScopeRejectsBeforeRelay`、`TestAPIKeyMethodScopeRejectsBeforeRelay`、`TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed`、`TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed`、`TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight`、`TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay`、`TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed`、访问允许/拒绝测试。 |
 | G17 可靠性 | 非流式安全重试、熔断、限流和半开恢复可解释。 | 故障注入测试、指标和 Runbook。 |
 | G18 计费规则 | 价格表达式、倍率、规则快照和历史账单解释一致。 | 计费事实链和调用事实快照测试。 |
-| G19 运行模式 | SQLite 单镜像可无 Redis；外部数据库或集群模式必须 Redis 可用。 | readiness、启动模式和 Redis 故障测试。 |
-| G20 热路径缓存和日志库 | 通道候选缓存可失效，独立日志库不破坏账单最小事实。 | 缓存版本测试、`LOG_SQL_DSN` 降级测试。 |
+| G19 运行模式 | SQLite 单镜像可无 Redis；外部数据库或集群模式必须 Redis 可用。 | `TestInitRedisSkipsEmptyConfig`、`TestReadinessRequiresRedisForExternalDatabaseMode`、readiness、启动模式和 Redis 故障测试。 |
+| G20 热路径缓存和日志库 | 通道候选缓存可失效，独立日志库不破坏账单最小事实。 | 缓存版本测试、`LOG_SQL_DSN` 初始化/副本写入/降级测试。 |
 
 P1 新增任何协议、APIType 或 provider 时，必须先更新 `docs/PROTOCOLS.md`，再更新 API、Relay、错误、测试、Runbook 和追踪矩阵。
 
@@ -112,7 +112,7 @@ P2 可以宣称完成时，必须证明生产和企业增强不破坏 P0/P1：
 | G20 管理审计 | settings、通道、用户、额度、价格和支付关键操作可追溯。 | 审计日志测试。 |
 | G21 支付幂等 | Stripe/易支付/充值码/人工补账不会重复入账，金额和签名可信。 | 支付 provider fixture、幂等测试。 |
 | G22 密钥轮换 | API Key、下游密钥、`ENCRYPTION_KEY` 或 KMS 轮换有兼容和恢复策略。 | 轮换测试、脱敏扫描。 |
-| G23 生产观测 | Request ID、结构化日志、Prometheus 指标、告警和生产 `/ready` 可用。 | readiness/metrics 测试、指标字段断言。 |
+| G23 生产观测 | Request ID、结构化日志、Prometheus 指标、告警和生产 `/ready` 可用。 | `TestRequestIDHeaderUsesConfiguredSetting`、`TestStructuredHTTPLogsUseJSONWhenEnabled`、`TestRecoveryStructuredPanicLogUsesJSONAndRedactsValue`、readiness/metrics 测试、指标字段断言。 |
 | G24 高级 API | Responses、Images、Audio、Moderations 等按能力矩阵打开，不影响基础 Chat。 | 高级 API 安全和协议测试。 |
 
 ## 交付前检查
@@ -122,14 +122,13 @@ P2 可以宣称完成时，必须证明生产和企业增强不破坏 P0/P1：
 ```text
 go test ./...
 git diff --check
-rg -n "<legacy-or-placeholder-pattern>" README.md docs
-rg -n "<legacy-routing-term>" README.md docs
+go test ./internal/router -run "TestDocsRelativeReferencesResolve|TestDocsAvoidLegacyTerminology" -count=1
 ```
 
 检查规则：
 
-- 第一条搜索用于查旧配置名、旧字段名、旧 API Key 明文字段说法、空泛填充描述和不确定状态描述；应无命中，除非命中内容是刻意保留的代码事实说明。
-- 第二条搜索用于确认模型路由实体没有使用旧称；该旧称只能出现在支付语境或术语表解释中。
+- `TestDocsRelativeReferencesResolve` 用于确认 README 和顶层 docs 的本地文档链接都能解析。
+- `TestDocsAvoidLegacyTerminology` 用于确认 README 和顶层 docs 遵守 `docs/GLOSSARY.md` 的不推荐术语规则。
 - `git diff --check` 允许 Windows 换行提示，但不能有空白错误。
 - 测试失败时不能宣称验收通过。
 

@@ -167,7 +167,7 @@ P0 控制台必须能支撑以下路径。
 
 - OpenAI-compatible 调用示例。
 - API Key 鉴权方式。
-- 当前 P0 非流式限制。
+- 当前非流式主链路和 OpenAI Chat 基础流式边界。
 - 成功后的日志和额度变化入口。
 - 常见失败 code 的处理入口。
 
@@ -272,7 +272,7 @@ P0 控制台必须能支撑以下路径。
 - `no_available_channel`：展示候选过滤摘要。
 - `upstream_secret_error`：提示检查 `ENCRYPTION_KEY` 和通道密钥，不展示明文。
 - 上游 401/403：提示密钥、模型权限、base URL 或 provider 配置。
-- 上游 429/5xx：提示限流、余额、上游状态、重试和熔断策略。
+- 上游 429/5xx：提示限流、余额、上游状态、`relay.retry_on_status` 白名单、重试和熔断策略。
 
 ### 5.5 settings 管理
 

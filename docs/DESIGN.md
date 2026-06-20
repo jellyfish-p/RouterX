@@ -319,6 +319,8 @@ API Key 生命周期、轮换、泄露处置、作用域、缓存一致性和高
 
 其中系统硬性过滤包括用户/API Key 状态、用户余额、Key 预算、通道启用状态、模型匹配、Adapter 可用性、熔断和安全策略。`routerx.route` 只能表达偏好，不能覆盖后台策略。通道内部解析按 `upstreams`、多 key/多 base URL、单 key/单 base URL 的顺序处理；`upstreams` 中的 base URL 和 key 视为绑定关系，不与外层数组交叉组合。管理员修改通道、分组、价格或 settings 后，必须刷新通道候选缓存或递增路由版本，避免集群实例长期使用旧候选集。
 
+当前实现的第一步为进程内缓存排序后的通道表快照，随后在请求路径执行模型匹配、熔断、`routerx.route`、用户分组访问和 API Key scope 过滤；按模型/APIType/用户分组预加载与 Redis 共享快照属于后续集群增强。
+
 ### Relay
 
 Relay 是核心模块。RouterX 的长期定位是多协议入口与多上游同等重要：
@@ -330,8 +332,8 @@ Relay 是核心模块。RouterX 的长期定位是多协议入口与多上游同
 
 阶段原则：
 
-- P0 建立可靠闭环：API Key 鉴权、通道选择、OpenAI-compatible 非流式基础调用、日志和扣费。
-- P1 扩展核心矩阵：流式响应、Anthropic/Gemini 入口、主要上游转换和 provider-specific 参数。
+- P0 建立可靠闭环：API Key 鉴权、通道选择、OpenAI-compatible 基础调用、OpenAI Chat 基础 SSE、日志和扣费。
+- P1 扩展核心矩阵：多协议流式响应、Anthropic/Gemini 入口、主要上游转换和 provider-specific 参数。
 - P2 完善高级接口：Images、Audio、Moderations、Responses 深度兼容、企业路由和多层 RouterX。
 
 `routerx` 私有扩展字段用于表达路由偏好和上游扩展参数，真实厂商调用前必须剥离；RouterX-Compatible 上游可以继续透传，并通过 hop 限制避免循环。

@@ -1,4 +1,8 @@
 DROP TABLE IF EXISTS settings;
+DROP TABLE IF EXISTS payment_events;
+DROP TABLE IF EXISTS payment_orders;
+DROP TABLE IF EXISTS payment_products;
+DROP TABLE IF EXISTS quota_transactions;
 DROP TABLE IF EXISTS redem_codes;
 DROP TABLE IF EXISTS logs;
 DROP TABLE IF EXISTS channels;
