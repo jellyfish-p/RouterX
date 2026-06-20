@@ -757,6 +757,21 @@ func TestApifoxCommonReusableSchemasHaveHumanReadablePropertyDescriptions(t *tes
 	}
 }
 
+func TestApifoxReferencedObjectPropertiesHaveLocalDescriptions(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := apifoxDirectPropertyDescriptionIssues(doc, map[string][]string{
+		"CreateTokenRequest":     {"metadata"},
+		"UpdateTokenRequest":     {"metadata"},
+		"Token":                  {"metadata"},
+		"RouterXProviderOptions": {"openai", "anthropic"},
+	})
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml referenced object properties need local descriptions:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
@@ -25761,6 +25776,50 @@ func apifoxSchemaPropertyDescriptionIssues(root interface{}, schemaNames []strin
 			}
 			if strings.TrimSpace(apifoxSchemaDescription(root, property)) == "" {
 				issues = append(issues, schemaName+"."+propertyName+" missing description")
+			}
+		}
+	}
+	return issues
+}
+
+func apifoxDirectPropertyDescriptionIssues(root interface{}, schemaProperties map[string][]string) []string {
+	issues := make([]string, 0)
+	schemaNames := make([]string, 0, len(schemaProperties))
+	for schemaName := range schemaProperties {
+		schemaNames = append(schemaNames, schemaName)
+	}
+	sort.Strings(schemaNames)
+
+	for _, schemaName := range schemaNames {
+		rawSchema, ok := apifoxResolveInternalRef(root, "#/components/schemas/"+schemaName)
+		if !ok {
+			issues = append(issues, schemaName+" schema missing")
+			continue
+		}
+		schema, ok := rawSchema.(map[string]interface{})
+		if !ok {
+			issues = append(issues, schemaName+" schema is not an object")
+			continue
+		}
+		properties, ok := schema["properties"].(map[string]interface{})
+		if !ok || len(properties) == 0 {
+			issues = append(issues, schemaName+" schema missing properties")
+			continue
+		}
+		for _, propertyName := range schemaProperties[schemaName] {
+			rawProperty, ok := properties[propertyName]
+			if !ok {
+				issues = append(issues, schemaName+"."+propertyName+" property missing")
+				continue
+			}
+			property, ok := rawProperty.(map[string]interface{})
+			if !ok {
+				issues = append(issues, schemaName+"."+propertyName+" property is not an object")
+				continue
+			}
+			description, _ := property["description"].(string)
+			if strings.TrimSpace(description) == "" {
+				issues = append(issues, schemaName+"."+propertyName+" missing local description")
 			}
 		}
 	}

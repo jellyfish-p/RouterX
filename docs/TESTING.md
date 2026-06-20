@@ -39,6 +39,7 @@
 | `TestApifoxModelPricingResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查用户模型目录、全局模型价格和通道模型价格响应字段都有可读说明，避免模型与价格配置接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxProtocolResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 OpenAI、Anthropic 和 Gemini 兼容响应、模型列表、错误封套和 usage 字段都有可读说明，避免协议兼容接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxCommonReusableSchemasHaveHumanReadablePropertyDescriptions` | 检查分页壳、汇总统计、Provider 扩展选项和 ChatMessage 等复用 schema 字段都有可读说明，避免复用结构在 Apifox 中只展示裸字段名 |
+| `TestApifoxReferencedObjectPropertiesHaveLocalDescriptions` | 检查 API Key metadata 和 provider 专属扩展等 `$ref` 字段在引用点也有本地说明，避免 Apifox 展示嵌套对象时缺少上下文 |
 | `TestApifoxV0RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v0` 请求体顶层字段都有可读说明，避免管理端和用户端接口在 Apifox 中只有字段名而缺少用途、边界或安全语义 |
 | `TestApifoxV1RequestBodyPropertiesHaveHumanReadableDescriptions` | 检查 `/v1` 模型入口请求体顶层字段都有可读说明，避免 OpenAI/Anthropic/Gemini 兼容接口在 Apifox 中缺少字段用途或转换语义 |
 | `TestApifoxOpenAPIInternalRefsResolve` | 递归检查 `docs/apifox/openapi.yaml` 内部 `$ref`，确保 requestBodies、responses、schemas、parameters 等组件引用都能解析，防止 Apifox 导入时出现断链 |

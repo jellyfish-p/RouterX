@@ -6536,6 +6536,7 @@ components:
           nullable: true
           description: Unix 秒时间戳。
         metadata:
+          description: 创建 API Key 时写入的非安全元数据；用于环境、团队、应用、标签和服务账号主体筛选。
           $ref: "#/components/schemas/TokenMetadata"
     UpdateTokenRequest:
       type: object
@@ -6564,6 +6565,7 @@ components:
           deprecated: true
           description: 用户编辑接口不允许修改无限标记；传入会返回 403。
         metadata:
+          description: 要替换的 API Key 非安全元数据；传入时按服务端规则归一化并覆盖旧值。
           $ref: "#/components/schemas/TokenMetadata"
     TokenMetadata:
       type: object
@@ -6785,6 +6787,7 @@ components:
           description: API Key scope 收窄策略；为空表示继承用户和系统策略。
           $ref: "#/components/schemas/TokenScope"
         metadata:
+          description: 该 API Key 的非安全元数据摘要；不会包含 API Key 明文或上游密钥。
           $ref: "#/components/schemas/TokenMetadata"
         last_used_at:
           type: string
@@ -7849,8 +7852,10 @@ components:
       description: provider 专属 JSON body 补充参数；仅在最终选中的上游 provider 匹配时合并，provider 专属补充值优先于通用 upstream.body，但仍不覆盖原请求已有字段、model、routerx 或 stream。OpenAI-compatible Chat 命中 Gemini 上游时，gemini.safetySettings 会映射到 Gemini 原生 safetySettings；Gemini generateContent 原生入口命中 Gemini 上游时也会只向 Gemini 上游保留原生生成字段。
       properties:
         openai:
+          description: OpenAI/OpenAI-compatible 上游专属 body 补充；仅命中对应 provider 时合并。
           $ref: "#/components/schemas/RouterXProviderBody"
         anthropic:
+          description: Anthropic 上游专属 body 补充；仅命中 Anthropic provider 时合并。
           $ref: "#/components/schemas/RouterXProviderBody"
         gemini:
           allOf:
