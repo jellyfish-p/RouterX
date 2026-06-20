@@ -1,17 +1,17 @@
 # RouterX
 
-RouterX 是一个开源的 AI 模型网关，用于统一管理多个大模型厂商的 API 访问。项目提供 OpenAI-compatible 转发入口、用户与管理员体系、API Key 管理、通道管理、额度控制、调用日志和基础用量统计。
+RouterX 是一个开源的 AI 模型网关，用于统一管理多个大模型厂商的 API 访问。项目提供 OpenAI-compatible、Anthropic-compatible 和 Gemini-compatible 模型入口，配套用户与管理员体系、API Key 管理、通道管理、额度控制、调用日志、审计、观测和支付/充值基础闭环。
 
 当前仓库包含 Go 后端和 Nuxt 前端。后端负责鉴权、路由、数据库迁移和模型转发；前端提供初始化、登录、用户控制台和管理后台页面。
 
 ## 功能概览
 
-- OpenAI-compatible `/v1` 入口，当前主要支持 Chat Completions 非流式转发闭环。
-- 支持 OpenAI / OpenAI-compatible 通道，Azure、Claude、Gemini、Qwen、DeepSeek 等适配器接口已预留。
+- OpenAI-compatible、Anthropic-compatible 和 Gemini-compatible `/v1` 入口，覆盖 Chat、Completions、Responses、Embeddings、Images、Audio、Moderations、模型列表和基础流式链路。
+- 支持 OpenAI / OpenAI-compatible、Azure OpenAI、Claude/Anthropic、Gemini、Qwen、DeepSeek、xAI 和 RouterX-compatible 上游通道，按 `docs/PROTOCOLS.md` 记录能力等级和字段降级边界。
 - 用户注册、登录、JWT 会话和管理员角色控制。
 - 首次初始化超级管理员和默认系统设置。
-- 用户 API Key 创建、列表、编辑、删除和额度控制。
-- 管理员用户、管理员账号、通道、日志、设置和看板接口。
+- 用户 API Key 创建、列表、编辑、删除、轮换、泄露上报、scope 收窄、用量统计和风险视图。
+- 管理员用户、管理员账号、用户分组、通道、日志、设置、看板、模型价格、支付商品、充值码、支付订单、退款请求和审计接口。
 - PostgreSQL、MySQL、SQLite 多数据库支持，启动时自动执行嵌入式迁移。
 - 单镜像 SQLite 模式不需要 Redis；外部数据库或集群模式必须配置 Redis，用于缓存、限流和跨实例一致性。
 - Nuxt 管理/用户前端，开发环境下自动代理 `/v0`、`/v1` 和 `/health` 到后端。
@@ -240,7 +240,7 @@ go run ./cmd/migrate/main.go > schema.hcl
 
 ## 开发状态
 
-RouterX 正处于快速迭代阶段。当前代码已经覆盖初始化、登录、JWT 鉴权、API Key、通道管理、日志、设置、基础限流和 OpenAI-compatible Chat Completions 非流式转发；多协议完整转换、更多上游厂商适配、流式响应、在线支付和更细粒度计费仍在后续路线图中。
+RouterX 后端当前已按 `docs/ACCEPTANCE.md` 和 `docs/TRACEABILITY.md` 收敛到可验证的 P0 开箱闭环，并覆盖多协议入口、主要上游适配、基础流式、访问控制、限流熔断、独立日志库、观测审计、模型价格管理、支付/充值/退款和高级 API 的基础链路。仍保留为后续增强的长尾项以追踪矩阵为准，例如更完整 SDK 行为矩阵、更多 provider 自动退款流程、KMS provider、冷热归档和更细粒度的生产观测。
 
 ## 文档索引
 
