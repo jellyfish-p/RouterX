@@ -5009,6 +5009,7 @@ components:
   schemas:
     StandardResponse:
       type: object
+      description: /v0 管理端和用户端通用响应壳；业务数据放在 data，错误原因放在 message。
       properties:
         success:
           type: boolean
@@ -5022,6 +5023,7 @@ components:
       required: [success]
     HealthResponse:
       type: object
+      description: 存活检查响应；只表示进程可响应 HTTP，不代表依赖已经就绪。
       properties:
         status:
           type: string
@@ -5029,6 +5031,7 @@ components:
           example: healthy
     ReadyResponse:
       type: object
+      description: 就绪检查响应；汇总数据库、Redis、迁移、JWT 和关键配置状态。
       properties:
         status:
           type: string
@@ -5058,12 +5061,14 @@ components:
           description: 关键 settings 或加密配置检查结果；配置非法、缺少 ENCRYPTION_KEY 或密文解密失败时返回问题 key。
     SetupStatus:
       type: object
+      description: 首次初始化状态；用于控制台判断是否需要展示初始化入口。
       properties:
         initialized:
           type: boolean
           description: 是否已经完成首次初始化；false 时允许调用 /v0/setup/init。
     SetupInitRequest:
       type: object
+      description: 首次初始化请求；创建初始超级管理员并写入基础配置。
       required: [username, password]
       properties:
         username:
@@ -5085,6 +5090,7 @@ components:
           description: 初始超级管理员邮箱；可用于资料展示和后续本地 email 身份。
     RegisterRequest:
       type: object
+      description: 自助注册请求；支持用户名、邮箱或手机号入口，并可携带注册验证码。
       required: [username, password]
       properties:
         username:
@@ -5120,6 +5126,7 @@ components:
           description: 注册验证码答案；auth.register.captcha.required=true 时必填，服务端使用 SHA256(captcha_code) 与 Redis 记录比对。
     RegisterCaptchaResponse:
       type: object
+      description: 注册验证码响应；返回验证码图片和提交注册时需要回传的验证码 ID。
       properties:
         captcha_id:
           type: string
@@ -5132,6 +5139,7 @@ components:
           description: 验证码有效期秒数，来自 auth.captcha.ttl_seconds。
     LoginCodeRequest:
       type: object
+      description: 登录验证码申请请求；用于邮箱或手机号验证码登录前置步骤。
       required: [account]
       properties:
         account:
@@ -5141,6 +5149,7 @@ components:
         account: alice@example.com
     LoginCodeResponse:
       type: object
+      description: 登录验证码申请响应；包含验证码 ID、投递方式和可选调试码。
       properties:
         captcha_id:
           type: string
@@ -5157,6 +5166,7 @@ components:
           description: 验证码有效期秒数，来自 auth.captcha.ttl_seconds。
     OAuthRegistrationRequiredResponse:
       type: object
+      description: OAuth 回调需要补齐本地账号时的响应；不会自动用邮箱接管已有账号。
       properties:
         registration_required:
           type: boolean
@@ -5176,6 +5186,7 @@ components:
           description: provider 返回的邮箱；不会用于自动绑定已有账号。
     OAuthRegisterRequest:
       type: object
+      description: OAuth 首次登录后的补齐注册请求；用短期票据创建或恢复本地账号。
       required: [registration_ticket, username, password]
       properties:
         registration_ticket:
@@ -5206,6 +5217,7 @@ components:
           description: auth.register.captcha.required=true 时必填；服务端使用 SHA256(captcha_code) 与 Redis 记录比对，成功后删除该验证码。
     OIDCRegistrationRequiredResponse:
       type: object
+      description: OIDC 回调需要补齐本地账号时的响应；subject 已校验但仍需本地账号信息。
       properties:
         registration_required:
           type: boolean
@@ -5225,6 +5237,7 @@ components:
           description: 已校验 ID Token 中的邮箱；不会用于自动绑定已有账号。
     OIDCRegisterRequest:
       type: object
+      description: OIDC 首次登录后的补齐注册请求；用短期票据创建或恢复本地账号。
       required: [registration_ticket, username, password]
       properties:
         registration_ticket:
@@ -5255,6 +5268,7 @@ components:
           description: auth.register.captcha.required=true 时必填；服务端使用 SHA256(captcha_code) 与 Redis 记录比对，成功后删除该验证码。
     LoginRequest:
       type: object
+      description: 本地登录请求；支持密码登录和邮箱/手机号验证码登录。
       properties:
         account:
           type: string
@@ -5282,6 +5296,7 @@ components:
         password: password
     LoginResponse:
       type: object
+      description: 登录成功响应；返回 User JWT 和脱敏用户摘要。
       properties:
         token:
           type: string
@@ -5292,6 +5307,7 @@ components:
             - $ref: "#/components/schemas/UserBrief"
     UserBrief:
       type: object
+      description: 脱敏用户摘要；用于登录、用户列表、个人资料和关联对象展示。
       properties:
         id:
           type: integer
@@ -5324,6 +5340,7 @@ components:
           description: 所属用户分组 ID；为空表示使用默认分组。
     UserIdentityBrief:
       type: object
+      description: 用户登录身份摘要；用于展示本地、OAuth 和 OIDC 绑定关系。
       properties:
         id:
           type: integer
@@ -5357,6 +5374,7 @@ components:
           description: 身份记录创建时间。
     CreateUserRequest:
       type: object
+      description: 管理员创建用户请求；可同时设置本地密码、角色、额度和分组。
       required: [username, password]
       properties:
         username:
@@ -5392,6 +5410,7 @@ components:
           description: 所属用户分组 ID；为空时使用默认分组。
     UpdateUserRequest:
       type: object
+      description: 管理员更新用户请求；只修改传入字段，并同步本地登录身份摘要。
       properties:
         display_name:
           type: string
@@ -5417,6 +5436,7 @@ components:
           description: 新用户分组 ID；为空时清理显式分组。
     UserGroupInfo:
       type: object
+      description: 用户分组摘要；用于用户归属、访问控制和控制台分组管理。
       properties:
         id:
           type: integer
@@ -5437,6 +5457,7 @@ components:
           description: 用户分组创建时间。
     CreateUserGroupRequest:
       type: object
+      description: 创建用户分组请求；分组名必须唯一。
       required: [name]
       properties:
         name:
@@ -5452,6 +5473,7 @@ components:
           example: 0.8
     UpdateUserGroupRequest:
       type: object
+      description: 更新用户分组请求；只修改传入字段。
       properties:
         name:
           type: string
@@ -5466,6 +5488,7 @@ components:
           example: 0.9
     UpdateSelfRequest:
       type: object
+      description: 当前用户更新个人资料请求；只能修改自己的展示资料和本地联系方式。
       properties:
         display_name:
           type: string
@@ -5478,6 +5501,7 @@ components:
           description: 新手机号；服务端会规范化并同步同用户 phone/local 登录标识，若已被其他账号绑定则返回 400。
     CancelSelfRequest:
       type: object
+      description: 当前用户注销账号请求；需要本地密码二次确认。
       required: [password]
       properties:
         password:
@@ -5485,6 +5509,7 @@ components:
           description: 当前本地登录密码，用于注销二次确认。
     RedeemCodeRequest:
       type: object
+      description: 用户兑换充值码请求；成功后充值码会被标记为已使用。
       required: [code]
       properties:
         code:
@@ -5493,6 +5518,7 @@ components:
           example: OFFLINE-CREDIT-1
     RedeemCodeResult:
       type: object
+      description: 充值码兑换结果；返回本次入账额度和兑换后余额。
       properties:
         redeemed_quota:
           type: integer
@@ -5504,6 +5530,7 @@ components:
           description: 兑换后用户当前可用额度。
     UserModelInfo:
       type: object
+      description: 用户可见模型摘要；用于模型列表展示和价格就绪提示。
       properties:
         id:
           type: string
@@ -5520,6 +5547,7 @@ components:
           description: true 表示已命中启用 channel_model_prices 或 model_prices；false 表示当前模型仍按 P0 minimum_usage 状态展示。
     UserModelListResult:
       type: object
+      description: 用户模型列表响应；包含当前用户可见的模型集合。
       properties:
         models:
           type: array
@@ -5528,6 +5556,7 @@ components:
             $ref: "#/components/schemas/UserModelInfo"
     UpsertModelPriceRequest:
       type: object
+      description: 新增或更新全局模型价格规则的请求；用于管理端维护模型级价格表达式。
       required: [model, price_mode, price_expression]
       properties:
         model:
@@ -5561,6 +5590,7 @@ components:
           description: 创建时未传默认为 true；更新时未传则保留原状态。
     ModelPriceAdminInfo:
       type: object
+      description: 管理端全局模型价格规则摘要；展示表达式、变量、启用状态和版本。
       properties:
         id:
           type: integer
@@ -5611,6 +5641,7 @@ components:
                 $ref: "#/components/schemas/ModelPriceAdminInfo"
     UpsertChannelModelPriceRequest:
       type: object
+      description: 新增或更新通道模型价格覆盖规则的请求；用于管理端维护通道级模型可用性和价格表达式。
       required: [channel_id, model, price_mode, price_expression]
       properties:
         channel_id:
@@ -5657,6 +5688,7 @@ components:
           example: 1000
     ChannelModelPriceAdminInfo:
       type: object
+      description: 管理端通道模型价格规则摘要；展示通道内模型覆盖规则和用户可见状态。
       properties:
         id:
           type: integer
@@ -5718,6 +5750,7 @@ components:
                 $ref: "#/components/schemas/ChannelModelPriceAdminInfo"
     PaymentProductInfo:
       type: object
+      description: 支付商品摘要；用于用户购买额度和管理端商品配置展示。
       properties:
         product_id:
           type: string
@@ -5745,6 +5778,7 @@ components:
           description: 商品赠送额度。
     UpsertPaymentProductRequest:
       type: object
+      description: 新增或更新支付商品请求；订单会保存商品快照，后续商品修改不影响历史订单。
       required: [product_id, name, amount, currency, quota]
       properties:
         product_id:
@@ -5803,6 +5837,7 @@ components:
                 $ref: "#/components/schemas/PaymentProductAdminInfo"
     PaymentManualAdjustmentRequest:
       type: object
+      description: 管理员人工调整用户额度请求；必须携带原因和幂等键。
       required: [user_id, amount, reason, idempotency_key]
       properties:
         user_id:
@@ -5828,6 +5863,7 @@ components:
           example: support-ticket-1234
     PaymentManualAdjustmentResult:
       type: object
+      description: 人工额度调整结果；返回调整前后余额和对应额度流水类型。
       properties:
         user_id:
           type: integer
@@ -5857,6 +5893,7 @@ components:
           description: 本次人工调整使用的幂等键。
     PaymentManualRefundRequest:
       type: object
+      description: 管理员人工退款落账请求；用于可信人工流程扣回订单额度。
       required: [order_no, refund_quota, reason, idempotency_key]
       properties:
         order_no:
@@ -5878,6 +5915,7 @@ components:
           example: refund-ticket-1234
     PaymentManualRefundResult:
       type: object
+      description: 人工退款落账结果；返回订单退款状态和扣回前后余额。
       properties:
         user_id:
           type: integer
@@ -5907,6 +5945,7 @@ components:
           description: 本次人工退款使用的幂等键。
     PaymentProviderRefundRequest:
       type: object
+      description: 管理员向支付 provider 发起退款请求；本地先记录请求，最终状态以可信事件或人工收尾为准。
       required: [order_no, reason, idempotency_key]
       properties:
         order_no:
@@ -5927,6 +5966,7 @@ components:
           example: refund-ticket-5678
     PaymentProviderRefundRequestResult:
       type: object
+      description: 支付 provider 退款请求结果；返回 provider 侧退款标识、本地请求状态和审计摘要。
       properties:
         user_id:
           type: integer
@@ -5964,6 +6004,7 @@ components:
           description: 本次 provider 退款请求使用的幂等键。
     AdminAuditLogInfo:
       type: object
+      description: 管理审计日志摘要；用于追踪管理动作、结果和脱敏前后状态。
       properties:
         id:
           type: integer
@@ -6026,6 +6067,7 @@ components:
                 $ref: "#/components/schemas/AdminAuditLogInfo"
     AlertEventInfo:
       type: object
+      description: 告警事件摘要；用于控制台展示风险事件、处理状态和脱敏上下文。
       properties:
         id:
           type: integer
@@ -6102,6 +6144,7 @@ components:
                 $ref: "#/components/schemas/AlertEventInfo"
     AlertDeliveryOutboxInfo:
       type: object
+      description: 告警投递 outbox 摘要；用于查看 webhook、邮件或 IM 投递状态。
       properties:
         id:
           type: integer
@@ -6153,12 +6196,14 @@ components:
                 $ref: "#/components/schemas/AlertDeliveryOutboxInfo"
     AlertDeliveryReplayResult:
       type: object
+      description: 告警投递重放结果；返回本次成功重放的 outbox 数量。
       properties:
         replayed:
           type: integer
           description: 本次成功投递的 outbox 数量。
     CreatePaymentOrderRequest:
       type: object
+      description: 用户创建支付订单请求；选择 provider、商品和支付完成跳转地址。
       required: [provider, product_id]
       properties:
         provider:
@@ -6176,6 +6221,7 @@ components:
           description: 支付完成后的前端跳转地址；Stripe 创建真实 Checkout Session 时必须是绝对 URL，入账仍只依赖 provider webhook。
     PaymentOrderInfo:
       type: object
+      description: 支付订单摘要；用于用户和管理端查看订单状态、金额快照和入账时间。
       properties:
         order_no:
           type: string
@@ -6229,6 +6275,7 @@ components:
                 $ref: "#/components/schemas/PaymentOrderInfo"
     StripeWebhookEvent:
       type: object
+      description: Stripe webhook 事件测试结构；用于 Apifox 调试本地签名和入账流程。
       required: [id, type, data]
       properties:
         id:
@@ -6282,6 +6329,7 @@ components:
                     user_id: { type: string }
     EpayNotifyRequest:
       type: object
+      description: 易支付异步通知请求；服务端校验签名、金额和订单状态后入账。
       required: [out_trade_no, money, trade_status, sign]
       properties:
         pid:
@@ -6316,6 +6364,7 @@ components:
           example: MD5
     CreateRedemCodesRequest:
       type: object
+      description: 管理员生成或导入充值码请求；支持随机生成、指定码和批次备注。
       required: [quota]
       properties:
         quota:
@@ -6350,6 +6399,7 @@ components:
           description: Unix 秒；为空或 0 表示不过期，非空时必须是未来时间。
     RedemCodeInfo:
       type: object
+      description: 充值码摘要；用于管理端查看发放、状态、使用人和过期时间。
       properties:
         id:
           type: integer
@@ -6401,6 +6451,7 @@ components:
                 $ref: "#/components/schemas/RedemCodeInfo"
     ChangePasswordRequest:
       type: object
+      description: 当前用户修改本地密码请求；需要旧密码验证。
       required: [old_password, new_password]
       properties:
         old_password:
@@ -6412,6 +6463,7 @@ components:
           description: 新本地登录密码；成功后只更新 username/local 主身份密码哈希。
     UpdateQuotaRequest:
       type: object
+      description: 管理员设置用户余额请求；直接写入新的可用额度并记录审计。
       required: [quota]
       properties:
         quota:
@@ -6423,6 +6475,7 @@ components:
           description: 人工调额原因；为空时使用默认原因。
     QuotaTransactionInfo:
       type: object
+      description: 额度流水摘要；记录余额变化、来源、操作者和请求追踪信息。
       properties:
         id:
           type: integer
@@ -6482,6 +6535,7 @@ components:
                 $ref: "#/components/schemas/QuotaTransactionInfo"
     PaginatedResult:
       type: object
+      description: 通用分页响应壳；组合 schema 会覆盖 data 元素类型。
       properties:
         total:
           type: integer
@@ -6517,6 +6571,7 @@ components:
                 $ref: "#/components/schemas/UserGroupInfo"
     CreateTokenRequest:
       type: object
+      description: 用户创建 API Key 请求；返回的明文 Key 只在创建响应中出现一次。
       required: [name]
       properties:
         name:
@@ -6540,6 +6595,7 @@ components:
           $ref: "#/components/schemas/TokenMetadata"
     UpdateTokenRequest:
       type: object
+      description: 用户更新 API Key 请求；普通用户不能通过该接口调整预算或无限标记。
       properties:
         name:
           type: string
@@ -6612,6 +6668,7 @@ components:
           example: Checkout Worker
     ReportTokenLeakRequest:
       type: object
+      description: API Key 泄露上报请求；用于立即禁用 Key、记录风险事件和触发告警。
       properties:
         reason:
           type: string
@@ -6620,6 +6677,7 @@ components:
           example: public_repo
     UpdateTokenScopeRequest:
       type: object
+      description: 管理员更新 API Key scope 请求；所有字段都只能收窄该 Key 的使用范围。
       properties:
         allow_models:
           type: array
@@ -6748,6 +6806,7 @@ components:
       description: token_ids 和 user_id 至少提供一个，避免误过期全部 Key。
     Token:
       type: object
+      description: API Key 脱敏摘要；永远不返回明文 Key，只展示生命周期、预算、scope 和使用线索。
       properties:
         id:
           type: integer
@@ -6820,6 +6879,7 @@ components:
           description: API Key 最近更新时间。
     TokenScope:
       type: object
+      description: API Key scope 收窄策略；为空表示继承用户和系统策略，不扩大权限。
       properties:
         allow_models:
           type: array
@@ -6898,6 +6958,7 @@ components:
               description: 只在创建响应出现一次。
     TokenUsage:
       type: object
+      description: API Key 用量摘要；按日志统计调用次数、额度消耗和最近使用线索。
       properties:
         token_id:
           type: integer
@@ -6939,6 +7000,7 @@ components:
           description: 最近失败摘要；为空表示最近调用无错误或没有日志。
     TokenLeakWindowCounter:
       type: object
+      description: API Key 泄露窗口聚合计数；用于展示模型、错误或来源摘要的出现次数。
       properties:
         value:
           type: string
@@ -6954,6 +7016,7 @@ components:
           description: 该值在窗口内最后出现时间。
     TokenEventCounter:
       type: object
+      description: API Key 事件窗口聚合计数；用于展示失败、限流和模型维度分布。
       properties:
         value:
           type: string
@@ -6969,6 +7032,7 @@ components:
           description: 该值在窗口内最后出现时间。
     TokenLeakWindow:
       type: object
+      description: API Key 泄露分析窗口；汇总调用、消耗、错误和来源摘要，辅助判断是否需要轮换。
       properties:
         token:
           description: 被分析的脱敏 API Key 摘要。
@@ -7042,6 +7106,7 @@ components:
           description: Token 最近 User-Agent 摘要。
     TokenEventWindow:
       type: object
+      description: API Key 失败事件窗口；汇总错误、限流、上游状态和模型维度。
       properties:
         token:
           description: 被分析的脱敏 API Key 摘要。
@@ -7117,6 +7182,7 @@ components:
           description: Token 最近 User-Agent 摘要。
     TokenRisk:
       type: object
+      description: API Key 风险摘要；用于控制台展示风险等级、原因和建议处置动作。
       properties:
         token:
           description: 被评估的脱敏 API Key 摘要。
@@ -7183,6 +7249,7 @@ components:
           description: 本次风险统计窗口起点。
     ReportTokenLeakResponse:
       type: object
+      description: API Key 泄露上报结果；返回禁用状态和是否建议创建替换 Key。
       properties:
         id:
           type: integer
@@ -7201,6 +7268,7 @@ components:
           description: 是否建议立即创建或轮换替换 Key。
     BatchDisableTokensResponse:
       type: object
+      description: 管理员批量禁用 API Key 结果；返回命中数量、实际禁用数量和影响 ID。
       properties:
         matched_count:
           type: integer
@@ -7219,6 +7287,7 @@ components:
           items: { type: integer, format: uint64 }
     BatchExpireTokensResponse:
       type: object
+      description: 管理员批量过期 API Key 结果；返回命中数量、实际过期数量和影响 ID。
       properties:
         matched_count:
           type: integer
@@ -7259,6 +7328,7 @@ components:
                 $ref: "#/components/schemas/TokenRisk"
     ChannelUpstreamRequest:
       type: object
+      description: 通道上游端点写入结构；保存时密钥会加密或脱敏处理。
       properties:
         base_url:
           type: string
@@ -7268,6 +7338,7 @@ components:
           description: 该上游端点专用密钥；保存时会按密钥策略加密或脱敏。
     ChannelUpstreamPublic:
       type: object
+      description: 通道上游端点脱敏摘要；响应中只暴露地址和是否配置密钥。
       properties:
         base_url:
           type: string
@@ -7277,6 +7348,7 @@ components:
           description: 该上游端点是否已配置专用密钥。
     CreateChannelRequest:
       type: object
+      description: 创建通道请求；包含上游地址、密钥池、模型映射、分组和候选权重。
       required: [type, name, models]
       properties:
         idx:
@@ -7343,6 +7415,7 @@ components:
         - $ref: "#/components/schemas/CreateChannelRequest"
     ChannelInfo:
       type: object
+      description: 通道脱敏摘要；用于管理端查看配置、健康状态和熔断相关指标。
       properties:
         id:
           type: integer
@@ -7442,6 +7515,7 @@ components:
                 $ref: "#/components/schemas/ChannelInfo"
     TestChannelResult:
       type: object
+      description: 通道连通性测试结果；返回成功状态、耗时、错误摘要和模型数量。
       properties:
         success:
           type: boolean
@@ -7458,6 +7532,7 @@ components:
           description: 测试期间探测到的上游模型数量；未探测时通常为 0 或省略。
     FetchChannelModelsResult:
       type: object
+      description: 通道模型拉取结果；返回从上游读取到的模型名列表。
       properties:
         models:
           type: array
@@ -7465,6 +7540,7 @@ components:
           items: { type: string }
     RotateSecretsRequest:
       type: object
+      description: 密钥轮换请求；用旧加密密钥重写已保存的通道和外部登录密文。
       required: [previous_encryption_key]
       properties:
         previous_encryption_key:
@@ -7473,6 +7549,7 @@ components:
           description: 旧 ENCRYPTION_KEY；仅用于本次重加密，不会写入响应或管理审计。
     RotateSecretsResult:
       type: object
+      description: 密钥轮换结果；返回扫描、重加密和跳过的密文字段数量。
       properties:
         scanned_channels:
           type: integer
@@ -7500,6 +7577,7 @@ components:
           example: 0
     Log:
       type: object
+      description: 模型调用日志摘要；用于排查请求、路由、上游、用量和错误来源。
       properties:
         id:
           type: integer
@@ -7602,6 +7680,7 @@ components:
                 $ref: "#/components/schemas/Log"
     BillingStats:
       type: object
+      description: 调用消耗汇总统计；用于 dashboard 和报表展示调用、额度和 token 总量。
       properties:
         call_count:
           type: integer
@@ -7617,6 +7696,7 @@ components:
           description: 汇总窗口内累计模型 token 数。
     DashboardStats:
       type: object
+      description: 控制台 dashboard 汇总；展示资源数量、当日调用消耗和就绪状态。
       properties:
         user_count:
           type: integer
@@ -7654,6 +7734,7 @@ components:
           $ref: "#/components/schemas/DashboardDependencies"
     DashboardDependencies:
       type: object
+      description: Dashboard 就绪依赖明细；用于解释 ready=false 的具体原因。
       properties:
         database:
           type: string
@@ -7672,6 +7753,7 @@ components:
           description: settings 状态；初始化后为 ok，异常时返回问题 key 或 not_initialized。
     Setting:
       type: object
+      description: 系统设置项摘要；敏感值在管理响应中脱敏展示。
       properties:
         id:
           type: integer
@@ -7744,6 +7826,7 @@ components:
         payment.epay.refund_url: "https://pay.example.com/refund"
     ChatCompletionRequest:
       type: object
+      description: OpenAI-compatible Chat Completions 请求；RouterX 会先验证 messages，再按模型和私有扩展路由到上游。
       required: [model, messages]
       properties:
         model:
@@ -7880,6 +7963,7 @@ components:
       description: 匹配 provider 后补充到 JSON body 的字段；model、routerx、stream 和原请求已存在字段不会被覆盖。
     ChatMessage:
       type: object
+      description: OpenAI-compatible Chat 消息；支持文本内容和 content part 数组。
       required: [role, content]
       properties:
         role:
@@ -7896,6 +7980,7 @@ components:
                 additionalProperties: true
     ChatCompletionResponse:
       type: object
+      description: OpenAI-compatible Chat Completions 响应；包含候选消息和用量统计。
       properties:
         id:
           type: string
@@ -7926,6 +8011,7 @@ components:
           $ref: "#/components/schemas/Usage"
     Usage:
       type: object
+      description: 模型用量统计；用于响应返回、日志记录和消耗计算。
       properties:
         prompt_tokens:
           type: integer
@@ -7938,6 +8024,7 @@ components:
           description: 输入和输出 token 总数。
     OpenAIErrorEnvelope:
       type: object
+      description: OpenAI-compatible 错误包络；/v1 OpenAI 风格入口失败时返回。
       properties:
         error:
           type: object
@@ -7948,6 +8035,7 @@ components:
             code: { type: string }
     AnthropicErrorEnvelope:
       type: object
+      description: Anthropic-compatible 错误包络；Anthropic 风格入口失败时返回。
       properties:
         type:
           type: string
@@ -7965,6 +8053,7 @@ components:
               example: invalid api key
     GeminiErrorEnvelope:
       type: object
+      description: Gemini-compatible 错误包络；Gemini 风格入口失败时返回。
       properties:
         error:
           type: object
@@ -7981,6 +8070,7 @@ components:
               example: UNAUTHENTICATED
     OpenAIModelList:
       type: object
+      description: OpenAI-compatible 模型列表响应；用于 /v1/models。
       properties:
         object:
           type: string
@@ -7993,6 +8083,7 @@ components:
             $ref: "#/components/schemas/OpenAIModel"
     OpenAIModel:
       type: object
+      description: OpenAI-compatible 模型摘要；由 RouterX 本地模型目录合成。
       properties:
         id:
           type: string
@@ -8009,6 +8100,7 @@ components:
           description: 模型归属方；本地合成模型通常为 routerx。
     GeminiModelList:
       type: object
+      description: Gemini-compatible 模型列表响应；用于 Gemini v1beta models 列表。
       properties:
         models:
           type: array
@@ -8017,6 +8109,7 @@ components:
             $ref: "#/components/schemas/GeminiModel"
     GeminiModel:
       type: object
+      description: Gemini-compatible 模型摘要；描述模型资源名和支持的生成方法。
       properties:
         name:
           type: string
@@ -8043,6 +8136,7 @@ components:
           example: [generateContent, streamGenerateContent, countTokens, embedContent, batchEmbedContents]
     AnthropicModelList:
       type: object
+      description: Anthropic-compatible 模型列表响应；用于 /v1/models 的 Anthropic 形态。
       properties:
         data:
           type: array
@@ -8054,6 +8148,7 @@ components:
           description: 是否还有下一页模型结果；当前本地列表通常为 false。
     AnthropicModel:
       type: object
+      description: Anthropic-compatible 模型摘要；由 RouterX 本地模型目录合成。
       properties:
         id:
           type: string
@@ -8125,6 +8220,7 @@ components:
           description: Anthropic metadata；命中 Anthropic 上游时原生保留。
     AnthropicMessageResponse:
       type: object
+      description: Anthropic-compatible Messages 响应；包含 assistant 消息内容、停止原因和用量统计。
       properties:
         id:
           type: string

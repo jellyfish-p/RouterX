@@ -555,6 +555,16 @@ func TestApifoxOpenAPIResponsesHaveHumanReadableDescriptionsAndSchemas(t *testin
 	}
 }
 
+func TestApifoxComponentSchemasHaveHumanReadableDescriptions(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := apifoxComponentSchemaDescriptionIssues(doc)
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml component schemas need human-readable descriptions:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxCoreResponseSchemasHaveHumanReadablePropertyDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := make([]string, 0)
@@ -25748,6 +25758,42 @@ func apifoxSchemaDescription(root interface{}, schema map[string]interface{}) st
 	}
 	description, _ := resolved["description"].(string)
 	return description
+}
+
+func apifoxComponentSchemaDescriptionIssues(root interface{}) []string {
+	rawSchemas, ok := apifoxResolveInternalRef(root, "#/components/schemas")
+	if !ok {
+		return []string{"components.schemas missing"}
+	}
+	schemas, ok := rawSchemas.(map[string]interface{})
+	if !ok {
+		return []string{"components.schemas is not an object"}
+	}
+
+	issues := make([]string, 0)
+	for schemaName, rawSchema := range schemas {
+		schema, ok := rawSchema.(map[string]interface{})
+		if !ok {
+			issues = append(issues, schemaName+" schema is not an object")
+			continue
+		}
+		if apifoxSchemaUsesCompositionOrRef(schema) {
+			continue
+		}
+		if strings.TrimSpace(apifoxSchemaDescription(root, schema)) == "" {
+			issues = append(issues, schemaName+" missing schema description")
+		}
+	}
+	return issues
+}
+
+func apifoxSchemaUsesCompositionOrRef(schema map[string]interface{}) bool {
+	for _, key := range []string{"$ref", "oneOf", "anyOf", "allOf"} {
+		if _, ok := schema[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func apifoxSchemaPropertyDescriptionIssues(root interface{}, schemaNames []string) []string {

@@ -28,6 +28,7 @@
 | `TestApifoxOpenAPIParametersHaveHumanReadableDescriptions` | 检查每个 path/query/header 参数都有可读说明，避免 Apifox 导入后只显示字段名而缺少用途说明 |
 | `TestApifoxOpenAPIRequestBodiesHaveHumanReadableDescriptionsAndSchemas` | 检查每个 requestBody 都有可读说明、content 和 schema，避免 Apifox 导入后请求体节点只有空壳或缺少字段结构 |
 | `TestApifoxOpenAPIResponsesHaveHumanReadableDescriptionsAndSchemas` | 检查每个响应码都有非泛化可读说明，且声明了 content 时必须带 schema，避免 Apifox 导入后响应示例只显示 OK/Ready 等占位文本 |
+| `TestApifoxComponentSchemasHaveHumanReadableDescriptions` | 检查普通组件 schema 自身也有模型级说明，避免 Apifox 模型列表只显示结构名而缺少用途上下文 |
 | `TestApifoxCoreResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 `StandardResponse`、`HealthResponse` 和 `ReadyResponse` 的响应字段都有可读说明，保证 Apifox 导入后的基础响应结构不会只显示字段名 |
 | `TestApifoxAccountResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查初始化状态、登录响应、用户摘要、身份摘要和用户分组摘要字段都有可读说明，避免账号路径在 Apifox 中只展示裸字段名 |
 | `TestApifoxAPIKeyResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 API Key 摘要和用量摘要响应字段都有可读说明，避免 Key 生命周期接口在 Apifox 中只展示裸字段名 |
