@@ -7498,14 +7498,36 @@ components:
     Log:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
-        user_id: { type: integer, format: uint64 }
-        token_id: { type: integer, format: uint64, nullable: true }
-        channel_id: { type: integer, format: uint64, nullable: true }
-        model: { type: string }
-        prompt_tokens: { type: integer }
-        completion_tokens: { type: integer }
-        total_tokens: { type: integer }
+        id:
+          type: integer
+          format: uint64
+          description: 调用日志内部 ID。
+        user_id:
+          type: integer
+          format: uint64
+          description: 发起调用的用户 ID。
+        token_id:
+          type: integer
+          format: uint64
+          nullable: true
+          description: 发起调用的 API Key 内部 Token ID；无 Key 上下文时为空。
+        channel_id:
+          type: integer
+          format: uint64
+          nullable: true
+          description: 实际命中的通道 ID；未进入上游调用时为空。
+        model:
+          type: string
+          description: 请求模型名。
+        prompt_tokens:
+          type: integer
+          description: 输入 token 数。
+        completion_tokens:
+          type: integer
+          description: 输出 token 数。
+        total_tokens:
+          type: integer
+          description: 输入和输出 token 总数。
         usage_source:
           type: string
           description: usage 来源；当前已落地 upstream 和 minimum。
@@ -7513,7 +7535,10 @@ components:
         usage_snapshot:
           type: string
           description: 脱敏 usage 快照 JSON 字符串；当前包含 request_id、created_at、usage_source、prompt_tokens、completion_tokens、total_tokens、raw_usage_summary 和 minimum_reason。
-        quota_used: { type: integer, format: int64 }
+        quota_used:
+          type: integer
+          format: int64
+          description: 本次调用最终消耗额度。
         status: { type: integer, description: "1=success, 2=failed" }
         content:
           type: string
@@ -7553,9 +7578,16 @@ components:
         billing_snapshot:
           type: string
           description: 脱敏计费快照 JSON 字符串；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式、规则 ID/版本、倍率快照、最终扣费、Key 预算前后和用户余额前后摘要；扣费失败时记录 billing_status=failed、attempted_quota_used 和 deduction_error_code。
-        error_msg: { type: string }
-        ip: { type: string }
-        created_at: { type: string, format: date-time }
+        error_msg:
+          type: string
+          description: 失败时的错误摘要；成功调用通常为空。
+        ip:
+          type: string
+          description: 发起调用时记录的客户端 IP。
+        created_at:
+          type: string
+          format: date-time
+          description: 调用日志创建时间。
     LogPage:
       allOf:
         - $ref: "#/components/schemas/PaginatedResult"
@@ -7638,16 +7670,33 @@ components:
     Setting:
       type: object
       properties:
-        id: { type: integer, format: uint64 }
-        key: { type: string }
+        id:
+          type: integer
+          format: uint64
+          description: 设置项内部 ID。
+        key:
+          type: string
+          description: 设置键名。
         value:
           type: string
           description: 配置值；敏感 key 在管理响应中为脱敏摘要，OAuth/OIDC client_secret 在存储层使用 enc:v1 密文。
-        type: { type: string }
-        category: { type: string }
-        description: { type: string }
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
+        type:
+          type: string
+          description: 设置值类型。
+        category:
+          type: string
+          description: 设置分类，用于控制台分组展示。
+        description:
+          type: string
+          description: 设置项的人类可读说明。
+        created_at:
+          type: string
+          format: date-time
+          description: 设置项创建时间。
+        updated_at:
+          type: string
+          format: date-time
+          description: 设置项最近更新时间。
     BatchSetSettingsRequest:
       type: object
       description: 顶层对象为 key/value 字符串映射；登录相关 key 包括 auth.login.username_password.enabled=true、auth.login.email_password.enabled=false 和 auth.login.phone_password.enabled=false，其中用户名密码登录不得关闭；注册相关 key 包括 auth.register.enabled=false、auth.register.username.enabled=true、auth.register.captcha.required=true、auth.register.default_quota=0 和 auth.register.default_group_id=default；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；倍率相关 key 包括 billing.user_group_ratios='{"vip":0.8}'、billing.channel_group_ratios='{"premium":1.2}' 和 billing.user_group_channel_ratios='{"vip":{"premium":0.9}}'，组合倍率命中时覆盖用户分组倍率和通道分组倍率的乘积；限流相关 key 包括 rate_limit.enabled=true、rate_limit.global_per_min=1000、rate_limit.per_ip_per_min=30、rate_limit.per_token_per_min=60、rate_limit.per_user_per_min=0、rate_limit.per_model_per_min=0 和 rate_limit.per_channel_per_min=0，0 表示关闭对应维度；usage 缺失策略可设置 billing.usage_missing_strategy=minimum 或 reject；Relay 重试、熔断和后台探测可设置 relay.retry_count=1、relay.retry_on_status='[429,500,502,503,504]'、relay.error_auto_ban=true、relay.error_ban_threshold=10、relay.error_ban_cooldown_seconds=300、relay.error_probe_enabled=true、relay.error_probe_interval_seconds=60 和 relay.error_probe_batch_size=20；通道候选缓存可设置 routing.channel_cache.enabled=true、routing.channel_cache.preload=true、routing.channel_cache.ttl_seconds=60 和 routing.channel_cache.version=1，Redis 可用时会共享排序后的候选快照，实例按 version 和内嵌 TTL 被动失效，并通过 routing:channel_candidate_cache:invalidate 主动广播清理本地缓存；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，易支付退款请求地址可设置 payment.epay.refund_url。

@@ -34,6 +34,7 @@
 | `TestApifoxAPIKeyRiskResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 API Key 泄露窗口、事件窗口、风险视图、泄露上报和批量处置响应字段都有可读说明，避免安全运维接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxChannelResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查通道摘要、上游端点摘要、连通性测试和模型拉取响应字段都有可读说明，避免通道管理接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxObservabilityResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查审计日志、告警事件、告警投递和 dashboard 响应字段都有可读说明，避免运维观测接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxLogAndSettingResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查调用日志和设置项响应字段都有可读说明，避免运维排查和设置接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxPaymentResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查支付商品、支付订单、人工调整、退款请求、充值码和额度流水响应字段都有可读说明，避免支付与额度接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxModelPricingResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查用户模型目录、全局模型价格和通道模型价格响应字段都有可读说明，避免模型与价格配置接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxProtocolResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 OpenAI、Anthropic 和 Gemini 兼容响应、模型列表、错误封套和 usage 字段都有可读说明，避免协议兼容接口在 Apifox 中只展示裸字段名 |

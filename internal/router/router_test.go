@@ -672,6 +672,19 @@ func TestApifoxObservabilityResponseSchemasHaveHumanReadablePropertyDescriptions
 	}
 }
 
+func TestApifoxLogAndSettingResponseSchemasHaveHumanReadablePropertyDescriptions(t *testing.T) {
+	doc := loadApifoxRawDocument(t)
+	issues := apifoxSchemaPropertyDescriptionIssues(doc, []string{
+		"Log",
+		"Setting",
+	})
+
+	sort.Strings(issues)
+	if len(issues) > 0 {
+		t.Fatalf("docs/apifox/openapi.yaml log and setting response schemas need human-readable property descriptions:\n%s", strings.Join(issues, "\n"))
+	}
+}
+
 func TestApifoxPaymentResponseSchemasHaveHumanReadablePropertyDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := apifoxSchemaPropertyDescriptionIssues(doc, []string{
