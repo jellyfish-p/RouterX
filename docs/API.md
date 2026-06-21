@@ -255,7 +255,7 @@ Gemini-compatible 错误示例：
 | PUT | `/v0/admin/groups/:id` | 已实现 | 更新用户分组名称或展示倍率；名称唯一，显式 `ratio <= 0` 会被拒绝，成功后写 `user_group.update` |
 | DELETE | `/v0/admin/groups/:id` | 已实现 | 删除未使用用户分组；`default` 或仍有用户引用时拒绝，成功后写 `user_group.delete` |
 
-`groups.ratio` 当前作为分组元数据和兼容展示字段；成功调用后的实际扣费倍率仍以 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` settings 为权威来源。
+`groups.ratio` 当前作为分组元数据和展示字段；成功调用后的实际扣费倍率仍以 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` settings 为权威来源。
 
 额度流水查询参数：
 
@@ -1132,7 +1132,7 @@ RouterX 仍保留以下非请求字段能力：
 API Key 校验规则：
 
 - 格式必须以 `sk-` 开头。
-- API Key 不存在、禁用、软删除、过期均返回 401；数据库兼容早期明文存量，验证成功后迁移为 SHA256 哈希。
+- API Key 不存在、禁用、软删除、过期均返回 401；数据库只保存 SHA256 哈希。
 - 所属用户禁用或软删除返回 403。
 - 额度不足返回 429。
 - 鉴权成功后写入 `current_user` 和 `current_token` 上下文。

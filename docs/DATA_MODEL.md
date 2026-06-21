@@ -224,7 +224,7 @@ erDiagram
 |------|------|------|
 | `id` | uint | 主键 |
 | `name` | string | 分组名 |
-| `ratio` | float64 | 分组元数据/兼容展示倍率，默认 `1.0` |
+| `ratio` | float64 | 分组元数据/展示倍率，默认 `1.0` |
 | `created_at` | time | 创建时间 |
 
 ### `tokens`
@@ -237,7 +237,7 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `id` | uint | 主键 |
 | `user_id` | uint | 所属用户 |
 | `name` | string | Token 备注名 |
-| `key` | string | API Key 的 SHA256 哈希；兼容早期明文存量时会在验证成功后迁移为哈希 |
+| `key` | string | API Key 的 SHA256 哈希 |
 | `status` | int | `0` 禁用，`1` 启用 |
 | `expired_at` | nullable time | 过期时间，空表示不过期 |
 | `quota_limit` | int64 | Key 剩余可消耗额度，成功调用会扣减；`-1` 表示无限制 |
@@ -935,7 +935,7 @@ QuotaUnlimited = -1
 必须加密或哈希的数据：
 
 - 用户密码：bcrypt 哈希。
-- API Key：数据库长期保存 SHA256 哈希，兼容早期明文存量时验证成功后迁移为哈希。
+- API Key：数据库长期保存 SHA256 哈希，不保存 API Key 明文。
 - 下游通道 API Key：应使用 `ENCRYPTION_KEY` 或 KMS 派生的服务端密钥加密后存储；当前通道 `api_key`、`api_keys` 和 `upstreams.api_key` 可通过 `POST /v0/admin/security/rotate-secrets` 用旧主密钥解密后重加密到当前 `ENCRYPTION_KEY`。
 - OAuth client_secret 和 OIDC client_secret：当前 `oauth.*.client_secret` 与 `oidc.*.client_secret` 已通过 `ENCRYPTION_KEY` 加密存储，也可通过 `POST /v0/admin/security/rotate-secrets` 重加密到当前主密钥，后续可接入 KMS。
 

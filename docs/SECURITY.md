@@ -84,7 +84,7 @@ RouterX 运行时
 ### 密钥和敏感数据
 
 - API Key 明文只在创建时返回一次。
-- API Key 数据库长期保存 SHA256 哈希，兼容早期明文存量时验证成功后迁移为哈希。
+- API Key 数据库长期保存 SHA256 哈希，不保存 API Key 明文。
 - 上游密钥、OAuth/OIDC client secret 和支付敏感密钥使用 `ENCRYPTION_KEY`、KMS 或环境变量注入；当前 settings 中的 `oauth.*.client_secret` 和 `oidc.*.client_secret` 会在配置 `ENCRYPTION_KEY` 时加密落库。
 - 管理响应只返回脱敏摘要，不返回可直接调用的上游密钥。
 - 日志和错误响应不能包含 API Key、上游密钥、Cookie、数据库 DSN、支付密钥和内部堆栈。

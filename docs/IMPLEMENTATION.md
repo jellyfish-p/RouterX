@@ -17,7 +17,7 @@ P0 的交付目标是：
 | 决策 | P0 默认 |
 |------|---------|
 | 配置来源 | DB `settings` 是运行时配置权威来源；环境变量只承载启动项和密钥。 |
-| API Key 存储 | 明文只返回一次，数据库保存 SHA256 哈希，兼容早期明文存量迁移。 |
+| API Key 存储 | 明文只返回一次，数据库只保存 SHA256 哈希。 |
 | 有限 API Key 预算 | 创建时只设置剩余可消耗额度，不扣 `users.quota`；调用成功同时扣用户余额、扣 Key 剩余额度并累计 Key 已用量。 |
 | 无限 API Key 预算 | `unlimited=true`、`quota_limit=-1` 或 `quota_limit=-1` 时，调用成功只扣用户 `quota`，并累计 Key 已用量。 |
 | Relay 重试 | `relay.retry_count=0` 默认单次调用；大于 0 时仅非流式可对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败换候选通道。 |
@@ -82,7 +82,7 @@ P0 的交付目标是：
 
 1. 创建有限额度 API Key 时，只设置 Key 剩余可消耗额度，不扣用户 `quota`。
 2. 创建无限 API Key 不扣 Key 剩余额度，调用成功后扣用户额度并累计 Key 已用量。
-3. `ValidateAndGetToken` 继续支持 SHA256 哈希，并兼容早期明文存量迁移。
+3. `ValidateAndGetToken` 使用 SHA256 哈希校验 API Key。
 4. 禁用、删除、过期、用户禁用和余额不足在调用下游前失败。
 5. Redis 缓存失效必须跟随 Token 更新、删除和用户状态变化。
 

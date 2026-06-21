@@ -105,7 +105,7 @@ P1/P2 启用访问控制后，默认策略应偏向安全：
 
 ## 6. 用户分组与通道分组
 
-用户分组和通道分组用于表达套餐、价格、访问范围和运营策略。新用户和新通道默认归入 `default` 分组；存量空分组在策略层归一为 `default`。
+用户分组和通道分组用于表达套餐、价格、访问范围和运营策略。新用户和新通道默认归入 `default` 分组；空分组在策略层归一为 `default`。
 
 | 概念 | 数据来源 | 用途 | 不应承担 |
 |------|----------|------|----------|
@@ -113,7 +113,7 @@ P1/P2 启用访问控制后，默认策略应偏向安全：
 | 通道分组 | `channels.channel_group` | 路由、套餐、倍率、访问控制；默认 `default` | provider 类型或真实地域的唯一来源 |
 | 用户分组 x 通道分组 | `billing.user_group_channel_group_access`、`billing.user_group_channel_ratios` | 组合访问和组合倍率 | 模型价格表达式 |
 
-用户分组 CRUD 当前由管理端 `/v0/admin/groups` 提供，`groups.ratio` 保留为分组元数据和兼容展示倍率；成功调用后的实际扣费倍率仍以 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` settings 为准。
+用户分组 CRUD 当前由管理端 `/v0/admin/groups` 提供，`groups.ratio` 保留为分组元数据和展示倍率；成功调用后的实际扣费倍率仍以 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` settings 为准。
 
 访问判断建议：
 

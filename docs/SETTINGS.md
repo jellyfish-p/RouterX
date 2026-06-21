@@ -115,7 +115,7 @@
 - `relay.max_response_body_bytes` 当前已在非流式上游响应读取路径生效，超过限制时返回 502 `upstream_response_too_large`，不反射下游响应体且不扣费。
 - `relay.routerx_max_hops` 当前已在 RouterX-Compatible 上游转发路径生效，达到或超过上限时返回 `routerx_hop_exceeded` 且不调用上游。
 - `relay.log_body_max_bytes` 和 `log.body_max_bytes` 当前默认是 `0`，表示默认不记录请求/响应 body；显式开启 `log.request_body_enabled` / `log.response_body_enabled` 且配置正数上限后，非流式 Relay 日志会保存截断和脱敏后的请求/响应片段。
-- `billing.usage_missing_strategy` 当前支持 `minimum` 和 `reject`；`minimum` 保持最低计费兼容行为，`reject` 在上游成功但缺少 usage 时返回 `usage_missing` 且不扣费。
+- `billing.usage_missing_strategy` 当前支持 `minimum` 和 `reject`；`minimum` 表示最低计费行为，`reject` 在上游成功但缺少 usage 时返回 `usage_missing` 且不扣费。
 - `alert.<target>.enabled=false` 时不会为新告警创建对应外部投递 outbox；当前 target 支持 `webhook`、`email` 和 `im`。开启且 `alert.<target>.url` 为绝对 URL 后，新告警会写入 `alert_delivery_outboxes`，后台 worker 或手动重放会发送脱敏告警 payload。
 
 ## P0 目标配置

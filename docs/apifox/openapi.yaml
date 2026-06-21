@@ -1794,7 +1794,7 @@ paths:
       operationId: getV0AdminGroups
       tags: [Admin Users]
       summary: 用户分组列表
-      description: 管理员查看用户分组；支持 page、page_size 和 keyword。groups.ratio 当前作为分组元数据/兼容展示倍率，实际扣费倍率以 billing.* settings 为准。
+      description: 管理员查看用户分组；支持 page、page_size 和 keyword。groups.ratio 当前作为分组元数据/展示倍率，实际扣费倍率以 billing.* settings 为准。
       security:
         - UserJWT: []
       parameters:
@@ -5425,7 +5425,7 @@ components:
         ratio:
           type: number
           format: double
-          description: 分组元数据/兼容展示倍率；实际扣费倍率以 billing.* settings 为准。
+          description: 分组元数据/展示倍率；实际扣费倍率以 billing.* settings 为准。
           example: 0.8
         created_at:
           type: string

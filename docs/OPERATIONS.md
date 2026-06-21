@@ -364,9 +364,9 @@ Redis 失败处理：
 - `jwt.secret` 初始化后不可为空。
 - `jwt.secret` 必须支持由 `JWT_SECRET` 环境变量指定；生产和多实例必须显式配置，禁止各实例启动时各自随机生成。
 - 下游 API Key、OAuth/OIDC client secret 应加密存储，主密钥来自 `ENCRYPTION_KEY` 环境变量或 KMS。
-- 当前加密格式使用 `enc:v1:` 前缀；未配置 `ENCRYPTION_KEY` 时新密钥可能以兼容方式保存，已有 `enc:v1:` 通道密钥或外部登录 client secret 且缺少或无法通过当前 `ENCRYPTION_KEY` 解密时 `/ready` 会阻止实例接收流量。
+- 当前加密格式使用 `enc:v1:` 前缀；未配置 `ENCRYPTION_KEY` 时禁止保存需要加密的密钥，`enc:v1:` 通道密钥或外部登录 client secret 缺少或无法通过当前 `ENCRYPTION_KEY` 解密时 `/ready` 会阻止实例接收流量。
 - 支付密钥应通过环境变量、KMS 或加密配置提供，禁止写入前端响应、日志或明文配置文件。
-- API Key 明文只返回一次，数据库保存 SHA256 哈希；后续重点是存量明文迁移兜底、缓存失效和审计。
+- API Key 明文只返回一次，数据库只保存 SHA256 哈希；后续重点是缓存失效和审计。
 - 管理端任何响应不得返回完整下游 API Key。
 
 密钥生命周期：

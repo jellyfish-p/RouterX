@@ -24,7 +24,7 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 |------|------|
 | 窄权限 | API Key 只允许调用 `/v1/*` 模型接口，不能调用 `/v0/user/*`、`/v0/admin/*` 或修改任何配置。 |
 | 一次性明文 | API Key 明文只在创建响应中出现一次，后续列表、日志、审计和缓存都不能保存完整明文。 |
-| 哈希长期保存 | 数据库长期保存 SHA256 哈希，兼容早期明文存量时只允许验证成功后迁移为哈希。 |
+| 哈希长期保存 | 数据库长期保存 SHA256 哈希，不保存 API Key 明文。 |
 | 后台策略优先 | API Key 作用域、`routerx` 偏好和调用方参数只能收窄能力，不能绕过用户、通道、额度、熔断和安全策略。 |
 | 账本可解释 | API Key 剩余可消耗额度是预算上限，不是余额划拨；模型消费以成功调用日志和扣费事务为准。 |
 | 可轮换 | 丢失、泄露、离职、环境迁移和定期安全策略都应通过创建新 Key、切换客户端、禁用旧 Key 完成。 |
@@ -36,7 +36,6 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 
 - 用户登录后通过 User JWT 调用 `/v0/user/token` 创建、列表、编辑和删除自己的 API Key。
 - 创建响应返回一次性 `sk-` 明文，`tokens.key` 保存 SHA256 哈希。
-- 校验时支持早期明文存量兼容，验证成功后迁移为 SHA256 哈希。
 - `status`、`expired_at`、软删除和所属用户状态会影响鉴权结果。
 - 普通用户可设置自己的 API Key 剩余可消耗额度，也可将 Key 设置为自身无限额度；实际可消费额度始终同时受用户 `users.quota` 约束。
 - 有限 API Key 创建不扣用户余额，`quota_limit` 表示 Key 剩余可消耗额度；成功调用同时扣用户余额和 Key 剩余额度，并累加 `quota_used`。
@@ -162,7 +161,7 @@ User JWT 登录
 | 字段 | 说明 |
 |------|------|
 | `prefix` | 可展示的短摘要，例如 `sk-abc...wxyz`，只用于识别，不用于鉴权。 |
-| `hash_version` | 哈希算法或迁移版本，支持未来升级。 |
+| `hash_version` | 哈希算法版本，支持未来升级。 |
 | `metadata_json` | 当前已落地；环境、应用名、团队、标签、外部系统关联 ID、服务账号主体和备注等非安全元数据，不保存 API Key 明文、上游密钥或支付密钥。服务账号主体使用 `principal_type=service_account`、`principal_id` 和 `principal_name` 描述非登录机器身份。 |
 | `created_by_user_id` | 创建动作的登录用户。 |
 | `updated_by_user_id` | 最近一次管理动作的登录用户。 |
@@ -304,7 +303,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 | `api_key.batch_disable_denied` | 管理员批量禁用 Key 但缺少 `token_ids` 和 `user_id` 筛选条件。 |
 | `api_key.batch_expire_denied` | 管理员批量过期 Key 但缺少 `token_ids` 和 `user_id` 筛选条件。 |
 | `api_key.quota_limit_set` | 创建或修改 Key 剩余可消耗额度或无限额度标记。 |
-| `api_key.quota_adjusted` | 管理员调整 Key 预算上限或迁移旧额度口径。 |
+| `api_key.quota_adjusted` | 管理员调整 Key 预算上限。 |
 
 审计字段：
 
@@ -359,7 +358,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 
 - 用户能创建、列表、编辑、删除自己的 API Key。
 - 创建响应返回一次性 `sk-` 明文，列表和日志不返回完整明文。
-- 数据库保存 SHA256 哈希，兼容早期明文存量迁移。
+- 数据库保存 SHA256 哈希，不保存 API Key 明文。
 - 禁用、过期、软删除、用户禁用和余额不足会阻止 `/v1` 调用。
 - 有限 API Key 和无限 API Key 的扣费语义与 `docs/BILLING.md` 一致。
 - API Key 不能调用 `/v0/user/*` 或 `/v0/admin/*`。

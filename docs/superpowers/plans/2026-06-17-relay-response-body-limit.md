@@ -67,7 +67,7 @@ Add a RelayService accessor:
 
 ```go
 func (s *RelayService) MaxResponseBodyBytes() int64 {
-    // 0 disables the limit for compatibility; invalid or missing values fall back to the historical 20MiB limit.
+    // 0 disables the limit; invalid or missing values fall back to the configured 20MiB default.
 }
 ```
 

@@ -79,7 +79,7 @@ type RouteSelectionFacts struct {
 }
 ```
 
-Add `SelectChannelCandidatesWithRouteDetailedFacts(modelName string, route RoutePreference) ([]model.Channel, RouteSelectionFacts, error)`. Keep `SelectChannelCandidatesWithRouteFacts` as a compatibility wrapper returning `facts.FilteredReasons`.
+Add `SelectChannelCandidatesWithRouteDetailedFacts(modelName string, route RoutePreference) ([]model.Channel, RouteSelectionFacts, error)`. Keep `SelectChannelCandidatesWithRouteFacts` as a thin wrapper returning `facts.FilteredReasons`.
 
 - [x] **Step 2: Capture health-blocked channel summaries**
 
