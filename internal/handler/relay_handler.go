@@ -347,7 +347,6 @@ func normalizeModelListProtocol(value string) string {
 
 func relayRequestContext(c *gin.Context) context.Context {
 	ctx := service.ContextWithRelayUserAgent(c.Request.Context(), c.GetHeader("User-Agent"))
-	ctx = service.ContextWithRelayRouterXOptions(ctx, c.GetHeader("X-RouterX-Options"))
 	ctx = service.ContextWithRelayRouterXHop(ctx, c.GetHeader(relay.RouterXHopHeaderName))
 	ctx = service.ContextWithRelayRouterXChain(ctx, c.GetHeader(relay.RouterXChainHeaderName))
 	ctx = service.ContextWithRelayRequestID(ctx, c.GetString("request_id"))

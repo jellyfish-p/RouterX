@@ -40,7 +40,7 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 | RXD-011 | `relay.retry_count=0` 默认单次调用；大于 0 按 `relay.retry_on_status` 开启非流式安全重试 | Active | 已定 | `SETTINGS`、`RELAY`、`IMPLEMENTATION` |
 | RXD-012 | P0 默认不记录请求和响应 body | Active | 已定 | `SETTINGS`、`OPERATIONS`、`RELAY` |
 | RXD-013 | `/v1` 必须返回入口协议兼容响应和错误格式 | Active | 已定 | `API`、`PROTOCOLS`、`RELAY`、`TESTING` |
-| RXD-014 | `routerx.route` 只能表达偏好，不能绕过管理员策略 | Active | 已定 | `RELAY`、`API`、`DESIGN` |
+| RXD-014 | API Key/channel-group scope 只能表达偏好，不能绕过管理员策略 | Active | 已定 | `RELAY`、`API`、`DESIGN` |
 | RXD-015 | 通道内部 `upstreams` 优先于外层 key/base URL 数组 | Active | 已定 | `RELAY`、`DATA_MODEL`、`TESTING` |
 | RXD-016 | P0 先保证 OpenAI-compatible Chat/Models 闭环 | Active | 已定 | `DEVELOPER_EXPERIENCE`、`RELAY`、`ROADMAP`、`IMPLEMENTATION` |
 | RXD-017 | 多协议和多上游同等重要，但分 P1/P2 展开 | Active | 已定 | `DESIGN`、`PROTOCOLS`、`RELAY`、`ROADMAP` |

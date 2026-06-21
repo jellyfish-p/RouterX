@@ -153,7 +153,7 @@ Gemini-compatible 错误示例：
 
 | HTTP 状态 | 内部 code 示例 | type/status 示例 | 调用方含义 |
 |-----------|----------------|------------------|------------|
-| 400 | `invalid_json`、`invalid_multipart`、`invalid_chat_messages`、`invalid_gemini_embedding_request`、`invalid_image_prompt`、`invalid_image_count`、`multipart_file_required`、`unsafe_multipart_file`、`model_required`、`invalid_routerx_options`、`routerx_hop_exceeded` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数 |
+| 400 | `invalid_json`、`invalid_multipart`、`invalid_chat_messages`、`invalid_gemini_embedding_request`、`invalid_image_prompt`、`invalid_image_count`、`multipart_file_required`、`unsafe_multipart_file`、`model_required`、`routerx_hop_exceeded` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数 |
 | 401 | `invalid_api_key`、`expired_api_key` | `authentication_error` / `UNAUTHENTICATED` | 更换或重新创建 API Key |
 | 403 | `user_disabled`、`token_forbidden`、`model_not_allowed`、`route_forbidden` | `permission_error` / `PERMISSION_DENIED` | 联系管理员调整权限或通道分组 |
 | 404 | `model_not_found`、`unsupported_api`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名、接口路径或资源 ID |
@@ -1065,10 +1065,7 @@ P0 明确失败：
 | API Key scope 达到 RPM/TPM 上限 | 429 | `rate_limit_exceeded` |
 | `stream=true` 但选中通道不是 OpenAI SSE 形态 | 502 | `unsupported_stream_channel` |
 | 选中通道 adapter 不支持该 APIType | 502 | `unsupported_api_type` |
-| `routerx` 结构非法 | 400 | `invalid_routerx_options` |
-| `routerx.route` 字段类型非法 | 400 | `invalid_routerx_route` |
 | 无可用通道 | 502 | `no_available_channel` |
-| `routerx.route` 筛选后无可用通道 | 502 | `no_available_channel` |
 | 下游密钥不可解密或缺失 | 502 | `upstream_secret_error` |
 | 余额不足 | 429 | `insufficient_quota` |
 
@@ -1095,58 +1092,14 @@ P0 明确失败：
 
 ### 额外参数
 
-JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 provider-specific 参数。该字段不会透传给真实厂商，除非上游通道也是 RouterX-Compatible。
+请求体或 multipart 表单中的 `routerx` 字段、以及 `X-RouterX-Options` header 已不作为客户端扩展协议处理。RouterX 会在发往真实上游前剥离这些字段；它们不会影响通道选择、上游 header/query/body，也不会触发专门的 routerx 解析错误。
 
-```json
-{
-  "model": "gpt-4o-mini",
-  "messages": [{ "role": "user", "content": "hi" }],
-  "routerx": {
-    "route": {
-      "channel_group": "premium",
-      "upstream_provider": "xai"
-    },
-    "upstream": {
-      "headers": {},
-      "query": {},
-      "body": {}
-    },
-    "provider": {
-      "openai": {},
-      "anthropic": {},
-      "gemini": {},
-      "xai": {}
-    }
-  }
-}
-```
+RouterX 仍保留以下非请求字段能力：
 
-规则：
-
-- 策略决策顺序、访问控制、限流、分组和冲突规则以 `docs/POLICIES.md` 为准。
-- `routerx.route` 用于路由偏好，不参与模型原生请求。
-- `routerx.route` 只能收窄管理员策略允许的候选通道，不能启用已禁用通道、绕过额度、绕过通道分组访问控制或强制使用无权限 provider。
-- `routerx.upstream` 用于安全补充上游 header、query 和 JSON body 参数；当前实现会把允许的 header/query 加到真实上游请求，并把 `routerx.upstream.body` 中不存在于原请求的字段合并进 JSON 请求体。
-- 敏感鉴权 header/query 必须来自通道配置，不能由用户请求覆盖；已有请求字段、`model`、`routerx` 和 `stream` 不会被 `routerx.upstream.body` 改写。
-- `routerx.provider.<provider>` 仅在选中对应上游 provider 时生效；当前基础实现会把匹配 provider 下的 JSON 字段作为 body 缺省补充，优先级高于通用 `routerx.upstream.body`，但仍不能覆盖调用方原请求字段、`model`、`routerx` 或 `stream`。
-- OpenAI-compatible Chat 命中 Gemini 上游时，`routerx.provider.gemini.safetySettings` 会映射到 Gemini 原生 `safetySettings`；其他未显式支持的 Gemini provider 字段不会透传到真实厂商请求。Anthropic `messages` 原生入口命中 Anthropic 上游时，会保留 `system/messages/max_tokens/metadata/stop_sequences/stream/temperature/top_p/top_k/tools/tool_choice/thinking` 等白名单字段到真实上游请求体。Gemini `generateContent` 原生入口命中 Gemini 上游时，会保留 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent` 到真实上游请求体。
-- multipart 或非 JSON 请求当前可通过 `routerx` 表单字段或 `X-RouterX-Options` header 传递 JSON 字符串；body/form 中的 `routerx` 优先于 header，multipart 当前只应用路由偏好和安全 header/query 补充，不重写文件表单 body。
-- 对 `GET /v1/models` 这类无 JSON body 的冲突路径，当前按 `format`、`routerx_protocol`、`X-RouterX-Protocol`、`anthropic-version`、OpenAI 默认值的顺序选择返回外形；`format` 继续保持最高优先级以兼容已有调用方。
-
-路由偏好处理：
-
-| 场景 | 目标行为 |
-|------|----------|
-| 偏好合法且候选通道可用 | 进入正常通道选择，并在日志中记录偏好被接受 |
-| 偏好字段未知但不影响安全 | 忽略未知字段，在日志中记录被忽略 |
-| 偏好格式非法 | 返回当前入口协议兼容的 400 错误 |
-| 偏好要求无权限通道或 provider | 返回当前入口协议兼容的 403 错误 |
-| 偏好合法但筛选后无可用通道 | 返回当前入口协议兼容的无可用通道错误 |
-
-安全边界：
-
-- 客户端不能通过 `routerx.upstream.headers` 覆盖 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`、`api-key`、`Content-Type` 或 `X-RouterX-*` 等敏感/内部 header，也不能通过 query 覆盖常见 API key 参数。
-- 客户端不能通过 `routerx.upstream.body` 覆盖 RouterX 已经完成安全决策的内部字段；当前 `model`、`routerx`、`stream` 和原请求已存在字段都会保持原值。
+- `GET /v1/models` 等无 JSON body 路径按 `format`、`routerx_protocol`、`X-RouterX-Protocol`、`anthropic-version`、OpenAI 默认值的顺序选择返回外形。
+- RouterX-Compatible 上游继续使用 `X-RouterX-Hop` 和 `X-RouterX-Chain` 做多层转发循环保护与链路摘要。
+- Anthropic `messages` 原生入口命中 Anthropic 上游时，会保留 `system/messages/max_tokens/metadata/stop_sequences/stream/temperature/top_p/top_k/tools/tool_choice/thinking` 等白名单字段。
+- Gemini 原生入口命中 Gemini 上游时，会保留 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent`、`content/taskType/title/outputDimensionality` 或 `requests` 等对应原生字段。
 - RouterX-Compatible 上游可以继续接收 `routerx` 扩展，但真实厂商上游必须在请求发出前移除该私有字段。
 - 所有路由偏好、是否命中、是否被拒绝和最终通道应进入日志或后续路由决策快照。
 

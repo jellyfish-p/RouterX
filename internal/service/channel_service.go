@@ -113,7 +113,7 @@ type ChannelSecretRotationResult struct {
 	SkippedSecrets  int
 }
 
-// RoutePreference describes request-level routerx.route filters after policy checks.
+// RoutePreference describes optional internal route filters after policy checks.
 type RoutePreference struct {
 	ChannelGroup     string
 	ChannelID        uint
@@ -136,7 +136,7 @@ func (s *ChannelService) SelectChannel(modelName string) (*model.Channel, error)
 	return s.SelectChannelWithRoute(modelName, RoutePreference{})
 }
 
-// SelectChannelWithRoute 在管理员允许的候选集中应用请求级 routerx.route 偏好。
+// SelectChannelWithRoute 在管理员允许的候选集中应用内部路由过滤条件。
 func (s *ChannelService) SelectChannelWithRoute(modelName string, route RoutePreference) (*model.Channel, error) {
 	candidates, err := s.SelectChannelCandidatesWithRoute(modelName, route)
 	if err != nil {
@@ -153,7 +153,7 @@ func (s *ChannelService) SelectChannelWithRoute(modelName string, route RoutePre
 	return weightedPick(bestPriorityCandidates), nil
 }
 
-// SelectChannelCandidatesWithRoute 返回经过系统过滤和 routerx.route 收窄后的有序候选通道。
+// SelectChannelCandidatesWithRoute 返回经过系统过滤和内部路由过滤后的有序候选通道。
 func (s *ChannelService) SelectChannelCandidatesWithRoute(modelName string, route RoutePreference) ([]model.Channel, error) {
 	candidates, _, err := s.SelectChannelCandidatesWithRouteFacts(modelName, route)
 	return candidates, err

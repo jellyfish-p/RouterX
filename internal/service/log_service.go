@@ -645,9 +645,6 @@ func normalizeLogAccessRuleSnapshot(log *model.Log) string {
 	if userStatus, ok := logSnapshotMap(policy["user_status"]); ok {
 		snapshot["user_status"] = userStatus
 	}
-	if routePreference, ok := logSnapshotMap(policy["route_preference"]); ok {
-		snapshot["route_preference"] = routePreference
-	}
 	if selectedGroup := selectedChannelGroupFromRouteSnapshot(log.RouteSnapshot); selectedGroup != "" {
 		snapshot["selected_channel_group"] = selectedGroup
 	}

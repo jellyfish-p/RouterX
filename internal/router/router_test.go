@@ -757,7 +757,6 @@ func TestApifoxCommonReusableSchemasHaveHumanReadablePropertyDescriptions(t *tes
 	issues := apifoxSchemaPropertyDescriptionIssues(doc, []string{
 		"PaginatedResult",
 		"BillingStats",
-		"RouterXProviderOptions",
 		"ChatMessage",
 	})
 
@@ -770,10 +769,9 @@ func TestApifoxCommonReusableSchemasHaveHumanReadablePropertyDescriptions(t *tes
 func TestApifoxReferencedObjectPropertiesHaveLocalDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := apifoxDirectPropertyDescriptionIssues(doc, map[string][]string{
-		"CreateTokenRequest":     {"metadata"},
-		"UpdateTokenRequest":     {"metadata"},
-		"Token":                  {"metadata"},
-		"RouterXProviderOptions": {"openai", "anthropic"},
+		"CreateTokenRequest": {"metadata"},
+		"UpdateTokenRequest": {"metadata"},
+		"Token":              {"metadata"},
 	})
 
 	sort.Strings(issues)
@@ -1419,8 +1417,8 @@ func TestTraceabilityP1RouterXExtensionEvidenceIncludesProviderSpecificTests(t *
 	}
 
 	requiredTests := []string{
-		"TestRouterXProviderOptionsApplyOnlyToSelectedProvider",
-		"TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings",
+		"TestRouterXProviderOptionsAreIgnored",
+		"TestOpenAIChatToGeminiUpstreamIgnoresRouterXProviderSafetySettings",
 		"TestAnthropicMessagesToAnthropicUpstreamPreservesNativeRequestFieldsAndDeductsUsage",
 		"TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields",
 	}
@@ -15490,7 +15488,7 @@ func TestChannelRoutingConfigResolution(t *testing.T) {
 	}
 }
 
-func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
+func TestRouterXRequestFieldIsIgnoredForRoutingAndStripped(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
@@ -15562,8 +15560,8 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 			t.Fatalf("create %s channel failed: %d %s", name, resp.Code, resp.Body.String())
 		}
 	}
-	createChannel("paid", "paid", paidUpstream.URL, 1)
 	createChannel("free", "free", freeUpstream.URL, 50)
+	createChannel("paid", "paid", paidUpstream.URL, 1)
 
 	chat := func(routerx interface{}) *httptest.ResponseRecorder {
 		body := map[string]interface{}{
@@ -15578,75 +15576,44 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 		return performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
 	}
 
-	paidResp := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": "paid"}})
-	if paidResp.Code != http.StatusOK || !strings.Contains(paidResp.Body.String(), "paid") {
-		t.Fatalf("paid route should select paid channel, got %d %s", paidResp.Code, paidResp.Body.String())
+	resp := chat(map[string]interface{}{
+		"route": map[string]interface{}{"channel_group": "paid"},
+		"upstream": map[string]interface{}{
+			"headers": map[string]string{"X-Upstream-Feature": "ignored"},
+		},
+	})
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), "free") {
+		t.Fatalf("routerx request field should not affect routing, got %d %s", resp.Code, resp.Body.String())
 	}
-	if paidCalls != 1 || freeCalls != 0 {
-		t.Fatalf("paid route should not fall back to higher-priority free channel, paid=%d free=%d", paidCalls, freeCalls)
+	if paidCalls != 0 || freeCalls != 1 {
+		t.Fatalf("routerx route should be ignored and normal priority should select free, paid=%d free=%d", paidCalls, freeCalls)
 	}
-	var paidLog model.Log
-	if err := internal.DB.Order("id ASC").First(&paidLog).Error; err != nil {
+	var callLog model.Log
+	if err := internal.DB.Order("id ASC").First(&callLog).Error; err != nil {
 		t.Fatal(err)
 	}
-	var paidRouteSnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(paidLog.RouteSnapshot), &paidRouteSnapshot); err != nil {
-		t.Fatalf("paid route should store route snapshot JSON, got %q: %v", paidLog.RouteSnapshot, err)
+	var routeSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RouteSnapshot), &routeSnapshot); err != nil {
+		t.Fatalf("route snapshot should be JSON, got %q: %v", callLog.RouteSnapshot, err)
 	}
-	filteredReasons, ok := paidRouteSnapshot["filtered_reasons"].(map[string]interface{})
-	if !ok || filteredReasons["route_preference"] != float64(1) {
-		t.Fatalf("paid route snapshot should record route preference filtering: %+v", paidRouteSnapshot)
+	if _, ok := routeSnapshot["route_preference"]; ok {
+		t.Fatalf("route snapshot should not record routerx route preferences: %+v", routeSnapshot)
 	}
-	routePreference, ok := paidRouteSnapshot["route_preference"].(map[string]interface{})
-	if !ok || routePreference["decision"] != "accepted" || routePreference["channel_group"] != "paid" {
-		t.Fatalf("paid route snapshot should record accepted route preference: %+v", paidRouteSnapshot)
+	var requestSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RequestSnapshot), &requestSnapshot); err != nil {
+		t.Fatalf("request snapshot should be JSON, got %q: %v", callLog.RequestSnapshot, err)
+	}
+	if _, ok := requestSnapshot["routerx_summary"]; ok {
+		t.Fatalf("request snapshot should not record routerx request field summary: %+v", requestSnapshot)
 	}
 
-	ignoredResp := chat(map[string]interface{}{"route": map[string]interface{}{"unknown": "keep-compatible"}})
+	ignoredResp := chat("not-an-object")
 	if ignoredResp.Code != http.StatusOK || !strings.Contains(ignoredResp.Body.String(), "free") {
-		t.Fatalf("unknown route keys should be ignored, got %d %s", ignoredResp.Code, ignoredResp.Body.String())
-	}
-	if paidCalls != 1 || freeCalls != 1 {
-		t.Fatalf("ignored route should use normal priority selection, paid=%d free=%d", paidCalls, freeCalls)
-	}
-
-	invalidOptions := chat("not-an-object")
-	if invalidOptions.Code != http.StatusBadRequest || !strings.Contains(invalidOptions.Body.String(), `"code":"invalid_routerx_options"`) {
-		t.Fatalf("invalid routerx options should return 400, got %d %s", invalidOptions.Code, invalidOptions.Body.String())
-	}
-	invalidRoute := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": 123}})
-	if invalidRoute.Code != http.StatusBadRequest || !strings.Contains(invalidRoute.Body.String(), `"code":"invalid_routerx_route"`) {
-		t.Fatalf("invalid routerx route should return 400, got %d %s", invalidRoute.Code, invalidRoute.Body.String())
-	}
-	noCandidate := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": "internal"}})
-	if noCandidate.Code != http.StatusBadGateway || !strings.Contains(noCandidate.Body.String(), `"code":"no_available_channel"`) {
-		t.Fatalf("route with no candidates should return no_available_channel, got %d %s", noCandidate.Code, noCandidate.Body.String())
-	}
-	var noCandidateLog model.Log
-	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg = ?", common.LogStatusFailed, tokenPayload.Data.ID, "no available channel").First(&noCandidateLog).Error; err != nil {
-		t.Fatal(err)
-	}
-	var noCandidatePolicySnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(noCandidateLog.PolicySnapshot), &noCandidatePolicySnapshot); err != nil {
-		t.Fatalf("no-candidate route should store policy snapshot JSON, got %q: %v", noCandidateLog.PolicySnapshot, err)
-	}
-	noCandidateScopeResult, ok := noCandidatePolicySnapshot["scope_result"].(map[string]interface{})
-	if !ok ||
-		noCandidatePolicySnapshot["kind"] != "policy" ||
-		noCandidatePolicySnapshot["access_decision"] != "deny" ||
-		noCandidatePolicySnapshot["reject_code"] != "no_available_channel" ||
-		noCandidatePolicySnapshot["quota_precheck"] != "available" ||
-		noCandidateScopeResult["api_type"] != "allow" ||
-		noCandidateScopeResult["model"] != "allow" ||
-		noCandidateScopeResult["route_candidate"] != "deny" {
-		t.Fatalf("unexpected no-candidate policy snapshot: %+v", noCandidatePolicySnapshot)
-	}
-	if paidCalls != 1 || freeCalls != 1 {
-		t.Fatalf("invalid or empty route results must not call upstream, paid=%d free=%d", paidCalls, freeCalls)
+		t.Fatalf("non-object routerx field should be ignored, got %d %s", ignoredResp.Code, ignoredResp.Body.String())
 	}
 }
 
-func TestRouterXUpstreamOptionsSupplementRequest(t *testing.T) {
+func TestRouterXUpstreamOptionsAreIgnored(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
@@ -15731,48 +15698,37 @@ func TestRouterXUpstreamOptionsSupplementRequest(t *testing.T) {
 		},
 	})
 	if chatResp.Code != http.StatusOK {
-		t.Fatalf("chat completion with upstream options failed: %d %s", chatResp.Code, chatResp.Body.String())
+		t.Fatalf("chat completion with ignored upstream options failed: %d %s", chatResp.Code, chatResp.Body.String())
 	}
 	if upstreamAuth != "Bearer channel-secret" || upstreamAPIKey != "" {
 		t.Fatalf("sensitive upstream headers must not be user-controlled, auth=%q x-api-key=%q", upstreamAuth, upstreamAPIKey)
 	}
-	if upstreamFeature != "beta" || upstreamQuery != "enabled" {
-		t.Fatalf("safe upstream options should be forwarded, header=%q query=%q", upstreamFeature, upstreamQuery)
+	if upstreamFeature != "" || upstreamQuery != "" {
+		t.Fatalf("routerx upstream options should be ignored, header=%q query=%q", upstreamFeature, upstreamQuery)
 	}
-	if upstreamBody["reasoning_effort"] != "high" || upstreamBody["temperature"] != float64(0.2) || upstreamBody["model"] != "gpt-options" {
-		t.Fatalf("upstream body options should supplement without overriding existing/internal fields: %#v", upstreamBody)
+	if _, ok := upstreamBody["reasoning_effort"]; ok || upstreamBody["temperature"] != float64(0.2) || upstreamBody["model"] != "gpt-options" {
+		t.Fatalf("routerx upstream body options should be ignored while original fields remain: %#v", upstreamBody)
 	}
 	if _, ok := upstreamBody["routerx"]; ok {
 		t.Fatalf("routerx private field leaked to upstream: %#v", upstreamBody)
 	}
 }
 
-func TestRouterXProviderOptionsApplyOnlyToSelectedProvider(t *testing.T) {
+func TestRouterXProviderOptionsAreIgnored(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
-	xaiCalls := 0
-	openAICalls := 0
-	var xaiBody map[string]interface{}
-	var openAIBody map[string]interface{}
-	xaiUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		xaiCalls++
-		if err := json.NewDecoder(req.Body).Decode(&xaiBody); err != nil {
-			t.Errorf("xAI upstream received invalid json: %v", err)
+	upstreamCalls := 0
+	var upstreamBody map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
+			t.Errorf("upstream received invalid json: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl-provider-xai","object":"chat.completion","model":"grok-test","choices":[{"index":0,"message":{"role":"assistant","content":"xai"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-provider-ignored","object":"chat.completion","model":"grok-test","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
 	}))
-	defer xaiUpstream.Close()
-	openAIUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		openAICalls++
-		if err := json.NewDecoder(req.Body).Decode(&openAIBody); err != nil {
-			t.Errorf("OpenAI-compatible upstream received invalid json: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl-provider-openai","object":"chat.completion","model":"grok-test","choices":[{"index":0,"message":{"role":"assistant","content":"openai"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
-	}))
-	defer openAIUpstream.Close()
+	defer upstream.Close()
 
 	r := newTestRouter(t)
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -15801,88 +15757,51 @@ func TestRouterXProviderOptionsApplyOnlyToSelectedProvider(t *testing.T) {
 	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
 		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
 	}
-	for _, channel := range []struct {
-		channelType int
-		name        string
-		baseURL     string
-	}{
-		{channelType: common.ChannelTypeXAI, name: "xai-provider", baseURL: xaiUpstream.URL},
-		{channelType: common.ChannelTypeOpenAICompat, name: "openai-provider", baseURL: openAIUpstream.URL},
-	} {
-		resp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
-			"type":     channel.channelType,
-			"name":     channel.name,
-			"models":   "grok-test",
-			"base_url": channel.baseURL,
-			"api_key":  channel.name + "-secret",
-		})
-		if resp.Code != http.StatusOK {
-			t.Fatalf("create %s channel failed: %d %s", channel.name, resp.Code, resp.Body.String())
-		}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "provider-options",
+		"models":   "grok-test",
+		"base_url": upstream.URL,
+		"api_key":  "provider-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
 	}
 
-	xaiResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+	resp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
 		"model":       "grok-test",
 		"temperature": 0.2,
 		"messages": []map[string]string{
 			{"role": "user", "content": "hello"},
 		},
 		"routerx": map[string]interface{}{
-			"route": map[string]string{"provider": "xai"},
-			"upstream": map[string]interface{}{
-				"body": map[string]interface{}{
-					"generic_param":     true,
-					"search_parameters": map[string]interface{}{"mode": "generic"},
-				},
-			},
 			"provider": map[string]interface{}{
 				"openai": map[string]interface{}{"reasoning_effort": "medium"},
-				"xai": map[string]interface{}{
-					"search_parameters": map[string]interface{}{"mode": "auto"},
-					"temperature":       0.9,
-					"model":             "evil-model",
-				},
+				"xai":    map[string]interface{}{"search_parameters": map[string]interface{}{"mode": "auto"}},
 			},
 		},
 	})
-	if xaiResp.Code != http.StatusOK {
-		t.Fatalf("xAI provider options request failed: %d %s", xaiResp.Code, xaiResp.Body.String())
+	if resp.Code != http.StatusOK {
+		t.Fatalf("provider options request failed: %d %s", resp.Code, resp.Body.String())
 	}
-	searchParameters, ok := xaiBody["search_parameters"].(map[string]interface{})
-	if !ok || searchParameters["mode"] != "auto" {
-		t.Fatalf("xAI provider options should override generic supplements before merge: %#v", xaiBody)
+	if upstreamCalls != 1 {
+		t.Fatalf("expected one upstream call, got %d", upstreamCalls)
 	}
-	if xaiBody["generic_param"] != true || xaiBody["temperature"] != float64(0.2) || xaiBody["model"] != "grok-test" {
-		t.Fatalf("provider options should supplement without overriding existing/internal fields: %#v", xaiBody)
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx private field leaked to upstream: %#v", upstreamBody)
 	}
-	if _, ok := xaiBody["reasoning_effort"]; ok {
-		t.Fatalf("non-selected provider options leaked to xAI upstream: %#v", xaiBody)
+	if _, ok := upstreamBody["reasoning_effort"]; ok {
+		t.Fatalf("routerx provider option leaked to upstream: %#v", upstreamBody)
 	}
-
-	openAIResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
-		"model": "grok-test",
-		"messages": []map[string]string{
-			{"role": "user", "content": "hello again"},
-		},
-		"routerx": map[string]interface{}{
-			"route": map[string]string{"provider": "openai-compatible"},
-			"provider": map[string]interface{}{
-				"xai": map[string]interface{}{"search_parameters": map[string]interface{}{"mode": "auto"}},
-			},
-		},
-	})
-	if openAIResp.Code != http.StatusOK {
-		t.Fatalf("OpenAI-compatible provider options request failed: %d %s", openAIResp.Code, openAIResp.Body.String())
+	if _, ok := upstreamBody["search_parameters"]; ok {
+		t.Fatalf("routerx provider option leaked to upstream: %#v", upstreamBody)
 	}
-	if xaiCalls != 1 || openAICalls != 1 {
-		t.Fatalf("requests should route once to each selected provider, xai=%d openai=%d", xaiCalls, openAICalls)
-	}
-	if _, ok := openAIBody["search_parameters"]; ok {
-		t.Fatalf("xAI provider options leaked to OpenAI-compatible upstream: %#v", openAIBody)
+	if upstreamBody["temperature"] != float64(0.2) || upstreamBody["model"] != "grok-test" {
+		t.Fatalf("original request fields should remain: %#v", upstreamBody)
 	}
 }
 
-func TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings(t *testing.T) {
+func TestOpenAIChatToGeminiUpstreamIgnoresRouterXProviderSafetySettings(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
@@ -15986,13 +15905,8 @@ func TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings(t *testing.T)
 	if !ok || !strings.Contains(fmt.Sprint(systemInstruction), "follow the safety policy") {
 		t.Fatalf("OpenAI system message should map to Gemini systemInstruction: %#v", upstreamBody)
 	}
-	settings, ok := upstreamBody["safetySettings"].([]interface{})
-	if !ok || len(settings) != 1 {
-		t.Fatalf("Gemini provider safetySettings should be preserved: %#v", upstreamBody)
-	}
-	setting, ok := settings[0].(map[string]interface{})
-	if !ok || setting["category"] != "HARM_CATEGORY_DANGEROUS_CONTENT" || setting["threshold"] != "BLOCK_ONLY_HIGH" {
-		t.Fatalf("unexpected Gemini safetySettings payload: %#v", upstreamBody)
+	if _, ok := upstreamBody["safetySettings"]; ok {
+		t.Fatalf("routerx provider safetySettings should be ignored: %#v", upstreamBody)
 	}
 }
 
@@ -16143,7 +16057,7 @@ func TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields(t *testing.T
 	}
 }
 
-func TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop(t *testing.T) {
+func TestRouterXCompatibleUpstreamStripsRouterXAndIncrementsHop(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
@@ -16232,13 +16146,8 @@ func TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop(t *testing.T)
 	if upstreamChain != "edge,routerx" {
 		t.Fatalf("routerx-compatible upstream should receive appended chain, got %q", upstreamChain)
 	}
-	routerXBody, ok := upstreamBody["routerx"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("routerx-compatible upstream should receive routerx private field: %#v", upstreamBody)
-	}
-	route, ok := routerXBody["route"].(map[string]interface{})
-	if !ok || route["provider"] != "routerx" {
-		t.Fatalf("routerx route should be preserved for next RouterX hop: %#v", routerXBody)
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx-compatible upstream should not receive routerx request field: %#v", upstreamBody)
 	}
 }
 
@@ -16511,57 +16420,18 @@ func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
 	}
 
 	paidResp := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": "paid"}})
-	if paidResp.Code != http.StatusForbidden || !strings.Contains(paidResp.Body.String(), `"code":"route_forbidden"`) {
-		t.Fatalf("route to forbidden channel group should fail before upstream, got %d %s", paidResp.Code, paidResp.Body.String())
+	if paidResp.Code != http.StatusOK || !strings.Contains(paidResp.Body.String(), "default") {
+		t.Fatalf("routerx route field should be ignored and use allowed default channel, got %d %s", paidResp.Code, paidResp.Body.String())
 	}
-	if defaultCalls != 1 || paidCalls != 0 {
-		t.Fatalf("forbidden user group route must not call upstream, default=%d paid=%d", defaultCalls, paidCalls)
+	if defaultCalls != 2 || paidCalls != 0 {
+		t.Fatalf("ignored routerx route should not call forbidden paid upstream, default=%d paid=%d", defaultCalls, paidCalls)
 	}
-	var failedLog model.Log
-	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-access").First(&failedLog).Error; err != nil {
+	var failedCount int64
+	if err := internal.DB.Model(&model.Log{}).Where("status = ? AND token_id = ? AND model = ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-access").Count(&failedCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "user group access") {
-		t.Fatalf("user group access denial should write a zero-quota failed log, got %+v", failedLog)
-	}
-	var policySnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
-		t.Fatalf("user group access denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
-	}
-	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
-	if !ok ||
-		policySnapshot["kind"] != "policy" ||
-		policySnapshot["access_decision"] != "deny" ||
-		policySnapshot["reject_code"] != "route_forbidden" ||
-		policySnapshot["quota_precheck"] != "available" ||
-		scopeResult["api_type"] != "allow" ||
-		scopeResult["model"] != "allow" ||
-		scopeResult["user_group_channel_group"] != "deny" {
-		t.Fatalf("unexpected user group access policy snapshot: %+v", policySnapshot)
-	}
-	var accessRuleSnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(failedLog.AccessRuleSnapshot), &accessRuleSnapshot); err != nil {
-		t.Fatalf("user group access denial should store access rule snapshot JSON, got %q: %v", failedLog.AccessRuleSnapshot, err)
-	}
-	if _, err := time.Parse(time.RFC3339Nano, fmt.Sprint(accessRuleSnapshot["created_at"])); err != nil {
-		t.Fatalf("access rule snapshot should include RFC3339 created_at, snapshot=%+v err=%v", accessRuleSnapshot, err)
-	}
-	accessScopeResult, ok := accessRuleSnapshot["scope_result"].(map[string]interface{})
-	if !ok ||
-		accessRuleSnapshot["schema"] != "routerx.snapshot.v1" ||
-		accessRuleSnapshot["kind"] != "access_rule" ||
-		accessRuleSnapshot["source"] != "policy" ||
-		accessRuleSnapshot["redacted"] != true ||
-		accessRuleSnapshot["access_decision"] != "deny" ||
-		accessRuleSnapshot["reject_code"] != "route_forbidden" ||
-		accessScopeResult["api_type"] != "allow" ||
-		accessScopeResult["model"] != "allow" ||
-		accessScopeResult["user_group_channel_group"] != "deny" {
-		t.Fatalf("unexpected user group access rule snapshot: %+v", accessRuleSnapshot)
-	}
-	logResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
-	if logResp.Code != http.StatusOK || !strings.Contains(logResp.Body.String(), `"access_rule_snapshot":`) {
-		t.Fatalf("user log should expose access rule snapshot, got %d %s", logResp.Code, logResp.Body.String())
+	if failedCount != 0 {
+		t.Fatalf("ignored routerx route should not write failed logs, got %d", failedCount)
 	}
 }
 
@@ -16697,29 +16567,18 @@ func TestChannelModelUserEnabledFiltersRelayCandidates(t *testing.T) {
 			"route": map[string]interface{}{"channel_id": hiddenChannelID},
 		},
 	})
-	if deniedResp.Code != http.StatusForbidden || !strings.Contains(deniedResp.Body.String(), `"code":"route_forbidden"`) {
-		t.Fatalf("explicit hidden channel route should be forbidden, got %d %s", deniedResp.Code, deniedResp.Body.String())
+	if deniedResp.Code != http.StatusOK || !strings.Contains(deniedResp.Body.String(), "visible") {
+		t.Fatalf("routerx channel route should be ignored and use visible channel, got %d %s", deniedResp.Code, deniedResp.Body.String())
 	}
-	if hiddenCalls != 0 || visibleCalls != 1 {
-		t.Fatalf("hidden route denial must not call upstream, hidden=%d visible=%d", hiddenCalls, visibleCalls)
+	if hiddenCalls != 0 || visibleCalls != 2 {
+		t.Fatalf("ignored routerx channel route must not call hidden upstream, hidden=%d visible=%d", hiddenCalls, visibleCalls)
 	}
-	var failedLog model.Log
-	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-user-enabled").First(&failedLog).Error; err != nil {
+	var failedCount int64
+	if err := internal.DB.Model(&model.Log{}).Where("status = ? AND token_id = ? AND model = ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-user-enabled").Count(&failedCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "ordinary users") {
-		t.Fatalf("hidden channel denial should write zero-quota failed log, got %+v", failedLog)
-	}
-	var policySnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
-		t.Fatalf("hidden channel denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
-	}
-	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
-	if !ok ||
-		policySnapshot["access_decision"] != "deny" ||
-		policySnapshot["reject_code"] != "route_forbidden" ||
-		scopeResult["channel_model"] != "deny" {
-		t.Fatalf("unexpected hidden channel denial policy snapshot: %+v", policySnapshot)
+	if failedCount != 0 {
+		t.Fatalf("ignored routerx channel route should not write failed logs, got %d", failedCount)
 	}
 }
 
@@ -18767,41 +18626,26 @@ func TestAPIKeyChannelGroupScopeFiltersRelayCandidates(t *testing.T) {
 			"route": map[string]string{"channel_group": "premium"},
 		},
 	})
-	if deniedResp.Code != http.StatusForbidden || !strings.Contains(deniedResp.Body.String(), `"code":"route_forbidden"`) {
-		t.Fatalf("disallowed channel group route should be forbidden, got %d %s", deniedResp.Code, deniedResp.Body.String())
+	if deniedResp.Code != http.StatusOK || !strings.Contains(deniedResp.Body.String(), "cheap ok") {
+		t.Fatalf("routerx channel group route should be ignored and use allowed cheap upstream, got %d %s", deniedResp.Code, deniedResp.Body.String())
 	}
-	if cheapCalls != 1 || premiumCalls != 0 {
-		t.Fatalf("denied channel group route must not call upstream, cheap=%d premium=%d", cheapCalls, premiumCalls)
+	if cheapCalls != 2 || premiumCalls != 0 {
+		t.Fatalf("ignored routerx channel group route must not call premium upstream, cheap=%d premium=%d", cheapCalls, premiumCalls)
 	}
 
 	var storedToken model.Token
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 46 {
-		t.Fatalf("disallowed channel group should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	if storedToken.RemainQuota != 42 {
+		t.Fatalf("ignored routerx route should deduct token budget for two successes, got %d", storedToken.RemainQuota)
 	}
-	var failedLog model.Log
-	if err := internal.DB.Where("status = ? AND model = ?", common.LogStatusFailed, "gpt-group-scope").First(&failedLog).Error; err != nil {
+	var failedCount int64
+	if err := internal.DB.Model(&model.Log{}).Where("status = ? AND model = ?", common.LogStatusFailed, "gpt-group-scope").Count(&failedCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "channel group") {
-		t.Fatalf("channel group scope denial should write a zero-quota failed log, got %+v", failedLog)
-	}
-	var policySnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
-		t.Fatalf("channel group scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
-	}
-	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
-	if !ok ||
-		policySnapshot["kind"] != "policy" ||
-		policySnapshot["access_decision"] != "deny" ||
-		policySnapshot["reject_code"] != "route_forbidden" ||
-		policySnapshot["quota_precheck"] != "not_evaluated" ||
-		scopeResult["api_type"] != "allow" ||
-		scopeResult["model"] != "allow" ||
-		scopeResult["channel_group"] != "deny" {
-		t.Fatalf("unexpected channel group scope denial policy snapshot: %+v", policySnapshot)
+	if failedCount != 0 {
+		t.Fatalf("ignored routerx channel group route should not write failed logs, got %d", failedCount)
 	}
 }
 
@@ -22567,41 +22411,37 @@ func TestImageMultipartPassthroughUsesRouteAndMinimumCharge(t *testing.T) {
 			upstreamHandler := func(label string, calls *int) http.HandlerFunc {
 				return func(w http.ResponseWriter, req *http.Request) {
 					*calls++
-					if label == "paid" {
-						upstreamPath = req.URL.Path
-						upstreamAuth = req.Header.Get("Authorization")
-					}
+					upstreamPath = req.URL.Path
+					upstreamAuth = req.Header.Get("Authorization")
 					if !strings.Contains(req.Header.Get("Content-Type"), "multipart/form-data") {
 						t.Errorf("%s upstream should receive multipart content type, got %q", label, req.Header.Get("Content-Type"))
 					}
 					if err := req.ParseMultipartForm(20 << 20); err != nil {
 						t.Errorf("%s upstream received invalid multipart body: %v", label, err)
 					}
-					if label == "paid" {
-						upstreamModel = req.FormValue("model")
-						upstreamPrompt = req.FormValue("prompt")
-						if leaked := req.FormValue("routerx"); leaked != "" {
-							t.Errorf("routerx private form field leaked to upstream: %q", leaked)
-						}
-						file, _, err := req.FormFile("image")
+					upstreamModel = req.FormValue("model")
+					upstreamPrompt = req.FormValue("prompt")
+					if leaked := req.FormValue("routerx"); leaked != "" {
+						t.Errorf("routerx private form field leaked to upstream: %q", leaked)
+					}
+					file, _, err := req.FormFile("image")
+					if err != nil {
+						t.Errorf("%s upstream missing image file: %v", label, err)
+					} else {
+						defer file.Close()
+						raw := new(bytes.Buffer)
+						_, _ = raw.ReadFrom(file)
+						upstreamImage = raw.Bytes()
+					}
+					if tc.withMask {
+						mask, _, err := req.FormFile("mask")
 						if err != nil {
-							t.Errorf("paid upstream missing image file: %v", err)
+							t.Errorf("%s upstream missing mask file: %v", label, err)
 						} else {
-							defer file.Close()
+							defer mask.Close()
 							raw := new(bytes.Buffer)
-							_, _ = raw.ReadFrom(file)
-							upstreamImage = raw.Bytes()
-						}
-						if tc.withMask {
-							mask, _, err := req.FormFile("mask")
-							if err != nil {
-								t.Errorf("paid upstream missing mask file: %v", err)
-							} else {
-								defer mask.Close()
-								raw := new(bytes.Buffer)
-								_, _ = raw.ReadFrom(mask)
-								upstreamMask = raw.Bytes()
-							}
+							_, _ = raw.ReadFrom(mask)
+							upstreamMask = raw.Bytes()
 						}
 					}
 					w.Header().Set("Content-Type", "application/json")
@@ -22707,13 +22547,13 @@ func TestImageMultipartPassthroughUsesRouteAndMinimumCharge(t *testing.T) {
 			resp := httptest.NewRecorder()
 			r.ServeHTTP(resp, req)
 
-			if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"url":"https://example.invalid/paid.png"`) {
-				t.Fatalf("image multipart passthrough should return paid upstream response, got %d %s", resp.Code, resp.Body.String())
+			if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"url":"https://example.invalid/free.png"`) {
+				t.Fatalf("image multipart passthrough should return normal-priority upstream response, got %d %s", resp.Code, resp.Body.String())
 			}
-			if paidCalls != 1 || freeCalls != 0 || upstreamPath != tc.expectedPath {
-				t.Fatalf("routerx.route should select paid image upstream, paid=%d free=%d path=%q", paidCalls, freeCalls, upstreamPath)
+			if paidCalls != 0 || freeCalls != 1 || upstreamPath != tc.expectedPath {
+				t.Fatalf("routerx form field should be ignored and normal priority should select free image upstream, paid=%d free=%d path=%q", paidCalls, freeCalls, upstreamPath)
 			}
-			if upstreamAuth != "Bearer upstream-secret-paid" {
+			if upstreamAuth != "Bearer upstream-secret-free" {
 				t.Fatalf("upstream authorization should use selected channel secret, got %q", upstreamAuth)
 			}
 			if upstreamModel != "gpt-image-test" || !bytes.Equal(upstreamImage, imageBytes) {
@@ -23270,31 +23110,27 @@ func TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge(t *tes
 	upstreamHandler := func(label string, calls *int) http.HandlerFunc {
 		return func(w http.ResponseWriter, req *http.Request) {
 			*calls++
-			if label == "paid" {
-				upstreamPath = req.URL.Path
-				upstreamAuth = req.Header.Get("Authorization")
-			}
+			upstreamPath = req.URL.Path
+			upstreamAuth = req.Header.Get("Authorization")
 			if !strings.Contains(req.Header.Get("Content-Type"), "multipart/form-data") {
 				t.Errorf("%s upstream should receive multipart content type, got %q", label, req.Header.Get("Content-Type"))
 			}
 			if err := req.ParseMultipartForm(20 << 20); err != nil {
 				t.Errorf("%s upstream received invalid multipart body: %v", label, err)
 			}
-			if label == "paid" {
-				upstreamModel = req.FormValue("model")
-				upstreamPrompt = req.FormValue("prompt")
-				if leaked := req.FormValue("routerx"); leaked != "" {
-					t.Errorf("routerx private form field leaked to upstream: %q", leaked)
-				}
-				file, _, err := req.FormFile("file")
-				if err != nil {
-					t.Errorf("paid upstream missing audio file: %v", err)
-				} else {
-					defer file.Close()
-					raw := new(bytes.Buffer)
-					_, _ = raw.ReadFrom(file)
-					upstreamFile = raw.Bytes()
-				}
+			upstreamModel = req.FormValue("model")
+			upstreamPrompt = req.FormValue("prompt")
+			if leaked := req.FormValue("routerx"); leaked != "" {
+				t.Errorf("routerx private form field leaked to upstream: %q", leaked)
+			}
+			file, _, err := req.FormFile("file")
+			if err != nil {
+				t.Errorf("%s upstream missing audio file: %v", label, err)
+			} else {
+				defer file.Close()
+				raw := new(bytes.Buffer)
+				_, _ = raw.ReadFrom(file)
+				upstreamFile = raw.Bytes()
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"text":"` + label + ` transcript"}`))
@@ -23388,13 +23224,13 @@ func TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge(t *tes
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"text":"paid transcript"`) {
-		t.Fatalf("audio transcription multipart passthrough should return paid upstream response, got %d %s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"text":"free transcript"`) {
+		t.Fatalf("audio transcription multipart passthrough should return normal-priority upstream response, got %d %s", resp.Code, resp.Body.String())
 	}
-	if paidCalls != 1 || freeCalls != 0 || upstreamPath != "/v1/audio/transcriptions" {
-		t.Fatalf("routerx.route should select paid transcription upstream, paid=%d free=%d path=%q", paidCalls, freeCalls, upstreamPath)
+	if paidCalls != 0 || freeCalls != 1 || upstreamPath != "/v1/audio/transcriptions" {
+		t.Fatalf("routerx form field should be ignored and normal priority should select free transcription upstream, paid=%d free=%d path=%q", paidCalls, freeCalls, upstreamPath)
 	}
-	if upstreamAuth != "Bearer upstream-secret-paid" {
+	if upstreamAuth != "Bearer upstream-secret-free" {
 		t.Fatalf("upstream authorization should use selected channel secret, got %q", upstreamAuth)
 	}
 	if upstreamModel != "whisper-test" || upstreamPrompt != "domain words" || !bytes.Equal(upstreamFile, audioBytes) {
@@ -23523,7 +23359,7 @@ func TestAudioMultipartRejectsInvalidResponseFormatBeforeUpstream(t *testing.T) 
 	}
 }
 
-func TestRouterXOptionsHeaderRoutesMultipartRequest(t *testing.T) {
+func TestRouterXOptionsHeaderIgnoredForMultipartRequest(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
@@ -23618,11 +23454,11 @@ func TestRouterXOptionsHeaderRoutesMultipartRequest(t *testing.T) {
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"text":"paid transcript"`) {
-		t.Fatalf("X-RouterX-Options should route multipart request to paid upstream, got %d %s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"text":"free transcript"`) {
+		t.Fatalf("X-RouterX-Options should be ignored and normal routing should return free upstream response, got %d %s", resp.Code, resp.Body.String())
 	}
-	if paidCalls != 1 || freeCalls != 0 {
-		t.Fatalf("X-RouterX-Options should select paid channel only, paid=%d free=%d", paidCalls, freeCalls)
+	if paidCalls != 0 || freeCalls != 1 {
+		t.Fatalf("X-RouterX-Options should be ignored and normal priority should select free, paid=%d free=%d", paidCalls, freeCalls)
 	}
 }
 

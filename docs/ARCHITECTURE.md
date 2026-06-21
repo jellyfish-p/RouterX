@@ -261,7 +261,7 @@ POST /v0/setup/init
 
 - 当前实现已支持 ChannelService 进程内候选缓存，缓存排序后的通道表快照，并通过 `routing.channel_cache.version` 和 `routing.channel_cache.ttl_seconds` 失效。
 - 启动或缓存版本变化后，ChannelService 应按模型、APIType、通道分组、用户分组访问规则预构建候选索引。
-- API Key scope、`routerx.route` 和请求级约束在预加载候选集之后继续收窄，避免按每个 Key 生成高基数缓存。
+- API Key scope、API Key/channel-group scope 和请求级约束在预加载候选集之后继续收窄，避免按每个 Key 生成高基数缓存。
 - 单机 SQLite 模式可使用进程内缓存和短 TTL。
 - DB+Redis 模式使用 Redis 保存 `routing.channel_cache.version`、失效标记或共享快照，管理员修改通道、分组、价格和策略后广播失效。
 - 任一实例发现本地版本落后时，必须重新加载候选索引后再承接后续请求。

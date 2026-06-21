@@ -7,7 +7,7 @@ info:
 
     本文件以当前 Go 路由注册和 docs/API.md 为准：
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
-    - /v1 使用入口协议兼容响应，不包裹 success/data/message；模型转发接口可通过请求体/form 中的 routerx 或 X-RouterX-Options header 传递路由偏好和安全 upstream 补充参数；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 缺少必填 image/file 文件字段时返回 400 multipart_file_required，单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态/危险扩展名、扩展名或文件头与图片/音频 API 不匹配或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，以上均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
+    - /v1 使用入口协议兼容响应，不包裹 success/data/message；请求体/form 中的 routerx 字段和 X-RouterX-Options header 不参与路由或上游参数补充，发往真实上游前会被剥离或忽略；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 缺少必填 image/file 文件字段时返回 400 multipart_file_required，单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态/危险扩展名、扩展名或文件头与图片/音频 API 不匹配或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，以上均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID；请求携带合法 W3C traceparent/tracestate 时，响应会回显 Traceparent/Tracestate，结构化 HTTP/Panic 日志和模型调用 request_snapshot 会写 trace_id/traceparent/tracestate；模型调用 request_snapshot 还会写入 user_id、token_id、API Key 哈希前缀、客户端 IP 哈希前缀和截断 User-Agent 摘要，/v1 真实上游请求也会继续透传 trace context。
     - 充值码、充值码创建/兑换拒绝审计、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook/邮件/IM 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期、最近使用、额度、轮换和泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、订单创建拒绝审计与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知、易支付同步返回基础接口，以及 Redis-backed 注册图片验证码生成、登录验证码基础生成、OAuth 基础登录/绑定/首次补齐注册/注销账号恢复、OIDC Discovery、已绑定身份回调登录、登录用户绑定、首次补齐注册和注销账号恢复接口已注册。
 servers:
@@ -3429,7 +3429,6 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3455,11 +3454,10 @@ paths:
       operationId: postV1ChatCompletions
       tags: [OpenAI Compatible]
       summary: OpenAI Chat Completions 转发
-      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。请求体必须包含非空数组 messages，缺少、null、空数组或非数组时返回 invalid_chat_messages 且不调用上游。本地限流读取 rate_limit.*，覆盖全局、IP、Token、用户、模型和通道分钟窗口；API Key max_concurrency 可限制同一 Key 同时在途请求，rpm/tpm 可限制同一 Key 每分钟请求和模型 token，命中时返回 rate_limit_exceeded 且不调用上游；外部数据库或集群模式下 Redis 限流依赖不可用时返回 503 rate_limit_unavailable 且不调用上游。通道候选读取 relay.error_auto_ban、relay.error_ban_threshold 和 relay.error_ban_cooldown_seconds，自动排除达到阈值且仍在冷却窗口内的故障通道，冷却后可重新进入候选作为半开探测。非流式在 relay.retry_count > 0 时会对 relay.retry_on_status 白名单状态码（默认 429/500/502/503/504）、网络错误、超时和响应读取失败换候选通道；400/401/403 默认不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。routerx.route 可在已允许候选通道内按分组、通道或 provider 收窄。
+      description: P0 稳定闭环；支持非流式 JSON 响应和 OpenAI-compatible SSE 基础流式。请求体必须包含非空数组 messages，缺少、null、空数组或非数组时返回 invalid_chat_messages 且不调用上游。本地限流读取 rate_limit.*，覆盖全局、IP、Token、用户、模型和通道分钟窗口；API Key max_concurrency 可限制同一 Key 同时在途请求，rpm/tpm 可限制同一 Key 每分钟请求和模型 token，命中时返回 rate_limit_exceeded 且不调用上游；外部数据库或集群模式下 Redis 限流依赖不可用时返回 503 rate_limit_unavailable 且不调用上游。通道候选读取 relay.error_auto_ban、relay.error_ban_threshold 和 relay.error_ban_cooldown_seconds，自动排除达到阈值且仍在冷却窗口内的故障通道，冷却后可重新进入候选作为半开探测。非流式在 relay.retry_count > 0 时会对 relay.retry_on_status 白名单状态码（默认 429/500/502/503/504）、网络错误、超时和响应读取失败换候选通道；400/401/403 默认不重试。stream=true 仅支持 OpenAI SSE 形态通道；命中 Anthropic/Gemini 等非 OpenAI SSE 通道时返回 unsupported_stream_channel。
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3481,7 +3479,7 @@ paths:
                 type: string
                 description: "OpenAI-compatible SSE data chunks ending with data: [DONE]."
         "400":
-          description: 请求体或 routerx 扩展非法；常见 code 包括 invalid_json、model_required、invalid_chat_messages、invalid_routerx_options、invalid_routerx_route。
+          description: 请求体非法；常见 code 包括 invalid_json、model_required、invalid_chat_messages。
           content:
             application/json:
               schema:
@@ -3513,7 +3511,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/OpenAIErrorEnvelope"
         "502":
-          description: 无可用通道或上游错误；routerx.route 筛选后无候选时返回 no_available_channel，选中通道 adapter 不支持当前 APIType 时返回 unsupported_api_type 且不调用上游；非流式命中 relay.retry_on_status 白名单、网络错误、超时或响应读取失败时会按 relay.retry_count 换候选，耗尽后返回最后一次上游错误；上游响应体超过 relay.max_response_body_bytes 时返回 upstream_response_too_large，billing.usage_missing_strategy=reject 且上游缺少 usage 时返回 usage_missing，stream=true 命中非 OpenAI SSE 通道时返回 unsupported_stream_channel。
+          description: 无可用通道或上游错误，选中通道 adapter 不支持当前 APIType 时返回 unsupported_api_type 且不调用上游；非流式命中 relay.retry_on_status 白名单、网络错误、超时或响应读取失败时会按 relay.retry_count 换候选，耗尽后返回最后一次上游错误；上游响应体超过 relay.max_response_body_bytes 时返回 upstream_response_too_large，billing.usage_missing_strategy=reject 且上游缺少 usage 时返回 usage_missing，stream=true 命中非 OpenAI SSE 通道时返回 unsupported_stream_channel。
           content:
             application/json:
               schema:
@@ -3533,7 +3531,6 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3563,7 +3560,6 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3584,7 +3580,6 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3601,11 +3596,10 @@ paths:
       operationId: postV1ImagesEdits
       tags: [OpenAI Compatible]
       summary: 图像编辑转发
-      description: OpenAI-compatible Image Edits 基础实现；multipart/form-data 请求体可透传到 OpenAI-compatible 上游 /v1/images/edits，Azure OpenAI 通道可转发到 /openai/v1/images/edits?api-version=preview。发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。缺少 image 文件字段时返回 multipart_file_required 且不调用上游、不扣费。size 省略、空字符串或 auto 会透传，WIDTHxHEIGHT 会在上游前校验为正整数、单边不超过 4096 且总像素不超过 4194304，非法返回 invalid_image_size 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非图片扩展名、非图片文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Image Edits 基础实现；multipart/form-data 请求体可透传到 OpenAI-compatible 上游 /v1/images/edits，Azure OpenAI 通道可转发到 /openai/v1/images/edits?api-version=preview。发出前剥离 routerx 表单字段，X-RouterX-Options header 不参与通道选择。缺少 image 文件字段时返回 multipart_file_required 且不调用上游、不扣费。size 省略、空字符串或 auto 会透传，WIDTHxHEIGHT 会在上游前校验为正整数、单边不超过 4096 且总像素不超过 4194304，非法返回 invalid_image_size 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非图片扩展名、非图片文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3622,11 +3616,10 @@ paths:
       operationId: postV1ImagesVariations
       tags: [OpenAI Compatible]
       summary: 图像变体转发
-      description: OpenAI-compatible Image Variations 基础实现；multipart/form-data 请求体透传到 OpenAI-compatible 上游 /v1/images/variations，Azure OpenAI 通道可转发到 /openai/v1/images/variations?api-version=preview。发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。缺少 image 文件字段时返回 multipart_file_required 且不调用上游、不扣费。size 省略、空字符串或 auto 会透传，WIDTHxHEIGHT 会在上游前校验为正整数、单边不超过 4096 且总像素不超过 4194304，非法返回 invalid_image_size 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非图片扩展名、非图片文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Image Variations 基础实现；multipart/form-data 请求体透传到 OpenAI-compatible 上游 /v1/images/variations，Azure OpenAI 通道可转发到 /openai/v1/images/variations?api-version=preview。发出前剥离 routerx 表单字段，X-RouterX-Options header 不参与通道选择。缺少 image 文件字段时返回 multipart_file_required 且不调用上游、不扣费。size 省略、空字符串或 auto 会透传，WIDTHxHEIGHT 会在上游前校验为正整数、单边不超过 4096 且总像素不超过 4194304，非法返回 invalid_image_size 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非图片扩展名、非图片文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整内容安全扫描、字段保真和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3643,11 +3636,10 @@ paths:
       operationId: postV1AudioTranscriptions
       tags: [OpenAI Compatible]
       summary: 语音转文字转发
-      description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，Azure OpenAI 通道转发到 /openai/v1/audio/transcriptions?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。缺少 file 文件字段时返回 multipart_file_required 且不调用上游、不扣费。response_format 省略或空字符串时交给上游默认策略，显式值只允许 json、text、srt、verbose_json、vtt，非法返回 invalid_audio_response_format 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非音频扩展名、非音频文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Audio Transcriptions 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/transcriptions，Azure OpenAI 通道转发到 /openai/v1/audio/transcriptions?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，X-RouterX-Options header 不参与通道选择。缺少 file 文件字段时返回 multipart_file_required 且不调用上游、不扣费。response_format 省略或空字符串时交给上游默认策略，显式值只允许 json、text、srt、verbose_json、vtt，非法返回 invalid_audio_response_format 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非音频扩展名、非音频文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3664,11 +3656,10 @@ paths:
       operationId: postV1AudioTranslations
       tags: [OpenAI Compatible]
       summary: 语音翻译转发
-      description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，Azure OpenAI 通道转发到 /openai/v1/audio/translations?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，并使用 form 中的 routerx.route 或 X-RouterX-Options header 参与通道选择。缺少 file 文件字段时返回 multipart_file_required 且不调用上游、不扣费。response_format 省略或空字符串时交给上游默认策略，显式值只允许 json、text、srt、verbose_json、vtt，非法返回 invalid_audio_response_format 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非音频扩展名、非音频文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
+      description: OpenAI-compatible Audio Translations 基础实现；multipart/form-data 请求体透传到上游 /v1/audio/translations，Azure OpenAI 通道转发到 /openai/v1/audio/translations?api-version=preview 并保留 model 作为 deployment 名；发出前剥离 routerx 表单字段，X-RouterX-Options header 不参与通道选择。缺少 file 文件字段时返回 multipart_file_required 且不调用上游、不扣费。response_format 省略或空字符串时交给上游默认策略，显式值只允许 json、text、srt、verbose_json、vtt，非法返回 invalid_audio_response_format 且不调用上游、不扣费。单个文件字段超过 relay.max_multipart_file_bytes 时本地返回 413 request_file_too_large，文件名命中路径形态、危险扩展名、非音频扩展名、非音频文件头或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，二者均不调用上游；上游无 usage 时按最低计费 1 写入 RouterX 日志并扣减用户额度和 API Key 预算；完整时长、内容安全扫描和价格规则以 docs/PROTOCOLS.md 与 docs/BILLING.md 为准。
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3689,7 +3680,6 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3719,7 +3709,6 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3866,7 +3855,6 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
       requestBody:
@@ -3928,7 +3916,6 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
         - name: model
@@ -3959,7 +3946,6 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
         - name: model
@@ -3989,7 +3975,6 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
         - name: model
@@ -4028,7 +4013,6 @@ paths:
       security:
         - ApiKeyBearer: []
       parameters:
-        - $ref: "#/components/parameters/RouterXOptions"
         - $ref: "#/components/parameters/RouterXHop"
         - $ref: "#/components/parameters/RouterXChain"
         - name: model
@@ -4187,14 +4171,6 @@ components:
       in: query
       schema: { type: string }
       description: RouterX 对外模型名过滤。
-    RouterXOptions:
-      name: X-RouterX-Options
-      in: header
-      required: false
-      schema:
-        type: string
-        example: '{"route":{"channel_group":"premium"},"upstream":{"headers":{"X-Upstream-Feature":"beta"},"query":{"trace":"enabled"},"body":{"reasoning_effort":"high"}},"provider":{"xai":{"search_parameters":{"mode":"auto"}}}}'
-      description: 可选 RouterX 私有选项 JSON 字符串；支持 route 路由偏好、upstream 安全 header/query/JSON body 补充和 provider 选中上游专属 JSON body 补充，body/form 中的 routerx 字段优先于该 header，发往真实上游前不会透传 routerx 私有字段。
     RouterXHop:
       name: X-RouterX-Hop
       in: header
@@ -7655,7 +7631,7 @@ components:
           description: 脱敏访问控制快照 JSON 字符串；当前包含 request_id、created_at，并从 policy_snapshot 派生 access_decision、scope_result、token_status、user_status、reject_code 和 selected_channel_group。
         route_snapshot:
           type: string
-          description: 脱敏路由快照 JSON 字符串；当前包含 request_id、created_at、请求模型、归一化模型、候选数量、候选过滤原因、已接受 routerx.route 偏好的 decision 摘要、选中通道、provider、分组、优先级、权重、上游 base URL 安全索引、模型重写摘要和非流式重试摘要。
+          description: 脱敏路由快照 JSON 字符串；当前包含 request_id、created_at、请求模型、归一化模型、候选数量、候选过滤原因、选中通道、provider、分组、优先级、权重、上游 base URL 安全索引、模型重写摘要和非流式重试摘要。
         billing_snapshot:
           type: string
           description: 脱敏计费快照 JSON 字符串；当前包含结算状态、usage_source、价格表达式或 P0 回退表达式、规则 ID/版本、倍率快照、最终扣费、Key 预算前后和用户余额前后摘要；扣费失败时记录 billing_status=failed、attempted_quota_used 和 deduction_error_code。
@@ -7876,91 +7852,6 @@ components:
         user:
           type: string
           description: 上游 user 字段；按原样透传。
-        routerx:
-          type: object
-          description: RouterX 私有扩展字段；普通 OpenAI-compatible 上游不会透传。OpenAI-compatible Chat 命中 Gemini 上游时，可通过 provider.gemini.safetySettings 传递 Gemini 原生安全设置。
-          properties:
-            route:
-              $ref: "#/components/schemas/RouterXRoutePreference"
-            upstream:
-              $ref: "#/components/schemas/RouterXUpstreamOptions"
-            provider:
-              $ref: "#/components/schemas/RouterXProviderOptions"
-          additionalProperties: true
-    RouterXRoutePreference:
-      type: object
-      description: 请求级路由偏好，只会在管理员已允许的候选通道内继续收窄，未知字段会被忽略。
-      properties:
-        channel_group: { type: string, description: 按通道分组收窄候选。 }
-        group: { type: string, description: channel_group 的兼容别名。 }
-        channel_id:
-          oneOf:
-            - { type: integer, format: uint64 }
-            - { type: string }
-          description: 指定目标通道 ID。
-        channel: { type: string, description: 指定目标通道名称。 }
-        channel_name: { type: string, description: channel 的兼容别名。 }
-        provider: { type: string, description: 指定上游 provider，例如 openai、openai-compatible、anthropic、gemini、qwen、deepseek、xai、routerx。 }
-        upstream_provider: { type: string, description: provider 的兼容别名。 }
-        disabled_providers:
-          type: array
-          items: { type: string }
-          description: 从候选集中排除指定 provider。
-      additionalProperties: true
-    RouterXUpstreamOptions:
-      type: object
-      description: 上游请求补充参数；只补充安全 header/query 和 JSON body 缺省字段，不覆盖通道密钥、provider API key、Content-Type、model、stream、routerx 或原请求已存在字段。
-      properties:
-        headers:
-          type: object
-          additionalProperties: { type: string }
-          description: 额外上游 header；Authorization、Cookie、Set-Cookie、X-Api-Key、api-key、Content-Type、X-RouterX-* 等敏感/内部字段会被忽略。
-          example:
-            X-Upstream-Feature: beta
-        query:
-          type: object
-          additionalProperties: { type: string }
-          description: 额外上游 query；key、api_key、apikey、access_token 等常见鉴权参数会被忽略，适配器已设置的 query 不会被覆盖。
-          example:
-            trace: enabled
-        body:
-          type: object
-          additionalProperties: true
-          description: 额外 JSON body 字段；仅在原请求不存在该字段时合并，model、routerx、stream 会被忽略。
-          example:
-            reasoning_effort: high
-      additionalProperties: true
-    RouterXProviderOptions:
-      type: object
-      description: provider 专属 JSON body 补充参数；仅在最终选中的上游 provider 匹配时合并，provider 专属补充值优先于通用 upstream.body，但仍不覆盖原请求已有字段、model、routerx 或 stream。OpenAI-compatible Chat 命中 Gemini 上游时，gemini.safetySettings 会映射到 Gemini 原生 safetySettings；Gemini generateContent 原生入口命中 Gemini 上游时也会只向 Gemini 上游保留原生生成字段。
-      properties:
-        openai:
-          description: OpenAI/OpenAI-compatible 上游专属 body 补充；仅命中对应 provider 时合并。
-          $ref: "#/components/schemas/RouterXProviderBody"
-        anthropic:
-          description: Anthropic 上游专属 body 补充；仅命中 Anthropic provider 时合并。
-          $ref: "#/components/schemas/RouterXProviderBody"
-        gemini:
-          allOf:
-            - $ref: "#/components/schemas/RouterXProviderBody"
-          description: Gemini 上游专属补充；OpenAI-compatible Chat 会把 safetySettings 映射为 Gemini 原生 safetySettings。Gemini generateContent 原生入口命中 Gemini 上游时会保留 contents、systemInstruction、generationConfig、safetySettings、tools、toolConfig 和 cachedContent。
-          example:
-            safetySettings:
-              - category: HARM_CATEGORY_DANGEROUS_CONTENT
-                threshold: BLOCK_ONLY_HIGH
-        xai:
-          allOf:
-            - $ref: "#/components/schemas/RouterXProviderBody"
-          description: xAI 上游专属补充；命中 xAI/OpenAI-compatible 上游时按安全合并规则补充到上游 body。
-          example:
-            search_parameters:
-              mode: auto
-      additionalProperties:
-        $ref: "#/components/schemas/RouterXProviderBody"
-    RouterXProviderBody:
-      type: object
-      additionalProperties: true
-      description: 匹配 provider 后补充到 JSON body 的字段；model、routerx、stream 和原请求已存在字段不会被覆盖。
     ChatMessage:
       type: object
       description: OpenAI-compatible Chat 消息；支持文本内容和 content part 数组。

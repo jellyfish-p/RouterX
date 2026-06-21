@@ -134,7 +134,7 @@ Adapter 负责：
 Adapter 不负责：
 
 - 判断 API Key 是否允许访问模型。
-- 筛选通道或应用 `routerx.route` 越权规则。
+- 筛选通道或应用 API Key/channel-group scope 越权规则。
 - 扣减用户余额和 Key 预算。
 - 写 `logs` 或管理审计。
 - 读取用户余额。
@@ -153,13 +153,13 @@ ChannelService 负责通道实体和候选通道选择的可解释规则：
 ```text
 system filters
   -> access policy
-  -> routerx.route narrowing
+  -> API Key/channel-group scope narrowing
   -> priority/weight selection
 ```
 
 禁止：
 
-- 让 `routerx.route` 启用被禁用通道。
+- 让 API Key/channel-group scope 启用被禁用通道。
 - 让用户请求覆盖上游鉴权 header。
 - 在未知 provider 或 adapter 缺失时静默降级到任意通道。
 

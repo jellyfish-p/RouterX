@@ -222,25 +222,21 @@ API Key 是调用 `/v1/*` 的唯一模型调用凭据。User JWT 只用于控制
 使用规则：
 
 - 完整策略语义以 `docs/POLICIES.md` 为准。
-- `routerx.route` 只能表达偏好，不能扩大权限。
+- API Key scope、用户分组和通道分组访问控制只能收窄权限，不能扩大权限。
 - 后台策略、安全过滤、用户状态、API Key 状态、额度、通道启用状态和访问控制永远优先。
 - 真实厂商上游调用前必须剥离 `routerx` 字段。
-- RouterX-Compatible 上游当前可以继续接收 `routerx`；服务端会递增 `X-RouterX-Hop` 并追加 `X-RouterX-Chain`，达到 `relay.routerx_max_hops` 配置的上限时返回 `routerx_hop_exceeded`，默认上限为 `3`，避免循环。
-- `routerx.upstream.headers` 和 `routerx.upstream.query` 只能补充安全字段，不能覆盖 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`、`api-key`、provider API key query 等敏感鉴权字段。
-- `routerx.upstream.body` 只补充 JSON 请求体中原本不存在的字段，不能覆盖 `model`、`routerx`、`stream` 或调用方已经显式提交的字段。
-- `routerx.provider.<provider>` 只在最终选中对应上游 provider 时生效；当前基础实现把匹配 provider 下的 JSON 字段作为 body 缺省补充，适合 xAI `search_parameters` 这类 OpenAI-compatible 扩展。
-- 非 JSON 请求当前可通过 `routerx` 表单字段或 `X-RouterX-Options` header 传递路由偏好和安全 header/query 补充；body/form 中的 `routerx` 优先于 header，两者都必须校验和脱敏。
+- RouterX-Compatible 上游会递增 `X-RouterX-Hop` 并追加 `X-RouterX-Chain`，达到 `relay.routerx_max_hops` 配置的上限时返回 `routerx_hop_exceeded`，默认上限为 `3`，避免循环。
+- 请求体或 multipart 表单中的 `routerx` 字段、以及 `X-RouterX-Options` header 不再作为客户端扩展协议处理；它们不会影响路由或上游参数，发往真实上游前会被剥离或忽略。
+- provider-specific 参数应使用目标协议自己的原生字段；Anthropic/Gemini 原生入口命中同 provider 上游时会通过内部白名单保留对应字段。
 
 调用方应预期：
 
 | 场景 | 行为 |
 |------|------|
-| 偏好合法且有候选 | 正常路由，日志记录偏好被接受 |
-| 未知但安全的偏好字段 | 可忽略，并记录摘要 |
-| `routerx` 结构非法 | 400 `invalid_routerx_options` |
-| route 格式非法 | 400 `invalid_routerx_route` |
-| route 越权 | 403 `route_forbidden` |
-| route 合法但无候选 | 502 `no_available_channel` 或入口协议等价错误 |
+| 请求携带 `routerx` 字段 | 字段被剥离或忽略，不影响路由或上游参数 |
+| 请求携带 `X-RouterX-Options` | header 被忽略，不影响路由或上游参数 |
+| scope 或访问控制越权 | 403 `route_forbidden` 或对应权限错误 |
+| 无可用候选 | 502 `no_available_channel` 或入口协议等价错误 |
 
 ## 7. 错误处理体验
 
@@ -335,7 +331,7 @@ P0 计费事实：
 
 - 每个团队或服务使用独立 API Key。
 - 通过用户分组、通道分组和模型分组控制访问。
-- 用 `routerx.route` 表达灰度或偏好，而不是硬编码具体通道 ID。
+- 用 API Key/channel-group scope 表达灰度或偏好，而不是硬编码具体通道 ID。
 - 日志和指标按团队、Key、模型、通道聚合。
 - 高风险 Key 轮换、禁用和泄露处理有 Runbook。
 
@@ -376,7 +372,7 @@ P0 验收：
 P1 验收：
 
 - 主流 SDK 可通过 RouterX 完成基础非流式和流式调用。
-- `routerx.route` 合法、非法、越权和无候选路径都有稳定行为。
+- API Key/channel-group scope 合法、非法、越权和无候选路径都有稳定行为。
 - 多协议入口成功和错误外形分别兼容 OpenAI、Anthropic 和 Gemini。
 - 重试和熔断行为能从日志解释。
 

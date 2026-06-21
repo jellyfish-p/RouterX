@@ -78,10 +78,10 @@
 | `TestAPIKeyEventWindowSummarizesErrorsAndRateLimits` | 用户和管理员查询单 Key 最近错误/限流事件聚合；窗口外日志、成功日志和其他 Key 日志不混入，响应包含错误 code、错误来源、上游状态和限流维度计数且不泄露原始 IP、错误正文或明文 Key |
 | `TestAPIKeyModelScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `allow_models` scope；允许模型成功转发，未允许模型返回 `model_not_allowed`，不调用上游、不额外扣费，并写失败日志、拒绝分支 `policy_snapshot` 和 `api_key.scope_updated` 审计 |
 | `TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `api_types` scope；允许 APIType 成功转发，未允许 APIType 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
-| `TestAPIKeyChannelGroupScopeFiltersRelayCandidates` | 用户更新 API Key `channel_groups` scope；候选通道按允许分组过滤，越权 `routerx.route` 返回 `route_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyChannelGroupScopeFiltersRelayCandidates` | 用户更新 API Key `channel_groups` scope；候选通道按允许分组过滤，越权 API Key/channel-group scope 返回 `route_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyEntryProtocolScopeRejectsBeforeRelay` | 用户更新 API Key `entry_protocols` scope；允许入口协议成功转发，未允许入口协议按当前协议错误外形返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyEntryProtocolScopeAllowsGeminiEmbeddingActions` | `entry_protocols=["gemini"]` 允许 Gemini embedContent 和 batchEmbedContents，不会被误判为 OpenAI 入口 |
-| `TestUserGroupChannelGroupAccessFiltersRelayCandidates` | 默认用户分组只能访问 settings 允许的通道分组；更高优先级的未授权通道会被过滤，越权 `routerx.route` 返回 `route_forbidden` 且不调用上游，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestUserGroupChannelGroupAccessFiltersRelayCandidates` | 默认用户分组只能访问 settings 允许的通道分组；更高优先级的未授权通道会被过滤，越权 API Key/channel-group scope 返回 `route_forbidden` 且不调用上游，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyIPScopeRejectsBeforeRelay` | 用户更新 API Key `ip_cidrs` scope；允许 IP 成功转发，未允许 IP 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyMethodScopeRejectsBeforeRelay` | 用户更新 API Key `methods` scope；允许方法路径成功转发，未允许方法路径返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed` | 用户更新 API Key `daily_quota` scope；当日成功日志已消耗额度达到上限后返回 `insufficient_quota`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
@@ -260,19 +260,19 @@
 | `TestImageGenerationsRejectsInvalidSizeBeforeUpstream` | Image Generations 在上游前拒绝超界 `size`，返回 `invalid_image_size`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestImageGenerationsRejectsInvalidPromptBeforeUpstream` | Image Generations 在上游前拒绝缺失、非字符串或空白 `prompt`，返回 `invalid_image_prompt`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestImageGenerationsRejectsInvalidCountBeforeUpstream` | Image Generations 在上游前拒绝 null、小于 1、非整数或非数字 `n`，返回 `invalid_image_count`，不调用上游且不扣用户额度或 API Key 预算 |
-| `TestImageMultipartPassthroughUsesRouteAndMinimumCharge` | Image Edits/Variations multipart 表单透传、`routerx` 表单字段剥离与路由偏好、图像/遮罩文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestImageMultipartPassthroughUsesRouteAndMinimumCharge` | Image Edits/Variations multipart 表单透传、`routerx` 表单字段剥离且不参与路由、图像/遮罩文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestImageMultipartRejectsInvalidSizeBeforeUpstream` | Image Edits/Variations 在上游前拒绝超界 `size`，返回 `invalid_image_size`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge` | Audio Speech 基础 JSON 透传、`routerx` 剥离、二进制音频响应和 Content-Type 透传、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestAudioSpeechRejectsInvalidResponseFormatBeforeUpstream` | Audio Speech 在上游前拒绝非法 `response_format`，返回 `invalid_audio_response_format`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestAudioSpeechRejectsInvalidRequestFieldsBeforeUpstream` | Audio Speech 在上游前拒绝空输入、超长输入和空 voice，返回稳定错误码，不调用上游且不扣用户额度或 API Key 预算 |
-| `TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge` | Audio Transcriptions multipart 表单透传、`routerx` 表单字段剥离与路由偏好、文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge` | Audio Transcriptions multipart 表单透传、`routerx` 表单字段剥离且不参与路由、文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestAudioMultipartRejectsInvalidResponseFormatBeforeUpstream` | Audio Transcriptions/Translations 在上游前拒绝非法 `response_format`，返回 `invalid_audio_response_format`，不调用上游且不扣用户额度或 API Key 预算 |
-| `TestRouterXOptionsHeaderRoutesMultipartRequest` | `X-RouterX-Options` header 为 multipart 请求提供路由偏好，且不向真实上游泄露 `routerx` 私有字段 |
-| `TestRouterXUpstreamOptionsSupplementRequest` | `routerx.upstream` 安全补充上游 header/query/JSON body，敏感鉴权字段、`model`、`stream` 和原请求已存在字段不会被覆盖，`routerx` 私有字段不会泄露 |
-| `TestRouterXProviderOptionsApplyOnlyToSelectedProvider` | `routerx.provider.<provider>` 只在选中 provider 匹配时补充 JSON body 字段，provider 专属补充值优先于通用 upstream 补充值，非选中 provider 参数不泄露 |
-| `TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings` | OpenAI-compatible Chat 命中 Gemini 上游时，`routerx.provider.gemini.safetySettings` 显式映射为 Gemini 原生 `safetySettings`，OpenAI 生成参数映射到 `generationConfig`，未支持的 Gemini provider 字段和其他 provider 字段不泄露 |
+| `TestRouterXOptionsHeaderIgnoredForMultipartRequest` | `X-RouterX-Options` header 被忽略，multipart 请求按正常优先级路由，且不向真实上游泄露 `routerx` 私有字段 |
+| `TestRouterXUpstreamOptionsAreIgnored` | 请求体中的 upstream 扩展被忽略，不补充上游 header/query/JSON body，`routerx` 私有字段不会泄露 |
+| `TestRouterXProviderOptionsAreIgnored` | 请求体中的 provider 扩展被忽略，不补充 provider 专属 JSON body 字段，`routerx` 私有字段不会泄露 |
+| `TestOpenAIChatToGeminiUpstreamIgnoresRouterXProviderSafetySettings` | OpenAI-compatible Chat 命中 Gemini 上游时，来自 `routerx.provider.gemini` 的 safetySettings 被忽略，OpenAI 生成参数仍映射到 `generationConfig` |
 | `TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields` | Gemini `generateContent` 入口命中 Gemini 上游时，真实上游 body 保留 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent`，不泄露 `routerx`，也不发送 OpenAI `messages/max_tokens`；成功日志保留 `ingress_protocol=gemini`，且不把已原生保真的字段误记为 dropped |
-| `TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop` | RouterX-Compatible 上游保留 `routerx` 私有字段，转发递增后的 `X-RouterX-Hop`，并追加 `X-RouterX-Chain` 链路摘要 |
+| `TestRouterXCompatibleUpstreamStripsRouterXAndIncrementsHop` | RouterX-Compatible 上游剥离请求体 `routerx` 私有字段，转发递增后的 `X-RouterX-Hop`，并追加 `X-RouterX-Chain` 链路摘要 |
 | `TestRouterXCompatibleUpstreamRejectsHopLimit` | RouterX-Compatible 上游在 `X-RouterX-Hop` 达到默认上限时本地拒绝且不调用上游 |
 | `TestRouterXCompatibleUpstreamUsesConfiguredHopLimit` | `relay.routerx_max_hops` 可收紧 RouterX-Compatible 循环保护上限，达到配置值时本地拒绝、不调用上游且不扣费 |
 | `TestChatCompletionStreamForwardsSSEAndDeductsUsage` | OpenAI-compatible Chat SSE chunk 转发、usage 提取、日志和扣费 |
@@ -302,7 +302,7 @@
 | `TestAnthropicMessagesToAnthropicUpstreamPreservesNativeRequestFieldsAndDeductsUsage` | Anthropic Messages 命中 Anthropic 上游时保留 content blocks、tools、tool_choice、thinking、metadata 和 stop_sequences，成功日志不再记录这些字段降级 |
 | `TestAnthropicMessagesStreamToAnthropicUpstreamPreservesNativeSSEAndDeductsUsage` | Anthropic Messages Stream 命中 Anthropic 上游时调用 `/v1/messages`，原样透传 Anthropic SSE，并从原生 usage 事件扣费 |
 | `TestRelayPrecheckRejectsBeforeUpstream` | 无效 Key、禁用 Key、额度不足、禁用通道不调用下游 |
-| `TestRouterXRoutePreferenceFiltersChannels` | `routerx.route` 被接受、未知字段忽略、非法结构拒绝和筛选后无候选；无候选返回 `no_available_channel` 且写拒绝分支 `policy_snapshot` |
+| `TestRouterXRequestFieldIsIgnoredForRoutingAndStripped` | API Key/channel-group scope 被接受、未知字段忽略、非法结构拒绝和筛选后无候选；无候选返回 `no_available_channel` 且写拒绝分支 `policy_snapshot` |
 
 仍需优先补齐：
 
@@ -623,7 +623,7 @@ Gemini-compatible 最小断言：
 |------|------|----------|
 | P0 | 开发者最小接入 | base URL + RouterX API Key、`/v1/models`、非流式 Chat、OpenAI Chat/Completions 基础 SSE、日志和扣费 |
 | P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 和 Legacy Completions 基础 chunk 转发、Anthropic Messages Stream/Gemini streamGenerateContent 到 OpenAI-compatible SSE、Anthropic Messages Stream 到 Anthropic 原生 SSE、Gemini streamGenerateContent 到 Gemini 原生 SSE、usage 扣费和客户端断开取消；继续补 usage fallback 和已输出后不切换通道的更多故障注入 |
-| P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
+| P1 | 路由偏好 | API Key/channel-group scope 被接受、忽略、拒绝和筛选后无候选 |
 | P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Anthropic Messages 到 Anthropic 上游的原生请求字段保真、Gemini generateContent 到 Gemini 上游的非流式原生字段保真、Anthropic/Gemini 基础流式、Anthropic/Gemini 原生 SSE 路径、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为和更长尾原生字段 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
 | P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝、Redis 全局/IP/Token/User/Model/Channel 限流拒绝和 `rate_limit_snapshot`、usage 缺失拒绝和扣费失败分支 policy/billing 事实，基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/规则版本/倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |

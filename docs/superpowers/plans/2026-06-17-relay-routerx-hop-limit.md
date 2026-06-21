@@ -96,7 +96,7 @@ Update settings, relay, API, developer experience, protocols, testing, traceabil
 Run:
 
 ```powershell
-go test ./internal/router -run "TestRouterXCompatibleUpstreamUsesConfiguredHopLimit|TestRouterXCompatibleUpstreamRejectsHopLimit|TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop|TestSetupBootstrapAdminQuotaAndSettingsDefaults|TestSettingsValidationAndReadiness" -count=1
+go test ./internal/router -run "TestRouterXCompatibleUpstreamUsesConfiguredHopLimit|TestRouterXCompatibleUpstreamRejectsHopLimit|TestRouterXCompatibleUpstreamStripsRouterXAndIncrementsHop|TestSetupBootstrapAdminQuotaAndSettingsDefaults|TestSettingsValidationAndReadiness" -count=1
 go test ./... -count=1
 python -c "import pathlib, yaml; yaml.safe_load(pathlib.Path('docs/apifox/openapi.yaml').read_text(encoding='utf-8')); print('yaml ok')"
 git diff --check

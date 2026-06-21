@@ -47,7 +47,7 @@ RouterX 运行时
 
 - `/v1/*` 只接受 API Key，不接受 User JWT。
 - `/v0/user/*` 和 `/v0/admin/*` 只接受 User JWT，不接受 API Key。
-- `routerx.route` 只表达偏好，不能覆盖管理员策略、访问控制、额度、熔断或密钥安全。
+- API Key/channel-group scope 只表达偏好，不能覆盖管理员策略、访问控制、额度、熔断或密钥安全。
 - 支付回调只信任 provider 签名、服务端订单和服务端商品配置，不信任客户端提交的额度。
 - Redis 是缓存和短期状态，不是计费、支付、settings 的最终事实源。
 
@@ -60,7 +60,7 @@ RouterX 运行时
 | S3 | JWT 伪造或跨实例失效 | 多实例各自生成 `jwt.secret`，或弱密钥导致伪造。 | 生产必须显式配置一致 `JWT_SECRET` 或数据库 `jwt.secret`；`/ready` 检查关键配置。 | `TestSettingsValidationAndReadiness`、生产 readiness 缺关键密钥时不就绪。 |
 | S4 | 管理权限越权 | 普通用户调用管理员接口，或普通管理员修改超级管理员配置。 | User JWT + role 校验；超级管理员能力单独判断；API Key 不继承管理权限。 | `TestAdminPrivilegeBoundaries`、权限矩阵接口测试。 |
 | S5 | API Key 越权调用管理接口 | 管理员的 API Key 被拿来调用 `/v0/admin/*`。 | API Key 只在 `/v1/*` 生效；管理接口只看 User JWT。 | API 鉴权边界测试，API Key 调 `/v0` 返回未登录或权限错误。 |
-| S6 | 路由或 scope 越权 | 调用方通过 `routerx.route` 强制使用无权通道、禁用通道或高价通道，或通过 API Key 调用 scope 未允许模型/APIType/通道分组/入口协议/IP/方法路径，或超过 Key 日/月预算/并发上限/RPM/TPM。 | 先做后台硬性过滤、用户分组访问控制、API Key scope 和访问控制，再应用偏好；拒绝原因写日志。 | `TestChannelRoutingConfigResolution`、`TestUserGroupChannelGroupAccessFiltersRelayCandidates`、`TestAPIKeyModelScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyChannelGroupScopeFiltersRelayCandidates`、`TestAPIKeyEntryProtocolScopeRejectsBeforeRelay`、`TestAPIKeyIPScopeRejectsBeforeRelay`、`TestAPIKeyMethodScopeRejectsBeforeRelay`、`TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed`、`TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed`、`TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight`、`TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay`、`TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed`、`routerx.route` 合法/拒绝路径测试。 |
+| S6 | 路由或 scope 越权 | 调用方通过 API Key/channel-group scope 强制使用无权通道、禁用通道或高价通道，或通过 API Key 调用 scope 未允许模型/APIType/通道分组/入口协议/IP/方法路径，或超过 Key 日/月预算/并发上限/RPM/TPM。 | 先做后台硬性过滤、用户分组访问控制、API Key scope 和访问控制，再应用偏好；拒绝原因写日志。 | `TestChannelRoutingConfigResolution`、`TestUserGroupChannelGroupAccessFiltersRelayCandidates`、`TestAPIKeyModelScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream`、`TestAPIKeyChannelGroupScopeFiltersRelayCandidates`、`TestAPIKeyEntryProtocolScopeRejectsBeforeRelay`、`TestAPIKeyIPScopeRejectsBeforeRelay`、`TestAPIKeyMethodScopeRejectsBeforeRelay`、`TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed`、`TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed`、`TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight`、`TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay`、`TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed`、API Key/channel-group scope 合法/拒绝路径测试。 |
 | S7 | 额度透支 | 并发请求同时通过余额检查，导致用户余额或 API Key 预算为负。 | 扣费使用事务或条件更新；`max_concurrency` 可在凭据层收窄单 Key 同时在途请求；成功日志与扣费事务一致。 | `TestUserBillingMatchesLogs`、`TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight`、并发扣费测试。 |
 | S8 | API Key 预算和余额不同步 | 创建有限 API Key 时误扣用户余额，或调用时只扣用户余额/只扣 Key 预算。 | 创建有限 API Key 只设置预算上限；成功调用同事务扣用户余额并消耗 Key 预算。 | `TestUserBillingMatchesLogs`、有限和无限 API Key 扣费断言。 |
 | S9 | 失败调用误扣 | 本地请求错误、无通道、余额不足或上游未调用时仍计费。 | 预检拒绝发生在上游前；失败默认 `quota_used=0`；如启用失败成本需写 settings 和快照。 | `TestRelayPrecheckRejectsBeforeUpstream`、失败日志断言。 |
@@ -93,7 +93,7 @@ RouterX 运行时
 
 - Relay 先做鉴权、用户状态、API Key 状态、额度、限流、基础请求校验和 API Key scope 检查，再选择通道。
 - 通道候选必须经过启用状态、模型匹配、Adapter 可用、熔断、访问控制和余额策略过滤。
-- `routerx.route` 只能在已允许候选集中收窄；格式非法返回入口协议兼容 400；越权返回 403 或无可用通道错误。
+- API Key/channel-group scope 只能在已允许候选集中收窄；格式非法返回入口协议兼容 400；越权返回 403 或无可用通道错误。
 - 真实上游调用前必须剥离 RouterX 私有字段，除非上游通道类型是 RouterX-Compatible。
 - 用户请求不能覆盖上游鉴权 header。
 
@@ -138,7 +138,7 @@ RouterX 运行时
 | 鉴权边界 | User JWT 不能调用 `/v1`；API Key 不能调用 `/v0`；普通用户不能调用管理员接口。 |
 | 密钥脱敏 | 响应、日志、错误和审计不包含用户 API Key 明文、上游密钥、DSN 或支付密钥。 |
 | 预检拒绝 | 无效 Key、禁用用户、禁用 API Key、余额不足、用户分组未允许通道分组、scope 未允许模型/APIType/通道分组/入口协议/IP/方法路径、达到日/月预算、达到并发上限、达到 RPM/TPM、禁用通道不会调用上游。 |
-| 路由越权 | `routerx.route` 不能启用无权通道或绕过通道分组。 |
+| 路由越权 | API Key/channel-group scope 不能启用无权通道或绕过通道分组。 |
 | 计费一致 | 成功调用的 `logs.quota_used`、用户余额和 Key 预算一致；失败调用不误扣。 |
 | 支付幂等 | 重复 webhook、金额不一致、签名失败和订单状态不匹配不会入账。 |
 | settings 安全 | 类型错误不写入；敏感值响应脱敏；生产关键配置缺失时 `/ready` 不就绪。 |

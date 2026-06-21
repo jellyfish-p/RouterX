@@ -23,7 +23,7 @@ P0 的交付目标是：
 | Relay 重试 | `relay.retry_count=0` 默认单次调用；大于 0 时仅非流式可对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败换候选通道。 |
 | P0 body 日志 | `log.body_max_bytes=0`、`relay.log_body_max_bytes=0`，默认不记录请求/响应 body。 |
 | `/v1` 错误 | 必须返回入口协议兼容错误，不返回 RouterX `{success,data,message}` 包装。 |
-| 用户路由偏好 | `routerx.route` 只能收窄管理员允许的候选集，不能绕过策略。 |
+| 用户路由偏好 | API Key/channel-group scope 只能收窄管理员允许的候选集，不能绕过策略。 |
 
 ## 文件地图
 
@@ -193,7 +193,7 @@ P0 通过后再进入 P1：
 - 不在日志、响应、审计或 Redis key 中泄露 API Key、下游密钥、支付密钥或 DSN。
 - 不在调用下游后才发现用户或 Token 明显无额度。
 - 不让有限 API Key 调用只更新 Key 预算或只扣用户余额；二者必须在同一事务中保持一致。
-- 不把 `routerx.route` 当成强制越权路由。
+- 不把 API Key/channel-group scope 当成强制越权路由。
 - 不把类型解析失败的配置静默当成 0、false 或空字符串。
 - 不用真实外部模型厂商作为 P0 自动化测试依赖。
 

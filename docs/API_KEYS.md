@@ -200,7 +200,7 @@ API Key 最大消耗额度必须和账单文档保持一致。
 ## 10. 作用域和策略
 
 P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list、日预算、月预算、并发上限与 RPM/TPM scope；后续作用域能力继续遵守只收窄、不放大的原则。
-跨模块策略决策顺序、访问控制、分组、限流、`routerx.route` 冲突规则和策略快照以 `docs/POLICIES.md` 为准；入口协议、APIType 和能力等级以 `docs/PROTOCOLS.md` 为准；调用事实快照封套和脱敏规则以 `docs/SNAPSHOTS.md` 为准。本节只说明 API Key scope 对调用凭据的影响。
+跨模块策略决策顺序、访问控制、分组、限流、API Key/channel-group scope 冲突规则和策略快照以 `docs/POLICIES.md` 为准；入口协议、APIType 和能力等级以 `docs/PROTOCOLS.md` 为准；调用事实快照封套和脱敏规则以 `docs/SNAPSHOTS.md` 为准。本节只说明 API Key scope 对调用凭据的影响。
 
 | 作用域 | 示例 | 拒绝时错误 |
 |--------|------|------------|
@@ -222,7 +222,7 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 2. 校验所属用户状态、用户额度和用户级策略。
 3. 校验 API Key 自身额度、作用域、预算和限流。
 4. 校验请求体格式、模型名和入口协议。
-5. 选择候选通道，再应用通道分组、模型匹配、熔断和 `routerx.route` 偏好。
+5. 选择候选通道，再应用通道分组、模型匹配、熔断和 API Key/channel-group scope 偏好。
 6. 写入策略快照、路由快照、日志和指标。
 
 ## 11. 接口契约

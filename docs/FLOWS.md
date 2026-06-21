@@ -112,7 +112,7 @@ L1 成功标准：
 
 ### 路由偏好
 
-技术用户可以通过 `routerx.route` 表达偏好，但不能越权。
+技术用户可以通过 API Key/channel-group scope 表达偏好，但不能越权。
 策略决策顺序、访问控制和冲突规则以 `docs/POLICIES.md` 为准。入口协议、APIType、上游厂商和能力等级以 `docs/PROTOCOLS.md` 为准。
 
 | 场景 | 行为 |

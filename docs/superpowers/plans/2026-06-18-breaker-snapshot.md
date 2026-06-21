@@ -145,7 +145,7 @@ Update the `policy_snapshot` schema description to mention `breaker_snapshot` fo
 - [x] **Step 1: Run targeted tests**
 
 ```powershell
-go test ./internal/router -run "TestNoAvailableChannelWritesBreakerSnapshot|TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold|TestChatCompletionHonorsDisabledAutoBanSetting|TestChannelBreakerCooldownAllowsProbeAfterWindow|TestRouterXRoutePreferenceFiltersChannels" -count=1
+go test ./internal/router -run "TestNoAvailableChannelWritesBreakerSnapshot|TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold|TestChatCompletionHonorsDisabledAutoBanSetting|TestChannelBreakerCooldownAllowsProbeAfterWindow|TestRouterXRequestFieldIsIgnoredForRoutingAndStripped" -count=1
 ```
 
 - [x] **Step 2: Run full tests**
