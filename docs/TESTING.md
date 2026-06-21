@@ -63,7 +63,7 @@
 | `TestTraceabilityP2AdvancedAPIEvidenceIncludesConcreteEndpointTests` | 检查 `P2-C5` 高级 API 证据必须列出 Responses、Embeddings、Images、Audio、Moderations 和 multipart 防护的具体测试 |
 | `TestTraceabilityP2AdvancedAPIKeyEvidenceIncludesConcreteManagementTests` | 检查 `P2-C6` 高级 API Key 管理证据必须列出生命周期、元数据过滤、服务账号主体、批量操作、风险视图、泄露窗口、告警投递和指标测试 |
 | `TestModelListSupportsRouterXProtocolSelector` | `/v1/models` 和 `/v1/models/{model}` 支持 `routerx_protocol` query 和 `X-RouterX-Protocol` header 选择 OpenAI、Anthropic 或 Gemini 模型外形；Gemini 外形声明生成、计数和 Embeddings 方法；`format` 保持最高优先级，无效 API Key 和模型详情 `model_not_found` 错误也按所选入口协议返回 |
-| `TestUserAPIKeyManagementAuditLogs` | API Key 创建、编辑、用户端额度/无限标记编辑拒绝、禁用和删除写入 `api_key.*` 管理审计，审计摘要不泄露 `sk-` 明文，并覆盖审计 `result`/`error_code`/时间范围过滤 |
+| `TestUserAPIKeyManagementAuditLogs` | API Key 创建、编辑、用户端额度/无限标记设置、禁用和删除写入 `api_key.*` 管理审计，审计摘要不泄露 `sk-` 明文，并覆盖审计 action/时间范围过滤 |
 | `TestUserAPIKeyAdvancedManagement` | 用户查看单 Key 用量摘要、轮换 Key、泄露上报禁用、轮换链路和禁用原因落库，相关审计不泄露明文 Key |
 | `TestAdminAPIKeyQueryAndBatchDisable` | 管理员跨用户脱敏查询 API Key；批量禁用必须带筛选条件，缺少筛选条件会写 `api_key.batch_disable_denied` 审计；批量禁用只影响命中 Key 并写 `api_key.batch_disabled` 审计 |
 | `TestAdminAPIKeyRiskViewSummarizesRiskyKeys` | 管理员风险视图按窗口聚合异常 Key，识别失败峰值和低剩余额度，返回风险等级、原因和建议动作，响应不包含明文 Key 或明文前缀 |
@@ -377,7 +377,7 @@ P0 OpenAI-compatible Chat 成功响应示例：
 | `logs` | `prompt_tokens`、`completion_tokens`、`total_tokens` | 与 usage fixture 一致 |
 | `logs` | `quota_used` | P0 等于 `total_tokens`；缺失 usage 时默认最低值 `1`，`billing.usage_missing_strategy=reject` 时失败且为 `0` |
 | `logs` | `status` | 成功为 `1`，失败为 `2` |
-| `tokens` | `remain_quota` / `quota_limit` / `quota_used` | 有限 API Key 按 `quota_used` 消耗预算 |
+| `tokens` | `quota_limit` / `quota_used` | 有限 API Key 按 `quota_used` 消耗预算 |
 | `users` | `quota` | 有限和无限 API Key 调用成功时均扣减用户额度 |
 | `channels` | `error_count` | 成功后清零或保持 0 |
 
@@ -613,7 +613,7 @@ Gemini-compatible 最小断言：
 - `GET /v0/user/billing?token_id=` 只聚合当前用户指定 API Key 的成功调用日志。
 - 失败调用默认不增加 `quota_used`。
 - 有限额度 API Key 调用同时扣 `users.quota` 和 Key 预算。
-- 无限 Token 调用扣 `users.quota`，`tokens.remain_quota` 保持 `-1`。
+- 无限 Token 调用扣 `users.quota`，`tokens.quota_limit` 保持 `-1`。
 - 创建有限额度 API Key 只设置预算上限，不扣用户余额，不计入模型消费日志。
 - 管理员日志筛选与用户日志视角一致。
 

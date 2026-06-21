@@ -16,9 +16,11 @@ type Token struct {
 	Key               string         `gorm:"type:varchar(64);not null;uniqueIndex" json:"-"` // SHA256(sk-xxxxxx)
 	Status            int            `gorm:"not null;default:1" json:"status"`               // 0=禁用, 1=启用
 	ExpiredAt         *time.Time     `json:"expired_at"`                                     // 过期时间, nil=永不过期
-	RemainQuota       int64          `gorm:"not null;default:0" json:"remain_quota"`         // 剩余额度, -1=无限制
+	QuotaLimit        int64          `gorm:"not null;default:0" json:"quota_limit"`          // 剩余可消耗额度, -1=无限制
+	QuotaUsed         int64          `gorm:"not null;default:0" json:"quota_used"`           // 已累计消耗额度
 	Unlimited         bool           `gorm:"not null;default:false" json:"unlimited"`
-	RotatedFromID     *uint          `gorm:"index" json:"rotated_from_id,omitempty"` // 轮换来源 Token ID
+	LeakRiskEnabled   bool           `gorm:"not null;default:true" json:"leak_risk_enabled"` // 是否启用泄露风控自动禁用
+	RotatedFromID     *uint          `gorm:"index" json:"rotated_from_id,omitempty"`         // 轮换来源 Token ID
 	RevokedReason     string         `gorm:"type:varchar(128);not null;default:''" json:"revoked_reason,omitempty"`
 	ScopeJSON         JSONValue      `gorm:"type:json" json:"scope_json,omitempty"`                                      // API Key 能力范围, 例如模型 allow-list
 	MetadataJSON      JSONValue      `gorm:"type:json" json:"metadata_json,omitempty"`                                   // 环境、团队、标签等非安全元数据

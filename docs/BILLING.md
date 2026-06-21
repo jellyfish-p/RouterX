@@ -8,7 +8,7 @@
 
 目标能力：
 
-- 支持用户额度、API Key 最大消耗额度。
+- 支持用户额度、API Key 剩余可消耗额度。
 - 支持 API Key 无限额度标记。
 - 支持系统级模型价格配置，系统模型价格存储在 `model_prices` SQL 表中。
 - 支持通道级模型价格覆盖，通道覆盖规则存储在 `channel_model_prices` SQL 表中，优先级高于系统模型价格。
@@ -43,7 +43,7 @@ QuotaPerUnit = 100000000
 
 - 所有额度字段使用 `int64` 整数，避免浮点误差。
 - `100000000` 个数据库 token / 基础额度单位 = `1` 个用户额度。
-- 数据库中 `quota`、`quota_used`、`remain_quota`、`quota_limit`、价格表达式结果等均以基础额度单位存储和计算。
+- 数据库中 `quota`、`quota_used`、`quota_limit`、价格表达式结果等均以基础额度单位存储和计算。
 - 展示层通过 `quota / QuotaPerUnit` 转为用户可见小数额度。
 
 ## 相关字段
@@ -51,9 +51,8 @@ QuotaPerUnit = 100000000
 | 表 | 字段 | 说明 |
 |----|------|------|
 | `users` | `quota` | 用户总可用额度，单位为基础额度单位 |
-| `tokens` | `remain_quota` | 当前字段；目标语义为 API Key 剩余预算上限，`-1` 表示不限 Token 自身额度 |
 | `tokens` | `unlimited` | API Key 是否无限制自身额度 |
-| `tokens` | `quota_limit` / `quota_used` | 目标字段；分别表示 Key 最大消耗额度和累计已用额度 |
+| `tokens` | `quota_limit` / `quota_used` | 分别表示 Key 剩余可消耗额度和累计已用额度 |
 | `payment_products` | `quota` | 支付商品对应增加的基础额度单位 |
 | `payment_orders` | `status` | 支付订单状态，如 `pending`、`paid`、`failed`、`closed`、`refunded` |
 | `payment_orders` | `quota` | 支付成功后应增加的基础额度单位 |
@@ -151,19 +150,19 @@ P0 扣费顺序：
 
 额度扣减规则：
 
-- Token `unlimited=true` 或 `remain_quota=-1` 时，不限制 Token 自身预算，只扣用户额度。
-- API Key 有限额度时，调用前必须同时满足用户余额和 Key 剩余预算；调用成功后同时扣用户额度并消耗 Key 预算。
-- 创建有限 API Key 不从用户额度划拨，也不冻结用户余额；它只设置该 Key 的最大消耗额度。
+- Token `unlimited=true` 或 `quota_limit=-1` 时，不限制 Token 自身预算，不扣 Key 剩余额度；调用成功仍扣用户额度并累计 `quota_used`。
+- API Key 有限额度时，调用前必须同时满足用户余额和 Key 剩余预算；调用成功后同时扣用户额度、扣 `quota_limit`，并累加 `quota_used`。
+- 创建有限 API Key 不从用户额度划拨，也不冻结用户余额；它只设置该 Key 的剩余可消耗额度。
 - 所有扣减都必须使用数据库条件更新或事务，不能在并发请求下透支。
 - 失败调用默认不扣费；如未来启用失败最低成本，必须写入配置和日志快照。
 
 余额与消费口径：
 
-| 事件 | `users.quota` | `tokens.remain_quota` | `logs.quota_used` | 口径 |
+| 事件 | `users.quota` | `tokens.quota_limit` | `logs.quota_used` | 口径 |
 |------|---------------|-----------------------|-------------------|------|
-| 创建有限额度 API Key | 不变 | 设置最大消耗额度或剩余预算上限 | 不写消费日志 | 预算上限，不是余额划拨 |
-| 有限 API Key 成功调用 | 减少本次 `quota_used` | 减少剩余预算或增加累计已用 | 写入本次消耗 | 模型消费，受用户余额和 Key 预算双约束 |
-| 无限 Token 成功调用 | 减少本次 `quota_used` | 保持 `-1` | 写入本次消耗 | 模型消费 |
+| 创建有限额度 API Key | 不变 | 设置剩余可消耗额度 | 不写消费日志 | 预算上限，不是余额划拨 |
+| 有限 API Key 成功调用 | 减少本次 `quota_used` | `quota_limit` 减少本次消耗，`quota_used` 增加本次消耗 | 写入本次消耗 | 模型消费，受用户余额和 Key 预算双约束 |
+| 无限 Token 成功调用 | 减少本次 `quota_used` | `quota_limit` 保持 `-1`，`quota_used` 增加本次消耗 | 写入本次消耗 | 模型消费 |
 | 失败且未产生有效 usage | 不变 | 不变 | 可写失败日志，`quota_used=0` | 不计消费 |
 
 用户可用余额只以 `users.quota` 为准；有限 API Key 的剩余预算不是额外余额，也不应加回用户余额展示。用户消费账单按成功调用的 `logs.quota_used` 聚合。Key 预算调整和用户余额调整不能混在同一口径里解释，否则会出现“创建 Key 被当成消费”或“删除 Key 被当成退款”的账本错误。

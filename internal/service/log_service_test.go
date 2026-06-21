@@ -365,11 +365,11 @@ func createLogServiceUserAndToken(t *testing.T, db *gorm.DB) (model.User, model.
 		t.Fatal(err)
 	}
 	token := model.Token{
-		UserID:      user.ID,
-		Name:        "log-token",
-		Key:         "log-token-" + username,
-		Status:      common.TokenStatusEnabled,
-		RemainQuota: 1000,
+		UserID:     user.ID,
+		Name:       "log-token",
+		Key:        "log-token-" + username,
+		Status:     common.TokenStatusEnabled,
+		QuotaLimit: 1000,
 	}
 	if err := db.Create(&token).Error; err != nil {
 		t.Fatal(err)

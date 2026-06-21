@@ -466,7 +466,7 @@ Provider 退款请求：
 | `resource_id` | string | 资源 ID 过滤 |
 | `actor_user_id` | uint | 操作人 ID 过滤 |
 | `result` | string | 结果过滤，例如 `success`、`failed`、`denied` |
-| `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden`、`redem_code_expired_at_not_future`、`redem_code_invalid_or_used`、`payment_order_provider_disabled` 或 `payment_order_cancel_not_pending` |
+| `error_code` | string | 失败或拒绝 code 过滤，例如 `redem_code_expired_at_not_future`、`redem_code_invalid_or_used`、`payment_order_provider_disabled` 或 `payment_order_cancel_not_pending` |
 | `start_time` | int64 | 起始 Unix 秒，按 `created_at >= start_time` 过滤 |
 | `end_time` | int64 | 结束 Unix 秒，按 `created_at <= end_time` 过滤 |
 
@@ -517,7 +517,7 @@ Provider 退款请求：
 | `api_key.batch_expired` | `POST /v0/admin/token/batch-expire` |
 | `api_key.batch_disable_denied` | `POST /v0/admin/token/batch-disable` 缺少 `token_ids` 和 `user_id` 被拒绝 |
 | `api_key.batch_expire_denied` | `POST /v0/admin/token/batch-expire` 缺少 `token_ids` 和 `user_id` 被拒绝 |
-| `api_key.quota_limit_denied` | 用户端尝试通过 `PUT /v0/user/token/:id` 修改额度或无限标记被拒绝 |
+| `api_key.quota_limit_set` | 用户端通过 `PUT /v0/user/token/:id` 设置 Key 剩余可消耗额度或无限额度标记 |
 | `setting.create` | `PUT /v0/admin/setting` 新增 key |
 | `setting.update` | `PUT /v0/admin/setting` 修改已有 key |
 | `setting.denied` | `PUT /v0/admin/setting` 参数校验失败或高风险配置被拒绝 |
@@ -824,7 +824,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 |------|------|----------|------|
 | GET | `/v0/user/token` | 已实现 | 当前用户 API Key 列表 |
 | POST | `/v0/user/token` | 已实现 | 创建 API Key，明文只返回一次；可写入 `metadata.environment/team/app/tags/external_id/note/principal_type/principal_id/principal_name` 非安全元数据；成功后写 `api_key.created` 审计 |
-| PUT | `/v0/user/token/:id` | 已实现 | 编辑 API Key 名称、状态、过期时间和元数据；普通编辑写 `api_key.updated`，禁用写 `api_key.disabled`，额度/无限标记编辑拒绝写 `api_key.quota_limit_denied` |
+| PUT | `/v0/user/token/:id` | 已实现 | 编辑 API Key 名称、状态、过期时间、元数据、剩余可消耗额度、无限额度标记和 `leak_risk_enabled`；普通编辑写 `api_key.updated`，禁用写 `api_key.disabled`，额度变更写 `api_key.quota_limit_set` |
 | DELETE | `/v0/user/token/:id` | 已实现 | 删除 API Key，成功后写 `api_key.deleted` 审计 |
 | POST | `/v0/user/token/:id/disable` | 已实现 | 禁用自己的 API Key，可记录禁用原因，成功后写 `api_key.disabled` 审计 |
 | POST | `/v0/user/token/:id/rotate` | 已实现 | 创建替换 Key、返回新明文一次、写入 `rotated_from_id` 并禁用旧 Key，成功后写 `api_key.rotated` 审计 |
@@ -845,7 +845,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | POST | `/v0/admin/alerts/deliveries/replay` | 基础实现 | 手动重放到期的 pending 告警投递，可选 `target=webhook/email/im`；`limit` 默认 20、最大 100，成功返回本次投递成功条数 |
 | POST | `/v0/admin/alerts/:id/ack` | 基础实现 | 管理员确认告警，写入确认时间和确认人；重复确认保持幂等 |
 
-用户端 API Key 不允许直接编辑最大消耗额度和无限额度标记，避免普通用户绕过预算策略；拒绝记录会写入管理审计，审计摘要不包含完整 API Key 明文或哈希。当前 scope 请求格式：
+用户端 API Key 可直接编辑剩余可消耗额度、无限额度标记和泄露风控自动禁用开关；实际调用仍同时受用户余额、scope、限流和访问控制约束。当前 scope 请求格式：
 
 ```json
 {
@@ -1139,10 +1139,10 @@ API Key 校验规则：
 
 额度规则：
 
-- 创建带最大消耗额度的 API Key 时，不扣减或冻结用户余额；该额度只是 Key 的预算上限。
-- 有限额度 API Key 调用成功后同时扣减用户余额，并消耗 Key 剩余预算或累计已用额度。
-- `unlimited=true` 或 `remain_quota=-1` 的 API Key 调用成功后只扣减用户额度。
-- 普通用户不能通过编辑 API Key 接口调整最大消耗额度或无限标记，预算调整只能由管理员或后续策略流程完成。
+- 创建带剩余可消耗额度的 API Key 时，不扣减或冻结用户余额；该额度只是 Key 的预算上限。
+- 有限额度 API Key 调用成功后同时扣减用户余额、扣减 Key 剩余可消耗额度并累计 Key 已用额度。
+- `unlimited=true` 或 `quota_limit=-1` 的 API Key 调用成功后不扣 Key 剩余额度，仍扣减用户额度并累加该 Key 的 `quota_used`。
+- 普通用户可以通过编辑 API Key 接口调整 Key 剩余可消耗额度或无限标记；实际消费仍以用户当前余额为上限。
 
 ## 分页规范
 

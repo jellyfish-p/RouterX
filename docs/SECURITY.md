@@ -14,7 +14,7 @@
 | 上游密钥 | 通道中调用 OpenAI、Anthropic、Gemini 等厂商的密钥 | 上游账号被盗刷、供应商风控 |
 | `ENCRYPTION_KEY` / KMS | 加密上游密钥和第三方 client secret 的主密钥 | 已加密密钥不可恢复或被批量解密 |
 | `JWT_SECRET` | JWT 签名密钥 | 跨实例登录异常、伪造 JWT |
-| 额度、Key 预算和账单事实 | `users.quota`、`tokens.remain_quota`/`quota_limit`、`logs.quota_used` | 透支、预算绕过、重复扣费、账单争议 |
+| 额度、Key 预算和账单事实 | `users.quota`、`tokens.quota_limit`、`tokens.quota_used`、`logs.quota_used` | 透支、预算绕过、重复扣费、账单争议 |
 | settings | 运行时配置权威来源 | 关闭安全开关、错误计费、错误日志策略 |
 | 支付密钥和回调 | Stripe、易支付等支付 provider 的签名凭据和事件 | 伪造充值、重复入账 |
 | 日志和提示内容 | 请求、响应、错误、审计摘要 | 隐私泄露、密钥泄露、合规风险 |

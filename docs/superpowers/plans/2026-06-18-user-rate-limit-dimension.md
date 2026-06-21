@@ -69,7 +69,7 @@ func TestRateLimitPerUserAppliesAcrossAPIKeys(t *testing.T) {
 	createToken := func(name string) (uint, string) {
 		resp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
 			"name":         name,
-			"remain_quota": 50,
+			"quota_limit": 50,
 		})
 		var payload struct {
 			Data struct {
@@ -122,8 +122,8 @@ func TestRateLimitPerUserAppliesAcrossAPIKeys(t *testing.T) {
 	if err := internal.DB.First(&secondToken, secondTokenID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if firstToken.RemainQuota != 48 || secondToken.RemainQuota != 50 {
-		t.Fatalf("only first token should be charged, first=%d second=%d", firstToken.RemainQuota, secondToken.RemainQuota)
+	if firstToken.QuotaLimit != 48 || secondToken.QuotaLimit != 50 {
+		t.Fatalf("only first token should be charged, first=%d second=%d", firstToken.QuotaLimit, secondToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, secondTokenID, "%user rate limit%").First(&failedLog).Error; err != nil {

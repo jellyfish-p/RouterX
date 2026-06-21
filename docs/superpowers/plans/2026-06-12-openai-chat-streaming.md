@@ -57,7 +57,7 @@ func TestChatCompletionStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
 		"name":         "stream",
-		"remain_quota": 50,
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -115,8 +115,8 @@ func TestChatCompletionStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 43 {
-		t.Fatalf("stream usage should deduct token budget by 7, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 43 {
+		t.Fatalf("stream usage should deduct token budget by 7, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {

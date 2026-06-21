@@ -35,7 +35,7 @@ func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	rootJWT := loginBearer(t, r, "root", "password123")
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
 		"name":         "models-protocol",
-		"remain_quota": 10,
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {

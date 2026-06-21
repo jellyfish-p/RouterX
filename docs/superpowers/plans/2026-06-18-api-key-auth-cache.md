@@ -42,7 +42,7 @@ func TestValidateAndGetTokenResolvesFromRedisAuthCache(t *testing.T) {
 	if err := db.Create(&user).Error; err != nil {
 		t.Fatal(err)
 	}
-	token := model.Token{UserID: user.ID, Name: "cached-key", Key: common.SHA256Hex("sk-real-key"), Status: common.TokenStatusEnabled, RemainQuota: 100}
+	token := model.Token{UserID: user.ID, Name: "cached-key", Key: common.SHA256Hex("sk-real-key"), Status: common.TokenStatusEnabled, QuotaLimit: 100}
 	if err := db.Create(&token).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestAPIKeyAuthCacheWarmsAndClearsOnDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := "sk-disable-cache"
-	token := model.Token{UserID: user.ID, Name: "disable-cache-key", Key: common.SHA256Hex(key), Status: common.TokenStatusEnabled, RemainQuota: 100}
+	token := model.Token{UserID: user.ID, Name: "disable-cache-key", Key: common.SHA256Hex(key), Status: common.TokenStatusEnabled, QuotaLimit: 100}
 	if err := db.Create(&token).Error; err != nil {
 		t.Fatal(err)
 	}

@@ -4151,7 +4151,7 @@ func addRelayPolicyActorStatusSnapshot(snapshot map[string]interface{}, token *m
 		"id":         token.ID,
 		"status":     tokenStatusSnapshot(token.Status),
 		"expired_at": nil,
-		"unlimited":  token.Unlimited || token.RemainQuota == common.QuotaUnlimited,
+		"unlimited":  token.Unlimited || token.QuotaLimit == common.QuotaUnlimited,
 	}
 	if token.ExpiredAt != nil {
 		tokenStatus["expired_at"] = token.ExpiredAt.UTC().Format(time.RFC3339Nano)

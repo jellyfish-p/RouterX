@@ -900,7 +900,7 @@ func collectAPIKeyLifecycleMetrics(now time.Time) ([]metricSample, []metricHisto
 				UserGroup: apiKeyMetricUserGroup(token),
 				KeyType:   "limited",
 			}
-			quotaRemaining[key] += maxInt64(token.RemainQuota, 0)
+			quotaRemaining[key] += maxInt64(apiKeyRemainingQuota(token), 0)
 		}
 		if token.RotatedFromID != nil {
 			rotationCounts["user_rotate"]++
@@ -929,7 +929,14 @@ func apiKeyLifecycleStatus(token model.Token, now time.Time) string {
 }
 
 func apiKeyIsUnlimited(token model.Token) bool {
-	return token.Unlimited || token.RemainQuota == common.QuotaUnlimited
+	return token.Unlimited || token.QuotaLimit == common.QuotaUnlimited
+}
+
+func apiKeyRemainingQuota(token model.Token) int64 {
+	if apiKeyIsUnlimited(token) {
+		return common.QuotaUnlimited
+	}
+	return token.QuotaLimit
 }
 
 func apiKeyMetricUserGroup(token model.Token) string {

@@ -25,7 +25,7 @@
 
 - `/v1/*` 只接受 API Key，`/v0/user/*` 和 `/v0/admin/*` 只接受 User JWT。
 - API Key 校验包含格式、哈希、状态、过期、软删除、所属用户状态和额度预检。
-- 普通用户不能通过用户端 API Key 编辑接口修改 `remain_quota` 或 `unlimited`。
+- 普通用户可以通过用户端 API Key 编辑接口修改自己的 `quota_limit` 或 `unlimited`，但不能修改 `quota_used`、所属用户、哈希字段或账户余额。
 - Relay 会在调用上游前检查用户余额和 API Key 预算。
 - API Key scope 已支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`entry_protocols` 入口协议 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list、`daily_quota` 日预算、`monthly_quota` 月预算、`max_concurrency` 并发上限、`rpm` 和 `tpm`，未命中或达到上限时在上游调用前返回 `model_not_allowed`、`token_forbidden`、`route_forbidden`、`insufficient_quota` 或 `rate_limit_exceeded` 并写失败日志。
 - 通道选择会过滤禁用通道、模型不匹配通道、错误计数过高通道和不可用 Adapter。

@@ -62,7 +62,6 @@ erDiagram
         string key
         int status
         time expired_at
-        int64 remain_quota
         bool unlimited
         json scope_json
         int64 quota_limit
@@ -241,8 +240,10 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 | `key` | string | API Key 的 SHA256 哈希；兼容早期明文存量时会在验证成功后迁移为哈希 |
 | `status` | int | `0` 禁用，`1` 启用 |
 | `expired_at` | nullable time | 过期时间，空表示不过期 |
-| `remain_quota` | int64 | 当前字段；目标语义为 Key 剩余预算上限，`-1` 表示无限制 |
+| `quota_limit` | int64 | Key 剩余可消耗额度，成功调用会扣减；`-1` 表示无限制 |
+| `quota_used` | int64 | Key 已累计消耗额度 |
 | `unlimited` | bool | 是否无限制 |
+| `leak_risk_enabled` | bool | 是否启用泄露风控自动禁用，默认启用；不影响风险提示和手动泄露上报 |
 | `rotated_from_id` | nullable uint | 轮换来源 Token ID |
 | `revoked_reason` | string | 禁用原因，例如 `rotated`、`reported_leak`、`admin_batch_disable` |
 | `scope_json` | json | API Key 收窄策略；当前支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`entry_protocols` 入口协议 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list、`daily_quota` 日预算、`monthly_quota` 月预算、`max_concurrency` 并发上限、`rpm` 每分钟请求上限和 `tpm` 每分钟模型 token 上限 |
@@ -261,13 +262,13 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 - API Key 明文只在创建时返回一次。
 - 数据库长期保存 SHA256 哈希，不保存 API Key 明文。
 - Redis 缓存使用 `SHA256(key)` 作为缓存键，避免明文出现在 Redis key。
-- 创建、编辑、禁用、删除、轮换、泄露上报、scope 更新、批量禁用、批量过期和用户端额度/无限标记编辑拒绝会写入 `admin_audit_logs`，审计摘要只包含 `tokens` 的公开字段，不保存完整 Key 明文或哈希。
+- 创建、编辑、额度设置、禁用、删除、轮换、泄露上报、scope 更新、批量禁用和批量过期会写入 `admin_audit_logs`，审计摘要只包含 `tokens` 的公开字段，不保存完整 Key 明文或哈希。
 
 额度语义：
 
-- 有限额度 API Key 的额度表示最大消耗预算，不来自创建时的用户余额划拨。
-- 有限额度 API Key 调用前必须同时检查 `users.quota` 和 Key 剩余预算；调用成功后同时扣用户余额并消耗 Key 预算。
-- `unlimited=true` 或 `remain_quota=-1` 表示 Token 自身不限额，调用成功后扣 `users.quota`。
+- 有限额度 API Key 的 `quota_limit` 表示剩余可消耗预算，不来自创建时的用户余额划拨。
+- 有限额度 API Key 调用前必须同时检查 `users.quota` 和 Key 剩余预算；调用成功后同时扣用户余额、扣 `quota_limit`，并累加 `quota_used`。
+- `unlimited=true` 或 `quota_limit=-1` 表示 Token 自身不限额，调用成功后扣 `users.quota` 并累加 `quota_used`。
 - 创建有限 API Key 不写模型消费日志，也不改变用户余额；模型消费以成功调用的 `logs.quota_used` 为准。
 
 目标增强字段：
@@ -276,8 +277,6 @@ API Key 生命周期、轮换、泄露处理、作用域、缓存一致性和高
 |------|------|
 | `prefix` | 可展示的短摘要，用于用户识别和工单排障，不用于鉴权。 |
 | `hash_version` | 哈希算法或迁移版本。 |
-| `quota_limit` | Key 最大消耗额度，`null` 或 `-1` 表示不限 Key 自身额度。 |
-| `quota_used` | Key 累计已消耗额度，用于计算剩余预算并支持历史统计。 |
 | `created_by_user_id` | 创建操作者。 |
 | `updated_by_user_id` | 最近管理操作者。 |
 
@@ -837,7 +836,7 @@ QuotaUnlimited = -1
 
 含义：
 
-- 数据库中 `quota`、`remain_quota`、`quota_limit`、`quota_used` 使用整数存储，避免浮点误差。
+- 数据库中 `quota`、`quota_limit`、`quota_limit`、`quota_used` 使用整数存储，避免浮点误差。
 - `100000000` 个基础单位等于 1 个展示额度单位。
 - `-1` 表示无限制，只能用于 Key 预算等明确允许无限制的字段。
 

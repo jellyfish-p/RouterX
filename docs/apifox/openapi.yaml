@@ -1020,7 +1020,7 @@ paths:
       operationId: putV0UserTokenId
       tags: [User API Key]
       summary: 编辑 API Key
-      description: 普通用户只能编辑名称、状态、过期时间和非安全元数据，不能通过本接口修改额度或无限标记。普通编辑成功后写 api_key.updated 并清理 Redis 鉴权 lookup cache；将状态改为禁用写 api_key.disabled；尝试修改 remain_quota 或 unlimited 会返回 403 并写 api_key.quota_limit_denied。
+      description: 普通用户可编辑名称、状态、过期时间、非安全元数据、Key 剩余可消耗额度、无限额度标记和泄露风控自动禁用开关。普通编辑成功后写 api_key.updated 并清理 Redis 鉴权 lookup cache；将状态改为禁用写 api_key.disabled；额度或无限标记变更写 api_key.quota_limit_set。
       security:
         - UserJWT: []
       parameters:
@@ -2473,7 +2473,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 api_key.created、api_key.batch_disable_denied、api_key.batch_expire_denied、api_key.quota_limit_denied、user.create、user.self_cancel_denied、user_group.create、redem_code.create_denied、redem_code.redeem_denied、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_order.create_denied、payment_order.cancel_denied、payment_webhook.processed、payment_webhook.failed、payment_refund.requested、payment_refund.request_denied、payment_refund.deducted、payment_refund.manual、payment_refund.manual_denied、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、payment_manual_adjust.denied、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.quota_limit_set、api_key.batch_disable_denied、api_key.batch_expire_denied、user.create、user.self_cancel_denied、user_group.create、redem_code.create_denied、redem_code.redeem_denied、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_order.create_denied、payment_order.cancel_denied、payment_webhook.processed、payment_webhook.failed、payment_refund.requested、payment_refund.request_denied、payment_refund.deducted、payment_refund.manual、payment_refund.manual_denied、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、payment_manual_adjust.denied、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
         - name: resource_type
           in: query
           required: false
@@ -2500,7 +2500,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 失败或拒绝 code 过滤，例如 api_key_quota_edit_forbidden、self_cancel_password_required、self_cancel_password_invalid、redem_code_expired_at_not_future、redem_code_invalid_or_used、redem_code_expired、payment_order_provider_disabled、payment_order_product_unavailable、payment_order_cancel_not_pending、payment_order_cancel_not_found、payment_refund_reason_required、payment_refund_idempotency_key_used、payment_manual_adjust_reason_required 或 payment_manual_refund_idempotency_key_used。
+          description: 失败或拒绝 code 过滤，例如 self_cancel_password_required、self_cancel_password_invalid、redem_code_expired_at_not_future、redem_code_invalid_or_used、redem_code_expired、payment_order_provider_disabled、payment_order_product_unavailable、payment_order_cancel_not_pending、payment_order_cancel_not_found、payment_refund_reason_required、payment_refund_idempotency_key_used、payment_manual_adjust_reason_required 或 payment_manual_refund_idempotency_key_used。
         - name: start_time
           in: query
           required: false
@@ -6554,13 +6554,14 @@ components:
           type: string
           maxLength: 64
           description: API Key 名称；用于列表、审计和人类识别。
-        remain_quota:
+        quota_limit:
           type: integer
           format: int64
-          description: 有限 Key 的预算上限；0 表示无可用预算。
+          nullable: true
+          description: 有限 Key 的剩余可消耗额度；-1 表示 Key 自身不限额。
         unlimited:
           type: boolean
-          description: true 时 remain_quota 为 -1，调用仍扣用户余额。
+          description: true 时 quota_limit 为 -1，调用仍扣用户余额并累计 quota_used。
         expired_at:
           type: integer
           format: int64
@@ -6569,9 +6570,13 @@ components:
         metadata:
           description: 创建 API Key 时写入的非安全元数据；用于环境、团队、应用、标签和服务账号主体筛选。
           $ref: "#/components/schemas/TokenMetadata"
+        leak_risk_enabled:
+          type: boolean
+          nullable: true
+          description: 是否启用泄露风控自动禁用；默认 true。关闭后仍保留风险提示和手动泄露上报能力。
     UpdateTokenRequest:
       type: object
-      description: 用户更新 API Key 请求；普通用户不能通过该接口调整预算或无限标记。
+      description: 用户更新 API Key 请求；可调整 Key 剩余可消耗额度、无限额度标记和泄露风控自动禁用开关。
       properties:
         name:
           type: string
@@ -6585,20 +6590,22 @@ components:
           format: int64
           nullable: true
           description: Unix 秒过期时间；为空时不设置过期时间。
-        remain_quota:
+        quota_limit:
           type: integer
           format: int64
           nullable: true
-          deprecated: true
-          description: 用户编辑接口不允许修改额度；传入会返回 403。
+          description: 设置 Key 剩余可消耗额度；-1 表示 Key 自身不限额。
         unlimited:
           type: boolean
           nullable: true
-          deprecated: true
-          description: 用户编辑接口不允许修改无限标记；传入会返回 403。
+          description: true 表示 Key 自身不限额；false 表示恢复有限额度，必要时需同时传 quota_limit。
         metadata:
           description: 要替换的 API Key 非安全元数据；传入时按服务端规则归一化并覆盖旧值。
           $ref: "#/components/schemas/TokenMetadata"
+        leak_risk_enabled:
+          type: boolean
+          nullable: true
+          description: 是否启用泄露风控自动禁用；关闭后仍保留风险提示和手动泄露上报能力。
     TokenMetadata:
       type: object
       description: API Key 非安全元数据，用于环境、团队、应用、标签和服务账号主体筛选；不得包含 API Key 明文、上游密钥、支付密钥或其他敏感凭据。
@@ -6803,13 +6810,20 @@ components:
           format: date-time
           nullable: true
           description: API Key 过期时间；为空表示不按时间自动过期。
-        remain_quota:
+        quota_limit:
           type: integer
           format: int64
-          description: API Key 剩余预算；unlimited=true 时可为兼容显示值，实际仍受用户余额和策略约束。
+          description: API Key 剩余可消耗额度；成功调用会扣减该字段；unlimited=true 时为 -1，实际仍受用户余额和策略约束。
+        quota_used:
+          type: integer
+          format: int64
+          description: API Key 已累计消耗额度；有限和无限 Key 成功调用都会累加。
         unlimited:
           type: boolean
           description: 是否不按 Key 预算额外限制；true 仍会继承用户余额、scope、限流和访问控制。
+        leak_risk_enabled:
+          type: boolean
+          description: 是否启用泄露风控自动禁用；不影响风险提示和手动泄露上报。
         rotated_from_id:
           type: integer
           format: uint64

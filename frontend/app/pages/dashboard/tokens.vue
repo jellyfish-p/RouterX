@@ -19,8 +19,9 @@ const loading = ref(false)
 const showCreate = ref(false)
 const createForm = reactive<CreateTokenRequest>({
   name: '',
-  remain_quota: -1,
+  quota_limit: -1,
   unlimited: true,
+  leak_risk_enabled: true,
   expired_at: null
 })
 const createLoading = ref(false)
@@ -30,8 +31,9 @@ const editingToken = ref<TokenInfo | null>(null)
 const editForm = reactive<UpdateTokenRequest>({
   name: undefined,
   status: undefined,
-  remain_quota: undefined,
+  quota_limit: undefined,
   unlimited: undefined,
+  leak_risk_enabled: undefined,
   expired_at: undefined
 })
 const editLoading = ref(false)
@@ -79,14 +81,24 @@ async function handleCreate() {
   }
 }
 
+watch(() => createForm.unlimited, (unlimited) => {
+  createForm.quota_limit = unlimited ? -1 : 0
+})
+
 function startEdit(token: TokenInfo) {
   editingToken.value = token
   editForm.name = token.name
   editForm.status = undefined
-  editForm.remain_quota = undefined
-  editForm.unlimited = undefined
+  editForm.quota_limit = token.unlimited ? 0 : token.quota_limit
+  editForm.unlimited = token.unlimited
+  editForm.leak_risk_enabled = token.leak_risk_enabled
   editForm.expired_at = undefined
 }
+
+watch(() => editForm.unlimited, (unlimited) => {
+  if (!editingToken.value || unlimited === undefined) return
+  editForm.quota_limit = unlimited ? -1 : 0
+})
 
 async function handleEdit() {
   if (!editingToken.value) return
@@ -125,8 +137,12 @@ onMounted(() => {
   fetchTokens()
 })
 
+function formatQuotaValue(value: number) {
+  return (value / 100000000).toFixed(2)
+}
+
 function formatQuota(token: TokenInfo) {
-  return token.unlimited ? '无限' : (token.remain_quota / 100000000).toFixed(2)
+  return token.unlimited ? '无限' : formatQuotaValue(token.quota_limit)
 }
 </script>
 
@@ -145,6 +161,7 @@ function formatQuota(token: TokenInfo) {
             <th class="px-3 py-2 font-medium">名称</th>
             <th class="px-3 py-2 font-medium">状态</th>
             <th class="px-3 py-2 font-medium">剩余额度</th>
+            <th class="px-3 py-2 font-medium">已用额度</th>
             <th class="px-3 py-2 font-medium">过期时间</th>
             <th class="px-3 py-2 font-medium">创建时间</th>
             <th class="px-3 py-2 font-medium">操作</th>
@@ -152,7 +169,7 @@ function formatQuota(token: TokenInfo) {
         </thead>
         <tbody>
           <tr v-if="loading">
-            <td colspan="6" class="px-3 py-8 text-center text-gray-500">加载中</td>
+            <td colspan="7" class="px-3 py-8 text-center text-gray-500">加载中</td>
           </tr>
           <tr v-for="token in tokens" v-else :key="token.id" class="border-t border-gray-100">
             <td class="px-3 py-2 font-medium">{{ token.name }}</td>
@@ -162,6 +179,7 @@ function formatQuota(token: TokenInfo) {
               </UBadge>
             </td>
             <td class="px-3 py-2">{{ formatQuota(token) }}</td>
+            <td class="px-3 py-2">{{ formatQuotaValue(token.quota_used) }}</td>
             <td class="px-3 py-2">{{ token.expired_at ? new Date(token.expired_at).toLocaleString() : '永不过期' }}</td>
             <td class="px-3 py-2">{{ new Date(token.created_at).toLocaleString() }}</td>
             <td class="px-3 py-2">
@@ -172,7 +190,7 @@ function formatQuota(token: TokenInfo) {
             </td>
           </tr>
           <tr v-if="!loading && tokens.length === 0">
-            <td colspan="6" class="px-3 py-8 text-center text-gray-500">暂无令牌</td>
+            <td colspan="7" class="px-3 py-8 text-center text-gray-500">暂无令牌</td>
           </tr>
         </tbody>
       </table>
@@ -191,7 +209,10 @@ function formatQuota(token: TokenInfo) {
             </div>
           </UFormField>
           <UFormField v-if="!createForm.unlimited" label="剩余额度">
-            <UInput v-model.number="createForm.remain_quota" type="number" placeholder="0 表示无限" />
+            <UInput v-model.number="createForm.quota_limit" type="number" placeholder="0 表示无可用预算" />
+          </UFormField>
+          <UFormField label="泄露风控">
+            <UCheckbox v-model="createForm.leak_risk_enabled" label="自动禁用疑似泄露 Key" />
           </UFormField>
           <UButton type="submit" block :loading="createLoading">创建</UButton>
         </form>
@@ -223,6 +244,17 @@ function formatQuota(token: TokenInfo) {
               ]"
               placeholder="不修改"
             />
+          </UFormField>
+          <UFormField label="额度">
+            <div class="flex items-center gap-3">
+              <UCheckbox v-model="editForm.unlimited" label="无限额度" />
+            </div>
+          </UFormField>
+          <UFormField v-if="!editForm.unlimited" label="剩余额度">
+            <UInput v-model.number="editForm.quota_limit" type="number" placeholder="0 表示无可用预算" />
+          </UFormField>
+          <UFormField label="泄露风控">
+            <UCheckbox v-model="editForm.leak_risk_enabled" label="自动禁用疑似泄露 Key" />
           </UFormField>
           <UButton type="submit" block :loading="editLoading">保存</UButton>
         </form>
