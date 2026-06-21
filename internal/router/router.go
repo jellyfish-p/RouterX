@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -1656,18 +1655,18 @@ func readinessSettingProblem() string {
 	if problem != "" {
 		return problem
 	}
-	if epayEnabled && strings.TrimSpace(os.Getenv("PAYMENT_EPAY_KEY")) == "" {
-		return "PAYMENT_EPAY_KEY"
+	if epayEnabled && !readinessHasSetting("payment.epay.key") {
+		return "payment.epay.key"
 	}
 	stripeEnabled, problem := readinessBoolSetting("payment.stripe.enabled")
 	if problem != "" {
 		return problem
 	}
-	if stripeEnabled && strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_SECRET_KEY")) == "" {
-		return "PAYMENT_STRIPE_SECRET_KEY"
+	if stripeEnabled && !readinessHasSetting("payment.stripe.secret_key") {
+		return "payment.stripe.secret_key"
 	}
-	if stripeEnabled && strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_WEBHOOK_SECRET")) == "" {
-		return "PAYMENT_STRIPE_WEBHOOK_SECRET"
+	if stripeEnabled && !readinessHasSetting("payment.stripe.webhook_secret") {
+		return "payment.stripe.webhook_secret"
 	}
 	return ""
 }
@@ -1820,6 +1819,11 @@ func settingValue(key string) (string, bool) {
 		return "", false
 	}
 	return setting.Value, true
+}
+
+func readinessHasSetting(key string) bool {
+	raw, ok := settingValue(key)
+	return ok && strings.TrimSpace(raw) != ""
 }
 
 func readinessBoolSetting(key string) (bool, string) {

@@ -231,12 +231,16 @@ P0 补齐这些配置时，应同时补测试：
 
 ### Payment
 
-支付 provider、充值码、退款和人工补账策略以 `docs/PAYMENTS.md` 为准。支付密钥本身优先来自环境变量、KMS 或加密配置，不应以明文写入普通 `settings` 响应。
+支付 provider、充值码、退款和人工补账策略以 `docs/PAYMENTS.md` 为准。支付配置全部来自数据库 `settings`，其中 provider 密钥由 `SettingService` 加密落库、透明解密使用，管理端响应和审计只允许脱敏展示。
 
 | key | 默认 | stage | 说明 |
 |-----|------|-------|------|
 | `payment.stripe.enabled` | `false` | P2 | 是否启用 Stripe |
+| `payment.stripe.secret_key` | `` | P2 | Stripe Secret Key；敏感配置，加密落库 |
+| `payment.stripe.webhook_secret` | `` | P2 | Stripe Webhook 签名密钥；敏感配置，加密落库 |
+| `payment.stripe.api_base` | `` | P2 | Stripe API 基础地址；为空时使用 `https://api.stripe.com`，仅测试、私有代理或受控网络出口场景覆盖 |
 | `payment.epay.enabled` | `false` | P2 | 是否启用易支付 |
+| `payment.epay.key` | `` | P2 | 易支付商户签名密钥；敏感配置，加密落库 |
 | `payment.epay.gateway` | `` | P2 | 易支付收银台网关地址 |
 | `payment.epay.pid` | `` | P2 | 易支付商户 ID |
 | `payment.epay.notify_url` | `` | P2 | 易支付异步通知地址 |
@@ -304,7 +308,7 @@ validate key exists
 - `auth.login.username_password.enabled=false`。
 - `auth.register.default_quota < 0`。
 - `auth.register.default_group_id` 为空。
-- `ENCRYPTION_KEY` 或 KMS 不可用，且数据库存在 `enc:v1:` 下游密钥或外部登录 `client_secret`。
+- `ENCRYPTION_KEY` 或 KMS 不可用，且数据库存在 `enc:v1:` 下游密钥、外部登录 `client_secret` 或支付 provider 密钥。
 - `SQL_DSN` 指向 PostgreSQL/MySQL 等外部数据库但 Redis 不可用。
 - `relay.timeout <= 0`。
 - `relay.max_request_body_bytes < 0`。
@@ -320,8 +324,8 @@ validate key exists
 - `billing.default_ratio <= 0`。
 - `billing.usage_missing_strategy` 不是 `minimum` 或 `reject`。
 - `billing.user_group_ratios`、`billing.channel_group_ratios`、`billing.model_group_ratios` 或 `billing.user_group_channel_ratios` 不是 JSON 对象，或包含空 key、`<= 0` 的倍率值。
-- `payment.epay.enabled=true` 但 `PAYMENT_EPAY_KEY` 不可用。
-- `payment.stripe.enabled=true` 但 `PAYMENT_STRIPE_SECRET_KEY` 或 `PAYMENT_STRIPE_WEBHOOK_SECRET` 不可用。
+- `payment.epay.enabled=true` 但 `payment.epay.key` 不可用。
+- `payment.stripe.enabled=true` 但 `payment.stripe.secret_key` 或 `payment.stripe.webhook_secret` 不可用。
 - 迁移状态 dirty 或必要 settings 未加载。
 - `observability.structured_logs_enabled` 不是布尔值。
 - `alert.<target>.enabled` 不是布尔值，`alert.<target>.url` 不是绝对 URL，或 `alert.<target>.timeout_seconds` / `alert.<target>.max_attempts` 不是正整数；当前 target 为 `webhook`、`email`、`im`。

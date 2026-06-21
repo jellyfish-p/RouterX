@@ -8767,7 +8767,6 @@ func TestAdminPaymentManualRefundMarksOrderAndDeductsQuota(t *testing.T) {
 func TestAdminStripeRefundRequestCreatesProviderRefundAndPendingOrder(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 
 	var refundAPICalls int32
 	stripeAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -8800,8 +8799,6 @@ func TestAdminStripeRefundRequestCreatesProviderRefundAndPendingOrder(t *testing
 		_, _ = w.Write([]byte(`{"id":"re_refund_request_1","status":"pending"}`))
 	}))
 	defer stripeAPI.Close()
-	t.Setenv("PAYMENT_STRIPE_SECRET_KEY", "sk_test_refund")
-	t.Setenv("PAYMENT_STRIPE_API_BASE", stripeAPI.URL)
 
 	r := newTestRouter(t)
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -8836,6 +8833,15 @@ func TestAdminStripeRefundRequestCreatesProviderRefundAndPendingOrder(t *testing
 	}
 	settingSvc := service.NewSettingService()
 	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.stripe.secret_key", "sk_test_refund"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.stripe.webhook_secret", "whsec_test_secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.stripe.api_base", stripeAPI.URL); err != nil {
 		t.Fatal(err)
 	}
 	paymentIntent := "pi_refund_request_1"
@@ -8954,7 +8960,6 @@ func TestAdminStripeRefundRequestCreatesProviderRefundAndPendingOrder(t *testing
 func TestAdminEpayRefundRequestCreatesProviderRefundAndPendingOrder(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_EPAY_KEY", "epay-refund-secret")
 
 	var refundAPICalls int32
 	epayAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -9009,6 +9014,9 @@ func TestAdminEpayRefundRequestCreatesProviderRefundAndPendingOrder(t *testing.T
 	}
 	settingSvc := service.NewSettingService()
 	if err := settingSvc.Set("payment.epay.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.epay.key", "epay-refund-secret"); err != nil {
 		t.Fatal(err)
 	}
 	if err := settingSvc.Set("payment.epay.pid", "merchant-epay-1"); err != nil {
@@ -9654,7 +9662,7 @@ func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 		!strings.Contains(deniedAuditBody, `\"product_id\":\"quota_100\"`) {
 		t.Fatalf("disabled payment provider should write denied order creation audit, got %d %s", deniedAuditResp.Code, deniedAuditBody)
 	}
-	if strings.Contains(deniedAuditBody, "checkout_url") || strings.Contains(deniedAuditBody, "PAYMENT_STRIPE_SECRET_KEY") {
+	if strings.Contains(deniedAuditBody, "checkout_url") || strings.Contains(deniedAuditBody, "payment.stripe.secret_key") {
 		t.Fatalf("payment order creation denial audit should not store checkout URL or provider secret names: %s", deniedAuditBody)
 	}
 	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
@@ -9838,7 +9846,6 @@ func TestUserCancelsPendingPaymentOrder(t *testing.T) {
 func TestStripeOrderCreatesCheckoutSessionWhenConfigured(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_SECRET_KEY", "sk_test_routerx")
 	var called atomic.Bool
 	stripeAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		called.Store(true)
@@ -9882,7 +9889,6 @@ func TestStripeOrderCreatesCheckoutSessionWhenConfigured(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"cs_test_123","url":"https://checkout.stripe.com/c/session_123"}`))
 	}))
 	defer stripeAPI.Close()
-	t.Setenv("PAYMENT_STRIPE_API_BASE", stripeAPI.URL)
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -9903,8 +9909,15 @@ func TestStripeOrderCreatesCheckoutSessionWhenConfigured(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
-		t.Fatal(err)
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.stripe.enabled":    "true",
+		"payment.stripe.secret_key": "sk_test_routerx",
+		"payment.stripe.api_base":   stripeAPI.URL,
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
@@ -10116,7 +10129,6 @@ func TestAdminAuditRequiresSuperAdmin(t *testing.T) {
 func TestEpayOrderBuildsSignedCheckoutURL(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_EPAY_KEY", "epay-checkout-secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10140,6 +10152,7 @@ func TestEpayOrderBuildsSignedCheckoutURL(t *testing.T) {
 	settingSvc := service.NewSettingService()
 	for key, value := range map[string]string{
 		"payment.epay.enabled":    "true",
+		"payment.epay.key":        "epay-checkout-secret",
 		"payment.epay.gateway":    "https://pay.example.com/submit.php",
 		"payment.epay.pid":        "merchant-1",
 		"payment.epay.notify_url": "https://api.example.com/v0/payment/epay/notify",
@@ -10194,7 +10207,6 @@ func TestEpayOrderBuildsSignedCheckoutURL(t *testing.T) {
 func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_EPAY_KEY", "epay-test-secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10218,8 +10230,14 @@ func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
-		t.Fatal(err)
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.epay.enabled": "true",
+		"payment.epay.key":     "epay-test-secret",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
 	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
 		"provider":   "epay",
@@ -10320,7 +10338,6 @@ func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 func TestEpayFailedNotifyMarksOrderFailedAndAudits(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_EPAY_KEY", "epay-test-secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10344,8 +10361,14 @@ func TestEpayFailedNotifyMarksOrderFailedAndAudits(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
-		t.Fatal(err)
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.epay.enabled": "true",
+		"payment.epay.key":     "epay-test-secret",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
 	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
 		"provider":   "epay",
@@ -10396,7 +10419,6 @@ func TestEpayFailedNotifyMarksOrderFailedAndAudits(t *testing.T) {
 func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10420,8 +10442,14 @@ func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
-		t.Fatal(err)
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.stripe.enabled":        "true",
+		"payment.stripe.webhook_secret": "whsec_test_secret",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
 	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
 		"provider":   "stripe",
@@ -10507,7 +10535,6 @@ func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 func TestStripeAsyncPaymentFailedMarksOrderFailedAndAudits(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10531,8 +10558,14 @@ func TestStripeAsyncPaymentFailedMarksOrderFailedAndAudits(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
-		t.Fatal(err)
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.stripe.enabled":        "true",
+		"payment.stripe.webhook_secret": "whsec_test_secret",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
 	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
 		"provider":   "stripe",
@@ -10581,7 +10614,6 @@ func TestStripeAsyncPaymentFailedMarksOrderFailedAndAudits(t *testing.T) {
 func TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10607,6 +10639,9 @@ func TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota(t *testing.T) {
 	}
 	settingSvc := service.NewSettingService()
 	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.stripe.webhook_secret", "whsec_test_secret"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -10689,7 +10724,6 @@ func TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota(t *testing.T) {
 func TestStripePartialRefundWebhookRecordsAndDeductsProportionally(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10715,6 +10749,9 @@ func TestStripePartialRefundWebhookRecordsAndDeductsProportionally(t *testing.T)
 	}
 	settingSvc := service.NewSettingService()
 	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.stripe.webhook_secret", "whsec_test_secret"); err != nil {
 		t.Fatal(err)
 	}
 	if err := settingSvc.Set("payment.refund.auto_deduct", "true"); err != nil {
@@ -10762,7 +10799,6 @@ func TestStripePartialRefundWebhookRecordsAndDeductsProportionally(t *testing.T)
 func TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10811,6 +10847,9 @@ func TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy(t *testing.T)
 	}
 	settingSvc := service.NewSettingService()
 	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.stripe.webhook_secret", "whsec_test_secret"); err != nil {
 		t.Fatal(err)
 	}
 	if err := settingSvc.Set("payment.dispute.auto_disable_tokens", "true"); err != nil {
@@ -10870,7 +10909,6 @@ func TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy(t *testing.T)
 func TestStripeDisputeLifecycleUpdatesDisputeFact(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10893,6 +10931,9 @@ func TestStripeDisputeLifecycleUpdatesDisputeFact(t *testing.T) {
 	}
 	settingSvc := service.NewSettingService()
 	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.stripe.webhook_secret", "whsec_test_secret"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -12291,10 +12332,12 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	epayMissingKey := performJSON(r, http.MethodGet, "/ready", "", nil)
-	if epayMissingKey.Code != http.StatusServiceUnavailable || !strings.Contains(epayMissingKey.Body.String(), "PAYMENT_EPAY_KEY") {
+	if epayMissingKey.Code != http.StatusServiceUnavailable || !strings.Contains(epayMissingKey.Body.String(), "payment.epay.key") {
 		t.Fatalf("enabled epay without key should make ready fail, got %d %s", epayMissingKey.Code, epayMissingKey.Body.String())
 	}
-	t.Setenv("PAYMENT_EPAY_KEY", "epay-test-secret")
+	if err := service.NewSettingService().Set("payment.epay.key", "epay-test-secret"); err != nil {
+		t.Fatal(err)
+	}
 	epayReady := performJSON(r, http.MethodGet, "/ready", "", nil)
 	if epayReady.Code != http.StatusOK {
 		t.Fatalf("epay key should restore ready, got %d %s", epayReady.Code, epayReady.Body.String())
@@ -12304,15 +12347,19 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	stripeMissingKeys := performJSON(r, http.MethodGet, "/ready", "", nil)
-	if stripeMissingKeys.Code != http.StatusServiceUnavailable || !strings.Contains(stripeMissingKeys.Body.String(), "PAYMENT_STRIPE_SECRET_KEY") {
+	if stripeMissingKeys.Code != http.StatusServiceUnavailable || !strings.Contains(stripeMissingKeys.Body.String(), "payment.stripe.secret_key") {
 		t.Fatalf("enabled stripe without secret key should make ready fail, got %d %s", stripeMissingKeys.Code, stripeMissingKeys.Body.String())
 	}
-	t.Setenv("PAYMENT_STRIPE_SECRET_KEY", "sk_test_routerx")
+	if err := service.NewSettingService().Set("payment.stripe.secret_key", "sk_test_routerx"); err != nil {
+		t.Fatal(err)
+	}
 	stripeMissingWebhook := performJSON(r, http.MethodGet, "/ready", "", nil)
-	if stripeMissingWebhook.Code != http.StatusServiceUnavailable || !strings.Contains(stripeMissingWebhook.Body.String(), "PAYMENT_STRIPE_WEBHOOK_SECRET") {
+	if stripeMissingWebhook.Code != http.StatusServiceUnavailable || !strings.Contains(stripeMissingWebhook.Body.String(), "payment.stripe.webhook_secret") {
 		t.Fatalf("enabled stripe without webhook secret should make ready fail, got %d %s", stripeMissingWebhook.Code, stripeMissingWebhook.Body.String())
 	}
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_routerx")
+	if err := service.NewSettingService().Set("payment.stripe.webhook_secret", "whsec_routerx"); err != nil {
+		t.Fatal(err)
+	}
 	stripeReady := performJSON(r, http.MethodGet, "/ready", "", nil)
 	if stripeReady.Code != http.StatusOK {
 		t.Fatalf("stripe keys should restore ready, got %d %s", stripeReady.Code, stripeReady.Body.String())
@@ -12604,7 +12651,7 @@ func TestAdminRotateSecretsReencryptsWithCurrentKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rotatePayload.Data.ScannedChannels != 1 || rotatePayload.Data.RotatedChannels != 1 ||
-		rotatePayload.Data.ScannedSettings != 2 || rotatePayload.Data.RotatedSettings != 2 ||
+		rotatePayload.Data.ScannedSettings != 5 || rotatePayload.Data.RotatedSettings != 2 ||
 		rotatePayload.Data.RotatedSecrets != 5 || rotatePayload.Data.SkippedSecrets != 0 {
 		t.Fatalf("unexpected rotation summary: %+v", rotatePayload.Data)
 	}

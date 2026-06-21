@@ -248,7 +248,7 @@ Stripe 要求：
 - 退款事件先记录为 refund fact；是否扣回额度由退款策略决定。
 - 争议/拒付事件先记录为 dispute fact；是否冻结 API Key 由风控策略决定。
 
-当前基础实现已支持创建 Stripe Checkout Session：当 `PAYMENT_STRIPE_SECRET_KEY` 和绝对 `return_url` 齐全时，用户创建订单会向 Stripe 写入 Checkout Session，metadata 包含 `order_no`、`user_id`、`product_id`，本地订单保存 `provider_order_id=session.id` 和 `checkout_url=session.url`；配置不足时仍返回本地安全 checkout 占位链接，便于开发演示但不适合作为生产收银台。`POST /v0/payment/stripe/webhook` 支持 `checkout.session.completed` 成功事件、`Stripe-Signature` 校验、订单 metadata 校验、金额/币种快照校验、`payment_events` 幂等、`quota_transactions` 入账，并写入 `payment_webhook.processed` 和 `payment_order.paid` 审计摘要。`charge.refunded` 全额或部分退款事件会记录 `payment_refund.processed`，自动扣回成功时额外记录 `payment_refund.deducted`；`charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated` 会更新 `payment_disputes` 并记录 `payment_dispute.*` 生命周期审计，created 阶段可按 settings 禁用该用户已启用的 API Key。
+当前基础实现已支持创建 Stripe Checkout Session：当 `payment.stripe.secret_key` 和绝对 `return_url` 齐全时，用户创建订单会向 Stripe 写入 Checkout Session，metadata 包含 `order_no`、`user_id`、`product_id`，本地订单保存 `provider_order_id=session.id` 和 `checkout_url=session.url`；配置不足时仍返回本地安全 checkout 占位链接，便于开发演示但不适合作为生产收银台。`POST /v0/payment/stripe/webhook` 使用 `payment.stripe.webhook_secret` 校验 `Stripe-Signature`，支持 `checkout.session.completed` 成功事件、订单 metadata 校验、金额/币种快照校验、`payment_events` 幂等、`quota_transactions` 入账，并写入 `payment_webhook.processed` 和 `payment_order.paid` 审计摘要。`charge.refunded` 全额或部分退款事件会记录 `payment_refund.processed`，自动扣回成功时额外记录 `payment_refund.deducted`；`charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated` 会更新 `payment_disputes` 并记录 `payment_dispute.*` 生命周期审计，created 阶段可按 settings 禁用该用户已启用的 API Key。
 
 Stripe `checkout.session.async_payment_failed` 当前也会在签名、金额、币种和 metadata 校验通过且本地订单仍为 `pending` 时，把订单置为 `failed`，写 `payment_webhook.failed` 审计且不增加额度。
 
@@ -324,7 +324,7 @@ user submits code
 - 用户可通过 `POST /v0/user/payment/orders/:order_no/cancel` 取消自己的 `pending` 订单，订单置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付、退款中或已退款订单不能取消，并写 `payment_order.cancel_denied` 拒绝审计，`error_code` 可用于区分非 pending、订单不存在或不属于当前用户。
 - 管理员可通过 `/v0/admin/redem` 生成随机充值码或导入指定充值码，可写入 `batch_no`、`note` 和未来 `expired_at`，并可作废未使用充值码；这些管理操作会写入 `redem_code.*` 管理审计，创建请求被本地拒绝时写 `redem_code.create_denied`，完整兑换码只进入脱敏摘要。
 - 管理员可通过 `/v0/admin/payment/products` 创建、更新、启用和禁用支付商品；用户侧只展示启用商品，禁用商品不能创建新订单；支付商品管理成功操作会写入 `admin_audit_logs`。
-- 用户侧支付商品列表和本地 `pending` 订单创建/查询已具备基础实现；创建订单要求对应 provider 已在 settings 启用，成功会写 `payment_order.create` 管理审计，摘要不保存 checkout URL；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，使用稳定 `error_code` 区分原因。Stripe secret 和绝对 `return_url` 齐全时会创建 Stripe Checkout Session；易支付网关、商户号、回调 URL 和 `PAYMENT_EPAY_KEY` 配置齐全时会返回签名收银台 URL；pending 订单不会入账。
+- 用户侧支付商品列表和本地 `pending` 订单创建/查询已具备基础实现；创建订单要求对应 provider 已在 settings 启用，成功会写 `payment_order.create` 管理审计，摘要不保存 checkout URL；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，使用稳定 `error_code` 区分原因。Stripe `payment.stripe.secret_key` 和绝对 `return_url` 齐全时会创建 Stripe Checkout Session；易支付网关、商户号、回调 URL 和 `payment.epay.key` 配置齐全时会返回签名收银台 URL；pending 订单不会入账。
 - Stripe webhook 已支持 `checkout.session.completed` 签名校验、金额/币种/metadata 校验、`payment_events` 幂等、入账审计和入账；`checkout.session.async_payment_failed` 会在快照校验通过且订单仍为 pending 时置为 `failed`，写 `payment_webhook.failed` 审计且不入账；`charge.refunded` 全额或部分退款事件可幂等记录订单退款状态，写入退款审计，并可按 settings 全额或比例扣回额度；`charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated` 可幂等更新 `payment_disputes` 争议事实，写入争议生命周期审计，并可在 created 阶段按 settings 禁用用户已启用 API Key。
 - 易支付异步通知已支持 MD5 签名校验、金额校验、`payment_events` 幂等记录、成功订单置为 `paid`、明确失败订单置为 `failed`、`quota_transactions` 入账、用户额度增加和基础 webhook/入账/失败审计；重复通知不重复入账。
 - 易支付同步返回页已支持本地订单状态只读展示，不作为入账依据。
@@ -481,12 +481,21 @@ receive webhook
 
 ## 12. settings 和密钥
 
-非敏感运行时配置可进入 `settings`：
+支付运行时配置全部进入数据库 `settings`：
 
 | key | 说明 |
 |-----|------|
 | `payment.stripe.enabled` | 是否启用 Stripe |
+| `payment.stripe.secret_key` | Stripe Secret Key；加密落库 |
+| `payment.stripe.webhook_secret` | Stripe Webhook 签名密钥；加密落库 |
+| `payment.stripe.api_base` | Stripe API 基础地址；为空时使用 `https://api.stripe.com` |
 | `payment.epay.enabled` | 是否启用易支付 |
+| `payment.epay.key` | 易支付商户签名密钥；加密落库 |
+| `payment.epay.gateway` | 易支付收银台网关地址 |
+| `payment.epay.pid` | 易支付商户 ID |
+| `payment.epay.notify_url` | 易支付异步通知地址 |
+| `payment.epay.return_url` | 易支付同步返回地址 |
+| `payment.epay.refund_url` | 易支付退款请求地址 |
 | `payment.currency` | 默认币种 |
 | `payment.order_expire_minutes` | 订单过期分钟数 |
 | `payment.refund.auto_deduct` | 退款是否自动扣回余额 |
@@ -494,17 +503,11 @@ receive webhook
 | `payment.manual_adjust.require_reason` | 人工调整是否必须填写原因 |
 | `payment.manual_adjust.large_amount_threshold` | 大额调整阈值 |
 
-敏感密钥来源：
-
-- `PAYMENT_STRIPE_SECRET_KEY`
-- `PAYMENT_STRIPE_WEBHOOK_SECRET`
-- `PAYMENT_EPAY_KEY`
-- KMS 或加密配置
-
 密钥要求：
 
 - 不返回给控制台。
 - 不写入日志、审计和支付事件明文。
+- 通过 `SettingService` 加密落库；集群节点从同一数据库和 Redis settings 缓存读取。
 - 生产开启 provider 时 `/ready` 会确认必需密钥可用。
 - 轮换时保留短窗口双密钥或按 provider 支持方式处理。
 

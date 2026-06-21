@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"routerx/internal"
 	"routerx/internal/common"
 	"routerx/internal/model"
@@ -1864,8 +1863,11 @@ func (s *UserService) CreatePaymentOrder(userID uint, provider, productID, payTy
 }
 
 func createStripeCheckoutSession(orderNo string, userID uint, product model.PaymentProduct, returnURL string) (string, string, error) {
-	secret := strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_SECRET_KEY"))
-	if secret == "" {
+	secret, secretOK, err := paymentSetting("payment.stripe.secret_key")
+	if err != nil {
+		return "", "", err
+	}
+	if !secretOK {
 		return "", "", nil
 	}
 	returnURL = strings.TrimSpace(returnURL)
@@ -1903,9 +1905,9 @@ func createStripeCheckoutSession(orderNo string, userID uint, product model.Paym
 	values.Set("payment_intent_data[metadata][user_id]", userIDText)
 	values.Set("payment_intent_data[metadata][routerx_order_source]", "payment_order")
 
-	apiBase := strings.TrimRight(strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_API_BASE")), "/")
-	if apiBase == "" {
-		apiBase = "https://api.stripe.com"
+	apiBase, err := stripeAPIBase()
+	if err != nil {
+		return "", "", err
 	}
 	req, err := http.NewRequest(http.MethodPost, apiBase+"/v1/checkout/sessions", strings.NewReader(values.Encode()))
 	if err != nil {
@@ -1942,8 +1944,11 @@ func createStripeCheckoutSession(orderNo string, userID uint, product model.Paym
 }
 
 func createStripeRefund(order model.PaymentOrder, amountMinor int64, idempotencyKey, reason string) (string, string, string, error) {
-	secret := strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_SECRET_KEY"))
-	if secret == "" {
+	secret, secretOK, err := paymentSetting("payment.stripe.secret_key")
+	if err != nil {
+		return "", "", "", err
+	}
+	if !secretOK {
 		return "", "", "", errors.New("stripe secret key is not configured")
 	}
 	if order.ProviderPaymentID == nil || strings.TrimSpace(*order.ProviderPaymentID) == "" {
@@ -1961,9 +1966,9 @@ func createStripeRefund(order model.PaymentOrder, amountMinor int64, idempotency
 	values.Set("metadata[reason]", reason)
 	values.Set("metadata[routerx_refund_source]", "admin_refund_request")
 
-	apiBase := strings.TrimRight(strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_API_BASE")), "/")
-	if apiBase == "" {
-		apiBase = "https://api.stripe.com"
+	apiBase, err := stripeAPIBase()
+	if err != nil {
+		return "", "", "", err
 	}
 	req, err := http.NewRequest(http.MethodPost, apiBase+"/v1/refunds", strings.NewReader(values.Encode()))
 	if err != nil {
@@ -2001,8 +2006,11 @@ func createStripeRefund(order model.PaymentOrder, amountMinor int64, idempotency
 }
 
 func createEpayRefund(order model.PaymentOrder, amountMinor int64, idempotencyKey, reason string) (string, string, string, error) {
-	key := strings.TrimSpace(os.Getenv("PAYMENT_EPAY_KEY"))
-	if key == "" {
+	key, keyOK, err := paymentSetting("payment.epay.key")
+	if err != nil {
+		return "", "", "", err
+	}
+	if !keyOK {
 		return "", "", "", errors.New("epay key is not configured")
 	}
 	pid, pidOK, err := paymentSetting("payment.epay.pid")
@@ -2112,7 +2120,10 @@ func firstNonEmpty(values ...string) string {
 }
 
 func epayCheckoutURL(orderNo string, product model.PaymentProduct, payType string) (string, error) {
-	key := strings.TrimSpace(os.Getenv("PAYMENT_EPAY_KEY"))
+	key, keyOK, err := paymentSetting("payment.epay.key")
+	if err != nil {
+		return "", err
+	}
 	gateway, gatewayOK, err := paymentSetting("payment.epay.gateway")
 	if err != nil {
 		return "", err
@@ -2129,7 +2140,7 @@ func epayCheckoutURL(orderNo string, product model.PaymentProduct, payType strin
 	if err != nil {
 		return "", err
 	}
-	if key == "" || !gatewayOK || !pidOK || !notifyOK || !returnOK {
+	if !keyOK || !gatewayOK || !pidOK || !notifyOK || !returnOK {
 		return "", nil
 	}
 	payType = strings.TrimSpace(payType)
@@ -2157,6 +2168,17 @@ func epayCheckoutURL(orderNo string, product model.PaymentProduct, payType strin
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
+}
+
+func stripeAPIBase() (string, error) {
+	apiBase, ok, err := paymentSetting("payment.stripe.api_base")
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "https://api.stripe.com", nil
+	}
+	return strings.TrimRight(apiBase, "/"), nil
 }
 
 func paymentSetting(key string) (string, bool, error) {
@@ -2292,8 +2314,11 @@ func (s *UserService) GetEpayReturnOrder(orderNo string) (*model.PaymentOrder, e
 
 // ProcessEpayNotify 验证易支付异步通知，并在可信成功事件中幂等入账。
 func (s *UserService) ProcessEpayNotify(values map[string]string, requestID string) error {
-	key := strings.TrimSpace(os.Getenv("PAYMENT_EPAY_KEY"))
-	if key == "" {
+	key, keyOK, err := paymentSetting("payment.epay.key")
+	if err != nil {
+		return err
+	}
+	if !keyOK {
 		return errors.New("epay key is not configured")
 	}
 	if !verifyEpaySign(values, key) {
@@ -2428,8 +2453,11 @@ type stripeCheckoutSession struct {
 
 // ProcessStripeWebhook 验证 Stripe 原始签名，并在可信 Checkout 成功事件中幂等入账。
 func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestID string) error {
-	secret := strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_WEBHOOK_SECRET"))
-	if secret == "" {
+	secret, secretOK, err := paymentSetting("payment.stripe.webhook_secret")
+	if err != nil {
+		return err
+	}
+	if !secretOK {
 		return errors.New("stripe webhook secret is not configured")
 	}
 	if !verifyStripeSignature(raw, signatureHeader, secret) {

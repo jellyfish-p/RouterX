@@ -226,7 +226,11 @@ func buildDefaultSettings() map[string]map[string]string {
 		},
 		"payment": {
 			"payment.stripe.enabled":                       "false",
+			"payment.stripe.secret_key":                    "",
+			"payment.stripe.webhook_secret":                "",
+			"payment.stripe.api_base":                      "",
 			"payment.epay.enabled":                         "false",
+			"payment.epay.key":                             "",
 			"payment.epay.gateway":                         "",
 			"payment.epay.pid":                             "",
 			"payment.epay.notify_url":                      "",

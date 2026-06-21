@@ -22,12 +22,10 @@ RouterX 支持两类基础运行方式，并可在第二类上扩展高可用。
 | `LOG_SQL_DSN` | 空 | 独立日志数据库连接字符串；为空时日志写入主数据库 |
 | `REDIS_CONN` | 空 | Redis 连接字符串；SQLite 单镜像模式可为空，外部数据库模式必填 |
 | `JWT_SECRET` | 空 | JWT 签名密钥；生产和多实例必须显式指定同一个值 |
-| `ENCRYPTION_KEY` | 空 | 加密下游 API Key、OAuth/OIDC client secret 的主密钥；生产必须显式指定或由 KMS 提供 |
-| `PAYMENT_STRIPE_SECRET_KEY` | 空 | Stripe Secret Key，启用 Stripe 时必填 |
-| `PAYMENT_STRIPE_WEBHOOK_SECRET` | 空 | Stripe Webhook 签名密钥，启用 Stripe Webhook 时必填 |
-| `PAYMENT_STRIPE_API_BASE` | `https://api.stripe.com` | 可选 Stripe API 基础地址；仅测试、私有代理或受控网络出口场景覆盖 |
-| `PAYMENT_EPAY_KEY` | 空 | 易支付商户签名密钥，启用易支付时必填 |
+| `ENCRYPTION_KEY` | 空 | 加密下游 API Key、OAuth/OIDC client secret 和支付 provider 密钥的主密钥；生产必须显式指定或由 KMS 提供 |
 | `SERVER_PORT` | `3000` | HTTP 服务端口 |
+
+Stripe 和易支付的 provider 配置不通过环境变量分发，而是由超级管理员写入数据库 `settings`。集群内所有节点通过同一数据库和 Redis settings 缓存读取同一份配置；`payment.stripe.secret_key`、`payment.stripe.webhook_secret` 和 `payment.epay.key` 会加密落库。
 
 DSN 示例：
 
@@ -53,7 +51,7 @@ rediss://:password@redis.example.com:6379/0
 - 只配置外部数据库但不配置 Redis 是非法运行形态。
 - Windows 绝对路径 SQLite DSN 在迁移 URL 转换上需要额外测试，生产建议使用相对路径或类 Unix 容器路径。
 - `JWT_SECRET` 不能由每个实例各自随机生成；多实例必须使用同一个环境变量值或同一个已写入数据库的 `jwt.secret`。
-- `ENCRYPTION_KEY` 不能随机丢失或随实例变化，否则已加密的下游密钥和 OAuth/OIDC client secret 无法解密。
+- `ENCRYPTION_KEY` 不能随机丢失或随实例变化，否则已加密的下游密钥、OAuth/OIDC client secret 和支付 provider 密钥无法解密。
 
 环境模式建议：
 
@@ -321,12 +319,12 @@ volumes:
 | `/ready` | 就绪检查 | DB、迁移状态、必要配置 |
 | `/metrics` | 指标 | Prometheus metrics，受 `observability.metrics_enabled` 控制 |
 
-当前 `/ready` 已检查数据库连通性、`schema_migrations.dirty` 迁移状态、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、关键 auth/relay/rate-limit settings 的注册表校验、已启用支付 provider 的必需密钥，以及已有加密通道密钥或外部登录 client secret 时的主密钥可用性和密文可解性：
+当前 `/ready` 已检查数据库连通性、`schema_migrations.dirty` 迁移状态、外部数据库模式下 Redis 可用性、初始化后 `jwt.secret`、关键 auth/relay/rate-limit settings 的注册表校验、已启用支付 provider 的必需 settings 密钥，以及已有加密通道密钥、外部登录 client secret 或支付 provider 密钥时的主密钥可用性和密文可解性：
 
-- `payment.epay.enabled=true` 时必须存在 `PAYMENT_EPAY_KEY`。
-- `payment.stripe.enabled=true` 时必须存在 `PAYMENT_STRIPE_SECRET_KEY` 和 `PAYMENT_STRIPE_WEBHOOK_SECRET`。
+- `payment.epay.enabled=true` 时必须存在 `payment.epay.key`。
+- `payment.stripe.enabled=true` 时必须存在 `payment.stripe.secret_key` 和 `payment.stripe.webhook_secret`。
 - 数据库中存在 `enc:v1:` 通道密钥时必须存在 `ENCRYPTION_KEY`，且单 key、多 key、upstreams 中的密文必须能被当前主密钥解开。
-- `settings` 中存在 `enc:v1:` 形态的 `oauth.*.client_secret` 或 `oidc.*.client_secret` 时，也必须能被当前主密钥解开。
+- `settings` 中存在 `enc:v1:` 形态的 `oauth.*.client_secret`、`oidc.*.client_secret` 或支付 provider 密钥时，也必须能被当前主密钥解开。
 - 如果 golang-migrate 的 `schema_migrations` 表存在且最新记录 `dirty=true`，`/ready` 会返回 `not_ready` 并在 `migration` 字段返回 `dirty`。
 - 如果关键 settings 因直接改库、迁移漂移或人工修复变成非法值，`/ready` 会返回 `not_ready` 并在 `setting` 字段指出问题 key。
 
@@ -363,9 +361,9 @@ Redis 失败处理：
 
 - `jwt.secret` 初始化后不可为空。
 - `jwt.secret` 必须支持由 `JWT_SECRET` 环境变量指定；生产和多实例必须显式配置，禁止各实例启动时各自随机生成。
-- 下游 API Key、OAuth/OIDC client secret 应加密存储，主密钥来自 `ENCRYPTION_KEY` 环境变量或 KMS。
-- 当前加密格式使用 `enc:v1:` 前缀；未配置 `ENCRYPTION_KEY` 时禁止保存需要加密的密钥，`enc:v1:` 通道密钥或外部登录 client secret 缺少或无法通过当前 `ENCRYPTION_KEY` 解密时 `/ready` 会阻止实例接收流量。
-- 支付密钥应通过环境变量、KMS 或加密配置提供，禁止写入前端响应、日志或明文配置文件。
+- 下游 API Key、OAuth/OIDC client secret 和支付 provider 密钥应加密存储，主密钥来自 `ENCRYPTION_KEY` 环境变量或 KMS。
+- 当前加密格式使用 `enc:v1:` 前缀；未配置 `ENCRYPTION_KEY` 时禁止保存需要加密的密钥，`enc:v1:` 通道密钥、外部登录 client secret 或支付 provider 密钥缺少或无法通过当前 `ENCRYPTION_KEY` 解密时 `/ready` 会阻止实例接收流量。
+- 支付密钥应通过数据库 settings 加密配置，禁止写入前端响应、日志或明文配置文件。
 - API Key 明文只返回一次，数据库只保存 SHA256 哈希；后续重点是缓存失效和审计。
 - 管理端任何响应不得返回完整下游 API Key。
 
@@ -444,7 +442,7 @@ Redis：
 
 密钥：
 
-- 加密通道 API Key 和 OAuth/OIDC client secret 的主密钥必须独立备份。
+- 加密通道 API Key、OAuth/OIDC client secret 和支付 provider 密钥的主密钥必须独立备份。
 - 丢失主密钥会导致已存下游密钥不可恢复。
 
 ## 发布检查清单

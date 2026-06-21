@@ -185,7 +185,7 @@ Gemini-compatible 错误示例：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/health` | 已注册 | 健康检查 |
-| GET | `/ready` | 已实现 | 就绪检查，检查数据库、`schema_migrations.dirty`、外部数据库模式下 Redis 可用性、初始化后的 JWT 配置、关键 auth/relay/rate-limit settings 注册表校验、已启用支付 provider 的必需密钥，以及存在 `enc:v1:` 通道密钥或外部登录 `client_secret` 时的 `ENCRYPTION_KEY` |
+| GET | `/ready` | 已实现 | 就绪检查，检查数据库、`schema_migrations.dirty`、外部数据库模式下 Redis 可用性、初始化后的 JWT 配置、关键 auth/relay/rate-limit settings 注册表校验、已启用支付 provider 的必需 settings 密钥，以及存在 `enc:v1:` 通道密钥、外部登录 `client_secret` 或支付 provider 密钥时的 `ENCRYPTION_KEY` |
 | GET | `/metrics` | 基础实现 | Prometheus 文本指标；默认由 `observability.metrics_enabled=false` 关闭，已包含实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露指标、通道可用状态、逐通道错误计数、日志补写 outbox 状态、限流拒绝、计费失败、支付、审计和 DB/Redis/日志库 up 及 DB/Redis 错误计数等基础指标 |
 | GET | `/v0/setup/status` | 已实现 | 查询系统是否初始化 |
 | POST | `/v0/setup/init` | 已实现 | 首次初始化超级管理员和默认设置 |
@@ -393,7 +393,7 @@ Provider 退款请求：
 }
 ```
 
-`refund_amount` 为空时按订单全额退款；非空时必须大于 0 且不能超过订单金额。接口需要订单为 `paid` 状态；Stripe 订单必须已保存 `provider_payment_id`，易支付订单需要配置 `payment.epay.pid`、`payment.epay.refund_url` 和 `PAYMENT_EPAY_KEY`。成功后本地订单进入 `refund_pending`，写 `payment_refund_requests` 和 `payment_refund.requested` 审计；本地参数、订单状态或幂等键拒绝会写 `payment_refund.request_denied` 且 `result=denied`，provider 调用失败会写同动作但 `result=failed`。最终退款状态和可选额度扣回仍以可信 provider webhook 或后续人工收尾为准。
+`refund_amount` 为空时按订单全额退款；非空时必须大于 0 且不能超过订单金额。接口需要订单为 `paid` 状态；Stripe 订单必须已保存 `provider_payment_id` 且配置 `payment.stripe.secret_key`，易支付订单需要配置 `payment.epay.pid`、`payment.epay.refund_url` 和 `payment.epay.key`。成功后本地订单进入 `refund_pending`，写 `payment_refund_requests` 和 `payment_refund.requested` 审计；本地参数、订单状态或幂等键拒绝会写 `payment_refund.request_denied` 且 `result=denied`，provider 调用失败会写同动作但 `result=failed`。最终退款状态和可选额度扣回仍以可信 provider webhook 或后续人工收尾为准。
 
 ### 模型价格管理
 
@@ -877,14 +877,14 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、取消未支付订单、订单列表和详情；Stripe secret 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、异步支付失败事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议生命周期记录和可选 API Key 禁用；易支付异步通知已支持 MD5 签名、金额校验、成功/明确失败状态处理、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回、人工退款落账以及 Stripe/易支付 provider 退款请求并写流水与审计。更多 provider 自动发起退款流程仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、取消未支付订单、订单列表和详情；`payment.stripe.secret_key` 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持使用 `payment.stripe.webhook_secret` 校验原始 body 签名、Checkout Session 成功事件、异步支付失败事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议生命周期记录和可选 API Key 禁用；易支付异步通知已支持使用 `payment.epay.key` 校验 MD5 签名、金额校验、成功/明确失败状态处理、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回、人工退款落账以及 Stripe/易支付 provider 退款请求并写流水与审计。更多 provider 自动发起退款流程仍属于后续能力。
 
 用户鉴权接口：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/v0/user/payment/products` | 获取可购买的充值商品 |
-| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并写 `payment_order.create` 管理审计；provider 必须已在 settings 启用，Stripe secret + 绝对 `return_url` 齐全时创建 Stripe Checkout Session，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，稳定 `error_code` 包含 `payment_order_provider_disabled`、`payment_order_product_unavailable` 或 `payment_order_provider_checkout_failed`；`expires_at` 来自 `payment.order_expire_minutes` |
+| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并写 `payment_order.create` 管理审计；provider 必须已在 settings 启用，`payment.stripe.secret_key` + 绝对 `return_url` 齐全时创建 Stripe Checkout Session，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，稳定 `error_code` 包含 `payment_order_provider_disabled`、`payment_order_product_unavailable` 或 `payment_order_provider_checkout_failed`；`expires_at` 来自 `payment.order_expire_minutes` |
 | GET | `/v0/user/payment/orders` | 查询当前用户支付订单列表 |
 | GET | `/v0/user/payment/orders/:order_no` | 查询当前用户支付订单详情 |
 | POST | `/v0/user/payment/orders/:order_no/cancel` | 取消当前用户自己的 `pending` 订单，置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付/退款中/已退款订单拒绝取消并写 `payment_order.cancel_denied`，稳定 `error_code` 包含 `payment_order_cancel_not_pending` 或 `payment_order_cancel_not_found`，不会入账 |
@@ -981,7 +981,7 @@ Stripe Webhook 要求：
 - 校验 `pid`、`out_trade_no`、`money` 和状态；成功状态入账，明确失败状态只把 pending 订单置为 `failed`。
 - 入账只依赖异步通知；同步返回页只展示本地订单状态。
 - 通知处理成功后返回网关要求的纯文本，例如 `success`。
-- 当前实现从 `PAYMENT_EPAY_KEY` 读取签名密钥，金额匹配且订单为 `pending` 时才把订单置为 `paid`、写 `payment_events`、写 `quota_transactions` 并增加用户额度；明确失败状态会把 pending 订单置为 `failed`，写 `payment_webhook.failed` 审计且不增加额度；重复通知不会重复入账。
+- 当前实现从 `payment.epay.key` 读取签名密钥，金额匹配且订单为 `pending` 时才把订单置为 `paid`、写 `payment_events`、写 `quota_transactions` 并增加用户额度；明确失败状态会把 pending 订单置为 `failed`，写 `payment_webhook.failed` 审计且不增加额度；重复通知不会重复入账。
 
 安全要求：
 

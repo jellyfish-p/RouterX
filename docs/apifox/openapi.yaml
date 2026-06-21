@@ -75,7 +75,7 @@ paths:
       operationId: getReady
       tags: [Health]
       summary: 服务就绪检查
-      description: '检查数据库可用性、schema_migrations dirty 状态；SQL_DSN 指向 PostgreSQL/MySQL 等外部数据库时还要求 Redis 可用；初始化后还会检查 JWT 配置、关键 auth/relay/rate-limit settings 注册表校验、已启用支付 provider 的必需环境密钥，以及存在 enc:v1: 通道密钥或外部登录 client_secret 时的 ENCRYPTION_KEY 和逐条解密结果。迁移 dirty 时返回 not_ready 并在 migration 字段返回 dirty；关键 settings 因直接改库或迁移漂移变成非法值时会返回 not_ready 并在 setting 字段指出问题 key；已有通道密文或外部登录 client_secret 缺少主密钥或无法解密时会返回 setting=ENCRYPTION_KEY。配置 LOG_SQL_DSN 时，独立日志库在启动期初始化，初始化失败会阻止服务启动；运行期日志库写入失败会保留主库调用事实并写应用告警。'
+      description: '检查数据库可用性、schema_migrations dirty 状态；SQL_DSN 指向 PostgreSQL/MySQL 等外部数据库时还要求 Redis 可用；初始化后还会检查 JWT 配置、关键 auth/relay/rate-limit settings 注册表校验、已启用支付 provider 的必需 settings 密钥，以及存在 enc:v1: 通道密钥、外部登录 client_secret 或支付 provider 密钥时的 ENCRYPTION_KEY 和逐条解密结果。迁移 dirty 时返回 not_ready 并在 migration 字段返回 dirty；关键 settings 因直接改库或迁移漂移变成非法值时会返回 not_ready 并在 setting 字段指出问题 key；已有密文缺少主密钥或无法解密时会返回 setting=ENCRYPTION_KEY。配置 LOG_SQL_DSN 时，独立日志库在启动期初始化，初始化失败会阻止服务启动；运行期日志库写入失败会保留主库调用事实并写应用告警。'
       responses:
         "200":
           description: 服务依赖和关键配置均可用，可以接收业务请求。
@@ -1439,7 +1439,7 @@ paths:
       operationId: postV0UserPaymentOrders
       tags: [User Payment]
       summary: 创建支付订单
-      description: 基础实现；provider 必须已通过 payment.stripe.enabled 或 payment.epay.enabled 启用。创建本地 pending 订单并保存商品快照，按 payment.order_expire_minutes 生成 expires_at，成功后写 payment_order.create 管理审计；审计摘要不保存 checkout_url。本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 payment_order.create_denied，error_code 包含 payment_order_provider_disabled、payment_order_product_unavailable 或 payment_order_provider_checkout_failed。Stripe 在 PAYMENT_STRIPE_SECRET_KEY 和绝对 return_url 齐全时创建 Checkout Session 并保存 session.id/session.url；易支付网关、商户号、回调 URL 和 PAYMENT_EPAY_KEY 配置齐全时返回签名收银台 URL；配置不足时返回安全 checkout 占位链接。
+      description: 基础实现；provider 必须已通过 payment.stripe.enabled 或 payment.epay.enabled 启用。创建本地 pending 订单并保存商品快照，按 payment.order_expire_minutes 生成 expires_at，成功后写 payment_order.create 管理审计；审计摘要不保存 checkout_url。本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 payment_order.create_denied，error_code 包含 payment_order_provider_disabled、payment_order_product_unavailable 或 payment_order_provider_checkout_failed。Stripe 在 payment.stripe.secret_key 和绝对 return_url 齐全时创建 Checkout Session 并保存 session.id/session.url；易支付网关、商户号、回调 URL 和 payment.epay.key 配置齐全时返回签名收银台 URL；配置不足时返回安全 checkout 占位链接。
       security:
         - UserJWT: []
       requestBody:
@@ -1548,7 +1548,7 @@ paths:
       operationId: postV0PaymentStripeWebhook
       tags: [Payment Webhook]
       summary: Stripe Webhook 异步通知
-      description: 基础实现；使用 PAYMENT_STRIPE_WEBHOOK_SECRET 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计。checkout.session.async_payment_failed 会在同样校验订单快照后将 pending 订单置为 failed，写 payment_webhook.failed 审计且不增加额度。charge.refunded 全额或部分退款事件会校验金额和币种，将 paid 订单置为 refunded 或 partially_refunded，写 payment_refund.processed；payment.refund.auto_deduct=true 且扣回成功时写 refund_deduct 流水和 payment_refund.deducted 审计，部分退款按退款金额比例扣回。charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated 争议生命周期事件会校验金额和币种，按 provider_dispute_id 更新 payment_disputes 当前事实，并写 payment_dispute.created、payment_dispute.updated、payment_dispute.closed 或 payment_dispute.funds_changed 审计；payment.dispute.auto_disable_tokens=true 时仅在 created 阶段禁用该用户已启用 API Key，revoked_reason=payment_dispute，且不直接修改额度或订单状态。重复事件幂等返回 success。
+      description: 基础实现；使用 payment.stripe.webhook_secret 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计。checkout.session.async_payment_failed 会在同样校验订单快照后将 pending 订单置为 failed，写 payment_webhook.failed 审计且不增加额度。charge.refunded 全额或部分退款事件会校验金额和币种，将 paid 订单置为 refunded 或 partially_refunded，写 payment_refund.processed；payment.refund.auto_deduct=true 且扣回成功时写 refund_deduct 流水和 payment_refund.deducted 审计，部分退款按退款金额比例扣回。charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated 争议生命周期事件会校验金额和币种，按 provider_dispute_id 更新 payment_disputes 当前事实，并写 payment_dispute.created、payment_dispute.updated、payment_dispute.closed 或 payment_dispute.funds_changed 审计；payment.dispute.auto_disable_tokens=true 时仅在 created 阶段禁用该用户已启用 API Key，revoked_reason=payment_dispute，且不直接修改额度或订单状态。重复事件幂等返回 success。
       parameters:
         - name: Stripe-Signature
           in: header
@@ -1582,7 +1582,7 @@ paths:
       operationId: postV0PaymentEpayNotify
       tags: [Payment Webhook]
       summary: 易支付异步通知
-      description: 基础实现；使用 PAYMENT_EPAY_KEY 校验 MD5 签名，校验 out_trade_no、money 和状态。成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计；明确失败状态会将 pending 订单置为 failed，写 payment_webhook.failed 审计且不增加额度；重复通知幂等返回 success。
+      description: 基础实现；使用 payment.epay.key 校验 MD5 签名，校验 out_trade_no、money 和状态。成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计；明确失败状态会将 pending 订单置为 failed，写 payment_webhook.failed 审计且不增加额度；重复通知幂等返回 success。
       requestBody:
         description: 易支付异步通知 请求体。
         required: true
@@ -2952,7 +2952,7 @@ paths:
       operationId: postV0AdminPaymentRefundRequests
       tags: [Admin Payment]
       summary: 发起 provider 退款请求
-      description: 管理员向 Stripe 或易支付发起 provider 退款请求；仅接受 paid 订单。Stripe 订单必须已保存 provider_payment_id，并调用 Stripe Refund API；易支付订单需要 payment.epay.pid、payment.epay.refund_url 和 PAYMENT_EPAY_KEY，并对退款表单做 MD5 签名。refund_amount 为空时按订单全额退款，非空时必须大于 0 且不超过订单金额。成功后写 payment_refund_requests、订单进入 refund_pending，并写 payment_refund.requested 管理审计；本地参数、订单状态或幂等键拒绝会写 payment_refund.request_denied 且 result=denied，provider 调用失败会写同动作但 result=failed，摘要不保存 provider secret；最终 refunded 或 partially_refunded 状态仍由可信 provider webhook 或后续人工收尾确认。
+      description: 管理员向 Stripe 或易支付发起 provider 退款请求；仅接受 paid 订单。Stripe 订单必须已保存 provider_payment_id 且配置 payment.stripe.secret_key，并调用 Stripe Refund API；易支付订单需要 payment.epay.pid、payment.epay.refund_url 和 payment.epay.key，并对退款表单做 MD5 签名。refund_amount 为空时按订单全额退款，非空时必须大于 0 且不超过订单金额。成功后写 payment_refund_requests、订单进入 refund_pending，并写 payment_refund.requested 管理审计；本地参数、订单状态或幂等键拒绝会写 payment_refund.request_denied 且 result=denied，provider 调用失败会写同动作但 result=failed，摘要不保存 provider secret；最终 refunded 或 partially_refunded 状态仍由可信 provider webhook 或后续人工收尾确认。
       security:
         - UserJWT: []
       requestBody:
@@ -7774,7 +7774,7 @@ components:
           description: 设置项最近更新时间。
     BatchSetSettingsRequest:
       type: object
-      description: 顶层对象为 key/value 字符串映射；登录相关 key 包括 auth.login.username_password.enabled=true、auth.login.email_password.enabled=false 和 auth.login.phone_password.enabled=false，其中用户名密码登录不得关闭；注册相关 key 包括 auth.register.enabled=false、auth.register.username.enabled=true、auth.register.captcha.required=true、auth.register.default_quota=0 和 auth.register.default_group_id=default；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；倍率相关 key 包括 billing.user_group_ratios='{"vip":0.8}'、billing.channel_group_ratios='{"premium":1.2}' 和 billing.user_group_channel_ratios='{"vip":{"premium":0.9}}'，组合倍率命中时覆盖用户分组倍率和通道分组倍率的乘积；限流相关 key 包括 rate_limit.enabled=true、rate_limit.global_per_min=1000、rate_limit.per_ip_per_min=30、rate_limit.per_token_per_min=60、rate_limit.per_user_per_min=0、rate_limit.per_model_per_min=0 和 rate_limit.per_channel_per_min=0，0 表示关闭对应维度；usage 缺失策略可设置 billing.usage_missing_strategy=minimum 或 reject；Relay 重试、熔断和后台探测可设置 relay.retry_count=1、relay.retry_on_status='[429,500,502,503,504]'、relay.error_auto_ban=true、relay.error_ban_threshold=10、relay.error_ban_cooldown_seconds=300、relay.error_probe_enabled=true、relay.error_probe_interval_seconds=60 和 relay.error_probe_batch_size=20；通道候选缓存可设置 routing.channel_cache.enabled=true、routing.channel_cache.preload=true、routing.channel_cache.ttl_seconds=60 和 routing.channel_cache.version=1，Redis 可用时会共享排序后的候选快照，实例按 version 和内嵌 TTL 被动失效，并通过 routing:channel_candidate_cache:invalidate 主动广播清理本地缓存；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，易支付退款请求地址可设置 payment.epay.refund_url。
+      description: 顶层对象为 key/value 字符串映射；登录相关 key 包括 auth.login.username_password.enabled=true、auth.login.email_password.enabled=false 和 auth.login.phone_password.enabled=false，其中用户名密码登录不得关闭；注册相关 key 包括 auth.register.enabled=false、auth.register.username.enabled=true、auth.register.captcha.required=true、auth.register.default_quota=0 和 auth.register.default_group_id=default；访问控制相关 key 包括 billing.default_user_channel_group_access='["default"]' 和 billing.user_group_channel_group_access='{"vip":{"allow":["premium"],"deny":["experimental"]}}'；倍率相关 key 包括 billing.user_group_ratios='{"vip":0.8}'、billing.channel_group_ratios='{"premium":1.2}' 和 billing.user_group_channel_ratios='{"vip":{"premium":0.9}}'，组合倍率命中时覆盖用户分组倍率和通道分组倍率的乘积；限流相关 key 包括 rate_limit.enabled=true、rate_limit.global_per_min=1000、rate_limit.per_ip_per_min=30、rate_limit.per_token_per_min=60、rate_limit.per_user_per_min=0、rate_limit.per_model_per_min=0 和 rate_limit.per_channel_per_min=0，0 表示关闭对应维度；usage 缺失策略可设置 billing.usage_missing_strategy=minimum 或 reject；Relay 重试、熔断和后台探测可设置 relay.retry_count=1、relay.retry_on_status='[429,500,502,503,504]'、relay.error_auto_ban=true、relay.error_ban_threshold=10、relay.error_ban_cooldown_seconds=300、relay.error_probe_enabled=true、relay.error_probe_interval_seconds=60 和 relay.error_probe_batch_size=20；通道候选缓存可设置 routing.channel_cache.enabled=true、routing.channel_cache.preload=true、routing.channel_cache.ttl_seconds=60 和 routing.channel_cache.version=1，Redis 可用时会共享排序后的候选快照，实例按 version 和内嵌 TTL 被动失效，并通过 routing:channel_candidate_cache:invalidate 主动广播清理本地缓存；支付争议策略可设置 payment.dispute.auto_disable_tokens=true，支付 provider 密钥可设置 payment.stripe.secret_key、payment.stripe.webhook_secret 和 payment.epay.key，敏感值会加密落库并在管理响应中脱敏。
       additionalProperties:
         type: string
       example:
@@ -7813,6 +7813,9 @@ components:
         routing.channel_cache.version: "1"
         observability.structured_logs_enabled: "true"
         payment.dispute.auto_disable_tokens: "true"
+        payment.stripe.secret_key: "sk_live_xxx"
+        payment.stripe.webhook_secret: "whsec_xxx"
+        payment.epay.key: "epay-signing-secret"
         payment.epay.refund_url: "https://pay.example.com/refund"
     ChatCompletionRequest:
       type: object

@@ -440,20 +440,22 @@ ceil(duration_seconds * second_price)
 |--------|------|
 | `payment.products` | 充值商品列表，例如金额、货币、额度、赠送额度、启用状态 |
 | `payment.stripe.enabled` | 是否启用 Stripe |
-| `payment.stripe.currency` | 默认货币，如 `usd` |
-| `payment.stripe.success_url` | Checkout 成功跳转 URL |
-| `payment.stripe.cancel_url` | Checkout 取消跳转 URL |
+| `payment.stripe.secret_key` | Stripe Secret Key；加密落库 |
+| `payment.stripe.webhook_secret` | Stripe Webhook 签名密钥；加密落库 |
+| `payment.stripe.api_base` | Stripe API 基础地址；为空时使用 `https://api.stripe.com` |
 | `payment.epay.enabled` | 是否启用易支付 |
+| `payment.epay.key` | 易支付商户签名密钥；加密落库 |
 | `payment.epay.gateway` | 易支付网关地址 |
 | `payment.epay.pid` | 易支付商户 ID |
 | `payment.epay.notify_url` | 易支付异步通知地址 |
 | `payment.epay.return_url` | 易支付同步返回地址 |
+| `payment.epay.refund_url` | 易支付退款请求地址 |
+| `payment.currency` | 默认货币，如 `usd` |
 
 敏感配置：
 
-- Stripe `secret_key`、`webhook_secret` 必须来自 `PAYMENT_STRIPE_SECRET_KEY`、`PAYMENT_STRIPE_WEBHOOK_SECRET`、KMS 或加密配置。
-- 易支付 `key` 必须来自 `PAYMENT_EPAY_KEY`、KMS 或加密配置。
-- 支付密钥不得写入前端响应、日志、订单扩展字段或审计明文。
+- Stripe `secret_key`、`webhook_secret` 和易支付 `key` 都通过数据库 `settings` 配置，并由 `SettingService` 加密落库、透明解密使用。
+- 支付密钥不得写入前端响应、日志、订单扩展字段或审计明文；管理端 settings 响应只返回脱敏值。
 
 ### Stripe
 

@@ -117,10 +117,9 @@ bun run dev
 | `LOG_SQL_DSN` | 空 | 独立日志数据库连接字符串；为空时日志写入主数据库 |
 | `REDIS_CONN` | 空 | Redis 连接字符串；SQLite 单镜像模式可为空，外部数据库或集群模式必填 |
 | `JWT_SECRET` | 空 | JWT 签名密钥；生产和多实例部署必须显式指定同一个值 |
-| `ENCRYPTION_KEY` | 空 | 下游 API Key 等敏感信息加密主密钥；生产必须固定配置 |
-| `PAYMENT_STRIPE_SECRET_KEY` | 空 | Stripe Secret Key，启用 Stripe 时使用 |
-| `PAYMENT_STRIPE_WEBHOOK_SECRET` | 空 | Stripe Webhook 签名密钥 |
-| `PAYMENT_EPAY_KEY` | 空 | 易支付商户签名密钥 |
+| `ENCRYPTION_KEY` | 空 | 下游 API Key、OAuth/OIDC client secret 和支付 provider 密钥的加密主密钥；生产必须固定配置 |
+
+Stripe 和易支付配置通过超级管理员系统设置写入数据库：`payment.stripe.secret_key`、`payment.stripe.webhook_secret` 和 `payment.epay.key` 会加密落库，集群节点共享同一份 settings。
 
 数据库 DSN 示例：
 

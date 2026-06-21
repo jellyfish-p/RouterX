@@ -116,6 +116,66 @@ func TestSettingLoadCacheAppliesRequestIDHeaderRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestPaymentSecretSettingsAreEncryptedAndReadable(t *testing.T) {
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	db, err := gorm.Open(sqlite.Open("file:payment_secret_settings_test_"+time.Now().Format("150405.000000000")+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Setting{}); err != nil {
+		t.Fatal(err)
+	}
+	internal.DB = db
+	internal.RDB = nil
+
+	svc := NewSettingService()
+	secrets := map[string]string{
+		"payment.stripe.secret_key":     "sk_test_routerx",
+		"payment.stripe.webhook_secret": "whsec_routerx",
+		"payment.epay.key":              "epay-test-secret",
+	}
+	for key, value := range secrets {
+		if !SettingKeyRequiresSecretEncryption(key) {
+			t.Fatalf("%s should require encrypted storage", key)
+		}
+		if err := svc.Set(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+		got, err := svc.Get(key)
+		if err != nil || got != value {
+			t.Fatalf("get %s should decrypt setting, got value=%q err=%v", key, got, err)
+		}
+		var stored model.Setting
+		if err := db.Where("key = ?", key).First(&stored).Error; err != nil {
+			t.Fatal(err)
+		}
+		if stored.Value == value || !strings.HasPrefix(stored.Value, "enc:v1:") {
+			t.Fatalf("%s should be stored encrypted, got %q", key, stored.Value)
+		}
+	}
+}
+
+func TestPaymentSecretSettingsRejectPlaintextWithoutEncryptionKey(t *testing.T) {
+	t.Setenv("ENCRYPTION_KEY", "")
+	db, err := gorm.Open(sqlite.Open("file:payment_secret_settings_missing_key_test_"+time.Now().Format("150405.000000000")+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.Setting{}); err != nil {
+		t.Fatal(err)
+	}
+	internal.DB = db
+	internal.RDB = nil
+
+	svc := NewSettingService()
+	if err := svc.Set("payment.epay.key", "epay-test-secret"); err == nil || !strings.Contains(err.Error(), "ENCRYPTION_KEY") {
+		t.Fatalf("non-empty payment secret should require ENCRYPTION_KEY, got %v", err)
+	}
+	if err := svc.Set("payment.epay.key", ""); err != nil {
+		t.Fatalf("empty default payment secret should be allowed without ENCRYPTION_KEY: %v", err)
+	}
+}
+
 // fakeRedisServer implements the tiny Redis subset SettingService needs in tests.
 type fakeRedisServer struct {
 	listener  net.Listener
