@@ -175,7 +175,7 @@ go run ./cmd/migrate/main.go up
 go run ./cmd/migrate/main.go
 
 # 运行后端测试
-go test ./...
+go test ./cmd/... ./internal/...
 
 # 前端开发
 cd frontend && bun run dev

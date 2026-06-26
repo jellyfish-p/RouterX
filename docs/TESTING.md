@@ -645,9 +645,11 @@ Gemini-compatible 最小断言：
 文档和代码变更后至少运行：
 
 ```text
-go test ./...
+go test ./cmd/... ./internal/...
 git diff --check
 ```
+
+后端验证使用显式包集合，避免前端依赖安装后 `frontend/node_modules` 中的 Go 文件参与 `go test ./...` 包发现。
 
 文档一致性变更后额外搜索：
 
