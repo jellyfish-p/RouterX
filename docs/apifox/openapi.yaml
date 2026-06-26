@@ -9,7 +9,7 @@ info:
     - /v0/setup、/v0/user、/v0/admin 使用 RouterX 统一响应。
     - /v1 使用入口协议兼容响应，不包裹 success/data/message；请求体/form 中的 routerx 字段和 X-RouterX-Options header 不参与路由或上游参数补充，发往真实上游前会被剥离或忽略；请求体超过 relay.max_request_body_bytes 时本地返回协议兼容 413 且不调用上游，OpenAI-compatible Images/Audio multipart 缺少必填 image/file 文件字段时返回 400 multipart_file_required，单个文件字段超过 relay.max_multipart_file_bytes 时返回 413 request_file_too_large，文件名命中路径形态/危险扩展名、扩展名或文件头与图片/音频 API 不匹配或内容命中可执行/脚本签名基础扫描时返回 400 unsafe_multipart_file，以上均不调用上游；选中通道 adapter 不支持当前 APIType 时返回 502 unsupported_api_type 且不调用上游；非流式上游响应超过 relay.max_response_body_bytes 时返回协议兼容 502 upstream_response_too_large 且不扣费。
     - 所有接口都会返回请求 ID 响应头；默认 header 为 X-Request-Id，可通过 observability.request_id_header 改为合法 HTTP header 名；/v1 调用上游时会透传同一个请求 ID；请求携带合法 W3C traceparent/tracestate 时，响应会回显 Traceparent/Tracestate，结构化 HTTP/Panic 日志和模型调用 request_snapshot 会写 trace_id/traceparent/tracestate；模型调用 request_snapshot 还会写入 user_id、token_id、API Key 哈希前缀、客户端 IP 哈希前缀和截断 User-Agent 摘要，/v1 真实上游请求也会继续透传 trace context。
-    - 充值码、充值码创建/兑换拒绝审计、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook/邮件/IM 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期、最近使用、额度、轮换和泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、Stripe/易支付 provider 退款请求、管理审计查询、用户侧支付商品/订单、订单创建拒绝审计与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知、易支付同步返回基础接口，以及 Redis-backed 注册图片验证码生成、登录验证码基础生成、OAuth 基础登录/绑定/首次补齐注册/注销账号恢复、OIDC Discovery、已绑定身份回调登录、登录用户绑定、首次补齐注册和注销账号恢复接口已注册。
+    - 充值码、充值码创建/兑换拒绝审计、额度流水查询、API Key 生命周期审计、API Key 泄露告警收件箱、告警 Webhook/邮件/IM 投递 outbox、用户自助注销保留账号、含 HTTP 请求量/耗时、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、额度消耗维度、API Key 鉴权/生命周期、最近使用、额度、轮换和泄露、通道可用状态、逐通道错误计数、后台探测结果、限流拒绝、计费失败、DB/Redis 错误计数、日志库健康、日志补写 outbox 状态、告警投递 outbox 状态和审计事件计数的基础 /metrics、管理端支付商品、系统模型价格管理、通道模型价格覆盖、管理审计查询、用户侧支付商品/订单、订单创建拒绝审计与未支付订单取消、Stripe webhook、Stripe 异步支付失败、易支付成功/失败异步通知、易支付同步返回基础接口，以及 Redis-backed 注册图片验证码生成、登录验证码基础生成、OAuth 基础登录/绑定/首次补齐注册/注销账号恢复、OIDC Discovery、已绑定身份回调登录、登录用户绑定、首次补齐注册和注销账号恢复接口已注册。
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -1325,7 +1325,7 @@ paths:
       operationId: getV0UserQuotaTransactions
       tags: [User Usage]
       summary: 当前用户额度流水
-      description: 查询当前用户自己的余额变更流水。该接口只返回支付入账、充值码兑换、退款扣回、人工补账和人工扣回等 quota_transactions；模型调用消费仍查询 /v0/user/log 或 /v0/user/billing。即使传入 user_id，服务端也会强制使用当前登录用户。
+      description: 查询当前用户自己的余额变更流水。该接口只返回支付入账、充值码兑换、人工补账和人工扣回等 quota_transactions；模型调用消费仍查询 /v0/user/log 或 /v0/user/billing。即使传入 user_id，服务端也会强制使用当前登录用户。
       security:
         - UserJWT: []
       parameters:
@@ -1334,11 +1334,11 @@ paths:
         - name: type
           in: query
           schema: { type: string }
-          description: 流水类型，例如 payment_grant、redem_redeem、admin_adjust、refund_deduct、manual_credit、manual_debit。
+          description: 流水类型，例如 payment_grant、redem_redeem、admin_adjust、manual_credit、manual_debit。
         - name: source_type
           in: query
           schema: { type: string }
-          description: 来源类型，例如 payment_order、payment_event、redem_code、admin_action、refund。
+          description: 来源类型，例如 payment_order、payment_event、redem_code、admin_action。
         - name: source_id
           in: query
           schema: { type: string }
@@ -1518,7 +1518,7 @@ paths:
       operationId: postV0UserPaymentOrdersOrderNoCancel
       tags: [User Payment]
       summary: 取消未支付订单
-      description: 当前用户取消自己的 pending 支付订单，订单置为 closed 并写 payment_order.cancel 审计；已 closed 订单幂等返回当前状态，已支付、退款中或已退款订单拒绝取消并写 payment_order.cancel_denied，error_code 包含 payment_order_cancel_not_pending 或 payment_order_cancel_not_found，不会增加用户额度。
+      description: 当前用户取消自己的 pending 支付订单，订单置为 closed 并写 payment_order.cancel 审计；已 closed 订单幂等返回当前状态，已支付订单拒绝取消并写 payment_order.cancel_denied，error_code 包含 payment_order_cancel_not_pending 或 payment_order_cancel_not_found，不会增加用户额度。
       security:
         - UserJWT: []
       parameters:
@@ -1548,7 +1548,7 @@ paths:
       operationId: postV0PaymentStripeWebhook
       tags: [Payment Webhook]
       summary: Stripe Webhook 异步通知
-      description: 基础实现；使用 payment.stripe.webhook_secret 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计。checkout.session.async_payment_failed 会在同样校验订单快照后将 pending 订单置为 failed，写 payment_webhook.failed 审计且不增加额度。charge.refunded 全额或部分退款事件会校验金额和币种，将 paid 订单置为 refunded 或 partially_refunded，写 payment_refund.processed；payment.refund.auto_deduct=true 且扣回成功时写 refund_deduct 流水和 payment_refund.deducted 审计，部分退款按退款金额比例扣回。charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated 争议生命周期事件会校验金额和币种，按 provider_dispute_id 更新 payment_disputes 当前事实，并写 payment_dispute.created、payment_dispute.updated、payment_dispute.closed 或 payment_dispute.funds_changed 审计；payment.dispute.auto_disable_tokens=true 时仅在 created 阶段禁用该用户已启用 API Key，revoked_reason=payment_dispute，且不直接修改额度或订单状态。重复事件幂等返回 success。
+      description: 基础实现；使用 payment.stripe.webhook_secret 校验 Stripe-Signature 原始 body 签名。checkout.session.completed 且 payment_status=paid 时校验 metadata.order_no、metadata.product_id、metadata.user_id、amount_total 和 currency，成功事件会写 payment_events、将 pending 订单置为 paid、写 quota_transactions、增加用户额度，并写 payment_webhook.processed 和 payment_order.paid 审计。checkout.session.async_payment_failed 会在同样校验订单快照后将 pending 订单置为 failed，写 payment_webhook.failed 审计且不增加额度。charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated 争议生命周期事件会校验金额和币种，按 provider_dispute_id 更新 payment_disputes 当前事实，并写 payment_dispute.created、payment_dispute.updated、payment_dispute.closed 或 payment_dispute.funds_changed 审计；payment.dispute.auto_disable_tokens=true 时仅在 created 阶段禁用该用户已启用 API Key，revoked_reason=payment_dispute，且不直接修改额度或订单状态。重复事件幂等返回 success。
       parameters:
         - name: Stripe-Signature
           in: header
@@ -1764,11 +1764,11 @@ paths:
         - name: type
           in: query
           schema: { type: string }
-          description: 流水类型，例如 payment_grant、redem_redeem、admin_adjust、refund_deduct、manual_credit、manual_debit。
+          description: 流水类型，例如 payment_grant、redem_redeem、admin_adjust、manual_credit、manual_debit。
         - name: source_type
           in: query
           schema: { type: string }
-          description: 来源类型，例如 payment_order、payment_event、redem_code、admin_action、refund。
+          description: 来源类型，例如 payment_order、payment_event、redem_code、admin_action。
         - name: source_id
           in: query
           schema: { type: string }
@@ -2463,7 +2463,7 @@ paths:
       operationId: getV0AdminAudit
       tags: [Admin Audit]
       summary: 管理审计日志列表
-      description: 超级管理员查询管理审计日志；当前基础实现已覆盖成功登录，API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、自助注销、自助注销二次确认拒绝、基础恢复、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建、创建拒绝和取消拒绝，支付 webhook 入账、provider 明确失败通知、Stripe/易支付 provider 退款请求、Stripe 全额/部分退款和扣回、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回、支付人工退款，settings 更新和校验拒绝，用户调额，充值码管理、创建拒绝和兑换拒绝，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
+      description: 超级管理员查询管理审计日志；当前基础实现已覆盖成功登录，API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝、用户端额度编辑拒绝，普通用户创建、编辑、禁用、删除、自助注销、自助注销二次确认拒绝、基础恢复、拒绝角色变更，用户分组创建、更新、删除，支付商品创建、更新、启用、禁用，支付订单创建、创建拒绝和取消拒绝，支付 webhook 入账、provider 明确失败通知、Stripe 争议事件记录和可选 API Key 禁用、支付人工补账/扣回，settings 更新和校验拒绝，用户调额，充值码管理、创建拒绝和兑换拒绝，通道创建、编辑、启用、禁用、删除、测试和拉取模型，管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝，以及日志清理和日志导出审计。
       security:
         - UserJWT: []
       parameters:
@@ -2473,7 +2473,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 动作过滤，例如 api_key.created、api_key.quota_limit_set、api_key.batch_disable_denied、api_key.batch_expire_denied、user.create、user.self_cancel_denied、user_group.create、redem_code.create_denied、redem_code.redeem_denied、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_order.create_denied、payment_order.cancel_denied、payment_webhook.processed、payment_webhook.failed、payment_refund.requested、payment_refund.request_denied、payment_refund.deducted、payment_refund.manual、payment_refund.manual_denied、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、payment_manual_adjust.denied、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
+          description: 动作过滤，例如 api_key.created、api_key.quota_limit_set、api_key.batch_disable_denied、api_key.batch_expire_denied、user.create、user.self_cancel_denied、user_group.create、redem_code.create_denied、redem_code.redeem_denied、payment_product.create、model_price.create、channel_model_price.create、payment_order.create、payment_order.create_denied、payment_order.cancel_denied、payment_webhook.processed、payment_webhook.failed、payment_dispute.created、payment_dispute.updated、payment_dispute.closed、payment_dispute.funds_changed、payment_manual_adjust.debit、payment_manual_adjust.denied、setting.denied、channel.update、log.clear、log.export 或 admin.denied。
         - name: resource_type
           in: query
           required: false
@@ -2500,7 +2500,7 @@ paths:
           in: query
           required: false
           schema: { type: string }
-          description: 失败或拒绝 code 过滤，例如 self_cancel_password_required、self_cancel_password_invalid、redem_code_expired_at_not_future、redem_code_invalid_or_used、redem_code_expired、payment_order_provider_disabled、payment_order_product_unavailable、payment_order_cancel_not_pending、payment_order_cancel_not_found、payment_refund_reason_required、payment_refund_idempotency_key_used、payment_manual_adjust_reason_required 或 payment_manual_refund_idempotency_key_used。
+          description: 失败或拒绝 code 过滤，例如 self_cancel_password_required、self_cancel_password_invalid、redem_code_expired_at_not_future、redem_code_invalid_or_used、redem_code_expired、payment_order_provider_disabled、payment_order_product_unavailable、payment_order_cancel_not_pending、payment_order_cancel_not_found 或 payment_manual_adjust_reason_required。
         - name: start_time
           in: query
           required: false
@@ -2916,64 +2916,6 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/PaymentManualAdjustmentResult"
-        "400":
-          $ref: "#/components/responses/StandardBadRequest"
-  /v0/admin/payment/refunds:
-    post:
-      operationId: postV0AdminPaymentRefunds
-      tags: [Admin Payment]
-      summary: 支付人工退款落账
-      description: 管理员对已确认的支付退款事实做人工落账；仅接受 paid 订单，refund_quota 必须大于 0 且不超过订单额度。成功后扣回用户额度，写 quota_transactions(type=refund_deduct, source_type=refund, source_id=<order_no>)，订单置为 refunded 或 partially_refunded，并写 payment_refund.manual 管理审计。reason 默认必填，idempotency_key 必填以防重复扣回；本地拒绝写 payment_refund.manual_denied，error_code 区分缺少订单号、退款额度非法、缺少原因、重复幂等键、订单状态不允许或余额不足。
-      security:
-        - UserJWT: []
-      requestBody:
-        description: 支付人工退款落账 请求体。
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PaymentManualRefundRequest"
-      responses:
-        "200":
-          description: 支付人工退款落账成功。
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/StandardResponse"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/PaymentManualRefundResult"
-        "400":
-          $ref: "#/components/responses/StandardBadRequest"
-  /v0/admin/payment/refund-requests:
-    post:
-      operationId: postV0AdminPaymentRefundRequests
-      tags: [Admin Payment]
-      summary: 发起 provider 退款请求
-      description: 管理员向 Stripe 或易支付发起 provider 退款请求；仅接受 paid 订单。Stripe 订单必须已保存 provider_payment_id 且配置 payment.stripe.secret_key，并调用 Stripe Refund API；易支付订单需要 payment.epay.pid、payment.epay.refund_url 和 payment.epay.key，并对退款表单做 MD5 签名。refund_amount 为空时按订单全额退款，非空时必须大于 0 且不超过订单金额。成功后写 payment_refund_requests、订单进入 refund_pending，并写 payment_refund.requested 管理审计；本地参数、订单状态或幂等键拒绝会写 payment_refund.request_denied 且 result=denied，provider 调用失败会写同动作但 result=failed，摘要不保存 provider secret；最终 refunded 或 partially_refunded 状态仍由可信 provider webhook 或后续人工收尾确认。
-      security:
-        - UserJWT: []
-      requestBody:
-        description: 发起 provider 退款请求 请求体。
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PaymentProviderRefundRequest"
-      responses:
-        "200":
-          description: provider 退款请求已受理。
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/StandardResponse"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/PaymentProviderRefundRequestResult"
         "400":
           $ref: "#/components/responses/StandardBadRequest"
   /v0/admin/admin:
@@ -5867,117 +5809,6 @@ components:
         idempotency_key:
           type: string
           description: 本次人工调整使用的幂等键。
-    PaymentManualRefundRequest:
-      type: object
-      description: 管理员人工退款落账请求；用于可信人工流程扣回订单额度。
-      required: [order_no, refund_quota, reason, idempotency_key]
-      properties:
-        order_no:
-          type: string
-          description: 本地支付订单号；订单必须处于 paid 状态。
-          example: RX202606150001
-        refund_quota:
-          type: integer
-          format: int64
-          description: 本次人工退款扣回额度，必须大于 0 且不能超过订单额度。
-          example: 40000000
-        reason:
-          type: string
-          description: 人工退款原因；默认策略要求必填。
-          example: customer refund
-        idempotency_key:
-          type: string
-          description: 幂等键，建议使用退款工单号或人工动作唯一编号，防止重复扣回。
-          example: refund-ticket-1234
-    PaymentManualRefundResult:
-      type: object
-      description: 人工退款落账结果；返回订单退款状态和扣回前后余额。
-      properties:
-        user_id:
-          type: integer
-          format: uint64
-          description: 退款扣回影响的用户 ID。
-        order_no:
-          type: string
-          description: 被人工退款处理的本地支付订单号。
-        refund_quota:
-          type: integer
-          format: int64
-          description: 本次人工退款扣回额度。
-        order_status:
-          type: string
-          enum: [refunded, partially_refunded]
-          description: 人工退款后订单状态。
-        balance_before:
-          type: integer
-          format: int64
-          description: 扣回前用户余额。
-        balance_after:
-          type: integer
-          format: int64
-          description: 扣回后用户余额。
-        idempotency_key:
-          type: string
-          description: 本次人工退款使用的幂等键。
-    PaymentProviderRefundRequest:
-      type: object
-      description: 管理员向支付 provider 发起退款请求；本地先记录请求，最终状态以可信事件或人工收尾为准。
-      required: [order_no, reason, idempotency_key]
-      properties:
-        order_no:
-          type: string
-          description: 本地支付订单号；订单必须是 paid 状态。Stripe 订单需已保存 provider_payment_id，易支付订单需配置 payment.epay.refund_url。
-          example: RX202606150001
-        refund_amount:
-          type: string
-          description: 退款金额；为空时按订单全额退款，非空时必须大于 0 且不能超过订单金额。
-          example: "5.00"
-        reason:
-          type: string
-          description: 发起 provider 退款的原因；默认策略要求必填，会写入 provider 请求摘要和管理审计。
-          example: customer requested partial refund
-        idempotency_key:
-          type: string
-          description: 幂等键；Stripe 会作为 Idempotency-Key，易支付会随退款表单签名提交，并在本地 payment_refund_requests 中唯一记录。
-          example: refund-ticket-5678
-    PaymentProviderRefundRequestResult:
-      type: object
-      description: 支付 provider 退款请求结果；返回 provider 侧退款标识、本地请求状态和审计摘要。
-      properties:
-        user_id:
-          type: integer
-          format: uint64
-          description: provider 退款请求关联的用户 ID。
-        order_no:
-          type: string
-          description: provider 退款请求关联的本地支付订单号。
-        provider:
-          type: string
-          enum: [stripe, epay]
-          description: 实际发起退款请求的支付 provider。
-        provider_refund_id:
-          type: string
-          description: provider 返回的退款请求或退款记录 ID。
-          example: re_123
-        refund_amount:
-          type: string
-          description: 本次请求退款金额，使用定点小数字符串。
-          example: "5.00"
-        refund_amount_minor:
-          type: integer
-          format: int64
-          description: 退款金额的货币最小单位。
-        refund_quota:
-          type: integer
-          format: int64
-          description: 按订单金额比例推导的退款额度。
-        order_status:
-          type: string
-          enum: [refund_pending]
-          description: 发起 provider 退款请求后的本地订单状态。
-        idempotency_key:
-          type: string
-          description: 本次 provider 退款请求使用的幂等键。
     AdminAuditLogInfo:
       type: object
       description: 管理审计日志摘要；用于追踪管理动作、结果和脱敏前后状态。
@@ -6207,7 +6038,7 @@ components:
           description: 支付 provider，例如 stripe 或 epay。
         status:
           type: string
-          enum: [pending, paid, failed, closed, refund_pending, refund_failed, refunded, partially_refunded]
+          enum: [pending, paid, failed, closed]
           description: 订单当前状态。
         product_id:
           type: string
@@ -6260,7 +6091,7 @@ components:
           example: evt_123
         type:
           type: string
-          description: 当前基础实现会处理 checkout.session.completed、charge.refunded、charge.dispute.created、charge.dispute.updated、charge.dispute.closed、charge.dispute.funds_withdrawn 和 charge.dispute.funds_reinstated。
+          description: 当前基础实现会处理 checkout.session.completed、checkout.session.async_payment_failed、charge.dispute.created、charge.dispute.updated、charge.dispute.closed、charge.dispute.funds_withdrawn 和 charge.dispute.funds_reinstated。
           example: checkout.session.completed
         data:
           type: object
@@ -6277,16 +6108,12 @@ components:
                 amount:
                   type: integer
                   format: int64
-                  description: Charge/Dispute 原金额，退款和争议事件可用。
+                  description: Charge/Dispute 原金额，争议事件可用。
                 amount_total:
                   type: integer
                   format: int64
                   description: Stripe minor unit 金额，例如 9.99 USD 为 999。
                   example: 999
-                amount_refunded:
-                  type: integer
-                  format: int64
-                  description: Stripe minor unit 退款金额；等于订单金额时为全额退款，小于订单金额时记录为部分退款并按比例扣回。
                 currency:
                   type: string
                   example: usd
@@ -6298,7 +6125,7 @@ components:
                   example: pi_123
                 metadata:
                   type: object
-                  description: 支付成功事件要求 order_no/product_id/user_id；退款或争议事件可仅携带 order_no，或通过 payment_intent 回查订单。
+                  description: 支付成功事件要求 order_no/product_id/user_id；争议事件可仅携带 order_no，或通过 payment_intent 回查订单。
                   properties:
                     order_no: { type: string }
                     product_id: { type: string }
@@ -6464,7 +6291,7 @@ components:
         type:
           type: string
           description: 额度流水类型。
-          enum: [payment_grant, redem_redeem, admin_adjust, refund_deduct, manual_credit, manual_debit]
+          enum: [payment_grant, redem_redeem, admin_adjust, manual_credit, manual_debit]
         amount:
           type: integer
           format: int64
@@ -6480,7 +6307,7 @@ components:
         source_type:
           type: string
           description: 流水来源类型。
-          enum: [payment_order, payment_event, redem_code, admin_action, refund]
+          enum: [payment_order, payment_event, redem_code, admin_action]
         source_id:
           type: string
           description: 来源 ID、本地订单号或事件 ID。
@@ -7816,7 +7643,6 @@ components:
         payment.stripe.secret_key: "sk_live_xxx"
         payment.stripe.webhook_secret: "whsec_xxx"
         payment.epay.key: "epay-signing-secret"
-        payment.epay.refund_url: "https://pay.example.com/refund"
     ChatCompletionRequest:
       type: object
       description: OpenAI-compatible Chat Completions 请求；RouterX 会先验证 messages，再按模型和私有扩展路由到上游。

@@ -166,7 +166,7 @@ RouterX 运行时
 - `docs/DATA_MODEL.md`：密钥字段、哈希、加密、审计和日志字段。
 - `docs/RELAY.md`：`routerx` 过滤、通道选择、上游错误和重试边界。
 - `docs/BILLING.md`：额度扣减、支付幂等、价格规则和账单事实。
-- `docs/PAYMENTS.md`：支付 provider、充值码、退款、人工补账、额度流水和 webhook 安全。
+- `docs/PAYMENTS.md`：支付 provider、充值码、人工补账、额度流水和 webhook 安全。
 - `docs/SETTINGS.md`：安全相关 settings、敏感值脱敏和 readiness。
 - `docs/OPERATIONS.md`：生产密钥、备份恢复、日志、指标和事故处理。
 - `docs/RUNBOOKS.md`：API Key 泄露、上游密钥泄露、`ENCRYPTION_KEY` 丢失、支付伪造和额度异常的处理步骤。

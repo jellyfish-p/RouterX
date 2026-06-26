@@ -231,7 +231,7 @@ P0 补齐这些配置时，应同时补测试：
 
 ### Payment
 
-支付 provider、充值码、退款和人工补账策略以 `docs/PAYMENTS.md` 为准。支付配置全部来自数据库 `settings`，其中 provider 密钥由 `SettingService` 加密落库、透明解密使用，管理端响应和审计只允许脱敏展示。
+支付 provider、充值码和人工补账策略以 `docs/PAYMENTS.md` 为准。支付配置全部来自数据库 `settings`，其中 provider 密钥由 `SettingService` 加密落库、透明解密使用，管理端响应和审计只允许脱敏展示。
 
 | key | 默认 | stage | 说明 |
 |-----|------|-------|------|
@@ -245,11 +245,8 @@ P0 补齐这些配置时，应同时补测试：
 | `payment.epay.pid` | `` | P2 | 易支付商户 ID |
 | `payment.epay.notify_url` | `` | P2 | 易支付异步通知地址 |
 | `payment.epay.return_url` | `` | P2 | 易支付同步返回地址 |
-| `payment.epay.refund_url` | `` | P2 | 易支付退款请求地址 |
 | `payment.currency` | `usd` | P2 | 默认币种 |
 | `payment.order_expire_minutes` | `30` | P2 | 支付订单过期时间 |
-| `payment.refund.auto_deduct` | `false` | P2 | 退款成功后是否自动扣回原订单额度 |
-| `payment.refund.allow_negative_balance` | `false` | P2 | 自动扣回是否允许用户余额变成负数 |
 | `payment.dispute.auto_disable_tokens` | `false` | P2 | Stripe 争议/拒付事件成功记录后是否自动禁用该用户已启用 API Key |
 | `payment.manual_adjust.require_reason` | `true` | P2 | 支付人工补账/扣回是否必须填写原因 |
 | `payment.manual_adjust.large_amount_threshold` | `0` | P2 | 大额人工调整阈值，`0` 表示当前不触发额外二次确认 |

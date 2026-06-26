@@ -119,7 +119,7 @@ RelayService 负责：
 RelayService 不负责：
 
 - User JWT 登录、管理员权限和普通用户 CRUD。
-- 支付订单、充值码、退款和人工补账。
+- 支付订单、充值码和人工补账。
 - OAuth/OIDC 身份绑定。
 - 直接保存上游厂商密钥明文。
 

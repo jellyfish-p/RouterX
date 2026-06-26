@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add user and admin APIs for querying `quota_transactions` so充值、充值码、退款、人工补账和扣回形成可查询的额度流水事实链。
+**Goal:** Add user and admin APIs for querying `quota_transactions` so充值、充值码、人工补账和扣回形成可查询的额度流水事实链。
 
-**Architecture:** Reuse `UserService` for quota transaction queries because the service already owns payment, redeem code, refund, and manual adjustment writes. Expose `/v0/user/quota-transactions` for the current user's own ledger and `/v0/admin/quota-transactions` for admin global queries with filters. Return sanitized DTOs and keep model-call consumption in `logs`, not in this ledger.
+**Architecture:** Reuse `UserService` for quota transaction queries because the service already owns payment, redeem code, and manual adjustment writes. Expose `/v0/user/quota-transactions` for the current user's own ledger and `/v0/admin/quota-transactions` for admin global queries with filters. Return sanitized DTOs and keep model-call consumption in `logs`, not in this ledger.
 
 **Tech Stack:** Go, Gin router integration tests, GORM `quota_transactions`, existing pagination DTO, Apifox OpenAPI YAML.
 

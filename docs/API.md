@@ -264,8 +264,8 @@ Gemini-compatible 错误示例：
 | `page` | int | 页码，默认 1 |
 | `page_size` | int | 每页数量，默认 20，最大 100 |
 | `user_id` | uint | 管理端按用户过滤；用户端接口会忽略该参数并强制使用当前用户 |
-| `type` | string | 流水类型，如 `payment_grant`、`redem_redeem`、`admin_adjust`、`refund_deduct`、`manual_credit`、`manual_debit` |
-| `source_type` | string | 来源类型，如 `payment_order`、`payment_event`、`redem_code`、`admin_action`、`refund` |
+| `type` | string | 流水类型，如 `payment_grant`、`redem_redeem`、`admin_adjust`、`manual_credit`、`manual_debit` |
+| `source_type` | string | 来源类型，如 `payment_order`、`payment_event`、`redem_code`、`admin_action` |
 | `source_id` | string | 来源 ID、本地订单号或事件 ID |
 | `start_time` | string | 创建时间下限，支持 RFC3339、`YYYY-MM-DD HH:mm:ss` 或 `YYYY-MM-DD` |
 | `end_time` | string | 创建时间上限，支持 RFC3339、`YYYY-MM-DD HH:mm:ss` 或 `YYYY-MM-DD` |
@@ -335,8 +335,6 @@ Gemini-compatible 错误示例：
 | PATCH | `/v0/admin/payment/products/:id/disable` | 基础实现 | 禁用商品；禁用后用户侧不可见且不能创建新订单，成功后写管理审计 |
 | PATCH | `/v0/admin/payment/products/:id/enable` | 基础实现 | 启用商品，成功后写管理审计 |
 | POST | `/v0/admin/payment/adjustments` | 基础实现 | 支付相关人工补账或扣回；写 `manual_credit`/`manual_debit` 额度流水和 `payment_manual_adjust.*` 管理审计，默认必须填写原因；本地拒绝写 `payment_manual_adjust.denied` |
-| POST | `/v0/admin/payment/refunds` | 基础实现 | 管理员确认支付退款后扣回额度，订单置为 `refunded` 或 `partially_refunded`，写 `refund_deduct` 流水和 `payment_refund.manual` 审计；本地拒绝写 `payment_refund.manual_denied` |
-| POST | `/v0/admin/payment/refund-requests` | 基础实现 | 向 Stripe 或易支付发起 provider 退款请求，写 `payment_refund_requests`，订单进入 `refund_pending`，最终状态等待可信 webhook 或后续人工收尾确认 |
 
 创建/更新支付商品请求：
 
@@ -368,32 +366,6 @@ Gemini-compatible 错误示例：
 ```
 
 `amount` 为正数时写 `manual_credit`，负数时写 `manual_debit`；`order_no` 可关联原支付订单，`idempotency_key` 用于防止同一人工动作重复改变余额。缺少原因、缺少幂等键、金额为 0、重复幂等键或关联订单/权限校验失败会写 `payment_manual_adjust.denied`，使用稳定 `error_code` 区分原因。
-
-支付人工退款请求：
-
-```json
-{
-  "order_no": "RX202606150001",
-  "refund_quota": 40000000,
-  "reason": "customer refund",
-  "idempotency_key": "refund-ticket-1234"
-}
-```
-
-`refund_quota` 必须大于 0 且不能超过订单入账额度；仅支持对 `paid` 订单人工落账退款。全额退款会将订单置为 `refunded`，部分退款会置为 `partially_refunded`；接口会写 `quota_transactions(type=refund_deduct, source_type=refund, source_id=<order_no>)`，并通过 `idempotency_key` 防止重复扣回。缺少订单号、退款额度非法、缺少原因、重复幂等键、订单状态不允许或余额不足会写 `payment_refund.manual_denied`。
-
-Provider 退款请求：
-
-```json
-{
-  "order_no": "RX202606150001",
-  "refund_amount": "5.00",
-  "reason": "customer requested partial refund",
-  "idempotency_key": "refund-ticket-5678"
-}
-```
-
-`refund_amount` 为空时按订单全额退款；非空时必须大于 0 且不能超过订单金额。接口需要订单为 `paid` 状态；Stripe 订单必须已保存 `provider_payment_id` 且配置 `payment.stripe.secret_key`，易支付订单需要配置 `payment.epay.pid`、`payment.epay.refund_url` 和 `payment.epay.key`。成功后本地订单进入 `refund_pending`，写 `payment_refund_requests` 和 `payment_refund.requested` 审计；本地参数、订单状态或幂等键拒绝会写 `payment_refund.request_denied` 且 `result=denied`，provider 调用失败会写同动作但 `result=failed`。最终退款状态和可选额度扣回仍以可信 provider webhook 或后续人工收尾为准。
 
 ### 模型价格管理
 
@@ -493,12 +465,6 @@ Provider 退款请求：
 | `payment_webhook.processed` | `POST /v0/payment/stripe/webhook`、`POST /v0/payment/epay/notify` |
 | `payment_webhook.failed` | Stripe `checkout.session.async_payment_failed` 或易支付明确失败通知将 pending 订单置为 `failed` |
 | `payment_order.paid` | 支付 provider 成功回调入账 |
-| `payment_refund.requested` | `POST /v0/admin/payment/refund-requests` 向 Stripe 或易支付发起退款请求 |
-| `payment_refund.request_denied` | `POST /v0/admin/payment/refund-requests` 本地拒绝或 provider 发起失败 |
-| `payment_refund.processed` | `POST /v0/payment/stripe/webhook` 处理全额或部分退款事件 |
-| `payment_refund.deducted` | Stripe 全额或部分退款按 settings 自动扣回额度 |
-| `payment_refund.manual` | `POST /v0/admin/payment/refunds` 管理员人工确认退款并扣回额度 |
-| `payment_refund.manual_denied` | `POST /v0/admin/payment/refunds` 本地拒绝人工退款落账 |
 | `payment_dispute.created` | `POST /v0/payment/stripe/webhook` 处理 Stripe 争议/拒付事件，可按 settings 禁用 API Key |
 | `payment_dispute.updated` | `POST /v0/payment/stripe/webhook` 处理 Stripe 争议更新事件 |
 | `payment_dispute.closed` | `POST /v0/payment/stripe/webhook` 处理 Stripe 争议关闭事件 |
@@ -877,7 +843,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、取消未支付订单、订单列表和详情；`payment.stripe.secret_key` 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持使用 `payment.stripe.webhook_secret` 校验原始 body 签名、Checkout Session 成功事件、异步支付失败事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议生命周期记录和可选 API Key 禁用；易支付异步通知已支持使用 `payment.epay.key` 校验 MD5 签名、金额校验、成功/明确失败状态处理、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回、人工退款落账以及 Stripe/易支付 provider 退款请求并写流水与审计。更多 provider 自动发起退款流程仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、取消未支付订单、订单列表和详情；`payment.stripe.secret_key` 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持使用 `payment.stripe.webhook_secret` 校验原始 body 签名、Checkout Session 成功事件、异步支付失败事件、金额/币种/metadata 校验、幂等入账和基础审计、争议生命周期记录和可选 API Key 禁用；易支付异步通知已支持使用 `payment.epay.key` 校验 MD5 签名、金额校验、成功/明确失败状态处理、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回并写流水与审计。
 
 用户鉴权接口：
 
@@ -887,13 +853,13 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并写 `payment_order.create` 管理审计；provider 必须已在 settings 启用，`payment.stripe.secret_key` + 绝对 `return_url` 齐全时创建 Stripe Checkout Session，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，稳定 `error_code` 包含 `payment_order_provider_disabled`、`payment_order_product_unavailable` 或 `payment_order_provider_checkout_failed`；`expires_at` 来自 `payment.order_expire_minutes` |
 | GET | `/v0/user/payment/orders` | 查询当前用户支付订单列表 |
 | GET | `/v0/user/payment/orders/:order_no` | 查询当前用户支付订单详情 |
-| POST | `/v0/user/payment/orders/:order_no/cancel` | 取消当前用户自己的 `pending` 订单，置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付/退款中/已退款订单拒绝取消并写 `payment_order.cancel_denied`，稳定 `error_code` 包含 `payment_order_cancel_not_pending` 或 `payment_order_cancel_not_found`，不会入账 |
+| POST | `/v0/user/payment/orders/:order_no/cancel` | 取消当前用户自己的 `pending` 订单，置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付订单拒绝取消并写 `payment_order.cancel_denied`，稳定 `error_code` 包含 `payment_order_cancel_not_pending` 或 `payment_order_cancel_not_found`，不会入账 |
 
 Provider 回调接口：
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
-| POST | `/v0/payment/stripe/webhook` | Stripe 签名 | 基础实现；Stripe Checkout webhook，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，`checkout.session.async_payment_failed` 会将 pending 订单置为 `failed` 并写 `payment_webhook.failed`，全额或部分退款时写 `payment_refund.*` 审计，争议 created/updated/closed/funds_* 事件会更新 `payment_disputes` 并写 `payment_dispute.*` 审计，created 可按 settings 禁用 API Key，返回纯文本 `success` |
+| POST | `/v0/payment/stripe/webhook` | Stripe 签名 | 基础实现；Stripe Checkout webhook，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，`checkout.session.async_payment_failed` 会将 pending 订单置为 `failed` 并写 `payment_webhook.failed`，争议 created/updated/closed/funds_* 事件会更新 `payment_disputes` 并写 `payment_dispute.*` 审计，created 可按 settings 禁用 API Key，返回纯文本 `success` |
 | POST | `/v0/payment/epay/notify` | 易支付签名 | 基础实现；易支付异步通知，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，明确失败状态会将 pending 订单置为 `failed` 并写 `payment_webhook.failed`，返回纯文本 `success` |
 | GET | `/v0/payment/epay/return` | 无，仅读状态 | 基础实现；易支付同步返回页，只读取本地订单状态，不入账 |
 
@@ -963,8 +929,6 @@ Provider 回调接口：
 | `paid` | 支付成功，额度已入账 |
 | `failed` | provider 明确支付失败；签名、金额或订单快照校验失败只拒绝入账，不直接改订单 |
 | `closed` | 超时关闭或用户取消 |
-| `refunded` | 已全额退款，是否扣回额度由退款策略决定 |
-| `partially_refunded` | 已部分退款，自动扣回开启时按退款金额比例扣回额度 |
 
 Stripe Webhook 要求：
 
@@ -972,7 +936,6 @@ Stripe Webhook 要求：
 - 只在 `checkout.session.completed` 或可信成功事件后入账。
 - 校验 `metadata.order_no`、金额、货币和订单状态。
 - 同一个 Stripe event id 必须幂等处理。
-- `charge.refunded` 全额退款事件会把订单置为 `refunded`；部分退款事件会把订单置为 `partially_refunded`。开启 `payment.refund.auto_deduct=true` 时按全额或比例策略扣回额度并写 `refund_deduct` 流水。
 - `charge.dispute.created`、`charge.dispute.updated`、`charge.dispute.closed`、`charge.dispute.funds_withdrawn` 和 `charge.dispute.funds_reinstated` 会更新 `payment_disputes` 并写 `payment_dispute.*` 审计；开启 `payment.dispute.auto_disable_tokens=true` 时，created 事件会禁用该用户已启用的 API Key，`revoked_reason=payment_dispute`，不直接修改额度或订单状态。
 
 易支付通知要求：

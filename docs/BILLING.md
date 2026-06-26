@@ -54,10 +54,10 @@ QuotaPerUnit = 100000000
 | `tokens` | `unlimited` | API Key 是否无限制自身额度 |
 | `tokens` | `quota_limit` / `quota_used` | 分别表示 Key 剩余可消耗额度和累计已用额度 |
 | `payment_products` | `quota` | 支付商品对应增加的基础额度单位 |
-| `payment_orders` | `status` | 支付订单状态，如 `pending`、`paid`、`failed`、`closed`、`refunded` |
+| `payment_orders` | `status` | 支付订单状态，如 `pending`、`paid`、`failed`、`closed` |
 | `payment_orders` | `quota` | 支付成功后应增加的基础额度单位 |
 | `payment_events` | `provider_event_id` | 支付渠道事件 ID，用于幂等处理 |
-| `quota_transactions` | `amount`、`idempotency_key` | 支付入账、充值码、退款、人工调整的额度流水核心字段 |
+| `quota_transactions` | `amount`、`idempotency_key` | 支付入账、充值码、人工调整的额度流水核心字段 |
 | `settings` | `billing.user_group_ratios` | 用户分组倍率 JSON 配置 |
 | `model_prices` | `price_expression` | 系统模型价格表达式，返回倍率前的 `base_quota` |
 | `model_prices` | `variables_json` | 系统模型价格变量默认值 |
@@ -165,7 +165,7 @@ P0 扣费顺序：
 | 无限 Token 成功调用 | 减少本次 `quota_used` | `quota_limit` 保持 `-1`，`quota_used` 增加本次消耗 | 写入本次消耗 | 模型消费 |
 | 失败且未产生有效 usage | 不变 | 不变 | 可写失败日志，`quota_used=0` | 不计消费 |
 
-用户可用余额只以 `users.quota` 为准；有限 API Key 的剩余预算不是额外余额，也不应加回用户余额展示。用户消费账单按成功调用的 `logs.quota_used` 聚合。Key 预算调整和用户余额调整不能混在同一口径里解释，否则会出现“创建 Key 被当成消费”或“删除 Key 被当成退款”的账本错误。
+用户可用余额只以 `users.quota` 为准；有限 API Key 的剩余预算不是额外余额，也不应加回用户余额展示。用户消费账单按成功调用的 `logs.quota_used` 聚合。Key 预算调整和用户余额调整不能混在同一口径里解释，否则会出现“创建 Key 被当成消费”或“删除 Key 被当成余额返还”的账本错误。
 
 ## 后台配置
 
@@ -396,7 +396,7 @@ ceil(duration_seconds * second_price)
 
 ## 支付和充值
 
-在线支付用于购买用户额度。支付金额、货币、赠送额度和最终入账额度必须由服务端商品配置决定，客户端不能直接提交要增加的 `quota`。支付 provider、充值码、退款、人工补账和额度流水的完整契约以 `docs/PAYMENTS.md` 为准；本文保留计费事实和入账口径摘要。
+在线支付用于购买用户额度。支付金额、货币、赠送额度和最终入账额度必须由服务端商品配置决定，客户端不能直接提交要增加的 `quota`。支付 provider、充值码、人工补账和额度流水的完整契约以 `docs/PAYMENTS.md` 为准；本文保留计费事实和入账口径摘要。
 
 支付模块是可选插件式能力。未启用支付时，系统仍应能通过管理员额度调整、API Key 预算控制和充值码完成基础运营；启用支付后必须满足签名校验、金额校验、幂等入账和审计要求。
 
@@ -449,7 +449,6 @@ ceil(duration_seconds * second_price)
 | `payment.epay.pid` | 易支付商户 ID |
 | `payment.epay.notify_url` | 易支付异步通知地址 |
 | `payment.epay.return_url` | 易支付同步返回地址 |
-| `payment.epay.refund_url` | 易支付退款请求地址 |
 | `payment.currency` | 默认货币，如 `usd` |
 
 敏感配置：
@@ -480,7 +479,6 @@ Stripe 规则：
 - Webhook 必须使用原始 request body 校验 `Stripe-Signature`。
 - 只处理可信事件类型，其他事件写入 `payment_events` 后忽略。
 - `amount_total` 和 `currency` 必须和本地订单一致。
-- 退款事件可先只记录，后续再按产品策略决定是否扣回额度。
 
 ### 易支付
 
@@ -537,7 +535,7 @@ receive notify
 - 用户创建支付订单。
 - Stripe Webhook 收到和处理结果。
 - 易支付异步通知收到和处理结果。
-- 支付订单入账、关闭、退款、人工修正。
+- 支付订单入账、关闭、人工修正。
 - 支付商品和支付配置变更。
 
 审计字段建议：

@@ -221,7 +221,7 @@ git diff --check
 - `docs/POLICIES.md`，仅当新增或改变策略决策顺序、访问控制、限流、预算、分组或路由偏好语义。
 - `docs/PROTOCOLS.md`，仅当新增或改变入口协议、APIType、上游厂商、能力等级、字段降级、流式或 SDK 兼容矩阵。
 - `docs/MODULE_BOUNDARIES.md`，仅当新增模块、改变模块职责、依赖方向、跨层边界或测试边界。
-- `docs/PAYMENTS.md`，仅当新增或改变支付 provider、充值码、订单、事件、退款、人工调整或额度流水。
+- `docs/PAYMENTS.md`，仅当新增或改变支付 provider、充值码、订单、事件、人工调整或额度流水。
 - `docs/ACCEPTANCE.md`，仅当新增或改变阶段验收门禁、交付证据等级或不可接受状态。
 - `docs/SECURITY.md`，仅当新增或改变安全边界。
 - `docs/ERRORS.md`，仅当新增或改变错误语义。

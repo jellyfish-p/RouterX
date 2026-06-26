@@ -58,8 +58,6 @@ func setupAdminRoutes(
 			authRequired.PATCH("/channel-model-prices/:id/disable", userH.DisableChannelModelPrice)
 			authRequired.PATCH("/channel-model-prices/:id/enable", userH.EnableChannelModelPrice)
 			authRequired.POST("/payment/adjustments", userH.CreatePaymentManualAdjustment)
-			authRequired.POST("/payment/refunds", userH.CreatePaymentManualRefund)
-			authRequired.POST("/payment/refund-requests", userH.CreatePaymentProviderRefundRequest)
 			authRequired.GET("/token", tokenH.AdminList)
 			authRequired.GET("/token/export", tokenH.AdminExport)
 			authRequired.GET("/token/risk", tokenH.AdminRisk)

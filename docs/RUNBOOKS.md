@@ -9,7 +9,7 @@
 - 日志、审计、指标、告警和保留规则以 `docs/OBSERVABILITY.md` 为准。
 - 调用事实快照、脱敏和历史解释以 `docs/SNAPSHOTS.md` 为准。
 - 密钥、权限、支付回调和事故边界以 `docs/SECURITY.md` 为准。
-- 支付 provider、充值码、退款、人工补账和额度流水以 `docs/PAYMENTS.md` 为准。
+- 支付 provider、充值码、人工补账和额度流水以 `docs/PAYMENTS.md` 为准。
 - 运行模式、密钥、迁移、备份和发布检查以 `docs/OPERATIONS.md` 为准。
 - 小白路径以 `docs/FLOWS.md` 为准；本文把路径中的失败点展开成可执行排查步骤。
 

@@ -76,7 +76,6 @@ const (
 	QuotaTransactionTypePaymentGrant = "payment_grant"
 	QuotaTransactionTypeRedemRedeem  = "redem_redeem"
 	QuotaTransactionTypeAdminAdjust  = "admin_adjust"
-	QuotaTransactionTypeRefundDeduct = "refund_deduct"
 	QuotaTransactionTypeManualCredit = "manual_credit"
 	QuotaTransactionTypeManualDebit  = "manual_debit"
 )
@@ -87,7 +86,6 @@ const (
 	QuotaSourceTypePaymentEvent = "payment_event"
 	QuotaSourceTypeRedemCode    = "redem_code"
 	QuotaSourceTypeAdminAction  = "admin_action"
-	QuotaSourceTypeRefund       = "refund"
 )
 
 // 支付 provider 和订单状态
@@ -95,14 +93,10 @@ const (
 	PaymentProviderStripe = "stripe"
 	PaymentProviderEpay   = "epay"
 
-	PaymentOrderStatusPending           = "pending"
-	PaymentOrderStatusPaid              = "paid"
-	PaymentOrderStatusFailed            = "failed"
-	PaymentOrderStatusClosed            = "closed"
-	PaymentOrderStatusRefundPending     = "refund_pending"
-	PaymentOrderStatusRefundFailed      = "refund_failed"
-	PaymentOrderStatusRefunded          = "refunded"
-	PaymentOrderStatusPartiallyRefunded = "partially_refunded"
+	PaymentOrderStatusPending = "pending"
+	PaymentOrderStatusPaid    = "paid"
+	PaymentOrderStatusFailed  = "failed"
+	PaymentOrderStatusClosed  = "closed"
 )
 
 // 未限制额度标记

@@ -109,10 +109,6 @@ const (
 	adminAuditActionPaymentWebhookProcessed = "payment_webhook.processed"
 	adminAuditActionPaymentWebhookFailed    = "payment_webhook.failed"
 	adminAuditActionPaymentOrderPaid        = "payment_order.paid"
-	adminAuditActionPaymentRefundRequested  = "payment_refund.requested"
-	adminAuditActionPaymentRefundProcessed  = "payment_refund.processed"
-	adminAuditActionPaymentRefundDeducted   = "payment_refund.deducted"
-	adminAuditActionPaymentRefundManual     = "payment_refund.manual"
 	adminAuditActionPaymentDisputeCreated   = "payment_dispute.created"
 	adminAuditActionPaymentDisputeUpdated   = "payment_dispute.updated"
 	adminAuditActionPaymentDisputeClosed    = "payment_dispute.closed"
@@ -195,46 +191,6 @@ type PaymentManualAdjustmentResult struct {
 	BalanceBefore  int64  `json:"balance_before"`
 	BalanceAfter   int64  `json:"balance_after"`
 	IdempotencyKey string `json:"idempotency_key"`
-}
-
-type PaymentManualRefundInput struct {
-	OrderNo        string
-	RefundQuota    int64
-	Reason         string
-	IdempotencyKey string
-	IP             string
-	UserAgent      string
-}
-
-type PaymentManualRefundResult struct {
-	UserID         uint   `json:"user_id"`
-	OrderNo        string `json:"order_no"`
-	RefundQuota    int64  `json:"refund_quota"`
-	OrderStatus    string `json:"order_status"`
-	BalanceBefore  int64  `json:"balance_before"`
-	BalanceAfter   int64  `json:"balance_after"`
-	IdempotencyKey string `json:"idempotency_key"`
-}
-
-type PaymentProviderRefundRequestInput struct {
-	OrderNo        string
-	RefundAmount   string
-	Reason         string
-	IdempotencyKey string
-	IP             string
-	UserAgent      string
-}
-
-type PaymentProviderRefundRequestResult struct {
-	UserID            uint   `json:"user_id"`
-	OrderNo           string `json:"order_no"`
-	Provider          string `json:"provider"`
-	ProviderRefundID  string `json:"provider_refund_id"`
-	RefundAmount      string `json:"refund_amount"`
-	RefundAmountMinor int64  `json:"refund_amount_minor"`
-	RefundQuota       int64  `json:"refund_quota"`
-	OrderStatus       string `json:"order_status"`
-	IdempotencyKey    string `json:"idempotency_key"`
 }
 
 func (s *UserService) ListAdminAuditLogs(operatorRole int, page, pageSize int, action, resourceType, resourceID string, actorUserID uint, result, errorCode string, startTime, endTime int64) ([]model.AdminAuditLog, int64, error) {
@@ -746,317 +702,6 @@ func (s *UserService) ApplyPaymentManualAdjustment(operatorID uint, operatorRole
 		return nil
 	})
 	return result, err
-}
-
-// ApplyPaymentManualRefund 记录管理员确认后的支付退款。
-// 该接口面向已经在线下或 provider 侧完成的退款事实，负责扣回额度、更新订单状态和留下审计证据。
-func (s *UserService) ApplyPaymentManualRefund(operatorID uint, operatorRole int, input PaymentManualRefundInput, requestID string) (*PaymentManualRefundResult, error) {
-	orderNo := strings.TrimSpace(input.OrderNo)
-	if orderNo == "" {
-		return nil, errors.New("order_no is required")
-	}
-	if input.RefundQuota <= 0 {
-		return nil, errors.New("refund_quota must be positive")
-	}
-	reason := strings.TrimSpace(input.Reason)
-	requireReason, err := paymentBoolSettingDefault("payment.manual_adjust.require_reason", true)
-	if err != nil {
-		return nil, err
-	}
-	if requireReason && reason == "" {
-		return nil, errors.New("reason is required")
-	}
-	if reason == "" {
-		reason = "payment manual refund"
-	}
-	idempotencyKey := strings.TrimSpace(input.IdempotencyKey)
-	if idempotencyKey == "" {
-		return nil, errors.New("idempotency_key is required")
-	}
-
-	var orderSnapshot model.PaymentOrder
-	if err := internal.DB.Where("order_no = ?", orderNo).First(&orderSnapshot).Error; err != nil {
-		return nil, err
-	}
-	if err := s.ensureNormalUserTarget(operatorID, operatorRole, orderSnapshot.UserID); err != nil {
-		return nil, err
-	}
-	allowNegative, err := paymentBoolSettingDefault("payment.refund.allow_negative_balance", false)
-	if err != nil {
-		return nil, err
-	}
-
-	actorID := operatorID
-	var result *PaymentManualRefundResult
-	err = internal.DB.Transaction(func(tx *gorm.DB) error {
-		var existing model.QuotaTransaction
-		err := tx.Where("idempotency_key = ?", idempotencyKey).First(&existing).Error
-		switch {
-		case err == nil:
-			return errors.New("idempotency_key has already been used")
-		case !errors.Is(err, gorm.ErrRecordNotFound):
-			return err
-		}
-
-		var order model.PaymentOrder
-		if err := tx.Where("order_no = ?", orderNo).First(&order).Error; err != nil {
-			return err
-		}
-		if order.Status != common.PaymentOrderStatusPaid {
-			return errors.New("payment order is not paid")
-		}
-		if input.RefundQuota > order.Quota {
-			return errors.New("refund_quota exceeds order quota")
-		}
-
-		refundStatus := common.PaymentOrderStatusRefunded
-		if input.RefundQuota < order.Quota {
-			refundStatus = common.PaymentOrderStatusPartiallyRefunded
-		}
-		balanceBefore, balanceAfter, err := applyQuotaChange(tx, quotaChange{
-			UserID:         order.UserID,
-			Amount:         -input.RefundQuota,
-			Type:           common.QuotaTransactionTypeRefundDeduct,
-			SourceType:     common.QuotaSourceTypeRefund,
-			SourceID:       order.OrderNo,
-			IdempotencyKey: idempotencyKey,
-			Reason:         reason,
-			ActorUserID:    &actorID,
-			RequestID:      requestID,
-			AllowNegative:  allowNegative,
-		})
-		if err != nil {
-			return err
-		}
-
-		now := time.Now()
-		if err := tx.Model(&order).Updates(map[string]interface{}{
-			"status":     refundStatus,
-			"updated_at": now,
-		}).Error; err != nil {
-			return err
-		}
-		order.Status = refundStatus
-
-		summary := map[string]interface{}{
-			"user_id":         order.UserID,
-			"order_no":        order.OrderNo,
-			"refund_quota":    input.RefundQuota,
-			"order_quota":     order.Quota,
-			"order_status":    refundStatus,
-			"reason":          reason,
-			"balance_before":  balanceBefore,
-			"balance_after":   balanceAfter,
-			"idempotency_key": idempotencyKey,
-			"allow_negative":  allowNegative,
-			"provider":        order.Provider,
-			"payment_amount":  order.Amount,
-			"currency":        order.Currency,
-		}
-		afterSummary, err := json.Marshal(summary)
-		if err != nil {
-			return err
-		}
-		if err := recordAdminAuditLogWithDB(tx, AdminAuditRecordInput{
-			RequestID:    requestID,
-			ActorUserID:  operatorID,
-			ActorRole:    operatorRole,
-			Action:       adminAuditActionPaymentRefundManual,
-			ResourceType: common.QuotaSourceTypePaymentOrder,
-			ResourceID:   order.OrderNo,
-			AfterSummary: string(afterSummary),
-			Result:       "success",
-			IP:           input.IP,
-			UserAgent:    input.UserAgent,
-		}); err != nil {
-			return err
-		}
-
-		result = &PaymentManualRefundResult{
-			UserID:         order.UserID,
-			OrderNo:        order.OrderNo,
-			RefundQuota:    input.RefundQuota,
-			OrderStatus:    refundStatus,
-			BalanceBefore:  balanceBefore,
-			BalanceAfter:   balanceAfter,
-			IdempotencyKey: idempotencyKey,
-		}
-		return nil
-	})
-	return result, err
-}
-
-// CreatePaymentProviderRefundRequest 向支付 provider 发起退款请求。
-// 请求成功只代表 provider 已受理；订单最终退款状态仍以后续可信 webhook 为准。
-func (s *UserService) CreatePaymentProviderRefundRequest(operatorID uint, operatorRole int, input PaymentProviderRefundRequestInput, requestID string) (*PaymentProviderRefundRequestResult, error) {
-	orderNo := strings.TrimSpace(input.OrderNo)
-	if orderNo == "" {
-		return nil, errors.New("order_no is required")
-	}
-	reason := strings.TrimSpace(input.Reason)
-	requireReason, err := paymentBoolSettingDefault("payment.manual_adjust.require_reason", true)
-	if err != nil {
-		return nil, err
-	}
-	if requireReason && reason == "" {
-		return nil, errors.New("reason is required")
-	}
-	if reason == "" {
-		reason = "payment provider refund request"
-	}
-	idempotencyKey := strings.TrimSpace(input.IdempotencyKey)
-	if idempotencyKey == "" {
-		return nil, errors.New("idempotency_key is required")
-	}
-
-	var existing model.PaymentRefundRequest
-	err = internal.DB.Where("idempotency_key = ?", idempotencyKey).First(&existing).Error
-	switch {
-	case err == nil:
-		return nil, errors.New("idempotency_key has already been used")
-	case !errors.Is(err, gorm.ErrRecordNotFound):
-		return nil, err
-	}
-
-	var order model.PaymentOrder
-	if err := internal.DB.Where("order_no = ?", orderNo).First(&order).Error; err != nil {
-		return nil, err
-	}
-	if err := s.ensureNormalUserTarget(operatorID, operatorRole, order.UserID); err != nil {
-		return nil, err
-	}
-	if order.Status != common.PaymentOrderStatusPaid {
-		return nil, errors.New("payment order is not paid")
-	}
-	orderAmountMinor, err := decimalAmountToMinorUnits(order.Amount)
-	if err != nil || orderAmountMinor <= 0 {
-		return nil, errors.New("invalid payment order amount")
-	}
-	refundAmount := strings.TrimSpace(input.RefundAmount)
-	if refundAmount == "" {
-		refundAmount = formatMinorUnits(orderAmountMinor)
-	}
-	refundAmountMinor, err := decimalAmountToMinorUnits(refundAmount)
-	if err != nil || refundAmountMinor <= 0 {
-		return nil, errors.New("refund_amount must be positive")
-	}
-	if refundAmountMinor > orderAmountMinor {
-		return nil, errors.New("refund_amount exceeds order amount")
-	}
-	refundAmount = formatMinorUnits(refundAmountMinor)
-	refundQuota := proportionalRefundQuota(order.Quota, refundAmountMinor, orderAmountMinor)
-	if refundQuota <= 0 {
-		return nil, errors.New("refund_quota must be positive")
-	}
-
-	providerRefundID, providerStatus, _, err := createProviderRefund(order, refundAmountMinor, idempotencyKey, reason)
-	if err != nil {
-		return nil, err
-	}
-	if providerStatus == "" {
-		providerStatus = "pending"
-	}
-
-	var result *PaymentProviderRefundRequestResult
-	err = internal.DB.Transaction(func(tx *gorm.DB) error {
-		var duplicate model.PaymentRefundRequest
-		err := tx.Where("idempotency_key = ?", idempotencyKey).First(&duplicate).Error
-		switch {
-		case err == nil:
-			return errors.New("idempotency_key has already been used")
-		case !errors.Is(err, gorm.ErrRecordNotFound):
-			return err
-		}
-
-		var requestIDPtr *string
-		if trimmed := strings.TrimSpace(requestID); trimmed != "" {
-			requestIDPtr = &trimmed
-		}
-		refundRequest := model.PaymentRefundRequest{
-			OrderNo:          order.OrderNo,
-			UserID:           order.UserID,
-			Provider:         order.Provider,
-			ProviderRefundID: providerRefundID,
-			Amount:           refundAmount,
-			AmountMinor:      refundAmountMinor,
-			Currency:         strings.ToLower(strings.TrimSpace(order.Currency)),
-			RefundQuota:      refundQuota,
-			Status:           providerStatus,
-			IdempotencyKey:   idempotencyKey,
-			Reason:           reason,
-			ActorUserID:      operatorID,
-			RequestID:        requestIDPtr,
-		}
-		if err := tx.Create(&refundRequest).Error; err != nil {
-			return err
-		}
-
-		now := time.Now()
-		if err := tx.Model(&model.PaymentOrder{}).Where("id = ?", order.ID).Updates(map[string]interface{}{
-			"status":     common.PaymentOrderStatusRefundPending,
-			"updated_at": now,
-		}).Error; err != nil {
-			return err
-		}
-
-		summary := map[string]interface{}{
-			"user_id":             order.UserID,
-			"order_no":            order.OrderNo,
-			"provider":            order.Provider,
-			"provider_refund_id":  providerRefundID,
-			"provider_status":     providerStatus,
-			"refund_amount":       refundAmount,
-			"refund_amount_minor": refundAmountMinor,
-			"currency":            strings.ToLower(strings.TrimSpace(order.Currency)),
-			"refund_quota":        refundQuota,
-			"order_status":        common.PaymentOrderStatusRefundPending,
-			"reason":              reason,
-			"idempotency_key":     idempotencyKey,
-		}
-		afterSummary, err := json.Marshal(summary)
-		if err != nil {
-			return err
-		}
-		if err := recordAdminAuditLogWithDB(tx, AdminAuditRecordInput{
-			RequestID:    requestID,
-			ActorUserID:  operatorID,
-			ActorRole:    operatorRole,
-			Action:       adminAuditActionPaymentRefundRequested,
-			ResourceType: common.QuotaSourceTypePaymentOrder,
-			ResourceID:   order.OrderNo,
-			AfterSummary: string(afterSummary),
-			Result:       "success",
-			IP:           input.IP,
-			UserAgent:    input.UserAgent,
-		}); err != nil {
-			return err
-		}
-
-		result = &PaymentProviderRefundRequestResult{
-			UserID:            order.UserID,
-			OrderNo:           order.OrderNo,
-			Provider:          order.Provider,
-			ProviderRefundID:  providerRefundID,
-			RefundAmount:      refundAmount,
-			RefundAmountMinor: refundAmountMinor,
-			RefundQuota:       refundQuota,
-			OrderStatus:       common.PaymentOrderStatusRefundPending,
-			IdempotencyKey:    idempotencyKey,
-		}
-		return nil
-	})
-	return result, err
-}
-
-func createProviderRefund(order model.PaymentOrder, amountMinor int64, idempotencyKey, reason string) (string, string, string, error) {
-	switch order.Provider {
-	case common.PaymentProviderStripe:
-		return createStripeRefund(order, amountMinor, idempotencyKey, reason)
-	case common.PaymentProviderEpay:
-		return createEpayRefund(order, amountMinor, idempotencyKey, reason)
-	default:
-		return "", "", "", errors.New("payment provider refund request does not support provider")
-	}
 }
 
 // ListRedemCodes 查询充值码列表，供管理员按状态、批次或关键字检索。
@@ -1943,182 +1588,6 @@ func createStripeCheckoutSession(orderNo string, userID uint, product model.Paym
 	return result.ID, result.URL, nil
 }
 
-func createStripeRefund(order model.PaymentOrder, amountMinor int64, idempotencyKey, reason string) (string, string, string, error) {
-	secret, secretOK, err := paymentSetting("payment.stripe.secret_key")
-	if err != nil {
-		return "", "", "", err
-	}
-	if !secretOK {
-		return "", "", "", errors.New("stripe secret key is not configured")
-	}
-	if order.ProviderPaymentID == nil || strings.TrimSpace(*order.ProviderPaymentID) == "" {
-		return "", "", "", errors.New("stripe payment_intent is required")
-	}
-	if amountMinor <= 0 {
-		return "", "", "", errors.New("refund_amount must be positive")
-	}
-
-	values := url.Values{}
-	values.Set("payment_intent", strings.TrimSpace(*order.ProviderPaymentID))
-	values.Set("amount", strconv.FormatInt(amountMinor, 10))
-	values.Set("metadata[order_no]", order.OrderNo)
-	values.Set("metadata[idempotency_key]", idempotencyKey)
-	values.Set("metadata[reason]", reason)
-	values.Set("metadata[routerx_refund_source]", "admin_refund_request")
-
-	apiBase, err := stripeAPIBase()
-	if err != nil {
-		return "", "", "", err
-	}
-	req, err := http.NewRequest(http.MethodPost, apiBase+"/v1/refunds", strings.NewReader(values.Encode()))
-	if err != nil {
-		return "", "", "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+secret)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Idempotency-Key", idempotencyKey)
-
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
-	if err != nil {
-		return "", "", "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", "", "", err
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", "", "", fmt.Errorf("stripe refund request failed: status %d", resp.StatusCode)
-	}
-	var result struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", "", "", err
-	}
-	result.ID = strings.TrimSpace(result.ID)
-	result.Status = strings.TrimSpace(result.Status)
-	if result.ID == "" {
-		return "", "", "", errors.New("stripe refund response missing id")
-	}
-	return result.ID, result.Status, string(body), nil
-}
-
-func createEpayRefund(order model.PaymentOrder, amountMinor int64, idempotencyKey, reason string) (string, string, string, error) {
-	key, keyOK, err := paymentSetting("payment.epay.key")
-	if err != nil {
-		return "", "", "", err
-	}
-	if !keyOK {
-		return "", "", "", errors.New("epay key is not configured")
-	}
-	pid, pidOK, err := paymentSetting("payment.epay.pid")
-	if err != nil {
-		return "", "", "", err
-	}
-	refundURL, refundURLOK, err := paymentSetting("payment.epay.refund_url")
-	if err != nil {
-		return "", "", "", err
-	}
-	if !pidOK || !refundURLOK {
-		return "", "", "", errors.New("epay refund settings are not configured")
-	}
-	if amountMinor <= 0 {
-		return "", "", "", errors.New("refund_amount must be positive")
-	}
-
-	values := map[string]string{
-		"act":             "refund",
-		"pid":             pid,
-		"out_trade_no":    order.OrderNo,
-		"money":           formatMinorUnits(amountMinor),
-		"reason":          reason,
-		"idempotency_key": idempotencyKey,
-		"sign_type":       "MD5",
-	}
-	if order.ProviderPaymentID != nil && strings.TrimSpace(*order.ProviderPaymentID) != "" {
-		values["trade_no"] = strings.TrimSpace(*order.ProviderPaymentID)
-	}
-	values["sign"] = epaySign(values, key)
-
-	form := url.Values{}
-	for name, value := range values {
-		form.Set(name, value)
-	}
-	req, err := http.NewRequest(http.MethodPost, refundURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", "", "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
-	if err != nil {
-		return "", "", "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", "", "", err
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", "", "", fmt.Errorf("epay refund request failed: status %d", resp.StatusCode)
-	}
-	var result struct {
-		Code     interface{} `json:"code"`
-		Msg      string      `json:"msg"`
-		RefundNo string      `json:"refund_no"`
-		RefundID string      `json:"refund_id"`
-		TradeNo  string      `json:"trade_no"`
-		Status   string      `json:"status"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", "", "", err
-	}
-	if !epayRefundAccepted(result.Code) {
-		msg := strings.TrimSpace(result.Msg)
-		if msg == "" {
-			msg = "epay refund request rejected"
-		}
-		return "", "", "", errors.New(msg)
-	}
-	providerRefundID := firstNonEmpty(result.RefundNo, result.RefundID, result.TradeNo)
-	if providerRefundID == "" {
-		providerRefundID = fallbackEpayRefundID(order.OrderNo, idempotencyKey)
-	}
-	return providerRefundID, strings.TrimSpace(result.Status), string(body), nil
-}
-
-func epayRefundAccepted(code interface{}) bool {
-	switch value := code.(type) {
-	case float64:
-		return value == 1
-	case int:
-		return value == 1
-	case string:
-		normalized := strings.ToLower(strings.TrimSpace(value))
-		return normalized == "1" || normalized == "success" || normalized == "succeeded"
-	case bool:
-		return value
-	default:
-		return false
-	}
-}
-
-func fallbackEpayRefundID(orderNo, idempotencyKey string) string {
-	sum := md5.Sum([]byte(orderNo + ":" + idempotencyKey))
-	return "epay_refund_" + hex.EncodeToString(sum[:])
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
 func epayCheckoutURL(orderNo string, product model.PaymentProduct, payType string) (string, error) {
 	key, keyOK, err := paymentSetting("payment.epay.key")
 	if err != nil {
@@ -2154,29 +1623,34 @@ func epayCheckoutURL(orderNo string, product model.PaymentProduct, payType strin
 		"notify_url":   notifyURL,
 		"return_url":   returnURL,
 		"name":         product.Name,
-		"money":        product.Amount,
+		"money":        strings.TrimSpace(product.Amount),
 		"sign_type":    "MD5",
 	}
 	values["sign"] = epaySign(values, key)
+
+	query := url.Values{}
+	for key, value := range values {
+		query.Set(key, value)
+	}
 	parsed, err := url.Parse(gateway)
 	if err != nil {
 		return "", err
-	}
-	query := parsed.Query()
-	for name, value := range values {
-		query.Set(name, value)
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
 }
 
 func stripeAPIBase() (string, error) {
-	apiBase, ok, err := paymentSetting("payment.stripe.api_base")
+	apiBase, apiBaseOK, err := paymentSetting("payment.stripe.api_base")
 	if err != nil {
 		return "", err
 	}
-	if !ok {
+	if !apiBaseOK {
 		return "https://api.stripe.com", nil
+	}
+	parsed, err := url.Parse(apiBase)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", errors.New("stripe api_base must be an absolute URL")
 	}
 	return strings.TrimRight(apiBase, "/"), nil
 }
@@ -2244,7 +1718,7 @@ func (s *UserService) GetPaymentOrder(userID uint, orderNo string) (*model.Payme
 }
 
 // CancelPaymentOrder 将当前用户自己的 pending 支付订单关闭。
-// 已关闭订单按幂等成功处理；已支付、退款中或已退款订单不能被用户取消。
+// 已关闭订单按幂等成功处理；已支付订单不能被用户取消。
 func (s *UserService) CancelPaymentOrder(userID uint, orderNo string) (*model.PaymentOrder, bool, error) {
 	orderNo = strings.TrimSpace(orderNo)
 	if userID == 0 || orderNo == "" {
@@ -2439,16 +1913,15 @@ type stripeWebhookEvent struct {
 }
 
 type stripeCheckoutSession struct {
-	ID             string            `json:"id"`
-	Metadata       map[string]string `json:"metadata"`
-	Amount         int64             `json:"amount"`
-	AmountTotal    int64             `json:"amount_total"`
-	AmountRefunded int64             `json:"amount_refunded"`
-	Currency       string            `json:"currency"`
-	PaymentStatus  string            `json:"payment_status"`
-	PaymentIntent  string            `json:"payment_intent"`
-	Status         string            `json:"status"`
-	Reason         string            `json:"reason"`
+	ID            string            `json:"id"`
+	Metadata      map[string]string `json:"metadata"`
+	Amount        int64             `json:"amount"`
+	AmountTotal   int64             `json:"amount_total"`
+	Currency      string            `json:"currency"`
+	PaymentStatus string            `json:"payment_status"`
+	PaymentIntent string            `json:"payment_intent"`
+	Status        string            `json:"status"`
+	Reason        string            `json:"reason"`
 }
 
 // ProcessStripeWebhook 验证 Stripe 原始签名，并在可信 Checkout 成功事件中幂等入账。
@@ -2495,9 +1968,6 @@ func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestI
 		}
 		if err := tx.Create(&paymentEvent).Error; err != nil {
 			return err
-		}
-		if event.Type == "charge.refunded" {
-			return processStripeRefund(tx, &paymentEvent, session, requestID)
 		}
 		if isStripeDisputeEvent(event.Type) {
 			return processStripeDispute(tx, &paymentEvent, session, requestID)
@@ -2584,125 +2054,6 @@ func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestI
 		}
 		return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentOrderPaid, paymentEvent, &order, nil)
 	})
-}
-
-func processStripeRefund(tx *gorm.DB, event *model.PaymentEvent, session stripeCheckoutSession, requestID string) error {
-	orderNo := strings.TrimSpace(session.Metadata["order_no"])
-	paymentIntent := strings.TrimSpace(session.PaymentIntent)
-	if orderNo == "" && paymentIntent == "" {
-		return errors.New("stripe refund missing order reference")
-	}
-	query := tx.Where("provider = ?", common.PaymentProviderStripe)
-	if orderNo != "" {
-		query = query.Where("order_no = ?", orderNo)
-	} else {
-		query = query.Where("provider_payment_id = ?", paymentIntent)
-	}
-	var order model.PaymentOrder
-	if err := query.First(&order).Error; err != nil {
-		return err
-	}
-	orderAmountMinor, refundedAmountMinor, err := verifyStripeRefundSnapshot(order, session)
-	if err != nil {
-		return err
-	}
-
-	now := time.Now()
-	eventUpdates := map[string]interface{}{"processed": true, "processed_at": &now}
-	if event.OrderNo == "" {
-		eventUpdates["order_no"] = order.OrderNo
-		event.OrderNo = order.OrderNo
-	}
-	if order.Status == common.PaymentOrderStatusRefunded {
-		if err := tx.Model(event).Updates(eventUpdates).Error; err != nil {
-			return err
-		}
-		event.Processed = true
-		event.ProcessedAt = &now
-		return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentRefundProcessed, *event, &order, map[string]interface{}{
-			"idempotent": true,
-		})
-	}
-	if order.Status != common.PaymentOrderStatusPaid && order.Status != common.PaymentOrderStatusRefundPending {
-		return errors.New("payment order is not paid")
-	}
-	refundStatus := common.PaymentOrderStatusRefunded
-	refundType := "full"
-	refundQuota := order.Quota
-	if refundedAmountMinor < orderAmountMinor {
-		refundStatus = common.PaymentOrderStatusPartiallyRefunded
-		refundType = "partial"
-		refundQuota = proportionalRefundQuota(order.Quota, refundedAmountMinor, orderAmountMinor)
-	}
-	if err := tx.Model(&order).Updates(map[string]interface{}{
-		"status":     refundStatus,
-		"updated_at": now,
-	}).Error; err != nil {
-		return err
-	}
-	order.Status = refundStatus
-	if err := tx.Model(&model.PaymentRefundRequest{}).
-		Where("order_no = ? AND status IN ?", order.OrderNo, []string{"pending", "succeeded"}).
-		Update("status", refundStatus).Error; err != nil {
-		return err
-	}
-
-	autoDeduct, err := paymentBoolSettingDefault("payment.refund.auto_deduct", false)
-	if err != nil {
-		return err
-	}
-	allowNegative, err := paymentBoolSettingDefault("payment.refund.allow_negative_balance", false)
-	if err != nil {
-		return err
-	}
-	deducted := false
-	if autoDeduct {
-		var user model.User
-		if err := tx.Select("id", "quota").First(&user, order.UserID).Error; err != nil {
-			return err
-		}
-		if refundQuota > 0 && (allowNegative || user.Quota >= refundQuota) {
-			reason := "stripe refund deduct"
-			if refundType == "partial" {
-				reason = "stripe partial refund deduct"
-			}
-			if _, _, err := applyQuotaChange(tx, quotaChange{
-				UserID:         order.UserID,
-				Amount:         -refundQuota,
-				Type:           common.QuotaTransactionTypeRefundDeduct,
-				SourceType:     common.QuotaSourceTypeRefund,
-				SourceID:       event.ProviderEventID,
-				IdempotencyKey: "refund:" + event.ProviderEventID,
-				Reason:         reason,
-				RequestID:      requestID,
-				AllowNegative:  allowNegative,
-			}); err != nil {
-				return err
-			}
-			deducted = true
-		}
-	}
-	if err := tx.Model(event).Updates(eventUpdates).Error; err != nil {
-		return err
-	}
-	event.Processed = true
-	event.ProcessedAt = &now
-	refundSummary := map[string]interface{}{
-		"amount_refunded": refundedAmountMinor,
-		"order_amount":    orderAmountMinor,
-		"auto_deduct":     autoDeduct,
-		"allow_negative":  allowNegative,
-		"deducted":        deducted,
-		"refund_quota":    refundQuota,
-		"refund_type":     refundType,
-	}
-	if err := recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentRefundProcessed, *event, &order, refundSummary); err != nil {
-		return err
-	}
-	if deducted {
-		return recordPaymentEventAudit(tx, requestID, adminAuditActionPaymentRefundDeducted, *event, &order, refundSummary)
-	}
-	return nil
 }
 
 func processStripeCheckoutFailure(tx *gorm.DB, event *model.PaymentEvent, session stripeCheckoutSession, requestID string) error {
@@ -3018,24 +2369,6 @@ func verifyStripeOrderSnapshot(order model.PaymentOrder, session stripeCheckoutS
 	return nil
 }
 
-func verifyStripeRefundSnapshot(order model.PaymentOrder, session stripeCheckoutSession) (int64, int64, error) {
-	expectedAmount, err := decimalAmountToMinorUnits(order.Amount)
-	if err != nil {
-		return 0, 0, err
-	}
-	refundedAmount := session.AmountRefunded
-	if refundedAmount == 0 {
-		refundedAmount = session.Amount
-	}
-	if refundedAmount <= 0 || refundedAmount > expectedAmount {
-		return 0, 0, errors.New("stripe refund amount mismatch")
-	}
-	if strings.ToLower(strings.TrimSpace(order.Currency)) != strings.ToLower(strings.TrimSpace(session.Currency)) {
-		return 0, 0, errors.New("stripe refund currency mismatch")
-	}
-	return expectedAmount, refundedAmount, nil
-}
-
 func verifyStripeDisputeSnapshot(order model.PaymentOrder, session stripeCheckoutSession) (int64, int64, error) {
 	expectedAmount, err := decimalAmountToMinorUnits(order.Amount)
 	if err != nil {
@@ -3049,16 +2382,6 @@ func verifyStripeDisputeSnapshot(order model.PaymentOrder, session stripeCheckou
 		return 0, 0, errors.New("stripe dispute currency mismatch")
 	}
 	return expectedAmount, disputeAmount, nil
-}
-
-func proportionalRefundQuota(orderQuota, refundedAmount, orderAmount int64) int64 {
-	if orderQuota <= 0 || refundedAmount <= 0 || orderAmount <= 0 {
-		return 0
-	}
-	if refundedAmount >= orderAmount {
-		return orderQuota
-	}
-	return orderQuota * refundedAmount / orderAmount
 }
 
 func paymentBoolSettingDefault(key string, fallback bool) (bool, error) {
