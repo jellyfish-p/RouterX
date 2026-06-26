@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,22 +37,12 @@ func (cfg rateLimitConfig) hasActiveDimensionForRequest(c *gin.Context) bool {
 	return cfg.perTokenPerMin > 0 || (cfg.perUserPerMin > 0 && token.UserID > 0)
 }
 
-// RateLimit Gin 中间件：基于 Redis 的分钟级多维限流。
+// RateLimit Gin 中间件：基于 Redis 或进程内内存的分钟级多维限流。
 // rate_limit.* 从 settings 热读取；任一维度配置为 0 时跳过该维度。
 func RateLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		cfg := loadRateLimitConfig()
 		if !cfg.enabled {
-			c.Next()
-			return
-		}
-		if internal.RDB == nil {
-			if cfg.hasActiveDimensionForRequest(c) && service.RedisRequiredForCurrentMode() {
-				service.RecordRedisError("rate_limit_required")
-				writeRateLimitUnavailableError(c, "redis", "required")
-				c.Abort()
-				return
-			}
 			c.Next()
 			return
 		}
@@ -195,9 +186,71 @@ func recordRateLimitUnavailablePolicyLog(c *gin.Context, dimension, reason strin
 	service.NewTokenService().RecordRateLimitUnavailablePolicyLog(token, dimension, reason, c.ClientIP(), c.GetHeader("User-Agent"), c.GetString("request_id"))
 }
 
+type processRateLimitEntry struct {
+	count     int64
+	expiresAt time.Time
+}
+
+type processRateLimitCounter struct {
+	mu      sync.Mutex
+	entries map[string]processRateLimitEntry
+	now     func() time.Time
+}
+
+var localRateLimitCounter = newProcessRateLimitCounter(time.Now)
+
+func newProcessRateLimitCounter(now func() time.Time) *processRateLimitCounter {
+	if now == nil {
+		now = time.Now
+	}
+	return &processRateLimitCounter{
+		entries: map[string]processRateLimitEntry{},
+		now:     now,
+	}
+}
+
+func ResetRateLimitState() {
+	localRateLimitCounter.mu.Lock()
+	defer localRateLimitCounter.mu.Unlock()
+	localRateLimitCounter.entries = map[string]processRateLimitEntry{}
+}
+
+func processRateLimitExceeded(key string, limit int64, window time.Duration) (bool, int64) {
+	if limit <= 0 {
+		return false, 0
+	}
+	now := localRateLimitCounter.now()
+	localRateLimitCounter.mu.Lock()
+	defer localRateLimitCounter.mu.Unlock()
+
+	entry := localRateLimitCounter.entries[key]
+	if entry.expiresAt.IsZero() || !entry.expiresAt.After(now) {
+		entry = processRateLimitEntry{expiresAt: now.Add(window)}
+	}
+	entry.count++
+	localRateLimitCounter.entries[key] = entry
+
+	if len(localRateLimitCounter.entries) > 10000 {
+		for k, value := range localRateLimitCounter.entries {
+			if !value.expiresAt.After(now) {
+				delete(localRateLimitCounter.entries, k)
+			}
+		}
+	}
+	return entry.count > limit, entry.count
+}
+
 func rateLimitExceeded(key string, limit int64) (bool, int64, bool) {
 	if limit <= 0 {
 		return false, 0, false
+	}
+	if internal.RDB == nil {
+		if service.RedisRequiredForCurrentMode() {
+			service.RecordRedisError("rate_limit_required")
+			return false, 0, true
+		}
+		exceeded, count := processRateLimitExceeded(key, limit, 2*time.Minute)
+		return exceeded, count, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()

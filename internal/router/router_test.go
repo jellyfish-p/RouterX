@@ -13992,6 +13992,93 @@ func TestRateLimitUsesSettingsAndEntryProtocolErrorShape(t *testing.T) {
 	}
 }
 
+func TestRateLimitFallsBackToMemoryWithoutRedisInSQLiteMode(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("SQL_DSN", "")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-memory-limit","object":"chat.completion","model":"gpt-memory-limit","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"rate_limit.enabled":           "true",
+		"rate_limit.global_per_min":    "0",
+		"rate_limit.per_token_per_min": "1",
+		"rate_limit.per_ip_per_min":    "0",
+		"rate_limit.per_user_per_min":  "0",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":        "memory-limit",
+		"quota_limit": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "memory-limit",
+		"models":   "gpt-memory-limit",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	internal.RDB = nil
+	body := map[string]interface{}{
+		"model": "gpt-memory-limit",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	first := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	second := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+
+	if first.Code != http.StatusOK {
+		t.Fatalf("first request should pass through memory limiter, got %d %s", first.Code, first.Body.String())
+	}
+	if second.Code != http.StatusTooManyRequests || !strings.Contains(second.Body.String(), `"code":"rate_limit_exceeded"`) {
+		t.Fatalf("second request should be denied by memory limiter, got %d %s", second.Code, second.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("memory limiter should reject before upstream on the second request, got %d upstream calls", upstreamCalls)
+	}
+}
+
 func TestRateLimitRedisUnavailableFailsClosedInExternalDatabaseMode(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

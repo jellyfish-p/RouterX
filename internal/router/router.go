@@ -37,6 +37,7 @@ func SetupRouter(
 ) *gin.Engine {
 	middleware.ResetHTTPMetrics()
 	middleware.ResetAPIKeyAuthMetrics()
+	middleware.ResetRateLimitState()
 	service.ResetRelayMetrics()
 	service.ResetInfrastructureErrorMetrics()
 
