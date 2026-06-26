@@ -10099,6 +10099,88 @@ func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 	}
 }
 
+func TestStripeWebhookStoresRedactedPayload(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_stripe_redaction",
+		Name:      "Stripe redaction credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.stripe.enabled":        "true",
+		"payment.stripe.webhook_secret": "whsec_test_secret",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "stripe",
+		"product_id": "quota_stripe_redaction",
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create payment order failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("user_id = ? AND provider = ?", root.ID, common.PaymentProviderStripe).First(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := stripeCheckoutCompletedPayload("evt_stripe_redacted", &order, root.ID, 999, "pi_redacted")
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	object := envelope["data"].(map[string]interface{})["object"].(map[string]interface{})
+	object["customer_email"] = "buyer@example.com"
+	object["client_secret"] = "pi_redacted_secret_should_not_persist"
+	object["metadata"].(map[string]interface{})["internal_note"] = "do-not-store-this"
+	raw, _ := json.Marshal(envelope)
+
+	resp := performStripeWebhook(r, string(raw), "whsec_test_secret")
+	if resp.Code != http.StatusOK || strings.TrimSpace(resp.Body.String()) != "success" {
+		t.Fatalf("signed stripe event should be acknowledged, got %d %s", resp.Code, resp.Body.String())
+	}
+
+	var event model.PaymentEvent
+	if err := internal.DB.Where("provider = ? AND provider_event_id = ?", common.PaymentProviderStripe, "evt_stripe_redacted").First(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(event.Payload, "evt_stripe_redacted") || !strings.Contains(event.Payload, order.OrderNo) || !strings.Contains(event.Payload, "pi_redacted") {
+		t.Fatalf("redacted payload should keep operational identifiers, got %s", event.Payload)
+	}
+	for _, forbidden := range []string{"buyer@example.com", "client_secret", "secret_should_not_persist", "internal_note", "do-not-store-this"} {
+		if strings.Contains(event.Payload, forbidden) {
+			t.Fatalf("stripe payload persisted sensitive field %q: %s", forbidden, event.Payload)
+		}
+	}
+}
+
 func TestStripeAsyncPaymentFailedMarksOrderFailedAndAudits(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")

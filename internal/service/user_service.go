@@ -1958,12 +1958,16 @@ func (s *UserService) ProcessStripeWebhook(raw []byte, signatureHeader, requestI
 			return err
 		}
 
+		redactedPayload, err := json.Marshal(redactedStripePayload(event, session))
+		if err != nil {
+			return err
+		}
 		paymentEvent := model.PaymentEvent{
 			Provider:        common.PaymentProviderStripe,
 			ProviderEventID: event.ID,
 			OrderNo:         orderNo,
 			EventType:       event.Type,
-			Payload:         string(raw),
+			Payload:         string(redactedPayload),
 			SignatureValid:  true,
 		}
 		if err := tx.Create(&paymentEvent).Error; err != nil {
@@ -2769,6 +2773,34 @@ func redactedEpayPayload(values map[string]string) map[string]string {
 		}
 		payload[k] = v
 	}
+	return payload
+}
+
+func redactedStripePayload(event stripeWebhookEvent, session stripeCheckoutSession) map[string]interface{} {
+	payload := map[string]interface{}{
+		"id":   event.ID,
+		"type": event.Type,
+	}
+	object := map[string]interface{}{
+		"id":             session.ID,
+		"amount":         session.Amount,
+		"amount_total":   session.AmountTotal,
+		"currency":       session.Currency,
+		"payment_status": session.PaymentStatus,
+		"payment_intent": session.PaymentIntent,
+		"status":         session.Status,
+		"reason":         session.Reason,
+	}
+	metadata := map[string]string{}
+	for _, key := range []string{"order_no", "product_id", "user_id"} {
+		if value := strings.TrimSpace(session.Metadata[key]); value != "" {
+			metadata[key] = value
+		}
+	}
+	if len(metadata) > 0 {
+		object["metadata"] = metadata
+	}
+	payload["data"] = map[string]interface{}{"object": object}
 	return payload
 }
 
