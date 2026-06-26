@@ -1176,14 +1176,14 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 				return usage, httpErr
 			}
 			billing := s.calculateRelayBilling(token, channel, reqInfo.Model, usage)
-			deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
+			deduction, err := s.tokenService.DeductDeliveredQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 			if err != nil {
 				logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingFailureSnapshot(usage, billing, deduction, err))
-				_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, "insufficient quota", clientIP)
+				_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, "stream post-delivery billing failed", clientIP)
 				return usage, err
 			}
 			_ = s.markChannelSuccess(channel, latencyMs)
-			logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(usage, billing, deduction))
+			logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayDeliveredBillingSnapshot(usage, billing, deduction))
 			_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, billing.QuotaUsed, "", clientIP)
 			return usage, nil
 		},
@@ -4390,6 +4390,24 @@ func buildRelayBillingSnapshot(usage *relay.Usage, billing relayBillingResult, d
 		return ""
 	}
 	return string(raw)
+}
+
+func buildRelayDeliveredBillingSnapshot(usage *relay.Usage, billing relayBillingResult, deduction QuotaDeductionResult) string {
+	raw := buildRelayBillingSnapshot(usage, billing, deduction)
+	if raw == "" {
+		return raw
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return raw
+	}
+	snapshot["post_delivery_debit"] = true
+	snapshot["overdrawn"] = (!deduction.TokenUnlimited && deduction.TokenQuotaAfter < 0) || deduction.UserQuotaAfter < 0
+	updated, err := json.Marshal(snapshot)
+	if err != nil {
+		return raw
+	}
+	return string(updated)
 }
 
 func buildRelayBillingFailureSnapshot(usage *relay.Usage, billing relayBillingResult, deduction QuotaDeductionResult, err error) string {

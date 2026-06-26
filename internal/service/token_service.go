@@ -2040,6 +2040,64 @@ func (s *TokenService) DeductQuotaWithSnapshot(tokenID uint, quota int64) (Quota
 	return result, nil
 }
 
+func (s *TokenService) DeductDeliveredQuotaWithSnapshot(tokenID uint, quota int64) (QuotaDeductionResult, error) {
+	result := QuotaDeductionResult{}
+	if quota <= 0 {
+		return result, nil
+	}
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		var token model.Token
+		if err := tx.Preload("User").First(&token, tokenID).Error; err != nil {
+			return err
+		}
+		result.TokenUnlimited = tokenIsUnlimited(token)
+		result.TokenQuotaBefore = tokenRemainingQuota(token)
+		result.TokenQuotaAfter = result.TokenQuotaBefore - quota
+		if result.TokenUnlimited {
+			result.TokenQuotaBefore = common.QuotaUnlimited
+			result.TokenQuotaAfter = common.QuotaUnlimited
+		}
+		if token.User != nil {
+			result.UserQuotaBefore = token.User.Quota
+			result.UserQuotaAfter = token.User.Quota - quota
+		}
+		tokenUpdates := map[string]interface{}{
+			"quota_used": gorm.Expr("quota_used + ?", quota),
+		}
+		if result.TokenUnlimited {
+			tokenUpdates["quota_limit"] = common.QuotaUnlimited
+			tokenUpdates["unlimited"] = true
+		} else {
+			tokenUpdates["quota_limit"] = gorm.Expr("quota_limit - ?", quota)
+			tokenUpdates["unlimited"] = false
+		}
+		res := tx.Model(&model.Token{}).
+			Where("id = ? AND status = ?", token.ID, common.TokenStatusEnabled).
+			Updates(tokenUpdates)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrAPIKeyDisabled
+		}
+		res = tx.Model(&model.User{}).
+			Where("id = ? AND status = ?", token.UserID, common.UserStatusEnabled).
+			Update("quota", gorm.Expr("quota - ?", quota))
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrAPIUserDisabled
+		}
+		return nil
+	})
+	if err != nil {
+		return result, err
+	}
+	s.invalidateAPIKeyAuthCacheByIDs(tokenID)
+	return result, nil
+}
+
 func (s *TokenService) HasAvailableQuota(token *model.Token) bool {
 	if token == nil {
 		return false
