@@ -13,20 +13,22 @@ type TokenListRequest struct {
 }
 
 type CreateTokenRequest struct {
-	Name        string                `json:"name" binding:"required,max=64"`
-	RemainQuota int64                 `json:"remain_quota"`
-	Unlimited   bool                  `json:"unlimited"`
-	ExpiredAt   *int64                `json:"expired_at"`
-	Metadata    *TokenMetadataRequest `json:"metadata"`
+	Name            string                `json:"name" binding:"required,max=64"`
+	QuotaLimit      *int64                `json:"quota_limit"`
+	Unlimited       bool                  `json:"unlimited"`
+	ExpiredAt       *int64                `json:"expired_at"`
+	Metadata        *TokenMetadataRequest `json:"metadata"`
+	LeakRiskEnabled *bool                 `json:"leak_risk_enabled"`
 }
 
 type UpdateTokenRequest struct {
-	Name        *string               `json:"name"`
-	Status      *int                  `json:"status"`
-	RemainQuota *int64                `json:"remain_quota"`
-	Unlimited   *bool                 `json:"unlimited"`
-	ExpiredAt   *int64                `json:"expired_at"`
-	Metadata    *TokenMetadataRequest `json:"metadata"`
+	Name            *string               `json:"name"`
+	Status          *int                  `json:"status"`
+	QuotaLimit      *int64                `json:"quota_limit"`
+	Unlimited       *bool                 `json:"unlimited"`
+	ExpiredAt       *int64                `json:"expired_at"`
+	Metadata        *TokenMetadataRequest `json:"metadata"`
+	LeakRiskEnabled *bool                 `json:"leak_risk_enabled"`
 }
 
 type ReportTokenLeakRequest struct {
@@ -103,8 +105,10 @@ type TokenResponse struct {
 	Name              string                 `json:"name"`
 	Status            int                    `json:"status"`
 	ExpiredAt         *time.Time             `json:"expired_at,omitempty"`
-	RemainQuota       int64                  `json:"remain_quota"`
+	QuotaLimit        int64                  `json:"quota_limit"`
+	QuotaUsed         int64                  `json:"quota_used"`
 	Unlimited         bool                   `json:"unlimited"`
+	LeakRiskEnabled   bool                   `json:"leak_risk_enabled"`
 	RotatedFromID     *uint                  `json:"rotated_from_id,omitempty"`
 	RevokedReason     string                 `json:"revoked_reason,omitempty"`
 	Scope             *TokenScopeResponse    `json:"scope,omitempty"`
@@ -236,8 +240,10 @@ func TokenFromModel(token model.Token) TokenResponse {
 		Name:              token.Name,
 		Status:            token.Status,
 		ExpiredAt:         token.ExpiredAt,
-		RemainQuota:       token.RemainQuota,
+		QuotaLimit:        token.QuotaLimit,
+		QuotaUsed:         token.QuotaUsed,
 		Unlimited:         token.Unlimited,
+		LeakRiskEnabled:   token.LeakRiskEnabled,
 		RotatedFromID:     token.RotatedFromID,
 		RevokedReason:     token.RevokedReason,
 		Scope:             TokenScopeFromJSON(token.ScopeJSON),

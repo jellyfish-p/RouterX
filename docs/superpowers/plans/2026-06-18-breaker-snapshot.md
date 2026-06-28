@@ -79,7 +79,7 @@ type RouteSelectionFacts struct {
 }
 ```
 
-Add `SelectChannelCandidatesWithRouteDetailedFacts(modelName string, route RoutePreference) ([]model.Channel, RouteSelectionFacts, error)`. Keep `SelectChannelCandidatesWithRouteFacts` as a compatibility wrapper returning `facts.FilteredReasons`.
+Add `SelectChannelCandidatesWithRouteDetailedFacts(modelName string, route RoutePreference) ([]model.Channel, RouteSelectionFacts, error)`. Keep `SelectChannelCandidatesWithRouteFacts` as a thin wrapper returning `facts.FilteredReasons`.
 
 - [x] **Step 2: Capture health-blocked channel summaries**
 
@@ -145,7 +145,7 @@ Update the `policy_snapshot` schema description to mention `breaker_snapshot` fo
 - [x] **Step 1: Run targeted tests**
 
 ```powershell
-go test ./internal/router -run "TestNoAvailableChannelWritesBreakerSnapshot|TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold|TestChatCompletionHonorsDisabledAutoBanSetting|TestChannelBreakerCooldownAllowsProbeAfterWindow|TestRouterXRoutePreferenceFiltersChannels" -count=1
+go test ./internal/router -run "TestNoAvailableChannelWritesBreakerSnapshot|TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold|TestChatCompletionHonorsDisabledAutoBanSetting|TestChannelBreakerCooldownAllowsProbeAfterWindow|TestRouterXRequestFieldIsIgnoredForRoutingAndStripped" -count=1
 ```
 
 - [x] **Step 2: Run full tests**

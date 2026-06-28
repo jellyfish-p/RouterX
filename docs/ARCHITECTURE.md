@@ -103,7 +103,7 @@ main
 | User | `/v0/user` | `SetupCheck`、User JWT | 用户控制台 API |
 | Relay | `/v1` | `SetupCheck`、API Key Auth | OpenAI、Gemini、Anthropic 入口协议和多上游转发 API |
 
-当前 `/ready` 挂在公共路由上，已检查数据库连接、golang-migrate 的 `schema_migrations.dirty` 状态、外部数据库模式下 Redis 可用性、初始化后的 JWT 配置、关键 settings、支付 provider 环境密钥，以及存在 `enc:v1:` 通道密钥时的 `ENCRYPTION_KEY` 和逐条解密结果。目标生产版本应继续补 KMS provider/轮换任务和更多 Redis 集群策略；这些检查属于运维就绪，不应阻塞 `/health` 存活探测。
+当前 `/ready` 挂在公共路由上，已检查数据库连接、golang-migrate 的 `schema_migrations.dirty` 状态、外部数据库模式下 Redis 可用性、初始化后的 JWT 配置、关键 settings、支付 provider 数据库密钥，以及存在 `enc:v1:` 通道密钥、外部登录 client secret 或支付 provider 密钥时的 `ENCRYPTION_KEY` 和逐条解密结果。目标生产版本应继续补 KMS provider/轮换任务和更多 Redis 集群策略；这些检查属于运维就绪，不应阻塞 `/health` 存活探测。
 
 全局中间件顺序：
 
@@ -225,7 +225,7 @@ POST /v0/setup/init
 
 ## 依赖装配
 
-当前使用手工依赖注入，适合项目早期。
+当前使用手工依赖注入，让服务边界和依赖关系保持显式。
 
 目标约束：
 
@@ -261,7 +261,7 @@ POST /v0/setup/init
 
 - 当前实现已支持 ChannelService 进程内候选缓存，缓存排序后的通道表快照，并通过 `routing.channel_cache.version` 和 `routing.channel_cache.ttl_seconds` 失效。
 - 启动或缓存版本变化后，ChannelService 应按模型、APIType、通道分组、用户分组访问规则预构建候选索引。
-- API Key scope、`routerx.route` 和请求级约束在预加载候选集之后继续收窄，避免按每个 Key 生成高基数缓存。
+- API Key scope、API Key/channel-group scope 和请求级约束在预加载候选集之后继续收窄，避免按每个 Key 生成高基数缓存。
 - 单机 SQLite 模式可使用进程内缓存和短 TTL。
 - DB+Redis 模式使用 Redis 保存 `routing.channel_cache.version`、失效标记或共享快照，管理员修改通道、分组、价格和策略后广播失效。
 - 任一实例发现本地版本落后时，必须重新加载候选索引后再承接后续请求。

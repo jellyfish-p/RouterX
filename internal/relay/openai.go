@@ -49,10 +49,12 @@ func (a *RouterXAdapter) ConvertRequest(apiType APIType, body []byte) ([]byte, e
 	if apiType == APIModels {
 		return nil, nil
 	}
-	if !json.Valid(body) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, errors.New("invalid json")
 	}
-	return body, nil
+	delete(payload, "routerx")
+	return json.Marshal(payload)
 }
 
 func (a *OpenAIAdapter) GetAPIEndpoint(apiType APIType, model string) string {

@@ -23,7 +23,10 @@ func main() {
 
 	// 2. 初始化 Redis
 	if err := internal.InitRedis(); err != nil {
-		log.Printf("[WARN] redis init failed (non-fatal): %v", err)
+		if redisInitFailureIsFatal(err) {
+			log.Fatalf("[FATAL] redis init failed in external database mode: %v", err)
+		}
+		log.Printf("[WARN] redis init failed (non-fatal in sqlite mode): %v", err)
 	}
 
 	// 3. 依赖注入: Service 层
@@ -72,4 +75,8 @@ func main() {
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("[FATAL] server failed: %v", err)
 	}
+}
+
+func redisInitFailureIsFatal(err error) bool {
+	return err != nil && service.RedisRequiredForCurrentMode()
 }

@@ -35,12 +35,12 @@ func TestValidateAndGetTokenRejectsExpirationBoundary(t *testing.T) {
 
 	key := "sk-expiration-boundary"
 	token := model.Token{
-		UserID:      user.ID,
-		Name:        "boundary-key",
-		Key:         common.SHA256Hex(key),
-		Status:      common.TokenStatusEnabled,
-		ExpiredAt:   &now,
-		RemainQuota: 100,
+		UserID:     user.ID,
+		Name:       "boundary-key",
+		Key:        common.SHA256Hex(key),
+		Status:     common.TokenStatusEnabled,
+		ExpiredAt:  &now,
+		QuotaLimit: 100,
 	}
 	if err := db.Create(&token).Error; err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestValidateAndGetTokenResolvesFromRedisAuthCache(t *testing.T) {
 	if err := db.Create(&user).Error; err != nil {
 		t.Fatal(err)
 	}
-	token := model.Token{UserID: user.ID, Name: "cached-key", Key: common.SHA256Hex("sk-real-key"), Status: common.TokenStatusEnabled, RemainQuota: 100}
+	token := model.Token{UserID: user.ID, Name: "cached-key", Key: common.SHA256Hex("sk-real-key"), Status: common.TokenStatusEnabled, QuotaLimit: 100}
 	if err := db.Create(&token).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestAPIKeyAuthCacheWarmsAndClearsOnDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := "sk-disable-cache"
-	token := model.Token{UserID: user.ID, Name: "disable-cache-key", Key: common.SHA256Hex(key), Status: common.TokenStatusEnabled, RemainQuota: 100}
+	token := model.Token{UserID: user.ID, Name: "disable-cache-key", Key: common.SHA256Hex(key), Status: common.TokenStatusEnabled, QuotaLimit: 100}
 	if err := db.Create(&token).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -118,5 +118,89 @@ func TestAPIKeyAuthCacheWarmsAndClearsOnDisable(t *testing.T) {
 	}
 	if cached, ok := redisServer.StringValue(cacheKey); ok {
 		t.Fatalf("disable should clear auth cache, value=%q", cached)
+	}
+}
+
+func TestDeductQuotaTracksTokenRemainingLimitAndUsedQuota(t *testing.T) {
+	db := newLogServiceTestDB(t, "token-quota-limit-used")
+	withMainDB(t, db)
+
+	username := "quota-limit-user"
+	user := model.User{Username: &username, Role: common.RoleUser, Status: common.UserStatusEnabled, Quota: 100}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	token := model.Token{
+		UserID:     user.ID,
+		Name:       "limited-key",
+		Key:        common.SHA256Hex("sk-limited-key"),
+		Status:     common.TokenStatusEnabled,
+		QuotaLimit: 50,
+		QuotaUsed:  3,
+	}
+	if err := db.Create(&token).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	deduction, err := NewTokenService().DeductQuotaWithSnapshot(token.ID, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deduction.TokenQuotaBefore != 50 || deduction.TokenQuotaAfter != 43 || deduction.UserQuotaBefore != 100 || deduction.UserQuotaAfter != 93 {
+		t.Fatalf("unexpected deduction snapshot: %+v", deduction)
+	}
+
+	var storedToken model.Token
+	if err := db.First(&storedToken, token.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.QuotaLimit != 43 || storedToken.QuotaUsed != 10 {
+		t.Fatalf("deduction should update remaining limit and cumulative usage, got %+v", storedToken)
+	}
+	var storedUser model.User
+	if err := db.First(&storedUser, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedUser.Quota != 93 {
+		t.Fatalf("deduction should update user quota, got %d", storedUser.Quota)
+	}
+}
+
+func TestDeductQuotaUnlimitedTokenStillTracksUsedQuota(t *testing.T) {
+	db := newLogServiceTestDB(t, "token-unlimited-quota-used")
+	withMainDB(t, db)
+
+	username := "unlimited-quota-user"
+	user := model.User{Username: &username, Role: common.RoleUser, Status: common.UserStatusEnabled, Quota: 100}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	token := model.Token{
+		UserID:     user.ID,
+		Name:       "unlimited-key",
+		Key:        common.SHA256Hex("sk-unlimited-key"),
+		Status:     common.TokenStatusEnabled,
+		QuotaLimit: common.QuotaUnlimited,
+		QuotaUsed:  3,
+		Unlimited:  true,
+	}
+	if err := db.Create(&token).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	deduction, err := NewTokenService().DeductQuotaWithSnapshot(token.ID, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deduction.TokenUnlimited || deduction.TokenQuotaBefore != common.QuotaUnlimited || deduction.TokenQuotaAfter != common.QuotaUnlimited || deduction.UserQuotaAfter != 93 {
+		t.Fatalf("unexpected unlimited deduction snapshot: %+v", deduction)
+	}
+
+	var storedToken model.Token
+	if err := db.First(&storedToken, token.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.QuotaLimit != common.QuotaUnlimited || storedToken.QuotaUsed != 10 {
+		t.Fatalf("unlimited deduction should keep unlimited budget and track usage, got %+v", storedToken)
 	}
 }

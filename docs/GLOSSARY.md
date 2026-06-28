@@ -39,7 +39,7 @@
 | 模型名 | model | 调用方请求中的模型名。 | 日志 P0 记录调用方模型名。 |
 | 上游模型名 | upstream model | 模型重写后真实发给上游的模型名。 | 需要和调用方模型名分别记录，便于账单和排障。 |
 | 模型重写 | model_rewrites | 将调用方模型名改写为上游模型名的通道规则。 | 不应改变调用方看到的入口协议。 |
-| 路由偏好 | `routerx.route` | 调用方在请求中给出的通道分组、provider 等偏好。 | 只能收窄后台允许的候选集，不能越权。 |
+| 路由偏好 | API Key/channel-group scope | 调用方在请求中给出的通道分组、provider 等偏好。 | 只能收窄后台允许的候选集，不能越权。 |
 
 ## 账号和凭据术语
 
@@ -57,9 +57,9 @@
 | 术语 | 英文/代码名 | 推荐含义 | 边界 |
 |------|-------------|----------|------|
 | 用户额度 | `users.quota` | 用户账户层面的可用余额，单位为基础额度单位。 | 无限 API Key 调用会扣用户额度。 |
-| API Key 预算上限 | `tokens.remain_quota` / `quota_limit` | 有限 API Key 的最大消耗额度或剩余预算。 | 不来自用户余额划拨；调用成功时同时扣用户余额并消耗 Key 预算。 |
-| 无限 API Key | `remain_quota=-1` / `unlimited=true` | 不限制 API Key 自身额度，但仍受用户额度和系统策略约束。 | 不是免费调用，也不能绕过限流和访问控制。 |
-| Key 预算 | key budget | 对单个 API Key 的最大消耗限制。 | 创建或调整预算不等于模型消费，也不改变用户余额。 |
+| API Key 预算上限 | `tokens.quota_limit` | 有限 API Key 的剩余可消耗额度。 | 不来自用户余额划拨；调用成功时同时扣用户余额、扣 Key 剩余额度并累计 Key 已用量。 |
+| 无限 API Key | `quota_limit=-1` / `unlimited=true` | 不限制 API Key 自身额度，但仍受用户额度和系统策略约束。 | 不是免费调用，也不能绕过限流和访问控制。 |
+| Key 预算 | key budget | 对单个 API Key 的剩余可消耗限制。 | 创建或调整预算不等于模型消费，也不改变用户余额。 |
 | 消费 | consumption | 模型调用成功后产生的 `quota_used`。 | 用户账单按消费日志聚合。 |
 | usage | usage | 上游或适配器给出的模型 token 用量。 | usage 不是最终扣费金额。 |
 | `quota_used` | quota_used | RouterX 结算后的本次额度消耗。 | 账单聚合以它为准。 |

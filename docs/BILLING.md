@@ -1,4 +1,4 @@
-﻿# RouterX 计费与额度设计
+# RouterX 计费与额度设计
 
 ## 目标
 
@@ -8,7 +8,7 @@
 
 目标能力：
 
-- 支持用户额度、API Key 最大消耗额度。
+- 支持用户额度、API Key 剩余可消耗额度。
 - 支持 API Key 无限额度标记。
 - 支持系统级模型价格配置，系统模型价格存储在 `model_prices` SQL 表中。
 - 支持通道级模型价格覆盖，通道覆盖规则存储在 `channel_model_prices` SQL 表中，优先级高于系统模型价格。
@@ -27,7 +27,7 @@
 
 ## 当前实现边界
 
-当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口、用户/管理端额度流水查询接口、基于 settings 的用户分组 x 通道分组访问控制，系统模型价格表 `model_prices` 的管理端 API、规则版本和用户侧模型价格就绪状态展示，以及通道模型价格覆盖 `channel_model_prices` 的管理端 API、规则版本、普通用户可见性和用户侧通道级价格状态展示。`channel_model_prices.user_enabled=false` 已同时作用于 `/v0/user/models` 和普通用户调用候选过滤。成功调用后的扣费热路径已读取启用的通道级价格表达式，未命中时读取启用的系统模型价格表达式，并在表达式后应用 `billing.default_ratio`、用户分组倍率、通道分组倍率或组合覆盖倍率；实际执行表达式、变量、规则 ID、规则版本、倍率快照和最终 `quota_used` 会写入 `billing_snapshot`。无价格规则或表达式不可执行时回退 P0 usage/minimum 后仍应用倍率；上游成功响应缺少 usage 时由 `billing.usage_missing_strategy` 决定最低扣费或拒绝且不扣费。目标口径已调整为用户余额 + Key 预算双约束，旧 Key 余额划拨语义需要迁移；完整访问控制快照和更多事件仍属于目标增强。
+当前代码已经具备基础额度预检、调用后 usage 写入、`quota_used` 记录、API Key/用户扣减、用户账单统计接口、用户/管理端额度流水查询接口、基于 settings 的用户分组 x 通道分组访问控制，系统模型价格表 `model_prices` 的管理端 API、规则版本和用户侧模型价格就绪状态展示，以及通道模型价格覆盖 `channel_model_prices` 的管理端 API、规则版本、普通用户可见性和用户侧通道级价格状态展示。`channel_model_prices.user_enabled=false` 已同时作用于 `/v0/user/models` 和普通用户调用候选过滤。成功调用后的扣费热路径已读取启用的通道级价格表达式，未命中时读取启用的系统模型价格表达式，并在表达式后应用 `billing.default_ratio`、用户分组倍率、通道分组倍率或组合覆盖倍率；实际执行表达式、变量、规则 ID、规则版本、倍率快照和最终 `quota_used` 会写入 `billing_snapshot`。无价格规则或表达式不可执行时回退 P0 usage/minimum 后仍应用倍率；上游成功响应缺少 usage 时由 `billing.usage_missing_strategy` 决定最低扣费或拒绝且不扣费。目标口径为用户余额 + Key 预算双约束；完整访问控制快照和更多事件仍属于目标增强。
 
 文档中的部分商业级 `billing_*_snapshot` 字段仍是目标设计，不应误读为当前迁移已经全部存在。`model_prices` 和 `channel_model_prices` 当前已经落库并用于管理端维护、`/v0/user/models` 价格状态/可见性展示，以及成功调用后的基础价格表达式执行；`multiplier_snapshot` 当前已记录默认倍率、用户分组倍率、通道分组倍率、组合倍率、倍率模式和最终 `effective_ratio`。调用事实快照的统一字段、脱敏和测试要求以 `docs/SNAPSHOTS.md` 为准。
 
@@ -43,7 +43,7 @@ QuotaPerUnit = 100000000
 
 - 所有额度字段使用 `int64` 整数，避免浮点误差。
 - `100000000` 个数据库 token / 基础额度单位 = `1` 个用户额度。
-- 数据库中 `quota`、`quota_used`、`remain_quota`、`quota_limit`、价格表达式结果等均以基础额度单位存储和计算。
+- 数据库中 `quota`、`quota_used`、`quota_limit`、价格表达式结果等均以基础额度单位存储和计算。
 - 展示层通过 `quota / QuotaPerUnit` 转为用户可见小数额度。
 
 ## 相关字段
@@ -51,14 +51,13 @@ QuotaPerUnit = 100000000
 | 表 | 字段 | 说明 |
 |----|------|------|
 | `users` | `quota` | 用户总可用额度，单位为基础额度单位 |
-| `tokens` | `remain_quota` | 当前字段；目标语义为 API Key 剩余预算上限，`-1` 表示不限 Token 自身额度 |
 | `tokens` | `unlimited` | API Key 是否无限制自身额度 |
-| `tokens` | `quota_limit` / `quota_used` | 目标字段；分别表示 Key 最大消耗额度和累计已用额度 |
+| `tokens` | `quota_limit` / `quota_used` | 分别表示 Key 剩余可消耗额度和累计已用额度 |
 | `payment_products` | `quota` | 支付商品对应增加的基础额度单位 |
-| `payment_orders` | `status` | 支付订单状态，如 `pending`、`paid`、`failed`、`closed`、`refunded` |
+| `payment_orders` | `status` | 支付订单状态，如 `pending`、`paid`、`failed`、`closed` |
 | `payment_orders` | `quota` | 支付成功后应增加的基础额度单位 |
 | `payment_events` | `provider_event_id` | 支付渠道事件 ID，用于幂等处理 |
-| `quota_transactions` | `amount`、`idempotency_key` | 支付入账、充值码、退款、人工调整的额度流水核心字段 |
+| `quota_transactions` | `amount`、`idempotency_key` | 支付入账、充值码、人工调整的额度流水核心字段 |
 | `settings` | `billing.user_group_ratios` | 用户分组倍率 JSON 配置 |
 | `model_prices` | `price_expression` | 系统模型价格表达式，返回倍率前的 `base_quota` |
 | `model_prices` | `variables_json` | 系统模型价格变量默认值 |
@@ -151,22 +150,22 @@ P0 扣费顺序：
 
 额度扣减规则：
 
-- Token `unlimited=true` 或 `remain_quota=-1` 时，不限制 Token 自身预算，只扣用户额度。
-- API Key 有限额度时，调用前必须同时满足用户余额和 Key 剩余预算；调用成功后同时扣用户额度并消耗 Key 预算。
-- 创建有限 API Key 不从用户额度划拨，也不冻结用户余额；它只设置该 Key 的最大消耗额度。
+- Token `unlimited=true` 或 `quota_limit=-1` 时，不限制 Token 自身预算，不扣 Key 剩余额度；调用成功仍扣用户额度并累计 `quota_used`。
+- API Key 有限额度时，调用前必须同时满足用户余额和 Key 剩余预算；调用成功后同时扣用户额度、扣 `quota_limit`，并累加 `quota_used`。
+- 创建有限 API Key 不从用户额度划拨，也不冻结用户余额；它只设置该 Key 的剩余可消耗额度。
 - 所有扣减都必须使用数据库条件更新或事务，不能在并发请求下透支。
 - 失败调用默认不扣费；如未来启用失败最低成本，必须写入配置和日志快照。
 
 余额与消费口径：
 
-| 事件 | `users.quota` | `tokens.remain_quota` | `logs.quota_used` | 口径 |
+| 事件 | `users.quota` | `tokens.quota_limit` | `logs.quota_used` | 口径 |
 |------|---------------|-----------------------|-------------------|------|
-| 创建有限额度 API Key | 不变 | 设置最大消耗额度或剩余预算上限 | 不写消费日志 | 预算上限，不是余额划拨 |
-| 有限 API Key 成功调用 | 减少本次 `quota_used` | 减少剩余预算或增加累计已用 | 写入本次消耗 | 模型消费，受用户余额和 Key 预算双约束 |
-| 无限 Token 成功调用 | 减少本次 `quota_used` | 保持 `-1` | 写入本次消耗 | 模型消费 |
+| 创建有限额度 API Key | 不变 | 设置剩余可消耗额度 | 不写消费日志 | 预算上限，不是余额划拨 |
+| 有限 API Key 成功调用 | 减少本次 `quota_used` | `quota_limit` 减少本次消耗，`quota_used` 增加本次消耗 | 写入本次消耗 | 模型消费，受用户余额和 Key 预算双约束 |
+| 无限 Token 成功调用 | 减少本次 `quota_used` | `quota_limit` 保持 `-1`，`quota_used` 增加本次消耗 | 写入本次消耗 | 模型消费 |
 | 失败且未产生有效 usage | 不变 | 不变 | 可写失败日志，`quota_used=0` | 不计消费 |
 
-用户可用余额只以 `users.quota` 为准；有限 API Key 的剩余预算不是额外余额，也不应加回用户余额展示。用户消费账单按成功调用的 `logs.quota_used` 聚合。Key 预算调整和用户余额调整不能混在同一口径里解释，否则会出现“创建 Key 被当成消费”或“删除 Key 被当成退款”的账本错误。
+用户可用余额只以 `users.quota` 为准；有限 API Key 的剩余预算不是额外余额，也不应加回用户余额展示。用户消费账单按成功调用的 `logs.quota_used` 聚合。Key 预算调整和用户余额调整不能混在同一口径里解释，否则会出现“创建 Key 被当成消费”或“删除 Key 被当成余额返还”的账本错误。
 
 ## 后台配置
 
@@ -397,7 +396,7 @@ ceil(duration_seconds * second_price)
 
 ## 支付和充值
 
-在线支付用于购买用户额度。支付金额、货币、赠送额度和最终入账额度必须由服务端商品配置决定，客户端不能直接提交要增加的 `quota`。支付 provider、充值码、退款、人工补账和额度流水的完整契约以 `docs/PAYMENTS.md` 为准；本文保留计费事实和入账口径摘要。
+在线支付用于购买用户额度。支付金额、货币、赠送额度和最终入账额度必须由服务端商品配置决定，客户端不能直接提交要增加的 `quota`。支付 provider、充值码、人工补账和额度流水的完整契约以 `docs/PAYMENTS.md` 为准；本文保留计费事实和入账口径摘要。
 
 支付模块是可选插件式能力。未启用支付时，系统仍应能通过管理员额度调整、API Key 预算控制和充值码完成基础运营；启用支付后必须满足签名校验、金额校验、幂等入账和审计要求。
 
@@ -441,20 +440,21 @@ ceil(duration_seconds * second_price)
 |--------|------|
 | `payment.products` | 充值商品列表，例如金额、货币、额度、赠送额度、启用状态 |
 | `payment.stripe.enabled` | 是否启用 Stripe |
-| `payment.stripe.currency` | 默认货币，如 `usd` |
-| `payment.stripe.success_url` | Checkout 成功跳转 URL |
-| `payment.stripe.cancel_url` | Checkout 取消跳转 URL |
+| `payment.stripe.secret_key` | Stripe Secret Key；加密落库 |
+| `payment.stripe.webhook_secret` | Stripe Webhook 签名密钥；加密落库 |
+| `payment.stripe.api_base` | Stripe API 基础地址；为空时使用 `https://api.stripe.com` |
 | `payment.epay.enabled` | 是否启用易支付 |
+| `payment.epay.key` | 易支付商户签名密钥；加密落库 |
 | `payment.epay.gateway` | 易支付网关地址 |
 | `payment.epay.pid` | 易支付商户 ID |
 | `payment.epay.notify_url` | 易支付异步通知地址 |
 | `payment.epay.return_url` | 易支付同步返回地址 |
+| `payment.currency` | 默认货币，如 `usd` |
 
 敏感配置：
 
-- Stripe `secret_key`、`webhook_secret` 必须来自 `PAYMENT_STRIPE_SECRET_KEY`、`PAYMENT_STRIPE_WEBHOOK_SECRET`、KMS 或加密配置。
-- 易支付 `key` 必须来自 `PAYMENT_EPAY_KEY`、KMS 或加密配置。
-- 支付密钥不得写入前端响应、日志、订单扩展字段或审计明文。
+- Stripe `secret_key`、`webhook_secret` 和易支付 `key` 都通过数据库 `settings` 配置，并由 `SettingService` 加密落库、透明解密使用。
+- 支付密钥不得写入前端响应、日志、订单扩展字段或审计明文；管理端 settings 响应只返回脱敏值。
 
 ### Stripe
 
@@ -479,7 +479,6 @@ Stripe 规则：
 - Webhook 必须使用原始 request body 校验 `Stripe-Signature`。
 - 只处理可信事件类型，其他事件写入 `payment_events` 后忽略。
 - `amount_total` 和 `currency` 必须和本地订单一致。
-- 退款事件可先只记录，后续再按产品策略决定是否扣回额度。
 
 ### 易支付
 
@@ -536,7 +535,7 @@ receive notify
 - 用户创建支付订单。
 - Stripe Webhook 收到和处理结果。
 - 易支付异步通知收到和处理结果。
-- 支付订单入账、关闭、退款、人工修正。
+- 支付订单入账、关闭、人工修正。
 - 支付商品和支付配置变更。
 
 审计字段建议：

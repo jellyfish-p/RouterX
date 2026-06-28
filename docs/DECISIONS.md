@@ -35,12 +35,12 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 | RXD-006 | User JWT 和 API Key 能力边界严格分离 | Active | 已定 | `API`、`ACCOUNTS`、`DESIGN` |
 | RXD-007 | API Key 明文只返回一次，数据库保存 SHA256 哈希 | Active | 已定 | `API`、`DATA_MODEL`、`ACCOUNTS` |
 | RXD-008 | 下游通道密钥使用 `ENCRYPTION_KEY` 或 KMS 加密 | Active | 已定 | `DATA_MODEL`、`OPERATIONS` |
-| RXD-009 | 有最大消耗额度的 API Key 是预算上限，不在创建时划拨用户余额 | Active | 已定 | `API_KEYS`、`BILLING`、`API`、`TESTING` |
+| RXD-009 | 有剩余可消耗额度的 API Key 是预算上限，不在创建时划拨用户余额 | Active | 已定 | `API_KEYS`、`BILLING`、`API`、`TESTING` |
 | RXD-010 | API Key 调用成功后始终扣用户余额；有限 Key 还要同时消耗自身预算上限 | Active | 已定 | `API_KEYS`、`BILLING`、`API`、`TESTING` |
 | RXD-011 | `relay.retry_count=0` 默认单次调用；大于 0 按 `relay.retry_on_status` 开启非流式安全重试 | Active | 已定 | `SETTINGS`、`RELAY`、`IMPLEMENTATION` |
 | RXD-012 | P0 默认不记录请求和响应 body | Active | 已定 | `SETTINGS`、`OPERATIONS`、`RELAY` |
 | RXD-013 | `/v1` 必须返回入口协议兼容响应和错误格式 | Active | 已定 | `API`、`PROTOCOLS`、`RELAY`、`TESTING` |
-| RXD-014 | `routerx.route` 只能表达偏好，不能绕过管理员策略 | Active | 已定 | `RELAY`、`API`、`DESIGN` |
+| RXD-014 | API Key/channel-group scope 只能表达偏好，不能绕过管理员策略 | Active | 已定 | `RELAY`、`API`、`DESIGN` |
 | RXD-015 | 通道内部 `upstreams` 优先于外层 key/base URL 数组 | Active | 已定 | `RELAY`、`DATA_MODEL`、`TESTING` |
 | RXD-016 | P0 先保证 OpenAI-compatible Chat/Models 闭环 | Active | 已定 | `DEVELOPER_EXPERIENCE`、`RELAY`、`ROADMAP`、`IMPLEMENTATION` |
 | RXD-017 | 多协议和多上游同等重要，但分 P1/P2 展开 | Active | 已定 | `DESIGN`、`PROTOCOLS`、`RELAY`、`ROADMAP` |
@@ -62,16 +62,16 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 
 默认设计：
 
-- 创建带最大消耗额度的 API Key 时，不从用户余额划拨或冻结额度。
-- 有限 API Key 的额度表示预算上限或剩余可消费上限，不是独立余额。
+- 创建带剩余可消耗额度的 API Key 时，不从用户余额划拨或冻结额度。
+- 有限 API Key 的额度表示剩余可消费上限，不是独立余额。
 - 有限 API Key 调用前必须同时检查用户余额和 Key 剩余预算；任一不足都拒绝，不调用上游。
-- 有限 API Key 调用成功后扣用户 `quota`，同时消耗 Key 的剩余预算或增加 Key 的累计已用。
+- 有限 API Key 调用成功后扣用户 `quota`，同时扣 Key 的剩余预算并增加 Key 的累计已用。
 - 无限 API Key 只表示 Key 自身没有预算上限，调用成功后仍扣用户 `quota`。
 
 为什么这样选：
 
 - 创建 Key 不改变用户余额，小白更容易理解“余额只在真实调用后减少”。
-- 技术用户仍能用每个 Key 的最大消耗额度控制项目、环境或人员预算。
+- 技术用户仍能用每个 Key 的剩余可消耗额度控制项目、环境或人员预算。
 - 调用时同时检查用户余额和 Key 预算，可以避免用户余额不足时有限 Key 继续透支。
 - 用户账单可以按成功调用的 `logs.quota_used` 聚合，不需要把创建 Key 解释成账务动作。
 
@@ -79,7 +79,7 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 
 - 有限 Key 需要记录预算上限、剩余预算或累计已用，不能只靠用户余额表达。
 - 扣费事务必须同时更新用户余额和 Key 预算计数，保证并发下二者都不透支。
-- 旧的划拨式 `remain_quota` 存量如存在，需要迁移或在文档和代码中标记为 legacy 语义。
+- `quota_limit` 只表达 Key 剩余可消耗预算，不表达用户余额划拨或冻结。
 
 ### RXD-011：默认不自动重试
 
@@ -135,7 +135,7 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 代价：
 
 - 用户看到的是“Key 未用预算失效”，不是“余额损失”。
-- 旧划拨模型迁移时需要单独定义存量 Key 的处理策略。
+- Key 预算调整必须保留审计事实，避免和用户余额流水混淆。
 
 ### RXD-022：失败调用默认不扣费
 
@@ -200,7 +200,7 @@ Confirm 项不是阻塞当前文档工作的开放问题。它们是“默认已
 
 - 新用户默认归入 `default` 用户分组。
 - 新通道默认归入 `default` 通道分组。
-- 存量空分组或空 `channel_group` 在策略层归一为 `default`，管理端后续可提示管理员补齐显式值。
+- 空分组或空 `channel_group` 在策略层归一为 `default`，管理端后续可提示管理员补齐显式值。
 
 为什么这样选：
 

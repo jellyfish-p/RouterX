@@ -39,20 +39,6 @@ type PaymentManualAdjustmentRequest struct {
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
-type PaymentManualRefundRequest struct {
-	OrderNo        string `json:"order_no"`
-	RefundQuota    int64  `json:"refund_quota"`
-	Reason         string `json:"reason"`
-	IdempotencyKey string `json:"idempotency_key"`
-}
-
-type PaymentProviderRefundRequest struct {
-	OrderNo        string `json:"order_no"`
-	RefundAmount   string `json:"refund_amount"`
-	Reason         string `json:"reason"`
-	IdempotencyKey string `json:"idempotency_key"`
-}
-
 type PaymentProductInfo struct {
 	ProductID  string `json:"product_id"`
 	Name       string `json:"name"`

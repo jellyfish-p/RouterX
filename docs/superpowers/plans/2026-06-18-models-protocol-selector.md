@@ -4,7 +4,7 @@
 
 **Goal:** Add `routerx_protocol` query and `X-RouterX-Protocol` header support to `GET /v1/models` while preserving existing `format` and Anthropic header behavior.
 
-**Architecture:** Keep model-list rendering in `RelayHandler.listModelsForRequest`. Extract a small format resolver that normalizes aliases and enforces compatibility precedence: `format` wins, then `routerx_protocol`, then `X-RouterX-Protocol`, then `anthropic-version`, then OpenAI default. Reuse the existing `RelayService.ListModels`, `ListGeminiModels`, and `ListAnthropicModels` response builders.
+**Architecture:** Keep model-list rendering in `RelayHandler.listModelsForRequest`. Extract a small format resolver that normalizes aliases and enforces format precedence: `format` wins, then `routerx_protocol`, then `X-RouterX-Protocol`, then `anthropic-version`, then OpenAI default. Reuse the existing `RelayService.ListModels`, `ListGeminiModels`, and `ListAnthropicModels` response builders.
 
 **Tech Stack:** Go, Gin router integration tests, existing API Key auth middleware, Apifox OpenAPI YAML.
 
@@ -35,7 +35,7 @@ func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	rootJWT := loginBearer(t, r, "root", "password123")
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
 		"name":         "models-protocol",
-		"remain_quota": 10,
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {

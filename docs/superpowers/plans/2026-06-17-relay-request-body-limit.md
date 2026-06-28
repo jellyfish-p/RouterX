@@ -53,7 +53,7 @@ Add `relay.max_request_body_bytes` default `10485760` in `SetupService.buildDefa
 
 ```go
 func (s *RelayService) MaxRequestBodyBytes() int64 {
-    // 0 disables the limit for compatibility; invalid values fall back to 20MiB.
+    // 0 disables the limit; invalid values fall back to 20MiB.
 }
 ```
 

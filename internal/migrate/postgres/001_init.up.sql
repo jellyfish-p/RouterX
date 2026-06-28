@@ -30,8 +30,10 @@ CREATE TABLE IF NOT EXISTS tokens (
     key VARCHAR(64) NOT NULL UNIQUE,
     status INT NOT NULL DEFAULT 1,
     expired_at TIMESTAMPTZ,
-    remain_quota BIGINT NOT NULL DEFAULT 0,
+    quota_limit BIGINT NOT NULL DEFAULT 0,
+    quota_used BIGINT NOT NULL DEFAULT 0,
     unlimited BOOLEAN NOT NULL DEFAULT FALSE,
+    leak_risk_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMPTZ

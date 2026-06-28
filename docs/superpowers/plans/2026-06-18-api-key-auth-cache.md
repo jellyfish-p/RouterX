@@ -42,7 +42,7 @@ func TestValidateAndGetTokenResolvesFromRedisAuthCache(t *testing.T) {
 	if err := db.Create(&user).Error; err != nil {
 		t.Fatal(err)
 	}
-	token := model.Token{UserID: user.ID, Name: "cached-key", Key: common.SHA256Hex("sk-real-key"), Status: common.TokenStatusEnabled, RemainQuota: 100}
+	token := model.Token{UserID: user.ID, Name: "cached-key", Key: common.SHA256Hex("sk-real-key"), Status: common.TokenStatusEnabled, QuotaLimit: 100}
 	if err := db.Create(&token).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestAPIKeyAuthCacheWarmsAndClearsOnDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := "sk-disable-cache"
-	token := model.Token{UserID: user.ID, Name: "disable-cache-key", Key: common.SHA256Hex(key), Status: common.TokenStatusEnabled, RemainQuota: 100}
+	token := model.Token{UserID: user.ID, Name: "disable-cache-key", Key: common.SHA256Hex(key), Status: common.TokenStatusEnabled, QuotaLimit: 100}
 	if err := db.Create(&token).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ At the start of `ValidateAndGetToken`, after deriving the SHA256 hash, try Redis
 
 - [x] **Step 3: Warm cache after DB validation**
 
-After DB hash or legacy plaintext lookup succeeds and the token is valid, `SET api_key_auth:<hash> <token_id> EX <ttl>`. If `expired_at` is sooner than the default TTL, use the remaining lifetime as the Redis TTL. Redis errors are ignored.
+After DB hash lookup succeeds and the token is valid, `SET api_key_auth:<hash> <token_id> EX <ttl>`. If `expired_at` is sooner than the default TTL, use the remaining lifetime as the Redis TTL. Redis errors are ignored.
 
 - [x] **Step 4: Add explicit invalidation helpers**
 

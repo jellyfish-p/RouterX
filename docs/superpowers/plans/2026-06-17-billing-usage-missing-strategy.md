@@ -4,7 +4,7 @@
 
 **Goal:** Implement the documented `billing.usage_missing_strategy` setting so operators can keep the current minimum-charge fallback or reject upstream responses that do not provide billable usage.
 
-**Architecture:** Keep the decision in `RelayService`, immediately after a successful upstream response has been converted and before any quota deduction. Add the setting to setup defaults and validation, keep `minimum` as the backward-compatible default, and make `reject` write a failed log with zero quota and a stable `usage_missing` error code.
+**Architecture:** Keep the decision in `RelayService`, immediately after a successful upstream response has been converted and before any quota deduction. Add the setting to setup defaults and validation, keep `minimum` as the default behavior, and make `reject` write a failed log with zero quota and a stable `usage_missing` error code.
 
 **Tech Stack:** Go, Gin router integration tests, RouterX settings service, Relay billing path, OpenAPI/Apifox docs.
 

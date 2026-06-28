@@ -153,7 +153,7 @@ Gemini-compatible 错误示例：
 
 | HTTP 状态 | 内部 code 示例 | type/status 示例 | 调用方含义 |
 |-----------|----------------|------------------|------------|
-| 400 | `invalid_json`、`invalid_multipart`、`invalid_chat_messages`、`invalid_gemini_embedding_request`、`invalid_image_prompt`、`invalid_image_count`、`multipart_file_required`、`unsafe_multipart_file`、`model_required`、`invalid_routerx_options`、`routerx_hop_exceeded` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数 |
+| 400 | `invalid_json`、`invalid_multipart`、`invalid_chat_messages`、`invalid_gemini_embedding_request`、`invalid_image_prompt`、`invalid_image_count`、`multipart_file_required`、`unsafe_multipart_file`、`model_required`、`routerx_hop_exceeded` | `invalid_request_error` / `INVALID_ARGUMENT` | 修正请求参数 |
 | 401 | `invalid_api_key`、`expired_api_key` | `authentication_error` / `UNAUTHENTICATED` | 更换或重新创建 API Key |
 | 403 | `user_disabled`、`token_forbidden`、`model_not_allowed`、`route_forbidden` | `permission_error` / `PERMISSION_DENIED` | 联系管理员调整权限或通道分组 |
 | 404 | `model_not_found`、`unsupported_api`、`resource_not_found` | `not_found_error` / `NOT_FOUND` | 检查模型名、接口路径或资源 ID |
@@ -185,7 +185,7 @@ Gemini-compatible 错误示例：
 | 方法 | 路径 | 当前状态 | 说明 |
 |------|------|----------|------|
 | GET | `/health` | 已注册 | 健康检查 |
-| GET | `/ready` | 已实现 | 就绪检查，检查数据库、`schema_migrations.dirty`、外部数据库模式下 Redis 可用性、初始化后的 JWT 配置、关键 auth/relay/rate-limit settings 注册表校验、已启用支付 provider 的必需密钥，以及存在 `enc:v1:` 通道密钥或外部登录 `client_secret` 时的 `ENCRYPTION_KEY` |
+| GET | `/ready` | 已实现 | 就绪检查，检查数据库、`schema_migrations.dirty`、外部数据库模式下 Redis 可用性、初始化后的 JWT 配置、关键 auth/relay/rate-limit settings 注册表校验、已启用支付 provider 的必需 settings 密钥，以及存在 `enc:v1:` 通道密钥、外部登录 `client_secret` 或支付 provider 密钥时的 `ENCRYPTION_KEY` |
 | GET | `/metrics` | 基础实现 | Prometheus 文本指标；默认由 `observability.metrics_enabled=false` 关闭，已包含实例、HTTP 请求量/耗时、Relay 日志、Relay 请求数、Relay/上游耗时、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、API Key 鉴权/生命周期/最近使用/额度/轮换/泄露指标、通道可用状态、逐通道错误计数、日志补写 outbox 状态、限流拒绝、计费失败、支付、审计和 DB/Redis/日志库 up 及 DB/Redis 错误计数等基础指标 |
 | GET | `/v0/setup/status` | 已实现 | 查询系统是否初始化 |
 | POST | `/v0/setup/init` | 已实现 | 首次初始化超级管理员和默认设置 |
@@ -255,7 +255,7 @@ Gemini-compatible 错误示例：
 | PUT | `/v0/admin/groups/:id` | 已实现 | 更新用户分组名称或展示倍率；名称唯一，显式 `ratio <= 0` 会被拒绝，成功后写 `user_group.update` |
 | DELETE | `/v0/admin/groups/:id` | 已实现 | 删除未使用用户分组；`default` 或仍有用户引用时拒绝，成功后写 `user_group.delete` |
 
-`groups.ratio` 当前作为分组元数据和兼容展示字段；成功调用后的实际扣费倍率仍以 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` settings 为权威来源。
+`groups.ratio` 当前作为分组元数据和展示字段；成功调用后的实际扣费倍率仍以 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` settings 为权威来源。
 
 额度流水查询参数：
 
@@ -264,8 +264,8 @@ Gemini-compatible 错误示例：
 | `page` | int | 页码，默认 1 |
 | `page_size` | int | 每页数量，默认 20，最大 100 |
 | `user_id` | uint | 管理端按用户过滤；用户端接口会忽略该参数并强制使用当前用户 |
-| `type` | string | 流水类型，如 `payment_grant`、`redem_redeem`、`admin_adjust`、`refund_deduct`、`manual_credit`、`manual_debit` |
-| `source_type` | string | 来源类型，如 `payment_order`、`payment_event`、`redem_code`、`admin_action`、`refund` |
+| `type` | string | 流水类型，如 `payment_grant`、`redem_redeem`、`admin_adjust`、`manual_credit`、`manual_debit` |
+| `source_type` | string | 来源类型，如 `payment_order`、`payment_event`、`redem_code`、`admin_action` |
 | `source_id` | string | 来源 ID、本地订单号或事件 ID |
 | `start_time` | string | 创建时间下限，支持 RFC3339、`YYYY-MM-DD HH:mm:ss` 或 `YYYY-MM-DD` |
 | `end_time` | string | 创建时间上限，支持 RFC3339、`YYYY-MM-DD HH:mm:ss` 或 `YYYY-MM-DD` |
@@ -335,8 +335,6 @@ Gemini-compatible 错误示例：
 | PATCH | `/v0/admin/payment/products/:id/disable` | 基础实现 | 禁用商品；禁用后用户侧不可见且不能创建新订单，成功后写管理审计 |
 | PATCH | `/v0/admin/payment/products/:id/enable` | 基础实现 | 启用商品，成功后写管理审计 |
 | POST | `/v0/admin/payment/adjustments` | 基础实现 | 支付相关人工补账或扣回；写 `manual_credit`/`manual_debit` 额度流水和 `payment_manual_adjust.*` 管理审计，默认必须填写原因；本地拒绝写 `payment_manual_adjust.denied` |
-| POST | `/v0/admin/payment/refunds` | 基础实现 | 管理员确认支付退款后扣回额度，订单置为 `refunded` 或 `partially_refunded`，写 `refund_deduct` 流水和 `payment_refund.manual` 审计；本地拒绝写 `payment_refund.manual_denied` |
-| POST | `/v0/admin/payment/refund-requests` | 基础实现 | 向 Stripe 或易支付发起 provider 退款请求，写 `payment_refund_requests`，订单进入 `refund_pending`，最终状态等待可信 webhook 或后续人工收尾确认 |
 
 创建/更新支付商品请求：
 
@@ -368,32 +366,6 @@ Gemini-compatible 错误示例：
 ```
 
 `amount` 为正数时写 `manual_credit`，负数时写 `manual_debit`；`order_no` 可关联原支付订单，`idempotency_key` 用于防止同一人工动作重复改变余额。缺少原因、缺少幂等键、金额为 0、重复幂等键或关联订单/权限校验失败会写 `payment_manual_adjust.denied`，使用稳定 `error_code` 区分原因。
-
-支付人工退款请求：
-
-```json
-{
-  "order_no": "RX202606150001",
-  "refund_quota": 40000000,
-  "reason": "customer refund",
-  "idempotency_key": "refund-ticket-1234"
-}
-```
-
-`refund_quota` 必须大于 0 且不能超过订单入账额度；仅支持对 `paid` 订单人工落账退款。全额退款会将订单置为 `refunded`，部分退款会置为 `partially_refunded`；接口会写 `quota_transactions(type=refund_deduct, source_type=refund, source_id=<order_no>)`，并通过 `idempotency_key` 防止重复扣回。缺少订单号、退款额度非法、缺少原因、重复幂等键、订单状态不允许或余额不足会写 `payment_refund.manual_denied`。
-
-Provider 退款请求：
-
-```json
-{
-  "order_no": "RX202606150001",
-  "refund_amount": "5.00",
-  "reason": "customer requested partial refund",
-  "idempotency_key": "refund-ticket-5678"
-}
-```
-
-`refund_amount` 为空时按订单全额退款；非空时必须大于 0 且不能超过订单金额。接口需要订单为 `paid` 状态；Stripe 订单必须已保存 `provider_payment_id`，易支付订单需要配置 `payment.epay.pid`、`payment.epay.refund_url` 和 `PAYMENT_EPAY_KEY`。成功后本地订单进入 `refund_pending`，写 `payment_refund_requests` 和 `payment_refund.requested` 审计；本地参数、订单状态或幂等键拒绝会写 `payment_refund.request_denied` 且 `result=denied`，provider 调用失败会写同动作但 `result=failed`。最终退款状态和可选额度扣回仍以可信 provider webhook 或后续人工收尾为准。
 
 ### 模型价格管理
 
@@ -466,7 +438,7 @@ Provider 退款请求：
 | `resource_id` | string | 资源 ID 过滤 |
 | `actor_user_id` | uint | 操作人 ID 过滤 |
 | `result` | string | 结果过滤，例如 `success`、`failed`、`denied` |
-| `error_code` | string | 失败或拒绝 code 过滤，例如 `api_key_quota_edit_forbidden`、`redem_code_expired_at_not_future`、`redem_code_invalid_or_used`、`payment_order_provider_disabled` 或 `payment_order_cancel_not_pending` |
+| `error_code` | string | 失败或拒绝 code 过滤，例如 `redem_code_expired_at_not_future`、`redem_code_invalid_or_used`、`payment_order_provider_disabled` 或 `payment_order_cancel_not_pending` |
 | `start_time` | int64 | 起始 Unix 秒，按 `created_at >= start_time` 过滤 |
 | `end_time` | int64 | 结束 Unix 秒，按 `created_at <= end_time` 过滤 |
 
@@ -493,12 +465,6 @@ Provider 退款请求：
 | `payment_webhook.processed` | `POST /v0/payment/stripe/webhook`、`POST /v0/payment/epay/notify` |
 | `payment_webhook.failed` | Stripe `checkout.session.async_payment_failed` 或易支付明确失败通知将 pending 订单置为 `failed` |
 | `payment_order.paid` | 支付 provider 成功回调入账 |
-| `payment_refund.requested` | `POST /v0/admin/payment/refund-requests` 向 Stripe 或易支付发起退款请求 |
-| `payment_refund.request_denied` | `POST /v0/admin/payment/refund-requests` 本地拒绝或 provider 发起失败 |
-| `payment_refund.processed` | `POST /v0/payment/stripe/webhook` 处理全额或部分退款事件 |
-| `payment_refund.deducted` | Stripe 全额或部分退款按 settings 自动扣回额度 |
-| `payment_refund.manual` | `POST /v0/admin/payment/refunds` 管理员人工确认退款并扣回额度 |
-| `payment_refund.manual_denied` | `POST /v0/admin/payment/refunds` 本地拒绝人工退款落账 |
 | `payment_dispute.created` | `POST /v0/payment/stripe/webhook` 处理 Stripe 争议/拒付事件，可按 settings 禁用 API Key |
 | `payment_dispute.updated` | `POST /v0/payment/stripe/webhook` 处理 Stripe 争议更新事件 |
 | `payment_dispute.closed` | `POST /v0/payment/stripe/webhook` 处理 Stripe 争议关闭事件 |
@@ -517,7 +483,7 @@ Provider 退款请求：
 | `api_key.batch_expired` | `POST /v0/admin/token/batch-expire` |
 | `api_key.batch_disable_denied` | `POST /v0/admin/token/batch-disable` 缺少 `token_ids` 和 `user_id` 被拒绝 |
 | `api_key.batch_expire_denied` | `POST /v0/admin/token/batch-expire` 缺少 `token_ids` 和 `user_id` 被拒绝 |
-| `api_key.quota_limit_denied` | 用户端尝试通过 `PUT /v0/user/token/:id` 修改额度或无限标记被拒绝 |
+| `api_key.quota_limit_set` | 用户端通过 `PUT /v0/user/token/:id` 设置 Key 剩余可消耗额度或无限额度标记 |
 | `setting.create` | `PUT /v0/admin/setting` 新增 key |
 | `setting.update` | `PUT /v0/admin/setting` 修改已有 key |
 | `setting.denied` | `PUT /v0/admin/setting` 参数校验失败或高风险配置被拒绝 |
@@ -824,7 +790,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 |------|------|----------|------|
 | GET | `/v0/user/token` | 已实现 | 当前用户 API Key 列表 |
 | POST | `/v0/user/token` | 已实现 | 创建 API Key，明文只返回一次；可写入 `metadata.environment/team/app/tags/external_id/note/principal_type/principal_id/principal_name` 非安全元数据；成功后写 `api_key.created` 审计 |
-| PUT | `/v0/user/token/:id` | 已实现 | 编辑 API Key 名称、状态、过期时间和元数据；普通编辑写 `api_key.updated`，禁用写 `api_key.disabled`，额度/无限标记编辑拒绝写 `api_key.quota_limit_denied` |
+| PUT | `/v0/user/token/:id` | 已实现 | 编辑 API Key 名称、状态、过期时间、元数据、剩余可消耗额度、无限额度标记和 `leak_risk_enabled`；普通编辑写 `api_key.updated`，禁用写 `api_key.disabled`，额度变更写 `api_key.quota_limit_set` |
 | DELETE | `/v0/user/token/:id` | 已实现 | 删除 API Key，成功后写 `api_key.deleted` 审计 |
 | POST | `/v0/user/token/:id/disable` | 已实现 | 禁用自己的 API Key，可记录禁用原因，成功后写 `api_key.disabled` 审计 |
 | POST | `/v0/user/token/:id/rotate` | 已实现 | 创建替换 Key、返回新明文一次、写入 `rotated_from_id` 并禁用旧 Key，成功后写 `api_key.rotated` 审计 |
@@ -845,7 +811,7 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 | POST | `/v0/admin/alerts/deliveries/replay` | 基础实现 | 手动重放到期的 pending 告警投递，可选 `target=webhook/email/im`；`limit` 默认 20、最大 100，成功返回本次投递成功条数 |
 | POST | `/v0/admin/alerts/:id/ack` | 基础实现 | 管理员确认告警，写入确认时间和确认人；重复确认保持幂等 |
 
-用户端 API Key 不允许直接编辑最大消耗额度和无限额度标记，避免普通用户绕过预算策略；拒绝记录会写入管理审计，审计摘要不包含完整 API Key 明文或哈希。当前 scope 请求格式：
+用户端 API Key 可直接编辑剩余可消耗额度、无限额度标记和泄露风控自动禁用开关；实际调用仍同时受用户余额、scope、限流和访问控制约束。当前 scope 请求格式：
 
 ```json
 {
@@ -877,23 +843,23 @@ API Key 用于 `/v1/*` 模型转发鉴权。
 
 ### 支付接口
 
-支付接口用于用户在线购买额度。支付 provider、充值码、退款、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、取消未支付订单、订单列表和详情；Stripe secret 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持原始 body 签名、Checkout Session 成功事件、异步支付失败事件、金额/币种/metadata 校验、幂等入账和基础审计，以及全额/部分退款事件、退款审计、可选自动扣回、争议生命周期记录和可选 API Key 禁用；易支付异步通知已支持 MD5 签名、金额校验、成功/明确失败状态处理、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回、人工退款落账以及 Stripe/易支付 provider 退款请求并写流水与审计。更多 provider 自动发起退款流程仍属于后续能力。
+支付接口用于用户在线购买额度。支付 provider、充值码、人工补账和额度流水契约以 `docs/PAYMENTS.md` 为准；本文只定义接口外形和鉴权边界。当前用户侧基础实现已支持商品列表、创建本地 `pending` 订单、取消未支付订单、订单列表和详情；`payment.stripe.secret_key` 与绝对 `return_url` 齐全时会创建真实 Checkout Session，配置不足时保留本地安全占位链接；Stripe webhook 已支持使用 `payment.stripe.webhook_secret` 校验原始 body 签名、Checkout Session 成功事件、异步支付失败事件、金额/币种/metadata 校验、幂等入账和基础审计、争议生命周期记录和可选 API Key 禁用；易支付异步通知已支持使用 `payment.epay.key` 校验 MD5 签名、金额校验、成功/明确失败状态处理、幂等入账和基础审计，同步返回页仅展示本地订单状态；管理端已支持支付相关人工补账/扣回并写流水与审计。
 
 用户鉴权接口：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/v0/user/payment/products` | 获取可购买的充值商品 |
-| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并写 `payment_order.create` 管理审计；provider 必须已在 settings 启用，Stripe secret + 绝对 `return_url` 齐全时创建 Stripe Checkout Session，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，稳定 `error_code` 包含 `payment_order_provider_disabled`、`payment_order_product_unavailable` 或 `payment_order_provider_checkout_failed`；`expires_at` 来自 `payment.order_expire_minutes` |
+| POST | `/v0/user/payment/orders` | 创建本地 `pending` 支付订单并写 `payment_order.create` 管理审计；provider 必须已在 settings 启用，`payment.stripe.secret_key` + 绝对 `return_url` 齐全时创建 Stripe Checkout Session，易支付配置齐全时返回签名收银台 URL，否则返回安全 checkout 占位链接；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，稳定 `error_code` 包含 `payment_order_provider_disabled`、`payment_order_product_unavailable` 或 `payment_order_provider_checkout_failed`；`expires_at` 来自 `payment.order_expire_minutes` |
 | GET | `/v0/user/payment/orders` | 查询当前用户支付订单列表 |
 | GET | `/v0/user/payment/orders/:order_no` | 查询当前用户支付订单详情 |
-| POST | `/v0/user/payment/orders/:order_no/cancel` | 取消当前用户自己的 `pending` 订单，置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付/退款中/已退款订单拒绝取消并写 `payment_order.cancel_denied`，稳定 `error_code` 包含 `payment_order_cancel_not_pending` 或 `payment_order_cancel_not_found`，不会入账 |
+| POST | `/v0/user/payment/orders/:order_no/cancel` | 取消当前用户自己的 `pending` 订单，置为 `closed` 并写 `payment_order.cancel` 审计；已 `closed` 订单幂等返回，已支付订单拒绝取消并写 `payment_order.cancel_denied`，稳定 `error_code` 包含 `payment_order_cancel_not_pending` 或 `payment_order_cancel_not_found`，不会入账 |
 
 Provider 回调接口：
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
-| POST | `/v0/payment/stripe/webhook` | Stripe 签名 | 基础实现；Stripe Checkout webhook，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，`checkout.session.async_payment_failed` 会将 pending 订单置为 `failed` 并写 `payment_webhook.failed`，全额或部分退款时写 `payment_refund.*` 审计，争议 created/updated/closed/funds_* 事件会更新 `payment_disputes` 并写 `payment_dispute.*` 审计，created 可按 settings 禁用 API Key，返回纯文本 `success` |
+| POST | `/v0/payment/stripe/webhook` | Stripe 签名 | 基础实现；Stripe Checkout webhook，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，`checkout.session.async_payment_failed` 会将 pending 订单置为 `failed` 并写 `payment_webhook.failed`，争议 created/updated/closed/funds_* 事件会更新 `payment_disputes` 并写 `payment_dispute.*` 审计，created 可按 settings 禁用 API Key，返回纯文本 `success` |
 | POST | `/v0/payment/epay/notify` | 易支付签名 | 基础实现；易支付异步通知，成功时幂等入账并写 `payment_webhook.processed`/`payment_order.paid` 审计，明确失败状态会将 pending 订单置为 `failed` 并写 `payment_webhook.failed`，返回纯文本 `success` |
 | GET | `/v0/payment/epay/return` | 无，仅读状态 | 基础实现；易支付同步返回页，只读取本地订单状态，不入账 |
 
@@ -963,8 +929,6 @@ Provider 回调接口：
 | `paid` | 支付成功，额度已入账 |
 | `failed` | provider 明确支付失败；签名、金额或订单快照校验失败只拒绝入账，不直接改订单 |
 | `closed` | 超时关闭或用户取消 |
-| `refunded` | 已全额退款，是否扣回额度由退款策略决定 |
-| `partially_refunded` | 已部分退款，自动扣回开启时按退款金额比例扣回额度 |
 
 Stripe Webhook 要求：
 
@@ -972,7 +936,6 @@ Stripe Webhook 要求：
 - 只在 `checkout.session.completed` 或可信成功事件后入账。
 - 校验 `metadata.order_no`、金额、货币和订单状态。
 - 同一个 Stripe event id 必须幂等处理。
-- `charge.refunded` 全额退款事件会把订单置为 `refunded`；部分退款事件会把订单置为 `partially_refunded`。开启 `payment.refund.auto_deduct=true` 时按全额或比例策略扣回额度并写 `refund_deduct` 流水。
 - `charge.dispute.created`、`charge.dispute.updated`、`charge.dispute.closed`、`charge.dispute.funds_withdrawn` 和 `charge.dispute.funds_reinstated` 会更新 `payment_disputes` 并写 `payment_dispute.*` 审计；开启 `payment.dispute.auto_disable_tokens=true` 时，created 事件会禁用该用户已启用的 API Key，`revoked_reason=payment_dispute`，不直接修改额度或订单状态。
 
 易支付通知要求：
@@ -981,7 +944,7 @@ Stripe Webhook 要求：
 - 校验 `pid`、`out_trade_no`、`money` 和状态；成功状态入账，明确失败状态只把 pending 订单置为 `failed`。
 - 入账只依赖异步通知；同步返回页只展示本地订单状态。
 - 通知处理成功后返回网关要求的纯文本，例如 `success`。
-- 当前实现从 `PAYMENT_EPAY_KEY` 读取签名密钥，金额匹配且订单为 `pending` 时才把订单置为 `paid`、写 `payment_events`、写 `quota_transactions` 并增加用户额度；明确失败状态会把 pending 订单置为 `failed`，写 `payment_webhook.failed` 审计且不增加额度；重复通知不会重复入账。
+- 当前实现从 `payment.epay.key` 读取签名密钥，金额匹配且订单为 `pending` 时才把订单置为 `paid`、写 `payment_events`、写 `quota_transactions` 并增加用户额度；明确失败状态会把 pending 订单置为 `failed`，写 `payment_webhook.failed` 审计且不增加额度；重复通知不会重复入账。
 
 安全要求：
 
@@ -1065,10 +1028,7 @@ P0 明确失败：
 | API Key scope 达到 RPM/TPM 上限 | 429 | `rate_limit_exceeded` |
 | `stream=true` 但选中通道不是 OpenAI SSE 形态 | 502 | `unsupported_stream_channel` |
 | 选中通道 adapter 不支持该 APIType | 502 | `unsupported_api_type` |
-| `routerx` 结构非法 | 400 | `invalid_routerx_options` |
-| `routerx.route` 字段类型非法 | 400 | `invalid_routerx_route` |
 | 无可用通道 | 502 | `no_available_channel` |
-| `routerx.route` 筛选后无可用通道 | 502 | `no_available_channel` |
 | 下游密钥不可解密或缺失 | 502 | `upstream_secret_error` |
 | 余额不足 | 429 | `insufficient_quota` |
 
@@ -1095,58 +1055,14 @@ P0 明确失败：
 
 ### 额外参数
 
-JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 provider-specific 参数。该字段不会透传给真实厂商，除非上游通道也是 RouterX-Compatible。
+请求体或 multipart 表单中的 `routerx` 字段、以及 `X-RouterX-Options` header 已不作为客户端扩展协议处理。RouterX 会在发往真实上游前剥离这些字段；它们不会影响通道选择、上游 header/query/body，也不会触发专门的 routerx 解析错误。
 
-```json
-{
-  "model": "gpt-4o-mini",
-  "messages": [{ "role": "user", "content": "hi" }],
-  "routerx": {
-    "route": {
-      "channel_group": "premium",
-      "upstream_provider": "xai"
-    },
-    "upstream": {
-      "headers": {},
-      "query": {},
-      "body": {}
-    },
-    "provider": {
-      "openai": {},
-      "anthropic": {},
-      "gemini": {},
-      "xai": {}
-    }
-  }
-}
-```
+RouterX 仍保留以下非请求字段能力：
 
-规则：
-
-- 策略决策顺序、访问控制、限流、分组和冲突规则以 `docs/POLICIES.md` 为准。
-- `routerx.route` 用于路由偏好，不参与模型原生请求。
-- `routerx.route` 只能收窄管理员策略允许的候选通道，不能启用已禁用通道、绕过额度、绕过通道分组访问控制或强制使用无权限 provider。
-- `routerx.upstream` 用于安全补充上游 header、query 和 JSON body 参数；当前实现会把允许的 header/query 加到真实上游请求，并把 `routerx.upstream.body` 中不存在于原请求的字段合并进 JSON 请求体。
-- 敏感鉴权 header/query 必须来自通道配置，不能由用户请求覆盖；已有请求字段、`model`、`routerx` 和 `stream` 不会被 `routerx.upstream.body` 改写。
-- `routerx.provider.<provider>` 仅在选中对应上游 provider 时生效；当前基础实现会把匹配 provider 下的 JSON 字段作为 body 缺省补充，优先级高于通用 `routerx.upstream.body`，但仍不能覆盖调用方原请求字段、`model`、`routerx` 或 `stream`。
-- OpenAI-compatible Chat 命中 Gemini 上游时，`routerx.provider.gemini.safetySettings` 会映射到 Gemini 原生 `safetySettings`；其他未显式支持的 Gemini provider 字段不会透传到真实厂商请求。Anthropic `messages` 原生入口命中 Anthropic 上游时，会保留 `system/messages/max_tokens/metadata/stop_sequences/stream/temperature/top_p/top_k/tools/tool_choice/thinking` 等白名单字段到真实上游请求体。Gemini `generateContent` 原生入口命中 Gemini 上游时，会保留 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent` 到真实上游请求体。
-- multipart 或非 JSON 请求当前可通过 `routerx` 表单字段或 `X-RouterX-Options` header 传递 JSON 字符串；body/form 中的 `routerx` 优先于 header，multipart 当前只应用路由偏好和安全 header/query 补充，不重写文件表单 body。
-- 对 `GET /v1/models` 这类无 JSON body 的冲突路径，当前按 `format`、`routerx_protocol`、`X-RouterX-Protocol`、`anthropic-version`、OpenAI 默认值的顺序选择返回外形；`format` 继续保持最高优先级以兼容已有调用方。
-
-路由偏好处理：
-
-| 场景 | 目标行为 |
-|------|----------|
-| 偏好合法且候选通道可用 | 进入正常通道选择，并在日志中记录偏好被接受 |
-| 偏好字段未知但不影响安全 | 忽略未知字段，在日志中记录被忽略 |
-| 偏好格式非法 | 返回当前入口协议兼容的 400 错误 |
-| 偏好要求无权限通道或 provider | 返回当前入口协议兼容的 403 错误 |
-| 偏好合法但筛选后无可用通道 | 返回当前入口协议兼容的无可用通道错误 |
-
-安全边界：
-
-- 客户端不能通过 `routerx.upstream.headers` 覆盖 `Authorization`、`Cookie`、`Set-Cookie`、`X-Api-Key`、`api-key`、`Content-Type` 或 `X-RouterX-*` 等敏感/内部 header，也不能通过 query 覆盖常见 API key 参数。
-- 客户端不能通过 `routerx.upstream.body` 覆盖 RouterX 已经完成安全决策的内部字段；当前 `model`、`routerx`、`stream` 和原请求已存在字段都会保持原值。
+- `GET /v1/models` 等无 JSON body 路径按 `format`、`routerx_protocol`、`X-RouterX-Protocol`、`anthropic-version`、OpenAI 默认值的顺序选择返回外形。
+- RouterX-Compatible 上游继续使用 `X-RouterX-Hop` 和 `X-RouterX-Chain` 做多层转发循环保护与链路摘要。
+- Anthropic `messages` 原生入口命中 Anthropic 上游时，会保留 `system/messages/max_tokens/metadata/stop_sequences/stream/temperature/top_p/top_k/tools/tool_choice/thinking` 等白名单字段。
+- Gemini 原生入口命中 Gemini 上游时，会保留 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent`、`content/taskType/title/outputDimensionality` 或 `requests` 等对应原生字段。
 - RouterX-Compatible 上游可以继续接收 `routerx` 扩展，但真实厂商上游必须在请求发出前移除该私有字段。
 - 所有路由偏好、是否命中、是否被拒绝和最终通道应进入日志或后续路由决策快照。
 
@@ -1179,17 +1095,17 @@ JSON 请求可以使用保留字段 `routerx` 传递 RouterX 路由偏好和 pro
 API Key 校验规则：
 
 - 格式必须以 `sk-` 开头。
-- API Key 不存在、禁用、软删除、过期均返回 401；数据库兼容早期明文存量，验证成功后迁移为 SHA256 哈希。
+- API Key 不存在、禁用、软删除、过期均返回 401；数据库只保存 SHA256 哈希。
 - 所属用户禁用或软删除返回 403。
 - 额度不足返回 429。
 - 鉴权成功后写入 `current_user` 和 `current_token` 上下文。
 
 额度规则：
 
-- 创建带最大消耗额度的 API Key 时，不扣减或冻结用户余额；该额度只是 Key 的预算上限。
-- 有限额度 API Key 调用成功后同时扣减用户余额，并消耗 Key 剩余预算或累计已用额度。
-- `unlimited=true` 或 `remain_quota=-1` 的 API Key 调用成功后只扣减用户额度。
-- 普通用户不能通过编辑 API Key 接口调整最大消耗额度或无限标记，预算调整只能由管理员或后续策略流程完成。
+- 创建带剩余可消耗额度的 API Key 时，不扣减或冻结用户余额；该额度只是 Key 的预算上限。
+- 有限额度 API Key 调用成功后同时扣减用户余额、扣减 Key 剩余可消耗额度并累计 Key 已用额度。
+- `unlimited=true` 或 `quota_limit=-1` 的 API Key 调用成功后不扣 Key 剩余额度，仍扣减用户额度并累加该 Key 的 `quota_used`。
+- 普通用户可以通过编辑 API Key 接口调整 Key 剩余可消耗额度或无限标记；实际消费仍以用户当前余额为上限。
 
 ## 分页规范
 

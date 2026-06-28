@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -253,12 +254,18 @@ func SettingKeyRequiresSecretEncryption(key string) bool {
 func encryptedSettingKey(key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))
 	return (strings.HasPrefix(key, "oauth.") && strings.HasSuffix(key, ".client_secret")) ||
-		(strings.HasPrefix(key, "oidc.") && strings.HasSuffix(key, ".client_secret"))
+		(strings.HasPrefix(key, "oidc.") && strings.HasSuffix(key, ".client_secret")) ||
+		key == "payment.stripe.secret_key" ||
+		key == "payment.stripe.webhook_secret" ||
+		key == "payment.epay.key"
 }
 
 func settingValueForStorage(key, value string) (string, error) {
 	if !encryptedSettingKey(key) {
 		return value, nil
+	}
+	if strings.TrimSpace(value) != "" && !common.IsEncryptedSecret(value) && strings.TrimSpace(os.Getenv("ENCRYPTION_KEY")) == "" {
+		return "", errors.New("ENCRYPTION_KEY is required to store encrypted setting " + key)
 	}
 	return common.EncryptSecret(value)
 }
@@ -304,7 +311,7 @@ func validateSettingValue(key, value string) error {
 		"auth.register.enabled", "auth.register.username.enabled", "auth.register.email.enabled", "auth.register.phone.enabled", "auth.register.oauth.enabled", "auth.register.oidc.enabled", "auth.register.captcha.required",
 		"routing.channel_cache.enabled", "routing.channel_cache.preload",
 		"ready.production_strict", "payment.epay.enabled", "payment.stripe.enabled",
-		"payment.refund.auto_deduct", "payment.refund.allow_negative_balance", "payment.dispute.auto_disable_tokens", "payment.manual_adjust.require_reason",
+		"payment.dispute.auto_disable_tokens", "payment.manual_adjust.require_reason",
 		"observability.metrics_enabled", "observability.audit_enabled", "observability.structured_logs_enabled",
 		"alert.webhook.enabled", "alert.email.enabled", "alert.im.enabled":
 		enabled, err := strconv.ParseBool(value)
@@ -339,7 +346,8 @@ func validateSettingValue(key, value string) error {
 		if len(value) != 3 {
 			return errors.New("payment.currency must be a 3-letter currency code")
 		}
-	case "payment.epay.gateway", "payment.epay.notify_url", "payment.epay.return_url", "payment.epay.refund_url",
+	case "payment.stripe.api_base",
+		"payment.epay.gateway", "payment.epay.notify_url", "payment.epay.return_url",
 		"alert.webhook.url", "alert.email.url", "alert.im.url":
 		return validateOptionalURLSetting(key, value)
 	}

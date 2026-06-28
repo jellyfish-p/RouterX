@@ -12,7 +12,7 @@
 | 原则 | 要求 |
 |------|------|
 | 默认可用 | P0 默认不要求配置复杂策略；启用通道、模型匹配、用户和 API Key 有额度即可完成基础调用。 |
-| 收窄不放大 | API Key scope、用户请求中的 `routerx.route`、provider-specific 参数只能收窄候选能力，不能扩大后台允许范围。 |
+| 收窄不放大 | API Key scope、用户请求中的 API Key/channel-group scope、provider-specific 参数只能收窄候选能力，不能扩大后台允许范围。 |
 | 后台优先 | 用户状态、API Key 状态、额度、通道启用状态、模型匹配、通道分组访问控制、熔断、限流和安全过滤优先于用户偏好。 |
 | 先拒绝再上游 | 认证失败、权限不足、余额不足、限流、访问控制失败和请求格式错误默认不调用上游。 |
 | 可解释 | 每次拒绝、忽略偏好、命中通道、使用倍率和扣费都应能通过日志、快照或审计解释。 |
@@ -25,7 +25,7 @@
 
 - `/v1/*` 只接受 API Key，`/v0/user/*` 和 `/v0/admin/*` 只接受 User JWT。
 - API Key 校验包含格式、哈希、状态、过期、软删除、所属用户状态和额度预检。
-- 普通用户不能通过用户端 API Key 编辑接口修改 `remain_quota` 或 `unlimited`。
+- 普通用户可以通过用户端 API Key 编辑接口修改自己的 `quota_limit` 或 `unlimited`，但不能修改 `quota_used`、所属用户、哈希字段或账户余额。
 - Relay 会在调用上游前检查用户余额和 API Key 预算。
 - API Key scope 已支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`entry_protocols` 入口协议 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list、`daily_quota` 日预算、`monthly_quota` 月预算、`max_concurrency` 并发上限、`rpm` 和 `tpm`，未命中或达到上限时在上游调用前返回 `model_not_allowed`、`token_forbidden`、`route_forbidden`、`insufficient_quota` 或 `rate_limit_exceeded` 并写失败日志。
 - 通道选择会过滤禁用通道、模型不匹配通道、错误计数过高通道和不可用 Adapter。
@@ -48,7 +48,7 @@
 | API Key scope | `tokens.scope_json` | P1/P2 | 当前支持模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list、日预算、月预算、并发上限和 RPM/TPM。 |
 | 通道配置 | `channels.models`、`channel_group`、priority、weight、熔断状态 | P0/P1 | 决定候选通道、模型匹配、分组和可用性。 |
 | 模型价格规则 | `model_prices`、`channel_model_prices` | P1 | 决定基础费用，不直接表达身份权限。 |
-| 调用方偏好 | `routerx.route` | P1 | 只在已允许候选集中继续收窄。 |
+| 调用方偏好 | API Key/channel-group scope | P1 | 只在已允许候选集中继续收窄。 |
 | 管理审计 | 变更 actor、reason、before/after snapshot | P2 | 证明策略变化是谁做的、为什么做、影响什么。 |
 
 如果多个来源冲突，按更严格的限制生效。允许规则不能覆盖更高优先级的拒绝规则。
@@ -66,7 +66,7 @@
 6. 模型和 API 类型校验
 7. 通道硬过滤
 8. 用户分组和通道分组访问控制
-9. routerx.route 偏好收窄
+9. API Key/channel-group scope 偏好收窄
 10. priority 和 weight 选择
 11. 模型重写和上游解析
 12. usage、价格规则、倍率和扣费
@@ -84,7 +84,7 @@
 | scope | Key 不允许该模型、入口或请求类型 | `token_forbidden` 或 `model_not_allowed` | 否 |
 | 通道硬过滤 | 无 Adapter、通道禁用、模型不匹配、熔断 | `no_available_channel` 或 `unsupported_channel` | 否 |
 | 访问控制 | 用户分组不能访问通道分组 | `route_forbidden` | 否 |
-| 路由偏好 | `routerx.route` 指向未授权 provider 或通道分组 | `route_forbidden` | 否 |
+| 路由偏好 | API Key/channel-group scope 指向未授权 provider 或通道分组 | `route_forbidden` | 否 |
 
 ## 5. 默认策略
 
@@ -94,7 +94,7 @@ P0 默认策略应偏向开箱成功：
 - 默认 settings 允许普通用户访问 `default` 通道分组；新通道默认写入 `default`，因此开箱路径仍可用。
 - 未配置 API Key scope 时，API Key 继承所属用户和系统策略。
 - 未配置复杂价格规则时，按 P0 usage 或最低计费规则结算。
-- 未配置 `routerx.route` 时，系统按通道 priority 和 weight 自动选择。
+- 未配置 API Key/channel-group scope 时，系统按通道 priority 和 weight 自动选择。
 
 P1/P2 启用访问控制后，默认策略应偏向安全：
 
@@ -105,7 +105,7 @@ P1/P2 启用访问控制后，默认策略应偏向安全：
 
 ## 6. 用户分组与通道分组
 
-用户分组和通道分组用于表达套餐、价格、访问范围和运营策略。新用户和新通道默认归入 `default` 分组；存量空分组在策略层归一为 `default`。
+用户分组和通道分组用于表达套餐、价格、访问范围和运营策略。新用户和新通道默认归入 `default` 分组；空分组在策略层归一为 `default`。
 
 | 概念 | 数据来源 | 用途 | 不应承担 |
 |------|----------|------|----------|
@@ -113,7 +113,7 @@ P1/P2 启用访问控制后，默认策略应偏向安全：
 | 通道分组 | `channels.channel_group` | 路由、套餐、倍率、访问控制；默认 `default` | provider 类型或真实地域的唯一来源 |
 | 用户分组 x 通道分组 | `billing.user_group_channel_group_access`、`billing.user_group_channel_ratios` | 组合访问和组合倍率 | 模型价格表达式 |
 
-用户分组 CRUD 当前由管理端 `/v0/admin/groups` 提供，`groups.ratio` 保留为分组元数据和兼容展示倍率；成功调用后的实际扣费倍率仍以 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` settings 为准。
+用户分组 CRUD 当前由管理端 `/v0/admin/groups` 提供，`groups.ratio` 保留为分组元数据和展示倍率；成功调用后的实际扣费倍率仍以 `billing.user_group_ratios`、`billing.channel_group_ratios` 和 `billing.user_group_channel_ratios` settings 为准。
 
 访问判断建议：
 
@@ -156,9 +156,9 @@ Scope 合成规则：
 - 空 scope 表示继承用户和系统策略，不表示超级权限。
 - Scope、用户分组、通道分组、通道模型、价格或 settings 变更后，必须递增策略或路由版本，并清理或刷新 API Key 鉴权、策略缓存和通道候选缓存；通道候选缓存的跨实例一致性依赖 `routing.channel_cache.version`、Redis 共享快照和主动 pub/sub 失效广播。
 
-## 8. `routerx.route`
+## 8. API Key/channel-group scope
 
-`routerx.route` 是调用方路由偏好，不是权限授予。
+API Key/channel-group scope 是调用方路由偏好，不是权限授予。
 
 允许表达：
 
@@ -209,7 +209,7 @@ access allowed
     -> log snapshots
 ```
 
-拒绝访问不应生成模型消费。管理员人工调整、支付入账、退款和充值码应进入额度流水，不进入模型调用消费日志。
+拒绝访问不应生成模型消费。管理员人工调整、支付入账和充值码应进入额度流水，不进入模型调用消费日志。
 
 ## 10. 限流、预算和熔断
 
@@ -242,7 +242,7 @@ access allowed
 | 字段 | 内容 |
 |------|------|
 | `policy_snapshot` | 用户状态、API Key 状态、scope 命中、访问控制结果和拒绝原因摘要。 |
-| `route_snapshot` | 候选通道、过滤原因、`routerx.route` 处理结果、最终通道和模型重写。 |
+| `route_snapshot` | 候选通道、过滤原因、API Key/channel-group scope 处理结果、最终通道和模型重写。 |
 | `access_rule_snapshot` | 用户分组、通道分组、模型/API 类型访问判断和规则版本。 |
 | `multiplier_snapshot` | 用户分组倍率、通道分组倍率、组合覆盖倍率、倍率模式和最终 `effective_ratio`。 |
 | `rate_limit_snapshot` | 命中的限流维度、窗口、阈值和剩余量摘要。 |
@@ -276,7 +276,7 @@ access allowed
 
 - 用户分组已可通过管理端 API 维护；用户分组和通道分组访问控制已可通过 settings 配置、验证和审计；完整调用快照仍需补齐。
 - API Key scope 已支持模型、APIType、通道分组、入口协议、IP/CIDR、方法路径、日预算、月预算、并发上限和 RPM/TPM 收窄。
-- `routerx.route` 合法、忽略、越权和无候选路径都有稳定行为和日志摘要。
+- API Key/channel-group scope 合法、忽略、越权和无候选路径都有稳定行为和日志摘要。
 - 计费倍率和访问控制分别快照，历史账单可解释。
 - 限流覆盖用户、Token、模型和通道维度；SQLite 单镜像可进程内降级，外部数据库或集群模式必须依赖 Redis 保持一致性。
 
@@ -297,8 +297,8 @@ access allowed
 | 用户分组管理 | `TestAdminUserGroupManagement` 覆盖分组创建、查询、更新、未使用删除、`default`/已引用分组删除保护和 `user_group.*` 审计。 |
 | 用户分组访问 | `TestUserGroupChannelGroupAccessFiltersRelayCandidates` 覆盖默认用户只能访问允许的通道分组，越权路由偏好不调用上游。 |
 | deny 优先 | 同时命中 allow 和 deny 时拒绝。 |
-| `routerx.route` 合法 | 在允许候选集中继续收窄。 |
-| `routerx.route` 越权 | 返回 403 或入口协议兼容权限错误，不调用上游。 |
+| API Key/channel-group scope 合法 | 在允许候选集中继续收窄。 |
+| API Key/channel-group scope 越权 | 返回 403 或入口协议兼容权限错误，不调用上游。 |
 | 限流 | 命中对应维度返回 `rate_limit_exceeded`，日志和指标有摘要。 |
 | 熔断 | 故障通道被排除，快照记录原因。 |
 | 倍率快照 | 成功调用能还原基础费用、倍率和最终 `quota_used`。 |
@@ -313,7 +313,7 @@ access allowed
 - `docs/GLOSSARY.md`：策略、访问控制、scope、用户分组、通道分组和快照术语。
 - `docs/API_KEYS.md`：API Key scope、预算、限流和缓存失效。
 - `docs/API.md`：鉴权矩阵、错误 code、`routerx` 请求格式和权限拒绝。
-- `docs/RELAY.md`：路由决策顺序、候选过滤、`routerx.route` 和路由快照。
+- `docs/RELAY.md`：路由决策顺序、候选过滤、API Key/channel-group scope 和路由快照。
 - `docs/BILLING.md`：访问控制、倍率、价格表达式和账单快照。
 - `docs/SNAPSHOTS.md`：调用事实快照封套、脱敏、存储和测试要求。
 - `docs/SETTINGS.md`：策略相关 settings、类型校验、默认值和 readiness。

@@ -9,7 +9,7 @@
 - 日志、审计、指标、告警和保留规则以 `docs/OBSERVABILITY.md` 为准。
 - 调用事实快照、脱敏和历史解释以 `docs/SNAPSHOTS.md` 为准。
 - 密钥、权限、支付回调和事故边界以 `docs/SECURITY.md` 为准。
-- 支付 provider、充值码、退款、人工补账和额度流水以 `docs/PAYMENTS.md` 为准。
+- 支付 provider、充值码、人工补账和额度流水以 `docs/PAYMENTS.md` 为准。
 - 运行模式、密钥、迁移、备份和发布检查以 `docs/OPERATIONS.md` 为准。
 - 小白路径以 `docs/FLOWS.md` 为准；本文把路径中的失败点展开成可执行排查步骤。
 
@@ -169,8 +169,8 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 
 安全动作：
 
-- 普通用户不能自己提高额度或把有限 Key 改成无限。
-- 管理员调整额度需要审计。
+- 普通用户可以调整自己的 Key 剩余可消耗额度或把 Key 设置为自身无限额度；实际消费仍以用户当前余额为准。
+- 管理员调整用户余额需要审计。
 
 验收信号：
 
@@ -228,7 +228,7 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 2. 检查通道 `models` 是否包含请求模型，或模型重写规则是否正确。
 3. 检查 `docs/PROTOCOLS.md` 中该入口协议、APIType 和 provider 组合是否达到可用等级，再检查 provider adapter 是否支持该请求类型。
 4. 检查通道 `error_count` 是否超过熔断阈值。
-5. 检查用户分组、模型分组、`channel_group` 和 `routerx.route` 是否把候选通道过滤掉。
+5. 检查用户分组、模型分组、`channel_group` 和 API Key/channel-group scope 是否把候选通道过滤掉。
 6. 检查优先级和权重是否导致只有不可用通道被选中。
 
 安全动作：
@@ -398,11 +398,11 @@ RouterX 的商业级故障处理不追求“把所有错误包装成友好提示
 - 失败且未调用上游的请求不扣费。
 - 汇总账单能由明细日志重算。
 
-### RB-105 `routerx.route` 没按预期生效
+### RB-105 API Key/channel-group scope 没按预期生效
 
 症状：
 
-- 技术用户传了 `routerx.route`，但通道选择和预期不同。
+- 技术用户传了 API Key/channel-group scope，但通道选择和预期不同。
 
 检查顺序：
 

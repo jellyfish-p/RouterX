@@ -145,7 +145,7 @@ Add `/v0/admin/groups` APIs to `docs/API.md` and explain `default`/in-use delete
 
 - [x] **Step 2: Sync policy/data model docs**
 
-Mark user group CRUD as current backend capability. Keep billing runtime ratios in settings as the authoritative pricing source; `groups.ratio` is retained as group metadata/legacy display ratio.
+Mark user group CRUD as current backend capability. Keep billing runtime ratios in settings as the authoritative pricing source; `groups.ratio` is retained as group metadata/display ratio.
 
 - [x] **Step 3: Update Apifox**
 

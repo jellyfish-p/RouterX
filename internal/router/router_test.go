@@ -138,11 +138,17 @@ func TestP0BackendFlow(t *testing.T) {
 		t.Fatalf("api key should be stored as sha256 hash")
 	}
 	quotaEdit := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(storedToken.ID), userJWT, map[string]interface{}{
-		"remain_quota": 1000000,
-		"unlimited":    true,
+		"quota_limit": 1000000,
+		"unlimited":   false,
 	})
-	if quotaEdit.Code != http.StatusForbidden {
-		t.Fatalf("token quota should not be editable through user API, got %d %s", quotaEdit.Code, quotaEdit.Body.String())
+	if quotaEdit.Code != http.StatusOK {
+		t.Fatalf("token quota should be editable through user API, got %d %s", quotaEdit.Code, quotaEdit.Body.String())
+	}
+	if err := internal.DB.First(&storedToken, storedToken.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.Unlimited || storedToken.QuotaLimit != 1000000 {
+		t.Fatalf("token quota edit should set finite remaining quota, got %+v", storedToken)
 	}
 
 	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", userJWT, map[string]interface{}{
@@ -243,8 +249,8 @@ func TestConsoleCapabilityContractExposesStatusEvidenceAndBoundaries(t *testing.
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "console-contract",
-		"remain_quota": 100,
+		"name":        "console-contract",
+		"quota_limit": 100,
 	})
 	var tokenPayload struct {
 		Success bool `json:"success"`
@@ -701,8 +707,6 @@ func TestApifoxPaymentResponseSchemasHaveHumanReadablePropertyDescriptions(t *te
 		"RedeemCodeResult",
 		"PaymentProductInfo",
 		"PaymentManualAdjustmentResult",
-		"PaymentManualRefundResult",
-		"PaymentProviderRefundRequestResult",
 		"PaymentOrderInfo",
 		"RedemCodeInfo",
 		"QuotaTransactionInfo",
@@ -757,7 +761,6 @@ func TestApifoxCommonReusableSchemasHaveHumanReadablePropertyDescriptions(t *tes
 	issues := apifoxSchemaPropertyDescriptionIssues(doc, []string{
 		"PaginatedResult",
 		"BillingStats",
-		"RouterXProviderOptions",
 		"ChatMessage",
 	})
 
@@ -770,10 +773,9 @@ func TestApifoxCommonReusableSchemasHaveHumanReadablePropertyDescriptions(t *tes
 func TestApifoxReferencedObjectPropertiesHaveLocalDescriptions(t *testing.T) {
 	doc := loadApifoxRawDocument(t)
 	issues := apifoxDirectPropertyDescriptionIssues(doc, map[string][]string{
-		"CreateTokenRequest":     {"metadata"},
-		"UpdateTokenRequest":     {"metadata"},
-		"Token":                  {"metadata"},
-		"RouterXProviderOptions": {"openai", "anthropic"},
+		"CreateTokenRequest": {"metadata"},
+		"UpdateTokenRequest": {"metadata"},
+		"Token":              {"metadata"},
 	})
 
 	sort.Strings(issues)
@@ -1419,8 +1421,8 @@ func TestTraceabilityP1RouterXExtensionEvidenceIncludesProviderSpecificTests(t *
 	}
 
 	requiredTests := []string{
-		"TestRouterXProviderOptionsApplyOnlyToSelectedProvider",
-		"TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings",
+		"TestRouterXProviderOptionsAreIgnored",
+		"TestOpenAIChatToGeminiUpstreamIgnoresRouterXProviderSafetySettings",
 		"TestAnthropicMessagesToAnthropicUpstreamPreservesNativeRequestFieldsAndDeductsUsage",
 		"TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields",
 	}
@@ -1818,8 +1820,8 @@ func TestModelListSupportsRouterXProtocolSelector(t *testing.T) {
 	}
 	rootJWT := loginBearer(t, r, "root", "password123")
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "models-protocol",
-		"remain_quota": 10,
+		"name":        "models-protocol",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -1919,8 +1921,8 @@ func TestV1UnsupportedRouteUsesOpenAIErrorAndAuth(t *testing.T) {
 	}
 	rootJWT := loginBearer(t, r, "root", "password123")
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "unsupported-v1",
-		"remain_quota": 10,
+		"name":        "unsupported-v1",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -1961,8 +1963,8 @@ func TestUserAPIKeyManagementAuditLogs(t *testing.T) {
 	rootJWT := loginBearer(t, r, "root", "password123")
 
 	createResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "audit-key",
-		"remain_quota": int64(100),
+		"name":        "audit-key",
+		"quota_limit": int64(100),
 	})
 	var payload struct {
 		Data struct {
@@ -1986,11 +1988,11 @@ func TestUserAPIKeyManagementAuditLogs(t *testing.T) {
 		t.Fatalf("update api key failed: %d %s", updateResp.Code, updateResp.Body.String())
 	}
 	quotaResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(payload.Data.ID), rootJWT, map[string]interface{}{
-		"remain_quota": int64(999),
-		"unlimited":    true,
+		"quota_limit": int64(999),
+		"unlimited":   true,
 	})
-	if quotaResp.Code != http.StatusForbidden {
-		t.Fatalf("api key quota edit should be forbidden, got %d %s", quotaResp.Code, quotaResp.Body.String())
+	if quotaResp.Code != http.StatusOK {
+		t.Fatalf("api key quota edit should be allowed, got %d %s", quotaResp.Code, quotaResp.Body.String())
 	}
 	disableResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(payload.Data.ID), rootJWT, map[string]interface{}{
 		"status": common.TokenStatusDisabled,
@@ -2008,7 +2010,7 @@ func TestUserAPIKeyManagementAuditLogs(t *testing.T) {
 	if auditResp.Code != http.StatusOK ||
 		!strings.Contains(body, `"action":"api_key.created"`) ||
 		!strings.Contains(body, `"action":"api_key.updated"`) ||
-		!strings.Contains(body, `"action":"api_key.quota_limit_denied"`) ||
+		!strings.Contains(body, `"action":"api_key.quota_limit_set"`) ||
 		!strings.Contains(body, `"action":"api_key.disabled"`) ||
 		!strings.Contains(body, `"action":"api_key.deleted"`) {
 		t.Fatalf("api key management should write audit logs, got %d %s", auditResp.Code, body)
@@ -2016,12 +2018,12 @@ func TestUserAPIKeyManagementAuditLogs(t *testing.T) {
 	if strings.Contains(body, payload.Data.Key) || strings.Contains(body, "sk-") {
 		t.Fatalf("api key audit should not expose plaintext keys: %s", body)
 	}
-	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=api_key&resource_id="+uintString(payload.Data.ID)+"&result=denied&error_code=api_key_quota_edit_forbidden", rootJWT, nil)
-	deniedBody := deniedAuditResp.Body.String()
-	if deniedAuditResp.Code != http.StatusOK ||
-		!strings.Contains(deniedBody, `"action":"api_key.quota_limit_denied"`) ||
-		strings.Contains(deniedBody, `"action":"api_key.created"`) {
-		t.Fatalf("api key denied audit filters should only return denied quota edits, got %d %s", deniedAuditResp.Code, deniedBody)
+	quotaAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=api_key&resource_id="+uintString(payload.Data.ID)+"&action=api_key.quota_limit_set", rootJWT, nil)
+	quotaAuditBody := quotaAuditResp.Body.String()
+	if quotaAuditResp.Code != http.StatusOK ||
+		!strings.Contains(quotaAuditBody, `"action":"api_key.quota_limit_set"`) ||
+		strings.Contains(quotaAuditBody, `"action":"api_key.created"`) {
+		t.Fatalf("api key quota audit filters should only return quota edits, got %d %s", quotaAuditResp.Code, quotaAuditBody)
 	}
 	futureStart := time.Now().Add(24 * time.Hour).Unix()
 	futureEnd := time.Now().Add(48 * time.Hour).Unix()
@@ -2029,6 +2031,71 @@ func TestUserAPIKeyManagementAuditLogs(t *testing.T) {
 	futureBody := futureAuditResp.Body.String()
 	if futureAuditResp.Code != http.StatusOK || strings.Contains(futureBody, `"action":"api_key.created"`) {
 		t.Fatalf("api key audit time filters should exclude records outside the range, got %d %s", futureAuditResp.Code, futureBody)
+	}
+}
+
+func TestUserCanManageAPIKeyQuotaAndLeakRiskSwitch(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	r := newTestRouter(t)
+
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+
+	createResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":        "quota-managed-key",
+		"quota_limit": int64(10),
+	})
+	var createPayload struct {
+		Data struct {
+			ID              uint  `json:"id"`
+			QuotaLimit      int64 `json:"quota_limit"`
+			QuotaUsed       int64 `json:"quota_used"`
+			LeakRiskEnabled bool  `json:"leak_risk_enabled"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createResp.Body.Bytes(), &createPayload); err != nil {
+		t.Fatal(err)
+	}
+	if createResp.Code != http.StatusOK ||
+		createPayload.Data.ID == 0 ||
+		createPayload.Data.QuotaLimit != 10 ||
+		createPayload.Data.QuotaUsed != 0 ||
+		!createPayload.Data.LeakRiskEnabled {
+		t.Fatalf("created api key should expose quota and default leak risk switch, got %d %s", createResp.Code, createResp.Body.String())
+	}
+
+	updateResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(createPayload.Data.ID), rootJWT, map[string]interface{}{
+		"quota_limit":       int64(25),
+		"leak_risk_enabled": false,
+	})
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("user should be able to update api key quota and leak risk switch, got %d %s", updateResp.Code, updateResp.Body.String())
+	}
+	var updated model.Token
+	if err := internal.DB.First(&updated, createPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if updated.QuotaLimit != 25 || updated.Unlimited || updated.QuotaUsed != 0 || updated.LeakRiskEnabled {
+		t.Fatalf("api key quota and leak risk switch should be updated, got %+v", updated)
+	}
+
+	unlimitedResp := performJSON(r, http.MethodPut, "/v0/user/token/"+uintString(createPayload.Data.ID), rootJWT, map[string]interface{}{
+		"unlimited": true,
+	})
+	if unlimitedResp.Code != http.StatusOK {
+		t.Fatalf("user should be able to set api key unlimited, got %d %s", unlimitedResp.Code, unlimitedResp.Body.String())
+	}
+	if err := internal.DB.First(&updated, createPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Unlimited || updated.QuotaLimit != common.QuotaUnlimited {
+		t.Fatalf("api key should become unlimited, got %+v", updated)
 	}
 }
 
@@ -2050,8 +2117,8 @@ func TestUserAPIKeyAdvancedManagement(t *testing.T) {
 		t.Fatal(err)
 	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "advanced-key",
-		"remain_quota": int64(100),
+		"name":        "advanced-key",
+		"quota_limit": int64(100),
 	})
 	var createPayload struct {
 		Data struct {
@@ -2207,8 +2274,8 @@ func TestAdminAPIKeyQueryAndBatchDisable(t *testing.T) {
 	}
 
 	rootTokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "root-admin-list-key",
-		"remain_quota": int64(100),
+		"name":        "root-admin-list-key",
+		"quota_limit": int64(100),
 	})
 	var rootTokenPayload struct {
 		Data struct {
@@ -2444,8 +2511,8 @@ func TestAPIKeyLeakReportCreatesAdminAlert(t *testing.T) {
 	rootJWT := loginBearer(t, r, "root", "password123")
 
 	createResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "leak-alert-key",
-		"remain_quota": int64(100),
+		"name":        "leak-alert-key",
+		"quota_limit": int64(100),
 	})
 	var createPayload struct {
 		Data struct {
@@ -2574,8 +2641,8 @@ func TestAPIKeyLeakAlertWebhookDeliveryReplay(t *testing.T) {
 	}
 
 	createResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "leak-webhook-key",
-		"remain_quota": int64(100),
+		"name":        "leak-webhook-key",
+		"quota_limit": int64(100),
 	})
 	var createPayload struct {
 		Data struct {
@@ -2743,8 +2810,8 @@ func TestAPIKeyLeakAlertEmailAndIMDeliveryReplay(t *testing.T) {
 	}
 
 	createResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "leak-multichannel-key",
-		"remain_quota": int64(100),
+		"name":        "leak-multichannel-key",
+		"quota_limit": int64(100),
 	})
 	var createPayload struct {
 		Data struct {
@@ -2866,8 +2933,8 @@ func TestAPIKeyMetadataFiltersAndSanitizedExport(t *testing.T) {
 	rootJWT := loginBearer(t, r, "root", "password123")
 
 	createProdResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "prod-router-key",
-		"remain_quota": int64(100),
+		"name":        "prod-router-key",
+		"quota_limit": int64(100),
 		"metadata": map[string]interface{}{
 			"environment": "prod",
 			"team":        "platform",
@@ -2902,8 +2969,8 @@ func TestAPIKeyMetadataFiltersAndSanitizedExport(t *testing.T) {
 	}
 
 	createDevResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "dev-router-key",
-		"remain_quota": int64(100),
+		"name":        "dev-router-key",
+		"quota_limit": int64(100),
 		"metadata": map[string]interface{}{
 			"environment": "dev",
 			"team":        "lab",
@@ -3013,8 +3080,8 @@ func TestAPIKeyServiceAccountPrincipalFiltersAndExport(t *testing.T) {
 	rootJWT := loginBearer(t, r, "root", "password123")
 
 	createSvcResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "checkout-worker",
-		"remain_quota": int64(1000),
+		"name":        "checkout-worker",
+		"quota_limit": int64(1000),
 		"metadata": map[string]interface{}{
 			"environment":    "prod",
 			"team":           "payments",
@@ -3051,8 +3118,8 @@ func TestAPIKeyServiceAccountPrincipalFiltersAndExport(t *testing.T) {
 	}
 
 	otherResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "docs-worker",
-		"remain_quota": int64(1000),
+		"name":        "docs-worker",
+		"quota_limit": int64(1000),
 		"metadata": map[string]interface{}{
 			"environment":    "prod",
 			"team":           "docs",
@@ -3371,8 +3438,8 @@ func TestAdminAPIKeyBatchExpire(t *testing.T) {
 	}
 
 	rootTokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "root-expire-safe-key",
-		"remain_quota": int64(100),
+		"name":        "root-expire-safe-key",
+		"quota_limit": int64(100),
 	})
 	var rootTokenPayload struct {
 		Data struct {
@@ -4192,8 +4259,8 @@ func TestUserSelfCancelDisablesAccountButPreservesIdentity(t *testing.T) {
 	userJWT := loginBearer(t, r, "cancel-user", "password123")
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
-		"name":         "cancel-key",
-		"remain_quota": 10,
+		"name":        "cancel-key",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -5992,8 +6059,8 @@ func TestOAuthRegistrationRestoresSelfCancelledProviderIdentity(t *testing.T) {
 	}
 	userJWT := loginBearer(t, r, "oauth-recover", "oldpassword123")
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
-		"name":         "oauth-recover-key",
-		"remain_quota": 10,
+		"name":        "oauth-recover-key",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -6913,8 +6980,8 @@ func TestOIDCRegistrationRestoresSelfCancelledProviderIdentity(t *testing.T) {
 	}
 	userJWT := loginBearer(t, r, "oidc-recover", "oldpassword123")
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
-		"name":         "oidc-recover-key",
-		"remain_quota": 10,
+		"name":        "oidc-recover-key",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -8577,7 +8644,7 @@ func TestAdminPaymentManualAdjustmentWritesManualTransactionAndAudit(t *testing.
 	}
 }
 
-func TestAdminPaymentManualRefundMarksOrderAndDeductsQuota(t *testing.T) {
+func TestPaymentRemovedPathsReturnNotFound(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 	r := newTestRouter(t)
@@ -8590,464 +8657,41 @@ func TestAdminPaymentManualRefundMarksOrderAndDeductsQuota(t *testing.T) {
 		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
 	}
 	rootJWT := loginBearer(t, r, "root", "password123")
-	createResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
-		"username": "alice",
-		"password": "password123",
-		"quota":    100,
-	})
-	if createResp.Code != http.StatusOK {
-		t.Fatalf("create user failed: %d %s", createResp.Code, createResp.Body.String())
-	}
-	var root model.User
-	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
-		t.Fatal(err)
-	}
-	var alice model.User
-	if err := internal.DB.Where("username = ?", "alice").First(&alice).Error; err != nil {
-		t.Fatal(err)
-	}
-	order := model.PaymentOrder{
-		OrderNo:   "PAYREFUND1000",
-		UserID:    alice.ID,
-		ProductID: "quota_manual_refund",
-		Provider:  common.PaymentProviderStripe,
-		Amount:    "9.99",
-		Currency:  "usd",
-		Quota:     100,
-		Status:    common.PaymentOrderStatusPaid,
-	}
-	if err := internal.DB.Create(&order).Error; err != nil {
-		t.Fatal(err)
+
+	if internal.DB.Migrator().HasTable("payment_refund_requests") {
+		t.Fatal("payment_refund_requests table should not be created")
 	}
 
-	refundResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refunds", rootJWT, map[string]interface{}{
-		"order_no":        order.OrderNo,
-		"refund_quota":    40,
-		"reason":          "customer refund",
-		"idempotency_key": "manual-refund-1",
-	})
-	refundBody := refundResp.Body.String()
-	if refundResp.Code != http.StatusOK ||
-		!strings.Contains(refundBody, `"order_status":"partially_refunded"`) ||
-		!strings.Contains(refundBody, `"balance_after":60`) {
-		t.Fatalf("manual refund should deduct quota and mark partial refund, got %d %s", refundResp.Code, refundBody)
-	}
-	if err := internal.DB.First(&alice, alice.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if alice.Quota != 60 {
-		t.Fatalf("manual refund should deduct user quota, got %d", alice.Quota)
-	}
-	if err := internal.DB.First(&order, order.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if order.Status != common.PaymentOrderStatusPartiallyRefunded {
-		t.Fatalf("manual partial refund should mark order partially_refunded, got %+v", order)
-	}
-	var quotaTx model.QuotaTransaction
-	if err := internal.DB.Where("idempotency_key = ?", "manual-refund-1").First(&quotaTx).Error; err != nil {
-		t.Fatalf("manual refund should write quota transaction: %v", err)
-	}
-	if quotaTx.UserID != alice.ID ||
-		quotaTx.Type != common.QuotaTransactionTypeRefundDeduct ||
-		quotaTx.Amount != -40 ||
-		quotaTx.BalanceBefore != 100 ||
-		quotaTx.BalanceAfter != 60 ||
-		quotaTx.SourceType != common.QuotaSourceTypeRefund ||
-		quotaTx.SourceID != order.OrderNo {
-		t.Fatalf("unexpected manual refund quota transaction: %+v", quotaTx)
-	}
-	if quotaTx.ActorUserID == nil || *quotaTx.ActorUserID != root.ID || quotaTx.Reason != "customer refund" {
-		t.Fatalf("manual refund quota transaction should include actor and reason: %+v", quotaTx)
-	}
-	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo, rootJWT, nil)
-	auditBody := auditResp.Body.String()
-	if auditResp.Code != http.StatusOK ||
-		!strings.Contains(auditBody, `"action":"payment_refund.manual"`) ||
-		!strings.Contains(auditBody, order.OrderNo) ||
-		!strings.Contains(auditBody, "customer refund") ||
-		!strings.Contains(auditBody, "manual-refund-1") {
-		t.Fatalf("manual refund should write payment refund audit log, got %d %s", auditResp.Code, auditBody)
-	}
-	duplicateResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refunds", rootJWT, map[string]interface{}{
-		"order_no":        order.OrderNo,
-		"refund_quota":    40,
-		"reason":          "customer refund",
-		"idempotency_key": "manual-refund-1",
-	})
-	if duplicateResp.Code != http.StatusBadRequest {
-		t.Fatalf("duplicate manual refund idempotency key should fail, got %d %s", duplicateResp.Code, duplicateResp.Body.String())
-	}
-	var txCount int64
-	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("idempotency_key = ?", "manual-refund-1").Count(&txCount).Error; err != nil {
-		t.Fatal(err)
-	}
-	if txCount != 1 {
-		t.Fatalf("duplicate manual refund must not write duplicate transactions, got %d", txCount)
-	}
-	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo+"&result=denied", rootJWT, nil)
-	deniedAuditBody := deniedAuditResp.Body.String()
-	if deniedAuditResp.Code != http.StatusOK ||
-		!strings.Contains(deniedAuditBody, `"action":"payment_refund.manual_denied"`) ||
-		!strings.Contains(deniedAuditBody, `"error_code":"payment_manual_refund_idempotency_key_used"`) ||
-		!strings.Contains(deniedAuditBody, "manual-refund-1") {
-		t.Fatalf("duplicate manual refund should write denied audit, got %d %s", deniedAuditResp.Code, deniedAuditBody)
-	}
-}
-
-func TestAdminStripeRefundRequestCreatesProviderRefundAndPendingOrder(t *testing.T) {
-	t.Setenv("JWT_SECRET", "test-jwt-secret")
-	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
-
-	var refundAPICalls int32
-	stripeAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		atomic.AddInt32(&refundAPICalls, 1)
-		if req.Method != http.MethodPost || req.URL.Path != "/v1/refunds" {
-			t.Fatalf("unexpected stripe refund request: %s %s", req.Method, req.URL.Path)
+	for _, tc := range []struct {
+		name string
+		path string
+		body map[string]interface{}
+	}{
+		{
+			name: "removed manual path",
+			path: "/v0/admin/payment/refunds",
+			body: map[string]interface{}{
+				"order_no":        "PAYREMOVED1000",
+				"refund_quota":    40,
+				"reason":          "removed path",
+				"idempotency_key": "removed-path-1",
+			},
+		},
+		{
+			name: "removed provider path",
+			path: "/v0/admin/payment/refund-requests",
+			body: map[string]interface{}{
+				"order_no":        "PAYREMOVED1000",
+				"refund_amount":   "5.00",
+				"reason":          "removed provider path",
+				"idempotency_key": "removed-provider-path-1",
+			},
+		},
+	} {
+		resp := performJSON(r, http.MethodPost, tc.path, rootJWT, tc.body)
+		if resp.Code != http.StatusNotFound {
+			t.Fatalf("%s route should be removed, got %d %s", tc.name, resp.Code, resp.Body.String())
 		}
-		if got := req.Header.Get("Authorization"); got != "Bearer sk_test_refund" {
-			t.Fatalf("stripe refund should use secret key authorization, got %q", got)
-		}
-		if got := req.Header.Get("Idempotency-Key"); got != "refund-request-1" {
-			t.Fatalf("stripe refund should send idempotency key, got %q", got)
-		}
-		if err := req.ParseForm(); err != nil {
-			t.Fatal(err)
-		}
-		expected := map[string]string{
-			"payment_intent":            "pi_refund_request_1",
-			"amount":                    "500",
-			"metadata[order_no]":        "PAYREFREQ1000",
-			"metadata[idempotency_key]": "refund-request-1",
-			"metadata[reason]":          "customer requested partial refund",
-		}
-		for key, want := range expected {
-			if got := req.Form.Get(key); got != want {
-				t.Fatalf("stripe refund form %s = %q, want %q", key, got, want)
-			}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"re_refund_request_1","status":"pending"}`))
-	}))
-	defer stripeAPI.Close()
-	t.Setenv("PAYMENT_STRIPE_SECRET_KEY", "sk_test_refund")
-	t.Setenv("PAYMENT_STRIPE_API_BASE", stripeAPI.URL)
-
-	r := newTestRouter(t)
-	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
-		"username": "root",
-		"password": "password123",
-	})
-	if initResp.Code != http.StatusOK {
-		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
-	}
-	rootJWT := loginBearer(t, r, "root", "password123")
-	createUserResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
-		"username": "alice",
-		"password": "password123",
-		"quota":    100,
-	})
-	if createUserResp.Code != http.StatusOK {
-		t.Fatalf("create user failed: %d %s", createUserResp.Code, createUserResp.Body.String())
-	}
-	var alice model.User
-	if err := internal.DB.Where("username = ?", "alice").First(&alice).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := internal.DB.Create(&model.PaymentProduct{
-		ProductID: "quota_refund_request",
-		Name:      "Refund request credits",
-		Amount:    "9.99",
-		Currency:  "usd",
-		Quota:     100,
-		Enabled:   true,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	settingSvc := service.NewSettingService()
-	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
-		t.Fatal(err)
-	}
-	paymentIntent := "pi_refund_request_1"
-	paidAt := time.Now()
-	order := model.PaymentOrder{
-		OrderNo:           "PAYREFREQ1000",
-		UserID:            alice.ID,
-		ProductID:         "quota_refund_request",
-		Provider:          common.PaymentProviderStripe,
-		Amount:            "9.99",
-		Currency:          "usd",
-		Quota:             100,
-		Status:            common.PaymentOrderStatusPaid,
-		ProviderPaymentID: &paymentIntent,
-		PaidAt:            &paidAt,
-	}
-	if err := internal.DB.Create(&order).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	missingReasonResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refund-requests", rootJWT, map[string]interface{}{
-		"order_no":        order.OrderNo,
-		"refund_amount":   "5.00",
-		"idempotency_key": "refund-request-missing-reason",
-	})
-	if missingReasonResp.Code != http.StatusBadRequest {
-		t.Fatalf("stripe refund request without reason should fail, got %d %s", missingReasonResp.Code, missingReasonResp.Body.String())
-	}
-	if atomic.LoadInt32(&refundAPICalls) != 0 {
-		t.Fatalf("invalid stripe refund request must not call provider, got %d", refundAPICalls)
-	}
-	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo+"&result=denied", rootJWT, nil)
-	deniedAuditBody := deniedAuditResp.Body.String()
-	if deniedAuditResp.Code != http.StatusOK ||
-		!strings.Contains(deniedAuditBody, `"action":"payment_refund.request_denied"`) ||
-		!strings.Contains(deniedAuditBody, `"error_code":"payment_refund_reason_required"`) ||
-		!strings.Contains(deniedAuditBody, "refund-request-missing-reason") {
-		t.Fatalf("denied stripe refund request should write audit log, got %d %s", deniedAuditResp.Code, deniedAuditBody)
-	}
-	if strings.Contains(deniedAuditBody, "sk_test_refund") || strings.Contains(deniedAuditBody, "re_refund_request_1") {
-		t.Fatalf("denied stripe refund request audit leaked provider secrets: %s", deniedAuditBody)
-	}
-
-	refundResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refund-requests", rootJWT, map[string]interface{}{
-		"order_no":        order.OrderNo,
-		"refund_amount":   "5.00",
-		"reason":          "customer requested partial refund",
-		"idempotency_key": "refund-request-1",
-	})
-	refundBody := refundResp.Body.String()
-	if refundResp.Code != http.StatusOK ||
-		!strings.Contains(refundBody, `"provider_refund_id":"re_refund_request_1"`) ||
-		!strings.Contains(refundBody, `"order_status":"refund_pending"`) ||
-		!strings.Contains(refundBody, `"refund_quota":50`) {
-		t.Fatalf("stripe refund request should create provider refund and pending order, got %d %s", refundResp.Code, refundBody)
-	}
-	if atomic.LoadInt32(&refundAPICalls) != 1 {
-		t.Fatalf("stripe refund API should be called once, got %d", refundAPICalls)
-	}
-	if err := internal.DB.First(&order, order.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if order.Status != "refund_pending" {
-		t.Fatalf("stripe refund request should mark order refund_pending, got %+v", order)
-	}
-	var refundRequest struct {
-		OrderNo          string
-		Provider         string
-		ProviderRefundID string
-		Amount           string
-		AmountMinor      int64
-		Currency         string
-		RefundQuota      int64
-		Status           string
-		IdempotencyKey   string
-		Reason           string
-		ActorUserID      uint
-	}
-	if err := internal.DB.Table("payment_refund_requests").Where("idempotency_key = ?", "refund-request-1").First(&refundRequest).Error; err != nil {
-		t.Fatalf("stripe refund request should be recorded: %v", err)
-	}
-	if refundRequest.OrderNo != order.OrderNo ||
-		refundRequest.Provider != common.PaymentProviderStripe ||
-		refundRequest.ProviderRefundID != "re_refund_request_1" ||
-		refundRequest.Amount != "5.00" ||
-		refundRequest.AmountMinor != 500 ||
-		refundRequest.Currency != "usd" ||
-		refundRequest.RefundQuota != 50 ||
-		refundRequest.Status != "pending" ||
-		refundRequest.Reason != "customer requested partial refund" ||
-		refundRequest.ActorUserID == 0 {
-		t.Fatalf("unexpected refund request record: %+v", refundRequest)
-	}
-	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo, rootJWT, nil)
-	auditBody := auditResp.Body.String()
-	if auditResp.Code != http.StatusOK ||
-		!strings.Contains(auditBody, `"action":"payment_refund.requested"`) ||
-		!strings.Contains(auditBody, "re_refund_request_1") ||
-		!strings.Contains(auditBody, "refund-request-1") {
-		t.Fatalf("stripe refund request should write audit log, got %d %s", auditResp.Code, auditBody)
-	}
-
-	webhookBody := stripeChargeRefundedPayload("evt_refund_requested_1", order, "pi_refund_request_1", 500)
-	webhookResp := performStripeWebhook(r, webhookBody, "whsec_test_secret")
-	if webhookResp.Code != http.StatusOK || strings.TrimSpace(webhookResp.Body.String()) != "success" {
-		t.Fatalf("stripe refund webhook should finalize pending refund, got %d %s", webhookResp.Code, webhookResp.Body.String())
-	}
-	if err := internal.DB.First(&order, order.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if order.Status != common.PaymentOrderStatusPartiallyRefunded {
-		t.Fatalf("stripe refund webhook should finalize pending refund, got %+v", order)
-	}
-}
-
-func TestAdminEpayRefundRequestCreatesProviderRefundAndPendingOrder(t *testing.T) {
-	t.Setenv("JWT_SECRET", "test-jwt-secret")
-	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_EPAY_KEY", "epay-refund-secret")
-
-	var refundAPICalls int32
-	epayAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		atomic.AddInt32(&refundAPICalls, 1)
-		if req.Method != http.MethodPost || req.URL.Path != "/refund" {
-			t.Fatalf("unexpected epay refund request: %s %s", req.Method, req.URL.Path)
-		}
-		if err := req.ParseForm(); err != nil {
-			t.Fatal(err)
-		}
-		expected := map[string]string{
-			"act":             "refund",
-			"pid":             "merchant-epay-1",
-			"out_trade_no":    "PAYEPAYREF1000",
-			"money":           "5.00",
-			"reason":          "customer requested epay partial refund",
-			"idempotency_key": "epay-refund-request-1",
-		}
-		for key, want := range expected {
-			if got := req.Form.Get(key); got != want {
-				t.Fatalf("epay refund form %s = %q, want %q", key, got, want)
-			}
-		}
-		if req.Form.Get("sign_type") != "MD5" || req.Form.Get("sign") != epaySign(req.Form, "epay-refund-secret") {
-			t.Fatalf("epay refund sign mismatch: %s", req.Form.Encode())
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":1,"msg":"success","refund_no":"epay_refund_1","status":"pending"}`))
-	}))
-	defer epayAPI.Close()
-
-	r := newTestRouter(t)
-	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
-		"username": "root",
-		"password": "password123",
-	})
-	if initResp.Code != http.StatusOK {
-		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
-	}
-	rootJWT := loginBearer(t, r, "root", "password123")
-	createUserResp := performJSON(r, http.MethodPost, "/v0/admin/user", rootJWT, map[string]interface{}{
-		"username": "alice",
-		"password": "password123",
-		"quota":    100,
-	})
-	if createUserResp.Code != http.StatusOK {
-		t.Fatalf("create user failed: %d %s", createUserResp.Code, createUserResp.Body.String())
-	}
-	var alice model.User
-	if err := internal.DB.Where("username = ?", "alice").First(&alice).Error; err != nil {
-		t.Fatal(err)
-	}
-	settingSvc := service.NewSettingService()
-	if err := settingSvc.Set("payment.epay.enabled", "true"); err != nil {
-		t.Fatal(err)
-	}
-	if err := settingSvc.Set("payment.epay.pid", "merchant-epay-1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := settingSvc.Set("payment.epay.refund_url", epayAPI.URL+"/refund"); err != nil {
-		t.Fatal(err)
-	}
-	paidAt := time.Now()
-	providerPaymentID := "TRADE_EP_REF_1"
-	order := model.PaymentOrder{
-		OrderNo:           "PAYEPAYREF1000",
-		UserID:            alice.ID,
-		ProductID:         "quota_epay_refund_request",
-		Provider:          common.PaymentProviderEpay,
-		Amount:            "9.99",
-		Currency:          "cny",
-		Quota:             100,
-		Status:            common.PaymentOrderStatusPaid,
-		ProviderPaymentID: &providerPaymentID,
-		PaidAt:            &paidAt,
-	}
-	if err := internal.DB.Create(&order).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	refundResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refund-requests", rootJWT, map[string]interface{}{
-		"order_no":        order.OrderNo,
-		"refund_amount":   "5.00",
-		"reason":          "customer requested epay partial refund",
-		"idempotency_key": "epay-refund-request-1",
-	})
-	refundBody := refundResp.Body.String()
-	if refundResp.Code != http.StatusOK ||
-		!strings.Contains(refundBody, `"provider":"epay"`) ||
-		!strings.Contains(refundBody, `"provider_refund_id":"epay_refund_1"`) ||
-		!strings.Contains(refundBody, `"order_status":"refund_pending"`) ||
-		!strings.Contains(refundBody, `"refund_quota":50`) {
-		t.Fatalf("epay refund request should create provider refund and pending order, got %d %s", refundResp.Code, refundBody)
-	}
-	if atomic.LoadInt32(&refundAPICalls) != 1 {
-		t.Fatalf("epay refund API should be called once, got %d", refundAPICalls)
-	}
-	if err := internal.DB.First(&order, order.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if order.Status != common.PaymentOrderStatusRefundPending {
-		t.Fatalf("epay refund request should mark order refund_pending, got %+v", order)
-	}
-	var refundRequest struct {
-		OrderNo          string
-		Provider         string
-		ProviderRefundID string
-		Amount           string
-		AmountMinor      int64
-		Currency         string
-		RefundQuota      int64
-		Status           string
-		IdempotencyKey   string
-		Reason           string
-		ActorUserID      uint
-	}
-	if err := internal.DB.Table("payment_refund_requests").Where("idempotency_key = ?", "epay-refund-request-1").First(&refundRequest).Error; err != nil {
-		t.Fatalf("epay refund request should be recorded: %v", err)
-	}
-	if refundRequest.OrderNo != order.OrderNo ||
-		refundRequest.Provider != common.PaymentProviderEpay ||
-		refundRequest.ProviderRefundID != "epay_refund_1" ||
-		refundRequest.Amount != "5.00" ||
-		refundRequest.AmountMinor != 500 ||
-		refundRequest.Currency != "cny" ||
-		refundRequest.RefundQuota != 50 ||
-		refundRequest.Status != "pending" ||
-		refundRequest.Reason != "customer requested epay partial refund" ||
-		refundRequest.ActorUserID == 0 {
-		t.Fatalf("unexpected epay refund request record: %+v", refundRequest)
-	}
-	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo, rootJWT, nil)
-	auditBody := auditResp.Body.String()
-	if auditResp.Code != http.StatusOK ||
-		!strings.Contains(auditBody, `"action":"payment_refund.requested"`) ||
-		!strings.Contains(auditBody, "epay_refund_1") ||
-		!strings.Contains(auditBody, "epay-refund-request-1") {
-		t.Fatalf("epay refund request should write audit log, got %d %s", auditResp.Code, auditBody)
-	}
-
-	duplicateResp := performJSON(r, http.MethodPost, "/v0/admin/payment/refund-requests", rootJWT, map[string]interface{}{
-		"order_no":        order.OrderNo,
-		"refund_amount":   "5.00",
-		"reason":          "customer requested epay partial refund",
-		"idempotency_key": "epay-refund-request-1",
-	})
-	if duplicateResp.Code != http.StatusBadRequest {
-		t.Fatalf("duplicate epay refund request idempotency key should fail, got %d %s", duplicateResp.Code, duplicateResp.Body.String())
-	}
-	if atomic.LoadInt32(&refundAPICalls) != 1 {
-		t.Fatalf("duplicate epay refund request must not call provider again, got %d", refundAPICalls)
-	}
-	deniedAuditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_order&resource_id="+order.OrderNo+"&result=denied", rootJWT, nil)
-	deniedAuditBody := deniedAuditResp.Body.String()
-	if deniedAuditResp.Code != http.StatusOK ||
-		!strings.Contains(deniedAuditBody, `"action":"payment_refund.request_denied"`) ||
-		!strings.Contains(deniedAuditBody, `"error_code":"payment_refund_idempotency_key_used"`) ||
-		!strings.Contains(deniedAuditBody, "epay-refund-request-1") {
-		t.Fatalf("duplicate epay refund request should write denied audit, got %d %s", deniedAuditResp.Code, deniedAuditBody)
-	}
-	if strings.Contains(deniedAuditBody, "epay-refund-secret") {
-		t.Fatalf("duplicate epay refund request audit leaked provider secret: %s", deniedAuditBody)
 	}
 }
 
@@ -9585,7 +9229,7 @@ func TestUserCreatesAndListsPaymentOrders(t *testing.T) {
 		!strings.Contains(deniedAuditBody, `\"product_id\":\"quota_100\"`) {
 		t.Fatalf("disabled payment provider should write denied order creation audit, got %d %s", deniedAuditResp.Code, deniedAuditBody)
 	}
-	if strings.Contains(deniedAuditBody, "checkout_url") || strings.Contains(deniedAuditBody, "PAYMENT_STRIPE_SECRET_KEY") {
+	if strings.Contains(deniedAuditBody, "checkout_url") || strings.Contains(deniedAuditBody, "payment.stripe.secret_key") {
 		t.Fatalf("payment order creation denial audit should not store checkout URL or provider secret names: %s", deniedAuditBody)
 	}
 	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
@@ -9769,7 +9413,6 @@ func TestUserCancelsPendingPaymentOrder(t *testing.T) {
 func TestStripeOrderCreatesCheckoutSessionWhenConfigured(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_SECRET_KEY", "sk_test_routerx")
 	var called atomic.Bool
 	stripeAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		called.Store(true)
@@ -9813,7 +9456,6 @@ func TestStripeOrderCreatesCheckoutSessionWhenConfigured(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"cs_test_123","url":"https://checkout.stripe.com/c/session_123"}`))
 	}))
 	defer stripeAPI.Close()
-	t.Setenv("PAYMENT_STRIPE_API_BASE", stripeAPI.URL)
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -9834,8 +9476,15 @@ func TestStripeOrderCreatesCheckoutSessionWhenConfigured(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
-		t.Fatal(err)
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.stripe.enabled":    "true",
+		"payment.stripe.secret_key": "sk_test_routerx",
+		"payment.stripe.api_base":   stripeAPI.URL,
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
@@ -10047,7 +9696,6 @@ func TestAdminAuditRequiresSuperAdmin(t *testing.T) {
 func TestEpayOrderBuildsSignedCheckoutURL(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_EPAY_KEY", "epay-checkout-secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10071,6 +9719,7 @@ func TestEpayOrderBuildsSignedCheckoutURL(t *testing.T) {
 	settingSvc := service.NewSettingService()
 	for key, value := range map[string]string{
 		"payment.epay.enabled":    "true",
+		"payment.epay.key":        "epay-checkout-secret",
 		"payment.epay.gateway":    "https://pay.example.com/submit.php",
 		"payment.epay.pid":        "merchant-1",
 		"payment.epay.notify_url": "https://api.example.com/v0/payment/epay/notify",
@@ -10125,7 +9774,6 @@ func TestEpayOrderBuildsSignedCheckoutURL(t *testing.T) {
 func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_EPAY_KEY", "epay-test-secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10149,8 +9797,14 @@ func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
-		t.Fatal(err)
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.epay.enabled": "true",
+		"payment.epay.key":     "epay-test-secret",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
 	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
 		"provider":   "epay",
@@ -10251,7 +9905,6 @@ func TestEpayNotifyPaysOrderIdempotently(t *testing.T) {
 func TestEpayFailedNotifyMarksOrderFailedAndAudits(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_EPAY_KEY", "epay-test-secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10275,8 +9928,14 @@ func TestEpayFailedNotifyMarksOrderFailedAndAudits(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := service.NewSettingService().Set("payment.epay.enabled", "true"); err != nil {
-		t.Fatal(err)
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.epay.enabled": "true",
+		"payment.epay.key":     "epay-test-secret",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
 	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
 		"provider":   "epay",
@@ -10327,7 +9986,6 @@ func TestEpayFailedNotifyMarksOrderFailedAndAudits(t *testing.T) {
 func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10351,8 +10009,14 @@ func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
-		t.Fatal(err)
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.stripe.enabled":        "true",
+		"payment.stripe.webhook_secret": "whsec_test_secret",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
 	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
 		"provider":   "stripe",
@@ -10435,10 +10099,91 @@ func TestStripeWebhookPaysOrderIdempotently(t *testing.T) {
 	}
 }
 
+func TestStripeWebhookStoresRedactedPayload(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.DB.Create(&model.PaymentProduct{
+		ProductID: "quota_stripe_redaction",
+		Name:      "Stripe redaction credits",
+		Amount:    "9.99",
+		Currency:  "usd",
+		Quota:     100,
+		Enabled:   true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.stripe.enabled":        "true",
+		"payment.stripe.webhook_secret": "whsec_test_secret",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
+		"provider":   "stripe",
+		"product_id": "quota_stripe_redaction",
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("create payment order failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	var order model.PaymentOrder
+	if err := internal.DB.Where("user_id = ? AND provider = ?", root.ID, common.PaymentProviderStripe).First(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := stripeCheckoutCompletedPayload("evt_stripe_redacted", &order, root.ID, 999, "pi_redacted")
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	object := envelope["data"].(map[string]interface{})["object"].(map[string]interface{})
+	object["customer_email"] = "buyer@example.com"
+	object["client_secret"] = "pi_redacted_secret_should_not_persist"
+	object["metadata"].(map[string]interface{})["internal_note"] = "do-not-store-this"
+	raw, _ := json.Marshal(envelope)
+
+	resp := performStripeWebhook(r, string(raw), "whsec_test_secret")
+	if resp.Code != http.StatusOK || strings.TrimSpace(resp.Body.String()) != "success" {
+		t.Fatalf("signed stripe event should be acknowledged, got %d %s", resp.Code, resp.Body.String())
+	}
+
+	var event model.PaymentEvent
+	if err := internal.DB.Where("provider = ? AND provider_event_id = ?", common.PaymentProviderStripe, "evt_stripe_redacted").First(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(event.Payload, "evt_stripe_redacted") || !strings.Contains(event.Payload, order.OrderNo) || !strings.Contains(event.Payload, "pi_redacted") {
+		t.Fatalf("redacted payload should keep operational identifiers, got %s", event.Payload)
+	}
+	for _, forbidden := range []string{"buyer@example.com", "client_secret", "secret_should_not_persist", "internal_note", "do-not-store-this"} {
+		if strings.Contains(event.Payload, forbidden) {
+			t.Fatalf("stripe payload persisted sensitive field %q: %s", forbidden, event.Payload)
+		}
+	}
+}
+
 func TestStripeAsyncPaymentFailedMarksOrderFailedAndAudits(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10462,8 +10207,14 @@ func TestStripeAsyncPaymentFailedMarksOrderFailedAndAudits(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := service.NewSettingService().Set("payment.stripe.enabled", "true"); err != nil {
-		t.Fatal(err)
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"payment.stripe.enabled":        "true",
+		"payment.stripe.webhook_secret": "whsec_test_secret",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
 	}
 	createResp := performJSON(r, http.MethodPost, "/v0/user/payment/orders", rootJWT, map[string]interface{}{
 		"provider":   "stripe",
@@ -10509,10 +10260,9 @@ func TestStripeAsyncPaymentFailedMarksOrderFailedAndAudits(t *testing.T) {
 	}
 }
 
-func TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota(t *testing.T) {
+func TestStripeUnhandledChargeEventIsAcceptedAsGenericEvent(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10523,12 +10273,9 @@ func TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota(t *testing.T) {
 		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
 	}
 	rootJWT := loginBearer(t, r, "root", "password123")
-	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
-		t.Fatal(err)
-	}
 	if err := internal.DB.Create(&model.PaymentProduct{
-		ProductID: "quota_refund",
-		Name:      "Refundable credits",
+		ProductID: "quota_removed_feature",
+		Name:      "Removed feature credits",
 		Amount:    "9.99",
 		Currency:  "usd",
 		Quota:     100,
@@ -10540,160 +10287,51 @@ func TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota(t *testing.T) {
 	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
 		t.Fatal(err)
 	}
-
-	firstOrder := createStripePaidOrder(t, r, rootJWT, "quota_refund", "evt_paid_refund_1", "pi_refund_1")
-	refundBody := stripeChargeRefundedPayload("evt_refund_1", firstOrder, "pi_refund_1", 999)
-	refundResp := performStripeWebhook(r, refundBody, "whsec_test_secret")
-	if refundResp.Code != http.StatusOK || strings.TrimSpace(refundResp.Body.String()) != "success" {
-		t.Fatalf("stripe refund webhook should return success, got %d %s", refundResp.Code, refundResp.Body.String())
+	if err := settingSvc.Set("payment.stripe.webhook_secret", "whsec_test_secret"); err != nil {
+		t.Fatal(err)
 	}
+
+	order := createStripePaidOrder(t, r, rootJWT, "quota_removed_feature", "evt_paid_removed_feature", "pi_removed_feature")
+	var before model.User
+	if err := internal.DB.Where("username = ?", "root").First(&before).Error; err != nil {
+		t.Fatal(err)
+	}
+	body := stripeUnhandledChargeEventPayload("evt_removed_feature", order, "pi_removed_feature", 999)
+	resp := performStripeWebhook(r, body, "whsec_test_secret")
+	if resp.Code != http.StatusOK || strings.TrimSpace(resp.Body.String()) != "success" {
+		t.Fatalf("unhandled stripe charge event should be accepted as a generic event, got %d %s", resp.Code, resp.Body.String())
+	}
+
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
 		t.Fatal(err)
 	}
-	if root.Quota != 100 {
-		t.Fatalf("refund with auto_deduct=false should not deduct quota, got %d", root.Quota)
-	}
-	if err := internal.DB.First(&firstOrder, firstOrder.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if firstOrder.Status != common.PaymentOrderStatusRefunded {
-		t.Fatalf("refund should mark order refunded, got %+v", firstOrder)
-	}
-	var refundTxCount int64
-	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("type = ? AND source_id = ?", common.QuotaTransactionTypeRefundDeduct, "evt_refund_1").Count(&refundTxCount).Error; err != nil {
-		t.Fatal(err)
-	}
-	if refundTxCount != 0 {
-		t.Fatalf("refund with auto_deduct=false should not write refund deduct transaction, got %d", refundTxCount)
-	}
-
-	if err := settingSvc.Set("payment.refund.auto_deduct", "true"); err != nil {
-		t.Fatal(err)
-	}
-	secondOrder := createStripePaidOrder(t, r, rootJWT, "quota_refund", "evt_paid_refund_2", "pi_refund_2")
-	refundDeductBody := stripeChargeRefundedPayload("evt_refund_2", secondOrder, "pi_refund_2", 999)
-	deductResp := performStripeWebhook(r, refundDeductBody, "whsec_test_secret")
-	if deductResp.Code != http.StatusOK || strings.TrimSpace(deductResp.Body.String()) != "success" {
-		t.Fatalf("stripe refund auto deduct should return success, got %d %s", deductResp.Code, deductResp.Body.String())
-	}
-	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
-		t.Fatal(err)
-	}
-	if root.Quota != 100 {
-		t.Fatalf("second refund should deduct the second grant once, got %d", root.Quota)
-	}
-	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("type = ? AND source_id = ?", common.QuotaTransactionTypeRefundDeduct, "evt_refund_2").Count(&refundTxCount).Error; err != nil {
-		t.Fatal(err)
-	}
-	if refundTxCount != 1 {
-		t.Fatalf("refund auto deduct should write one refund deduct transaction, got %d", refundTxCount)
-	}
-	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_event&resource_id=evt_refund_2", rootJWT, nil)
-	auditBody := auditResp.Body.String()
-	if auditResp.Code != http.StatusOK ||
-		!strings.Contains(auditBody, `"action":"payment_refund.processed"`) ||
-		!strings.Contains(auditBody, `"action":"payment_refund.deducted"`) ||
-		!strings.Contains(auditBody, "event_id") ||
-		!strings.Contains(auditBody, "evt_refund_2") ||
-		!strings.Contains(auditBody, secondOrder.OrderNo) {
-		t.Fatalf("stripe refund should write payment event audit logs, got %d %s", auditResp.Code, auditBody)
-	}
-	duplicateRefund := performStripeWebhook(r, refundDeductBody, "whsec_test_secret")
-	if duplicateRefund.Code != http.StatusOK || strings.TrimSpace(duplicateRefund.Body.String()) != "success" {
-		t.Fatalf("duplicate stripe refund should return success, got %d %s", duplicateRefund.Code, duplicateRefund.Body.String())
-	}
-	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
-		t.Fatal(err)
-	}
-	if root.Quota != 100 {
-		t.Fatalf("duplicate refund must not deduct quota twice, got %d", root.Quota)
-	}
-	if err := internal.DB.Model(&model.QuotaTransaction{}).Where("type = ? AND source_id = ?", common.QuotaTransactionTypeRefundDeduct, "evt_refund_2").Count(&refundTxCount).Error; err != nil {
-		t.Fatal(err)
-	}
-	if refundTxCount != 1 {
-		t.Fatalf("duplicate refund must not write duplicate refund transaction, got %d", refundTxCount)
-	}
-}
-
-func TestStripePartialRefundWebhookRecordsAndDeductsProportionally(t *testing.T) {
-	t.Setenv("JWT_SECRET", "test-jwt-secret")
-	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
-	r := newTestRouter(t)
-
-	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
-		"username": "root",
-		"password": "password123",
-	})
-	if initResp.Code != http.StatusOK {
-		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
-	}
-	rootJWT := loginBearer(t, r, "root", "password123")
-	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(0)).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := internal.DB.Create(&model.PaymentProduct{
-		ProductID: "quota_partial_refund",
-		Name:      "Partially refundable credits",
-		Amount:    "9.99",
-		Currency:  "usd",
-		Quota:     100,
-		Enabled:   true,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	settingSvc := service.NewSettingService()
-	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
-		t.Fatal(err)
-	}
-	if err := settingSvc.Set("payment.refund.auto_deduct", "true"); err != nil {
-		t.Fatal(err)
-	}
-
-	order := createStripePaidOrder(t, r, rootJWT, "quota_partial_refund", "evt_paid_partial_refund", "pi_partial_refund")
-	refundBody := stripeChargeRefundedPayload("evt_partial_refund_1", order, "pi_partial_refund", 500)
-	refundResp := performStripeWebhook(r, refundBody, "whsec_test_secret")
-	if refundResp.Code != http.StatusOK || strings.TrimSpace(refundResp.Body.String()) != "success" {
-		t.Fatalf("stripe partial refund webhook should return success, got %d %s", refundResp.Code, refundResp.Body.String())
-	}
-	var root model.User
-	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
-		t.Fatal(err)
-	}
-	if root.Quota != 50 {
-		t.Fatalf("partial refund should deduct proportional quota once, got %d", root.Quota)
+	if root.Quota != before.Quota {
+		t.Fatalf("generic charge event must not change quota, before %d got %d", before.Quota, root.Quota)
 	}
 	if err := internal.DB.First(&order, order.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if order.Status != common.PaymentOrderStatusPartiallyRefunded {
-		t.Fatalf("partial refund should mark order partially_refunded, got %+v", order)
+	if order.Status != common.PaymentOrderStatusPaid {
+		t.Fatalf("generic charge event must not change payment order status, got %+v", order)
 	}
-	var refundTx model.QuotaTransaction
-	if err := internal.DB.Where("type = ? AND source_id = ?", common.QuotaTransactionTypeRefundDeduct, "evt_partial_refund_1").First(&refundTx).Error; err != nil {
-		t.Fatalf("partial refund should write refund deduct transaction: %v", err)
+	var event model.PaymentEvent
+	if err := internal.DB.Where("provider_event_id = ?", "evt_removed_feature").First(&event).Error; err != nil {
+		t.Fatalf("generic charge event should still be recorded: %v", err)
 	}
-	if refundTx.Amount != -50 || refundTx.BalanceBefore != 100 || refundTx.BalanceAfter != 50 || refundTx.Reason != "stripe partial refund deduct" {
-		t.Fatalf("unexpected partial refund deduct transaction: %+v", refundTx)
+	if !event.Processed {
+		t.Fatalf("generic charge event should be marked processed: %+v", event)
 	}
-	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_event&resource_id=evt_partial_refund_1", rootJWT, nil)
+	auditResp := performJSON(r, http.MethodGet, "/v0/admin/audit?resource_type=payment_event&resource_id=evt_removed_feature", rootJWT, nil)
 	auditBody := auditResp.Body.String()
-	if auditResp.Code != http.StatusOK ||
-		!strings.Contains(auditBody, `"action":"payment_refund.processed"`) ||
-		!strings.Contains(auditBody, `"action":"payment_refund.deducted"`) ||
-		!strings.Contains(auditBody, "partial") ||
-		!strings.Contains(auditBody, "evt_partial_refund_1") ||
-		!strings.Contains(auditBody, order.OrderNo) {
-		t.Fatalf("partial refund should write payment event audit logs, got %d %s", auditResp.Code, auditBody)
+	if auditResp.Code != http.StatusOK || strings.Contains(auditBody, "payment_refund") {
+		t.Fatalf("generic charge event must not write removed audit actions, got %d %s", auditResp.Code, auditBody)
 	}
 }
 
 func TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10712,8 +10350,8 @@ func TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy(t *testing.T)
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "risk key",
-		"remain_quota": int64(100),
+		"name":        "risk key",
+		"quota_limit": int64(100),
 	})
 	if tokenResp.Code != http.StatusOK {
 		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
@@ -10742,6 +10380,9 @@ func TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy(t *testing.T)
 	}
 	settingSvc := service.NewSettingService()
 	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.stripe.webhook_secret", "whsec_test_secret"); err != nil {
 		t.Fatal(err)
 	}
 	if err := settingSvc.Set("payment.dispute.auto_disable_tokens", "true"); err != nil {
@@ -10801,7 +10442,6 @@ func TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy(t *testing.T)
 func TestStripeDisputeLifecycleUpdatesDisputeFact(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_test_secret")
 	r := newTestRouter(t)
 
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -10824,6 +10464,9 @@ func TestStripeDisputeLifecycleUpdatesDisputeFact(t *testing.T) {
 	}
 	settingSvc := service.NewSettingService()
 	if err := settingSvc.Set("payment.stripe.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settingSvc.Set("payment.stripe.webhook_secret", "whsec_test_secret"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -11234,11 +10877,8 @@ func TestSetupBootstrapAdminQuotaAndSettingsDefaults(t *testing.T) {
 		"payment.epay.pid",
 		"payment.epay.notify_url",
 		"payment.epay.return_url",
-		"payment.epay.refund_url",
 		"payment.currency",
 		"payment.order_expire_minutes",
-		"payment.refund.auto_deduct",
-		"payment.refund.allow_negative_balance",
 		"payment.dispute.auto_disable_tokens",
 	} {
 		var count int64
@@ -11372,8 +11012,8 @@ func TestTraceContextPropagatesToResponseStructuredLogAndUpstream(t *testing.T) 
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "traceparent",
-		"remain_quota": 100,
+		"name":        "traceparent",
+		"quota_limit": 100,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -12097,12 +11737,6 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 	if badEpayGateway.Code != http.StatusBadRequest {
 		t.Fatalf("invalid payment.epay.gateway should be rejected, got %d %s", badEpayGateway.Code, badEpayGateway.Body.String())
 	}
-	badEpayRefundURL := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
-		"payment.epay.refund_url": "pay.example.com/refund",
-	})
-	if badEpayRefundURL.Code != http.StatusBadRequest {
-		t.Fatalf("invalid payment.epay.refund_url should be rejected, got %d %s", badEpayRefundURL.Code, badEpayRefundURL.Body.String())
-	}
 	badDefaultAccess := performJSON(r, http.MethodPut, "/v0/admin/setting", rootJWT, map[string]interface{}{
 		"billing.default_user_channel_group_access": `"default"`,
 	})
@@ -12222,10 +11856,12 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	epayMissingKey := performJSON(r, http.MethodGet, "/ready", "", nil)
-	if epayMissingKey.Code != http.StatusServiceUnavailable || !strings.Contains(epayMissingKey.Body.String(), "PAYMENT_EPAY_KEY") {
+	if epayMissingKey.Code != http.StatusServiceUnavailable || !strings.Contains(epayMissingKey.Body.String(), "payment.epay.key") {
 		t.Fatalf("enabled epay without key should make ready fail, got %d %s", epayMissingKey.Code, epayMissingKey.Body.String())
 	}
-	t.Setenv("PAYMENT_EPAY_KEY", "epay-test-secret")
+	if err := service.NewSettingService().Set("payment.epay.key", "epay-test-secret"); err != nil {
+		t.Fatal(err)
+	}
 	epayReady := performJSON(r, http.MethodGet, "/ready", "", nil)
 	if epayReady.Code != http.StatusOK {
 		t.Fatalf("epay key should restore ready, got %d %s", epayReady.Code, epayReady.Body.String())
@@ -12235,15 +11871,19 @@ func TestSettingsValidationAndReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	stripeMissingKeys := performJSON(r, http.MethodGet, "/ready", "", nil)
-	if stripeMissingKeys.Code != http.StatusServiceUnavailable || !strings.Contains(stripeMissingKeys.Body.String(), "PAYMENT_STRIPE_SECRET_KEY") {
+	if stripeMissingKeys.Code != http.StatusServiceUnavailable || !strings.Contains(stripeMissingKeys.Body.String(), "payment.stripe.secret_key") {
 		t.Fatalf("enabled stripe without secret key should make ready fail, got %d %s", stripeMissingKeys.Code, stripeMissingKeys.Body.String())
 	}
-	t.Setenv("PAYMENT_STRIPE_SECRET_KEY", "sk_test_routerx")
+	if err := service.NewSettingService().Set("payment.stripe.secret_key", "sk_test_routerx"); err != nil {
+		t.Fatal(err)
+	}
 	stripeMissingWebhook := performJSON(r, http.MethodGet, "/ready", "", nil)
-	if stripeMissingWebhook.Code != http.StatusServiceUnavailable || !strings.Contains(stripeMissingWebhook.Body.String(), "PAYMENT_STRIPE_WEBHOOK_SECRET") {
+	if stripeMissingWebhook.Code != http.StatusServiceUnavailable || !strings.Contains(stripeMissingWebhook.Body.String(), "payment.stripe.webhook_secret") {
 		t.Fatalf("enabled stripe without webhook secret should make ready fail, got %d %s", stripeMissingWebhook.Code, stripeMissingWebhook.Body.String())
 	}
-	t.Setenv("PAYMENT_STRIPE_WEBHOOK_SECRET", "whsec_routerx")
+	if err := service.NewSettingService().Set("payment.stripe.webhook_secret", "whsec_routerx"); err != nil {
+		t.Fatal(err)
+	}
 	stripeReady := performJSON(r, http.MethodGet, "/ready", "", nil)
 	if stripeReady.Code != http.StatusOK {
 		t.Fatalf("stripe keys should restore ready, got %d %s", stripeReady.Code, stripeReady.Body.String())
@@ -12535,7 +12175,7 @@ func TestAdminRotateSecretsReencryptsWithCurrentKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rotatePayload.Data.ScannedChannels != 1 || rotatePayload.Data.RotatedChannels != 1 ||
-		rotatePayload.Data.ScannedSettings != 2 || rotatePayload.Data.RotatedSettings != 2 ||
+		rotatePayload.Data.ScannedSettings != 5 || rotatePayload.Data.RotatedSettings != 2 ||
 		rotatePayload.Data.RotatedSecrets != 5 || rotatePayload.Data.SkippedSecrets != 0 {
 		t.Fatalf("unexpected rotation summary: %+v", rotatePayload.Data)
 	}
@@ -12889,8 +12529,8 @@ func TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields(t *testing.
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "protocols",
-		"remain_quota": 50,
+		"name":        "protocols",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -13002,8 +12642,8 @@ func TestAnthropicAndGeminiEntrypointsConvertSuccessAndDegradeFields(t *testing.
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 32 {
-		t.Fatalf("protocol calls should deduct combined usage from token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 32 {
+		t.Fatalf("protocol calls should deduct combined usage from token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -13047,8 +12687,8 @@ func TestAnthropicMessagesToAnthropicUpstreamPreservesNativeRequestFieldsAndDedu
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "anthropic-native-fields",
-		"remain_quota": 50,
+		"name":        "anthropic-native-fields",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -13158,8 +12798,8 @@ func TestAnthropicMessagesToAnthropicUpstreamPreservesNativeRequestFieldsAndDedu
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 43 {
-		t.Fatalf("Anthropic native fields usage should deduct token budget by 7, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 43 {
+		t.Fatalf("Anthropic native fields usage should deduct token budget by 7, got %d", storedToken.QuotaLimit)
 	}
 	var callLog model.Log
 	if err := internal.DB.Where("token_id = ? AND status = ?", tokenPayload.Data.ID, common.LogStatusSuccess).First(&callLog).Error; err != nil {
@@ -13232,8 +12872,8 @@ func TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage(t *testing.T)
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "gemini-embed",
-		"remain_quota": 50,
+		"name":        "gemini-embed",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -13282,8 +12922,8 @@ func TestGeminiEmbedContentConvertsOpenAIEmbeddingsAndDeductsUsage(t *testing.T)
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 44 {
-		t.Fatalf("gemini embedContent usage should deduct token budget by 6, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 44 {
+		t.Fatalf("gemini embedContent usage should deduct token budget by 6, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -13344,8 +12984,8 @@ func TestGeminiEmbedContentToGeminiUpstreamPreservesNativeRequestFieldsAndDeduct
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "gemini-native-embed",
-		"remain_quota": 50,
+		"name":        "gemini-native-embed",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -13413,8 +13053,8 @@ func TestGeminiEmbedContentToGeminiUpstreamPreservesNativeRequestFieldsAndDeduct
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 44 {
-		t.Fatalf("Gemini native embedContent usage should deduct token budget by 6, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 44 {
+		t.Fatalf("Gemini native embedContent usage should deduct token budget by 6, got %d", storedToken.QuotaLimit)
 	}
 	var callLog model.Log
 	if err := internal.DB.Where("token_id = ? AND status = ?", tokenPayload.Data.ID, common.LogStatusSuccess).First(&callLog).Error; err != nil {
@@ -13468,8 +13108,8 @@ func TestGeminiBatchEmbedContentsToGeminiUpstreamPreservesNativeRequestsAndDeduc
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "gemini-native-batch-embed",
-		"remain_quota": 50,
+		"name":        "gemini-native-batch-embed",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -13547,8 +13187,8 @@ func TestGeminiBatchEmbedContentsToGeminiUpstreamPreservesNativeRequestsAndDeduc
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 42 {
-		t.Fatalf("Gemini native batchEmbedContents usage should deduct token budget by 8, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 42 {
+		t.Fatalf("Gemini native batchEmbedContents usage should deduct token budget by 8, got %d", storedToken.QuotaLimit)
 	}
 	var callLog model.Log
 	if err := internal.DB.Where("token_id = ? AND status = ?", tokenPayload.Data.ID, common.LogStatusSuccess).First(&callLog).Error; err != nil {
@@ -13600,8 +13240,8 @@ func TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage(t *test
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "gemini-batch-embed",
-		"remain_quota": 50,
+		"name":        "gemini-batch-embed",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -13659,8 +13299,8 @@ func TestGeminiBatchEmbedContentsConvertsOpenAIEmbeddingsAndDeductsUsage(t *test
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 42 {
-		t.Fatalf("gemini batchEmbedContents usage should deduct token budget by 8, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 42 {
+		t.Fatalf("gemini batchEmbedContents usage should deduct token budget by 8, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -13708,8 +13348,8 @@ func TestGeminiBatchEmbedContentsRejectsMismatchedEmbeddingCount(t *testing.T) {
 	}
 	rootJWT := loginBearer(t, r, "root", "password123")
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "gemini-batch-mismatch",
-		"remain_quota": 50,
+		"name":        "gemini-batch-mismatch",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -13793,8 +13433,8 @@ func TestGeminiStreamGenerateContentConvertsOpenAISSEAndDeductsUsage(t *testing.
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "gemini-stream",
-		"remain_quota": 50,
+		"name":        "gemini-stream",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -13852,8 +13492,8 @@ func TestGeminiStreamGenerateContentConvertsOpenAISSEAndDeductsUsage(t *testing.
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("gemini stream usage should deduct token budget by 5, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("gemini stream usage should deduct token budget by 5, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -13908,8 +13548,8 @@ func TestGeminiStreamGenerateContentToGeminiUpstreamPreservesNativeSSEAndDeducts
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "gemini-native-stream",
-		"remain_quota": 50,
+		"name":        "gemini-native-stream",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -13991,8 +13631,8 @@ func TestGeminiStreamGenerateContentToGeminiUpstreamPreservesNativeSSEAndDeducts
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 44 {
-		t.Fatalf("Gemini native stream usage should deduct token budget by 6, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 44 {
+		t.Fatalf("Gemini native stream usage should deduct token budget by 6, got %d", storedToken.QuotaLimit)
 	}
 	var callLog model.Log
 	if err := internal.DB.Where("token_id = ? AND status = ?", tokenPayload.Data.ID, common.LogStatusSuccess).First(&callLog).Error; err != nil {
@@ -14039,8 +13679,8 @@ func TestAnthropicMessagesStreamConvertsOpenAISSEAndDeductsUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "anthropic-stream",
-		"remain_quota": 50,
+		"name":        "anthropic-stream",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -14100,8 +13740,8 @@ func TestAnthropicMessagesStreamConvertsOpenAISSEAndDeductsUsage(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("anthropic stream usage should deduct token budget by 5, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("anthropic stream usage should deduct token budget by 5, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -14161,8 +13801,8 @@ func TestAnthropicMessagesStreamToAnthropicUpstreamPreservesNativeSSEAndDeductsU
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "anthropic-native-stream",
-		"remain_quota": 50,
+		"name":        "anthropic-native-stream",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -14228,8 +13868,8 @@ func TestAnthropicMessagesStreamToAnthropicUpstreamPreservesNativeSSEAndDeductsU
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 44 {
-		t.Fatalf("Anthropic native stream usage should deduct token budget by 6, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 44 {
+		t.Fatalf("Anthropic native stream usage should deduct token budget by 6, got %d", storedToken.QuotaLimit)
 	}
 	var callLog model.Log
 	if err := internal.DB.Where("token_id = ? AND status = ?", tokenPayload.Data.ID, common.LogStatusSuccess).First(&callLog).Error; err != nil {
@@ -14266,8 +13906,8 @@ func TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol(t *testin
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "protocol-errors",
-		"remain_quota": 50,
+		"name":        "protocol-errors",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -14320,8 +13960,8 @@ func TestAnthropicAndGeminiEntrypointsMapUpstreamErrorsToEntryProtocol(t *testin
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("protocol upstream errors should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("protocol upstream errors should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 }
 
@@ -14362,8 +14002,8 @@ func TestRateLimitUsesSettingsAndEntryProtocolErrorShape(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "limited",
-		"remain_quota": 50,
+		"name":        "limited",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -14411,8 +14051,8 @@ func TestRateLimitUsesSettingsAndEntryProtocolErrorShape(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 48 {
-		t.Fatalf("only the successful request should deduct quota, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 48 {
+		t.Fatalf("only the successful request should deduct quota, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%rate limit%").First(&failedLog).Error; err != nil {
@@ -14431,6 +14071,93 @@ func TestRateLimitUsesSettingsAndEntryProtocolErrorShape(t *testing.T) {
 		scopeResult["rate_limit"] != "deny" ||
 		scopeResult["rate_limit_dimension"] != "token" {
 		t.Fatalf("unexpected rate limit policy snapshot: %+v", policySnapshot)
+	}
+}
+
+func TestRateLimitFallsBackToMemoryWithoutRedisInSQLiteMode(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+	t.Setenv("SQL_DSN", "")
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-memory-limit","object":"chat.completion","model":"gpt-memory-limit","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(100)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	settingSvc := service.NewSettingService()
+	for key, value := range map[string]string{
+		"rate_limit.enabled":           "true",
+		"rate_limit.global_per_min":    "0",
+		"rate_limit.per_token_per_min": "1",
+		"rate_limit.per_ip_per_min":    "0",
+		"rate_limit.per_user_per_min":  "0",
+	} {
+		if err := settingSvc.Set(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":        "memory-limit",
+		"quota_limit": 50,
+	})
+	var tokenPayload struct {
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "memory-limit",
+		"models":   "gpt-memory-limit",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	internal.RDB = nil
+	body := map[string]interface{}{
+		"model": "gpt-memory-limit",
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	}
+	first := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+	second := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
+
+	if first.Code != http.StatusOK {
+		t.Fatalf("first request should pass through memory limiter, got %d %s", first.Code, first.Body.String())
+	}
+	if second.Code != http.StatusTooManyRequests || !strings.Contains(second.Body.String(), `"code":"rate_limit_exceeded"`) {
+		t.Fatalf("second request should be denied by memory limiter, got %d %s", second.Code, second.Body.String())
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("memory limiter should reject before upstream on the second request, got %d upstream calls", upstreamCalls)
 	}
 }
 
@@ -14483,8 +14210,8 @@ func TestRateLimitRedisUnavailableFailsClosedInExternalDatabaseMode(t *testing.T
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "redis-unavailable-limited",
-		"remain_quota": 50,
+		"name":        "redis-unavailable-limited",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -14546,8 +14273,8 @@ func TestRateLimitRedisUnavailableFailsClosedInExternalDatabaseMode(t *testing.T
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 || storedToken.LastErrorCode != "rate_limit_unavailable" {
-		t.Fatalf("failed closed request should not deduct quota and should update last error code, got quota=%d last_error=%q", storedToken.RemainQuota, storedToken.LastErrorCode)
+	if storedToken.QuotaLimit != 50 || storedToken.LastErrorCode != "rate_limit_unavailable" {
+		t.Fatalf("failed closed request should not deduct quota and should update last error code, got quota=%d last_error=%q", storedToken.QuotaLimit, storedToken.LastErrorCode)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_code = ?", common.LogStatusFailed, tokenPayload.Data.ID, "rate_limit_unavailable").First(&failedLog).Error; err != nil {
@@ -14623,8 +14350,8 @@ func TestRateLimitGlobalAndIPWriteSnapshotDetails(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "global-ip-limited",
-		"remain_quota": 50,
+		"name":        "global-ip-limited",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -14724,8 +14451,8 @@ func TestRateLimitGlobalAndIPWriteSnapshotDetails(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 46 {
-		t.Fatalf("only allowed requests should be charged, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 46 {
+		t.Fatalf("only allowed requests should be charged, got %d", storedToken.QuotaLimit)
 	}
 }
 
@@ -14777,8 +14504,8 @@ func TestRateLimitPerUserAppliesAcrossAPIKeys(t *testing.T) {
 
 	createToken := func(name string) (uint, string) {
 		resp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-			"name":         name,
-			"remain_quota": 50,
+			"name":        name,
+			"quota_limit": 50,
 		})
 		var payload struct {
 			Data struct {
@@ -14831,8 +14558,8 @@ func TestRateLimitPerUserAppliesAcrossAPIKeys(t *testing.T) {
 	if err := internal.DB.First(&secondToken, secondTokenID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if firstToken.RemainQuota != 48 || secondToken.RemainQuota != 50 {
-		t.Fatalf("only first token should be charged, first=%d second=%d", firstToken.RemainQuota, secondToken.RemainQuota)
+	if firstToken.QuotaLimit != 48 || secondToken.QuotaLimit != 50 {
+		t.Fatalf("only first token should be charged, first=%d second=%d", firstToken.QuotaLimit, secondToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, secondTokenID, "%user rate limit%").First(&failedLog).Error; err != nil {
@@ -14898,8 +14625,8 @@ func TestRateLimitPerModelRejectsBeforeUpstream(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "model-limited",
-		"remain_quota": 50,
+		"name":        "model-limited",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -14945,8 +14672,8 @@ func TestRateLimitPerModelRejectsBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 48 {
-		t.Fatalf("only first request should be charged, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 48 {
+		t.Fatalf("only first request should be charged, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-model-limit", "%model rate limit%").First(&failedLog).Error; err != nil {
@@ -15013,8 +14740,8 @@ func TestRateLimitPerChannelRejectsBeforeUpstream(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "channel-limited",
-		"remain_quota": 50,
+		"name":        "channel-limited",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -15068,8 +14795,8 @@ func TestRateLimitPerChannelRejectsBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 48 {
-		t.Fatalf("only first request should be charged, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 48 {
+		t.Fatalf("only first request should be charged, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND channel_id = ? AND model = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, channelPayload.Data.ID, "gpt-channel-limit", "%channel rate limit%").First(&failedLog).Error; err != nil {
@@ -15136,8 +14863,8 @@ func TestRelayPrecheckRejectsBeforeUpstream(t *testing.T) {
 	createToken := func(name string, remainQuota int64) (uint, string) {
 		t.Helper()
 		tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-			"name":         name,
-			"remain_quota": remainQuota,
+			"name":        name,
+			"quota_limit": remainQuota,
 		})
 		var tokenPayload struct {
 			Data struct {
@@ -15198,8 +14925,8 @@ func TestRelayPrecheckRejectsBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&zeroUserToken, zeroUserTokenID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if zeroUserToken.RemainQuota != 10 {
-		t.Fatalf("zero user quota precheck should not deduct token budget, got %d", zeroUserToken.RemainQuota)
+	if zeroUserToken.QuotaLimit != 10 {
+		t.Fatalf("zero user quota precheck should not deduct token budget, got %d", zeroUserToken.QuotaLimit)
 	}
 
 	noChannelTokenID, noChannelKey := createToken("no-channel", 10)
@@ -15229,8 +14956,8 @@ func TestRelayPrecheckRejectsBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&noChannelToken, noChannelTokenID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if noChannelToken.RemainQuota != 10 {
-		t.Fatalf("channel precheck should not deduct token budget, got %d", noChannelToken.RemainQuota)
+	if noChannelToken.QuotaLimit != 10 {
+		t.Fatalf("channel precheck should not deduct token budget, got %d", noChannelToken.QuotaLimit)
 	}
 	var noChannelFailedLogs int64
 	if err := internal.DB.Model(&model.Log{}).Where("status = ? AND token_id = ?", common.LogStatusFailed, noChannelTokenID).Count(&noChannelFailedLogs).Error; err != nil {
@@ -15272,8 +14999,8 @@ func TestChatCompletionInvalidRequestDoesNotCallUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "invalid-request",
-		"remain_quota": 10,
+		"name":        "invalid-request",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -15332,8 +15059,8 @@ func TestChatCompletionInvalidRequestDoesNotCallUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("invalid local requests should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("invalid local requests should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -15440,8 +15167,8 @@ func TestChannelRoutingConfigResolution(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "routing",
-		"remain_quota": 10,
+		"name":        "routing",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -15490,7 +15217,7 @@ func TestChannelRoutingConfigResolution(t *testing.T) {
 	}
 }
 
-func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
+func TestRouterXRequestFieldIsIgnoredForRoutingAndStripped(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
@@ -15531,8 +15258,8 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "route",
-		"remain_quota": 50,
+		"name":        "route",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -15562,8 +15289,8 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 			t.Fatalf("create %s channel failed: %d %s", name, resp.Code, resp.Body.String())
 		}
 	}
-	createChannel("paid", "paid", paidUpstream.URL, 1)
 	createChannel("free", "free", freeUpstream.URL, 50)
+	createChannel("paid", "paid", paidUpstream.URL, 1)
 
 	chat := func(routerx interface{}) *httptest.ResponseRecorder {
 		body := map[string]interface{}{
@@ -15578,75 +15305,44 @@ func TestRouterXRoutePreferenceFiltersChannels(t *testing.T) {
 		return performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, body)
 	}
 
-	paidResp := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": "paid"}})
-	if paidResp.Code != http.StatusOK || !strings.Contains(paidResp.Body.String(), "paid") {
-		t.Fatalf("paid route should select paid channel, got %d %s", paidResp.Code, paidResp.Body.String())
+	resp := chat(map[string]interface{}{
+		"route": map[string]interface{}{"channel_group": "paid"},
+		"upstream": map[string]interface{}{
+			"headers": map[string]string{"X-Upstream-Feature": "ignored"},
+		},
+	})
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), "free") {
+		t.Fatalf("routerx request field should not affect routing, got %d %s", resp.Code, resp.Body.String())
 	}
-	if paidCalls != 1 || freeCalls != 0 {
-		t.Fatalf("paid route should not fall back to higher-priority free channel, paid=%d free=%d", paidCalls, freeCalls)
+	if paidCalls != 0 || freeCalls != 1 {
+		t.Fatalf("routerx route should be ignored and normal priority should select free, paid=%d free=%d", paidCalls, freeCalls)
 	}
-	var paidLog model.Log
-	if err := internal.DB.Order("id ASC").First(&paidLog).Error; err != nil {
+	var callLog model.Log
+	if err := internal.DB.Order("id ASC").First(&callLog).Error; err != nil {
 		t.Fatal(err)
 	}
-	var paidRouteSnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(paidLog.RouteSnapshot), &paidRouteSnapshot); err != nil {
-		t.Fatalf("paid route should store route snapshot JSON, got %q: %v", paidLog.RouteSnapshot, err)
+	var routeSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RouteSnapshot), &routeSnapshot); err != nil {
+		t.Fatalf("route snapshot should be JSON, got %q: %v", callLog.RouteSnapshot, err)
 	}
-	filteredReasons, ok := paidRouteSnapshot["filtered_reasons"].(map[string]interface{})
-	if !ok || filteredReasons["route_preference"] != float64(1) {
-		t.Fatalf("paid route snapshot should record route preference filtering: %+v", paidRouteSnapshot)
+	if _, ok := routeSnapshot["route_preference"]; ok {
+		t.Fatalf("route snapshot should not record routerx route preferences: %+v", routeSnapshot)
 	}
-	routePreference, ok := paidRouteSnapshot["route_preference"].(map[string]interface{})
-	if !ok || routePreference["decision"] != "accepted" || routePreference["channel_group"] != "paid" {
-		t.Fatalf("paid route snapshot should record accepted route preference: %+v", paidRouteSnapshot)
+	var requestSnapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(callLog.RequestSnapshot), &requestSnapshot); err != nil {
+		t.Fatalf("request snapshot should be JSON, got %q: %v", callLog.RequestSnapshot, err)
+	}
+	if _, ok := requestSnapshot["routerx_summary"]; ok {
+		t.Fatalf("request snapshot should not record routerx request field summary: %+v", requestSnapshot)
 	}
 
-	ignoredResp := chat(map[string]interface{}{"route": map[string]interface{}{"unknown": "keep-compatible"}})
+	ignoredResp := chat("not-an-object")
 	if ignoredResp.Code != http.StatusOK || !strings.Contains(ignoredResp.Body.String(), "free") {
-		t.Fatalf("unknown route keys should be ignored, got %d %s", ignoredResp.Code, ignoredResp.Body.String())
-	}
-	if paidCalls != 1 || freeCalls != 1 {
-		t.Fatalf("ignored route should use normal priority selection, paid=%d free=%d", paidCalls, freeCalls)
-	}
-
-	invalidOptions := chat("not-an-object")
-	if invalidOptions.Code != http.StatusBadRequest || !strings.Contains(invalidOptions.Body.String(), `"code":"invalid_routerx_options"`) {
-		t.Fatalf("invalid routerx options should return 400, got %d %s", invalidOptions.Code, invalidOptions.Body.String())
-	}
-	invalidRoute := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": 123}})
-	if invalidRoute.Code != http.StatusBadRequest || !strings.Contains(invalidRoute.Body.String(), `"code":"invalid_routerx_route"`) {
-		t.Fatalf("invalid routerx route should return 400, got %d %s", invalidRoute.Code, invalidRoute.Body.String())
-	}
-	noCandidate := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": "internal"}})
-	if noCandidate.Code != http.StatusBadGateway || !strings.Contains(noCandidate.Body.String(), `"code":"no_available_channel"`) {
-		t.Fatalf("route with no candidates should return no_available_channel, got %d %s", noCandidate.Code, noCandidate.Body.String())
-	}
-	var noCandidateLog model.Log
-	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg = ?", common.LogStatusFailed, tokenPayload.Data.ID, "no available channel").First(&noCandidateLog).Error; err != nil {
-		t.Fatal(err)
-	}
-	var noCandidatePolicySnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(noCandidateLog.PolicySnapshot), &noCandidatePolicySnapshot); err != nil {
-		t.Fatalf("no-candidate route should store policy snapshot JSON, got %q: %v", noCandidateLog.PolicySnapshot, err)
-	}
-	noCandidateScopeResult, ok := noCandidatePolicySnapshot["scope_result"].(map[string]interface{})
-	if !ok ||
-		noCandidatePolicySnapshot["kind"] != "policy" ||
-		noCandidatePolicySnapshot["access_decision"] != "deny" ||
-		noCandidatePolicySnapshot["reject_code"] != "no_available_channel" ||
-		noCandidatePolicySnapshot["quota_precheck"] != "available" ||
-		noCandidateScopeResult["api_type"] != "allow" ||
-		noCandidateScopeResult["model"] != "allow" ||
-		noCandidateScopeResult["route_candidate"] != "deny" {
-		t.Fatalf("unexpected no-candidate policy snapshot: %+v", noCandidatePolicySnapshot)
-	}
-	if paidCalls != 1 || freeCalls != 1 {
-		t.Fatalf("invalid or empty route results must not call upstream, paid=%d free=%d", paidCalls, freeCalls)
+		t.Fatalf("non-object routerx field should be ignored, got %d %s", ignoredResp.Code, ignoredResp.Body.String())
 	}
 }
 
-func TestRouterXUpstreamOptionsSupplementRequest(t *testing.T) {
+func TestRouterXUpstreamOptionsAreIgnored(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
@@ -15681,8 +15377,8 @@ func TestRouterXUpstreamOptionsSupplementRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "upstream-options",
-		"remain_quota": 50,
+		"name":        "upstream-options",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -15731,48 +15427,37 @@ func TestRouterXUpstreamOptionsSupplementRequest(t *testing.T) {
 		},
 	})
 	if chatResp.Code != http.StatusOK {
-		t.Fatalf("chat completion with upstream options failed: %d %s", chatResp.Code, chatResp.Body.String())
+		t.Fatalf("chat completion with ignored upstream options failed: %d %s", chatResp.Code, chatResp.Body.String())
 	}
 	if upstreamAuth != "Bearer channel-secret" || upstreamAPIKey != "" {
 		t.Fatalf("sensitive upstream headers must not be user-controlled, auth=%q x-api-key=%q", upstreamAuth, upstreamAPIKey)
 	}
-	if upstreamFeature != "beta" || upstreamQuery != "enabled" {
-		t.Fatalf("safe upstream options should be forwarded, header=%q query=%q", upstreamFeature, upstreamQuery)
+	if upstreamFeature != "" || upstreamQuery != "" {
+		t.Fatalf("routerx upstream options should be ignored, header=%q query=%q", upstreamFeature, upstreamQuery)
 	}
-	if upstreamBody["reasoning_effort"] != "high" || upstreamBody["temperature"] != float64(0.2) || upstreamBody["model"] != "gpt-options" {
-		t.Fatalf("upstream body options should supplement without overriding existing/internal fields: %#v", upstreamBody)
+	if _, ok := upstreamBody["reasoning_effort"]; ok || upstreamBody["temperature"] != float64(0.2) || upstreamBody["model"] != "gpt-options" {
+		t.Fatalf("routerx upstream body options should be ignored while original fields remain: %#v", upstreamBody)
 	}
 	if _, ok := upstreamBody["routerx"]; ok {
 		t.Fatalf("routerx private field leaked to upstream: %#v", upstreamBody)
 	}
 }
 
-func TestRouterXProviderOptionsApplyOnlyToSelectedProvider(t *testing.T) {
+func TestRouterXProviderOptionsAreIgnored(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
-	xaiCalls := 0
-	openAICalls := 0
-	var xaiBody map[string]interface{}
-	var openAIBody map[string]interface{}
-	xaiUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		xaiCalls++
-		if err := json.NewDecoder(req.Body).Decode(&xaiBody); err != nil {
-			t.Errorf("xAI upstream received invalid json: %v", err)
+	upstreamCalls := 0
+	var upstreamBody map[string]interface{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upstreamCalls++
+		if err := json.NewDecoder(req.Body).Decode(&upstreamBody); err != nil {
+			t.Errorf("upstream received invalid json: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl-provider-xai","object":"chat.completion","model":"grok-test","choices":[{"index":0,"message":{"role":"assistant","content":"xai"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-provider-ignored","object":"chat.completion","model":"grok-test","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
 	}))
-	defer xaiUpstream.Close()
-	openAIUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		openAICalls++
-		if err := json.NewDecoder(req.Body).Decode(&openAIBody); err != nil {
-			t.Errorf("OpenAI-compatible upstream received invalid json: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"chatcmpl-provider-openai","object":"chat.completion","model":"grok-test","choices":[{"index":0,"message":{"role":"assistant","content":"openai"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
-	}))
-	defer openAIUpstream.Close()
+	defer upstream.Close()
 
 	r := newTestRouter(t)
 	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
@@ -15787,8 +15472,8 @@ func TestRouterXProviderOptionsApplyOnlyToSelectedProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "provider-options",
-		"remain_quota": 50,
+		"name":        "provider-options",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -15801,88 +15486,51 @@ func TestRouterXProviderOptionsApplyOnlyToSelectedProvider(t *testing.T) {
 	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
 		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
 	}
-	for _, channel := range []struct {
-		channelType int
-		name        string
-		baseURL     string
-	}{
-		{channelType: common.ChannelTypeXAI, name: "xai-provider", baseURL: xaiUpstream.URL},
-		{channelType: common.ChannelTypeOpenAICompat, name: "openai-provider", baseURL: openAIUpstream.URL},
-	} {
-		resp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
-			"type":     channel.channelType,
-			"name":     channel.name,
-			"models":   "grok-test",
-			"base_url": channel.baseURL,
-			"api_key":  channel.name + "-secret",
-		})
-		if resp.Code != http.StatusOK {
-			t.Fatalf("create %s channel failed: %d %s", channel.name, resp.Code, resp.Body.String())
-		}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "provider-options",
+		"models":   "grok-test",
+		"base_url": upstream.URL,
+		"api_key":  "provider-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
 	}
 
-	xaiResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+	resp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
 		"model":       "grok-test",
 		"temperature": 0.2,
 		"messages": []map[string]string{
 			{"role": "user", "content": "hello"},
 		},
 		"routerx": map[string]interface{}{
-			"route": map[string]string{"provider": "xai"},
-			"upstream": map[string]interface{}{
-				"body": map[string]interface{}{
-					"generic_param":     true,
-					"search_parameters": map[string]interface{}{"mode": "generic"},
-				},
-			},
 			"provider": map[string]interface{}{
 				"openai": map[string]interface{}{"reasoning_effort": "medium"},
-				"xai": map[string]interface{}{
-					"search_parameters": map[string]interface{}{"mode": "auto"},
-					"temperature":       0.9,
-					"model":             "evil-model",
-				},
+				"xai":    map[string]interface{}{"search_parameters": map[string]interface{}{"mode": "auto"}},
 			},
 		},
 	})
-	if xaiResp.Code != http.StatusOK {
-		t.Fatalf("xAI provider options request failed: %d %s", xaiResp.Code, xaiResp.Body.String())
+	if resp.Code != http.StatusOK {
+		t.Fatalf("provider options request failed: %d %s", resp.Code, resp.Body.String())
 	}
-	searchParameters, ok := xaiBody["search_parameters"].(map[string]interface{})
-	if !ok || searchParameters["mode"] != "auto" {
-		t.Fatalf("xAI provider options should override generic supplements before merge: %#v", xaiBody)
+	if upstreamCalls != 1 {
+		t.Fatalf("expected one upstream call, got %d", upstreamCalls)
 	}
-	if xaiBody["generic_param"] != true || xaiBody["temperature"] != float64(0.2) || xaiBody["model"] != "grok-test" {
-		t.Fatalf("provider options should supplement without overriding existing/internal fields: %#v", xaiBody)
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx private field leaked to upstream: %#v", upstreamBody)
 	}
-	if _, ok := xaiBody["reasoning_effort"]; ok {
-		t.Fatalf("non-selected provider options leaked to xAI upstream: %#v", xaiBody)
+	if _, ok := upstreamBody["reasoning_effort"]; ok {
+		t.Fatalf("routerx provider option leaked to upstream: %#v", upstreamBody)
 	}
-
-	openAIResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
-		"model": "grok-test",
-		"messages": []map[string]string{
-			{"role": "user", "content": "hello again"},
-		},
-		"routerx": map[string]interface{}{
-			"route": map[string]string{"provider": "openai-compatible"},
-			"provider": map[string]interface{}{
-				"xai": map[string]interface{}{"search_parameters": map[string]interface{}{"mode": "auto"}},
-			},
-		},
-	})
-	if openAIResp.Code != http.StatusOK {
-		t.Fatalf("OpenAI-compatible provider options request failed: %d %s", openAIResp.Code, openAIResp.Body.String())
+	if _, ok := upstreamBody["search_parameters"]; ok {
+		t.Fatalf("routerx provider option leaked to upstream: %#v", upstreamBody)
 	}
-	if xaiCalls != 1 || openAICalls != 1 {
-		t.Fatalf("requests should route once to each selected provider, xai=%d openai=%d", xaiCalls, openAICalls)
-	}
-	if _, ok := openAIBody["search_parameters"]; ok {
-		t.Fatalf("xAI provider options leaked to OpenAI-compatible upstream: %#v", openAIBody)
+	if upstreamBody["temperature"] != float64(0.2) || upstreamBody["model"] != "grok-test" {
+		t.Fatalf("original request fields should remain: %#v", upstreamBody)
 	}
 }
 
-func TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings(t *testing.T) {
+func TestOpenAIChatToGeminiUpstreamIgnoresRouterXProviderSafetySettings(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
@@ -15913,8 +15561,8 @@ func TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings(t *testing.T)
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "gemini-provider-safety",
-		"remain_quota": 50,
+		"name":        "gemini-provider-safety",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -15986,13 +15634,8 @@ func TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings(t *testing.T)
 	if !ok || !strings.Contains(fmt.Sprint(systemInstruction), "follow the safety policy") {
 		t.Fatalf("OpenAI system message should map to Gemini systemInstruction: %#v", upstreamBody)
 	}
-	settings, ok := upstreamBody["safetySettings"].([]interface{})
-	if !ok || len(settings) != 1 {
-		t.Fatalf("Gemini provider safetySettings should be preserved: %#v", upstreamBody)
-	}
-	setting, ok := settings[0].(map[string]interface{})
-	if !ok || setting["category"] != "HARM_CATEGORY_DANGEROUS_CONTENT" || setting["threshold"] != "BLOCK_ONLY_HIGH" {
-		t.Fatalf("unexpected Gemini safetySettings payload: %#v", upstreamBody)
+	if _, ok := upstreamBody["safetySettings"]; ok {
+		t.Fatalf("routerx provider safetySettings should be ignored: %#v", upstreamBody)
 	}
 }
 
@@ -16029,8 +15672,8 @@ func TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields(t *testing.T
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "gemini-native",
-		"remain_quota": 50,
+		"name":        "gemini-native",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -16143,7 +15786,7 @@ func TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields(t *testing.T
 	}
 }
 
-func TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop(t *testing.T) {
+func TestRouterXCompatibleUpstreamStripsRouterXAndIncrementsHop(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
@@ -16174,8 +15817,8 @@ func TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop(t *testing.T)
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "routerx-compatible",
-		"remain_quota": 50,
+		"name":        "routerx-compatible",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -16232,13 +15875,8 @@ func TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop(t *testing.T)
 	if upstreamChain != "edge,routerx" {
 		t.Fatalf("routerx-compatible upstream should receive appended chain, got %q", upstreamChain)
 	}
-	routerXBody, ok := upstreamBody["routerx"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("routerx-compatible upstream should receive routerx private field: %#v", upstreamBody)
-	}
-	route, ok := routerXBody["route"].(map[string]interface{})
-	if !ok || route["provider"] != "routerx" {
-		t.Fatalf("routerx route should be preserved for next RouterX hop: %#v", routerXBody)
+	if _, ok := upstreamBody["routerx"]; ok {
+		t.Fatalf("routerx-compatible upstream should not receive routerx request field: %#v", upstreamBody)
 	}
 }
 
@@ -16267,8 +15905,8 @@ func TestRouterXCompatibleUpstreamRejectsHopLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "routerx-hop-limit",
-		"remain_quota": 50,
+		"name":        "routerx-hop-limit",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -16347,8 +15985,8 @@ func TestRouterXCompatibleUpstreamUsesConfiguredHopLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "routerx-configured-hop-limit",
-		"remain_quota": 50,
+		"name":        "routerx-configured-hop-limit",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -16402,8 +16040,8 @@ func TestRouterXCompatibleUpstreamUsesConfiguredHopLimit(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("configured routerx hop limit rejection should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("configured routerx hop limit rejection should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -16455,8 +16093,8 @@ func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "group-access",
-		"remain_quota": 50,
+		"name":        "group-access",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -16511,57 +16149,18 @@ func TestUserGroupChannelGroupAccessFiltersRelayCandidates(t *testing.T) {
 	}
 
 	paidResp := chat(map[string]interface{}{"route": map[string]interface{}{"channel_group": "paid"}})
-	if paidResp.Code != http.StatusForbidden || !strings.Contains(paidResp.Body.String(), `"code":"route_forbidden"`) {
-		t.Fatalf("route to forbidden channel group should fail before upstream, got %d %s", paidResp.Code, paidResp.Body.String())
+	if paidResp.Code != http.StatusOK || !strings.Contains(paidResp.Body.String(), "default") {
+		t.Fatalf("routerx route field should be ignored and use allowed default channel, got %d %s", paidResp.Code, paidResp.Body.String())
 	}
-	if defaultCalls != 1 || paidCalls != 0 {
-		t.Fatalf("forbidden user group route must not call upstream, default=%d paid=%d", defaultCalls, paidCalls)
+	if defaultCalls != 2 || paidCalls != 0 {
+		t.Fatalf("ignored routerx route should not call forbidden paid upstream, default=%d paid=%d", defaultCalls, paidCalls)
 	}
-	var failedLog model.Log
-	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-access").First(&failedLog).Error; err != nil {
+	var failedCount int64
+	if err := internal.DB.Model(&model.Log{}).Where("status = ? AND token_id = ? AND model = ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-access").Count(&failedCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "user group access") {
-		t.Fatalf("user group access denial should write a zero-quota failed log, got %+v", failedLog)
-	}
-	var policySnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
-		t.Fatalf("user group access denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
-	}
-	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
-	if !ok ||
-		policySnapshot["kind"] != "policy" ||
-		policySnapshot["access_decision"] != "deny" ||
-		policySnapshot["reject_code"] != "route_forbidden" ||
-		policySnapshot["quota_precheck"] != "available" ||
-		scopeResult["api_type"] != "allow" ||
-		scopeResult["model"] != "allow" ||
-		scopeResult["user_group_channel_group"] != "deny" {
-		t.Fatalf("unexpected user group access policy snapshot: %+v", policySnapshot)
-	}
-	var accessRuleSnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(failedLog.AccessRuleSnapshot), &accessRuleSnapshot); err != nil {
-		t.Fatalf("user group access denial should store access rule snapshot JSON, got %q: %v", failedLog.AccessRuleSnapshot, err)
-	}
-	if _, err := time.Parse(time.RFC3339Nano, fmt.Sprint(accessRuleSnapshot["created_at"])); err != nil {
-		t.Fatalf("access rule snapshot should include RFC3339 created_at, snapshot=%+v err=%v", accessRuleSnapshot, err)
-	}
-	accessScopeResult, ok := accessRuleSnapshot["scope_result"].(map[string]interface{})
-	if !ok ||
-		accessRuleSnapshot["schema"] != "routerx.snapshot.v1" ||
-		accessRuleSnapshot["kind"] != "access_rule" ||
-		accessRuleSnapshot["source"] != "policy" ||
-		accessRuleSnapshot["redacted"] != true ||
-		accessRuleSnapshot["access_decision"] != "deny" ||
-		accessRuleSnapshot["reject_code"] != "route_forbidden" ||
-		accessScopeResult["api_type"] != "allow" ||
-		accessScopeResult["model"] != "allow" ||
-		accessScopeResult["user_group_channel_group"] != "deny" {
-		t.Fatalf("unexpected user group access rule snapshot: %+v", accessRuleSnapshot)
-	}
-	logResp := performJSON(r, http.MethodGet, "/v0/user/log", rootJWT, nil)
-	if logResp.Code != http.StatusOK || !strings.Contains(logResp.Body.String(), `"access_rule_snapshot":`) {
-		t.Fatalf("user log should expose access rule snapshot, got %d %s", logResp.Code, logResp.Body.String())
+	if failedCount != 0 {
+		t.Fatalf("ignored routerx route should not write failed logs, got %d", failedCount)
 	}
 }
 
@@ -16604,8 +16203,8 @@ func TestChannelModelUserEnabledFiltersRelayCandidates(t *testing.T) {
 	}
 	userJWT := loginBearer(t, r, "alice", "password123")
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
-		"name":         "ordinary",
-		"remain_quota": 50,
+		"name":        "ordinary",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -16697,29 +16296,18 @@ func TestChannelModelUserEnabledFiltersRelayCandidates(t *testing.T) {
 			"route": map[string]interface{}{"channel_id": hiddenChannelID},
 		},
 	})
-	if deniedResp.Code != http.StatusForbidden || !strings.Contains(deniedResp.Body.String(), `"code":"route_forbidden"`) {
-		t.Fatalf("explicit hidden channel route should be forbidden, got %d %s", deniedResp.Code, deniedResp.Body.String())
+	if deniedResp.Code != http.StatusOK || !strings.Contains(deniedResp.Body.String(), "visible") {
+		t.Fatalf("routerx channel route should be ignored and use visible channel, got %d %s", deniedResp.Code, deniedResp.Body.String())
 	}
-	if hiddenCalls != 0 || visibleCalls != 1 {
-		t.Fatalf("hidden route denial must not call upstream, hidden=%d visible=%d", hiddenCalls, visibleCalls)
+	if hiddenCalls != 0 || visibleCalls != 2 {
+		t.Fatalf("ignored routerx channel route must not call hidden upstream, hidden=%d visible=%d", hiddenCalls, visibleCalls)
 	}
-	var failedLog model.Log
-	if err := internal.DB.Where("status = ? AND token_id = ? AND model = ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-user-enabled").First(&failedLog).Error; err != nil {
+	var failedCount int64
+	if err := internal.DB.Model(&model.Log{}).Where("status = ? AND token_id = ? AND model = ?", common.LogStatusFailed, tokenPayload.Data.ID, "gpt-user-enabled").Count(&failedCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "ordinary users") {
-		t.Fatalf("hidden channel denial should write zero-quota failed log, got %+v", failedLog)
-	}
-	var policySnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
-		t.Fatalf("hidden channel denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
-	}
-	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
-	if !ok ||
-		policySnapshot["access_decision"] != "deny" ||
-		policySnapshot["reject_code"] != "route_forbidden" ||
-		scopeResult["channel_model"] != "deny" {
-		t.Fatalf("unexpected hidden channel denial policy snapshot: %+v", policySnapshot)
+	if failedCount != 0 {
+		t.Fatalf("ignored routerx channel route should not write failed logs, got %d", failedCount)
 	}
 }
 
@@ -16765,8 +16353,8 @@ func TestUserBillingMatchesLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "billing",
-		"remain_quota": 50,
+		"name":        "billing",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -16841,8 +16429,8 @@ func TestUserBillingMatchesLogs(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 38 {
-		t.Fatalf("token budget should only deduct successful usage, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 38 {
+		t.Fatalf("token budget should only deduct successful usage, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -16877,12 +16465,12 @@ func TestUserBillingFiltersByAPIKey(t *testing.T) {
 	rootJWT := loginBearer(t, r, "root", "password123")
 
 	firstTokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "billing-filter-first",
-		"remain_quota": 50,
+		"name":        "billing-filter-first",
+		"quota_limit": 50,
 	})
 	secondTokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "billing-filter-second",
-		"remain_quota": 50,
+		"name":        "billing-filter-second",
+		"quota_limit": 50,
 	})
 	var firstToken, secondToken struct {
 		Data struct {
@@ -16950,8 +16538,8 @@ func TestRelayMaxRequestBodyBytesRejectsBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "body-limit",
-		"remain_quota": 10,
+		"name":        "body-limit",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -16992,8 +16580,8 @@ func TestRelayMaxRequestBodyBytesRejectsBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("oversized local requests should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("oversized local requests should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -17032,8 +16620,8 @@ func TestRelayMaxMultipartFileBytesRejectsBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "multipart-limit",
-		"remain_quota": 10,
+		"name":        "multipart-limit",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -17090,8 +16678,8 @@ func TestRelayMaxMultipartFileBytesRejectsBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("oversized multipart files should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("oversized multipart files should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -17127,8 +16715,8 @@ func TestRelayMultipartRejectsUnsafeFileNameBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "multipart-unsafe",
-		"remain_quota": 10,
+		"name":        "multipart-unsafe",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -17192,8 +16780,8 @@ func TestRelayMultipartRejectsUnsafeFileNameBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("unsafe multipart files should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("unsafe multipart files should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -17229,8 +16817,8 @@ func TestRelayMultipartRejectsUnsafeFileContentBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "multipart-unsafe-content",
-		"remain_quota": 10,
+		"name":        "multipart-unsafe-content",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -17287,8 +16875,8 @@ func TestRelayMultipartRejectsUnsafeFileContentBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("unsafe multipart content should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("unsafe multipart content should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -17324,8 +16912,8 @@ func TestRelayMultipartRejectsIncompatibleFileExtensionBeforeUpstream(t *testing
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "multipart-extension",
-		"remain_quota": 10,
+		"name":        "multipart-extension",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -17382,8 +16970,8 @@ func TestRelayMultipartRejectsIncompatibleFileExtensionBeforeUpstream(t *testing
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("incompatible multipart files should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("incompatible multipart files should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -17419,8 +17007,8 @@ func TestRelayMultipartRejectsMismatchedFileContentBeforeUpstream(t *testing.T) 
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "multipart-content-type",
-		"remain_quota": 10,
+		"name":        "multipart-content-type",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -17477,8 +17065,8 @@ func TestRelayMultipartRejectsMismatchedFileContentBeforeUpstream(t *testing.T) 
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("mismatched multipart files should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("mismatched multipart files should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -17537,8 +17125,8 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "limited-sdk",
-		"remain_quota": 50,
+		"name":        "limited-sdk",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -17609,8 +17197,8 @@ func TestChatCompletionSuccessLogsAndDeductsQuota(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("token budget should be deducted by usage, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("token budget should be deducted by usage, got %d", storedToken.QuotaLimit)
 	}
 	if err := internal.DB.First(&root, root.ID).Error; err != nil {
 		t.Fatal(err)
@@ -17821,8 +17409,8 @@ func TestRelayBodyLoggingRedactsAndTruncatesWhenEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "body-log-key",
-		"remain_quota": 50,
+		"name":        "body-log-key",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -17913,8 +17501,8 @@ func TestChatCompletionDeductionFailureWritesBillingSnapshot(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "deduct-failure",
-		"remain_quota": 10,
+		"name":        "deduct-failure",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -17955,8 +17543,8 @@ func TestChatCompletionDeductionFailureWritesBillingSnapshot(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("failed deduction should not consume token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("failed deduction should not consume token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -18030,8 +17618,8 @@ func TestChatCompletionUsesModelPriceExpressionForBilling(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "priced-key",
-		"remain_quota": 50,
+		"name":        "priced-key",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -18104,8 +17692,8 @@ func TestChatCompletionUsesModelPriceExpressionForBilling(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 38 {
-		t.Fatalf("token budget should be deducted by model price expression, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 38 {
+		t.Fatalf("token budget should be deducted by model price expression, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -18170,8 +17758,8 @@ func TestChatCompletionUsesModelPriceExpressionForBilling(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 18 {
-		t.Fatalf("token budget should prefer channel model price expression, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 18 {
+		t.Fatalf("token budget should prefer channel model price expression, got %d", storedToken.QuotaLimit)
 	}
 	if err := internal.DB.First(&root, root.ID).Error; err != nil {
 		t.Fatal(err)
@@ -18255,8 +17843,8 @@ func TestChatCompletionAppliesBillingMultipliers(t *testing.T) {
 	}
 	userJWT := loginBearer(t, r, "ratio-user", "password123")
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", userJWT, map[string]interface{}{
-		"name":         "ratio-key",
-		"remain_quota": 50,
+		"name":        "ratio-key",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -18310,8 +17898,8 @@ func TestChatCompletionAppliesBillingMultipliers(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 35 {
-		t.Fatalf("token budget should be deducted by base quota and effective multiplier, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 35 {
+		t.Fatalf("token budget should be deducted by base quota and effective multiplier, got %d", storedToken.QuotaLimit)
 	}
 	var user model.User
 	if err := internal.DB.Where("username = ?", "ratio-user").First(&user).Error; err != nil {
@@ -18368,8 +17956,8 @@ func TestChatCompletionAppliesBillingMultipliers(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 15 {
-		t.Fatalf("token budget should use separate user/channel factors when no combination override exists, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 15 {
+		t.Fatalf("token budget should use separate user/channel factors when no combination override exists, got %d", storedToken.QuotaLimit)
 	}
 	if err := internal.DB.Where("username = ?", "ratio-user").First(&user).Error; err != nil {
 		t.Fatal(err)
@@ -18424,8 +18012,8 @@ func TestAPIKeyModelScopeRestrictsRelayBeforeUpstream(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "scoped",
-		"remain_quota": 50,
+		"name":        "scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -18485,8 +18073,8 @@ func TestAPIKeyModelScopeRestrictsRelayBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("denied model should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("denied model should not deduct token budget after one success, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -18570,8 +18158,8 @@ func TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "api-scoped",
-		"remain_quota": 50,
+		"name":        "api-scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -18633,8 +18221,8 @@ func TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("disallowed api type should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("disallowed api type should not deduct token budget after one success, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND model = ?", common.LogStatusFailed, "gpt-api-scope").First(&failedLog).Error; err != nil {
@@ -18696,8 +18284,8 @@ func TestAPIKeyChannelGroupScopeFiltersRelayCandidates(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "group-scoped",
-		"remain_quota": 50,
+		"name":        "group-scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -18767,41 +18355,26 @@ func TestAPIKeyChannelGroupScopeFiltersRelayCandidates(t *testing.T) {
 			"route": map[string]string{"channel_group": "premium"},
 		},
 	})
-	if deniedResp.Code != http.StatusForbidden || !strings.Contains(deniedResp.Body.String(), `"code":"route_forbidden"`) {
-		t.Fatalf("disallowed channel group route should be forbidden, got %d %s", deniedResp.Code, deniedResp.Body.String())
+	if deniedResp.Code != http.StatusOK || !strings.Contains(deniedResp.Body.String(), "cheap ok") {
+		t.Fatalf("routerx channel group route should be ignored and use allowed cheap upstream, got %d %s", deniedResp.Code, deniedResp.Body.String())
 	}
-	if cheapCalls != 1 || premiumCalls != 0 {
-		t.Fatalf("denied channel group route must not call upstream, cheap=%d premium=%d", cheapCalls, premiumCalls)
+	if cheapCalls != 2 || premiumCalls != 0 {
+		t.Fatalf("ignored routerx channel group route must not call premium upstream, cheap=%d premium=%d", cheapCalls, premiumCalls)
 	}
 
 	var storedToken model.Token
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 46 {
-		t.Fatalf("disallowed channel group should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 42 {
+		t.Fatalf("ignored routerx route should deduct token budget for two successes, got %d", storedToken.QuotaLimit)
 	}
-	var failedLog model.Log
-	if err := internal.DB.Where("status = ? AND model = ?", common.LogStatusFailed, "gpt-group-scope").First(&failedLog).Error; err != nil {
+	var failedCount int64
+	if err := internal.DB.Model(&model.Log{}).Where("status = ? AND model = ?", common.LogStatusFailed, "gpt-group-scope").Count(&failedCount).Error; err != nil {
 		t.Fatal(err)
 	}
-	if failedLog.QuotaUsed != 0 || !strings.Contains(failedLog.ErrorMsg, "channel group") {
-		t.Fatalf("channel group scope denial should write a zero-quota failed log, got %+v", failedLog)
-	}
-	var policySnapshot map[string]interface{}
-	if err := json.Unmarshal([]byte(failedLog.PolicySnapshot), &policySnapshot); err != nil {
-		t.Fatalf("channel group scope denial should store policy snapshot JSON, got %q: %v", failedLog.PolicySnapshot, err)
-	}
-	scopeResult, ok := policySnapshot["scope_result"].(map[string]interface{})
-	if !ok ||
-		policySnapshot["kind"] != "policy" ||
-		policySnapshot["access_decision"] != "deny" ||
-		policySnapshot["reject_code"] != "route_forbidden" ||
-		policySnapshot["quota_precheck"] != "not_evaluated" ||
-		scopeResult["api_type"] != "allow" ||
-		scopeResult["model"] != "allow" ||
-		scopeResult["channel_group"] != "deny" {
-		t.Fatalf("unexpected channel group scope denial policy snapshot: %+v", policySnapshot)
+	if failedCount != 0 {
+		t.Fatalf("ignored routerx channel group route should not write failed logs, got %d", failedCount)
 	}
 }
 
@@ -18831,8 +18404,8 @@ func TestAPIKeyIPScopeRejectsBeforeRelay(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "ip-scoped",
-		"remain_quota": 50,
+		"name":        "ip-scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -18894,8 +18467,8 @@ func TestAPIKeyIPScopeRejectsBeforeRelay(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("disallowed ip should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("disallowed ip should not deduct token budget after one success, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%ip%scope%").First(&failedLog).Error; err != nil {
@@ -18953,8 +18526,8 @@ func TestAPIKeyMethodScopeRejectsBeforeRelay(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "method-scoped",
-		"remain_quota": 50,
+		"name":        "method-scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -19016,8 +18589,8 @@ func TestAPIKeyMethodScopeRejectsBeforeRelay(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("disallowed method should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("disallowed method should not deduct token budget after one success, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%method%scope%").First(&failedLog).Error; err != nil {
@@ -19068,8 +18641,8 @@ func TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "daily-scoped",
-		"remain_quota": 50,
+		"name":        "daily-scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -19124,8 +18697,8 @@ func TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("daily quota rejection should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("daily quota rejection should not deduct token budget after one success, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%daily%quota%").First(&failedLog).Error; err != nil {
@@ -19176,8 +18749,8 @@ func TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "monthly-scoped",
-		"remain_quota": 50,
+		"name":        "monthly-scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -19232,8 +18805,8 @@ func TestAPIKeyMonthlyQuotaScopeRejectsAfterMonthlyBudgetUsed(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("monthly quota rejection should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("monthly quota rejection should not deduct token budget after one success, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%monthly%quota%").First(&failedLog).Error; err != nil {
@@ -19297,8 +18870,8 @@ func TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "concurrency-scoped",
-		"remain_quota": 50,
+		"name":        "concurrency-scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -19372,8 +18945,8 @@ func TestAPIKeyMaxConcurrencyScopeRejectsOnlyWhileInFlight(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 40 {
-		t.Fatalf("concurrency rejection should not deduct token budget after two successes, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 40 {
+		t.Fatalf("concurrency rejection should not deduct token budget after two successes, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%concurrency%scope%").First(&failedLog).Error; err != nil {
@@ -19424,8 +18997,8 @@ func TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "rpm-scoped",
-		"remain_quota": 50,
+		"name":        "rpm-scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -19480,8 +19053,8 @@ func TestAPIKeyRPMScopeRejectsWithinMinuteBeforeRelay(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("rpm rejection should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("rpm rejection should not deduct token budget after one success, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%rpm%scope%").First(&failedLog).Error; err != nil {
@@ -19532,8 +19105,8 @@ func TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "tpm-scoped",
-		"remain_quota": 50,
+		"name":        "tpm-scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -19588,8 +19161,8 @@ func TestAPIKeyTPMScopeRejectsAfterMinuteTokenBudgetUsed(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("tpm rejection should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("tpm rejection should not deduct token budget after one success, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%tpm%scope%").First(&failedLog).Error; err != nil {
@@ -19641,8 +19214,8 @@ func TestAPIKeyPersistsLastUsageSourceSummary(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "source-summary",
-		"remain_quota": 50,
+		"name":        "source-summary",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -19738,8 +19311,8 @@ func TestAPIKeyEntryProtocolScopeRejectsBeforeRelay(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "entry-scoped",
-		"remain_quota": 50,
+		"name":        "entry-scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -19803,8 +19376,8 @@ func TestAPIKeyEntryProtocolScopeRejectsBeforeRelay(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("disallowed entry protocol should not deduct token budget after one success, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("disallowed entry protocol should not deduct token budget after one success, got %d", storedToken.QuotaLimit)
 	}
 	var failedLog model.Log
 	if err := internal.DB.Where("status = ? AND token_id = ? AND error_msg LIKE ?", common.LogStatusFailed, tokenPayload.Data.ID, "%entry protocol%scope%").First(&failedLog).Error; err != nil {
@@ -19855,8 +19428,8 @@ func TestAPIKeyEntryProtocolScopeAllowsGeminiEmbeddingActions(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "gemini-entry-scoped",
-		"remain_quota": 50,
+		"name":        "gemini-entry-scoped",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -19976,8 +19549,8 @@ func TestAzureChatCompletionUsesDeploymentPathAndAPIKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "azure-chat",
-		"remain_quota": 50,
+		"name":        "azure-chat",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -20027,8 +19600,8 @@ func TestAzureChatCompletionUsesDeploymentPathAndAPIKey(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 41 {
-		t.Fatalf("azure chat usage should deduct token budget by 9, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 41 {
+		t.Fatalf("azure chat usage should deduct token budget by 9, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -20091,8 +19664,8 @@ func TestAzureCompletionsUsesDeploymentPathAndAPIKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "azure-completions",
-		"remain_quota": 50,
+		"name":        "azure-completions",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -20141,8 +19714,8 @@ func TestAzureCompletionsUsesDeploymentPathAndAPIKey(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 43 {
-		t.Fatalf("azure completions usage should deduct token budget by 7, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 43 {
+		t.Fatalf("azure completions usage should deduct token budget by 7, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -20262,8 +19835,8 @@ func TestAzureResponsesUsesV1EndpointAndUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "azure-responses",
-		"remain_quota": 50,
+		"name":        "azure-responses",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -20311,8 +19884,8 @@ func TestAzureResponsesUsesV1EndpointAndUsage(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 41 {
-		t.Fatalf("azure responses usage should deduct token budget by 9, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 41 {
+		t.Fatalf("azure responses usage should deduct token budget by 9, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -20375,8 +19948,8 @@ func TestAzureEmbeddingsUsesDeploymentPathAndAPIKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "azure-embeddings",
-		"remain_quota": 50,
+		"name":        "azure-embeddings",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -20424,8 +19997,8 @@ func TestAzureEmbeddingsUsesDeploymentPathAndAPIKey(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 44 {
-		t.Fatalf("azure embeddings usage should deduct token budget by 6, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 44 {
+		t.Fatalf("azure embeddings usage should deduct token budget by 6, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -20485,8 +20058,8 @@ func TestAzureImageGenerationsUsesV1EndpointAndMinimumCharge(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "azure-images",
-		"remain_quota": 50,
+		"name":        "azure-images",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -20535,8 +20108,8 @@ func TestAzureImageGenerationsUsesV1EndpointAndMinimumCharge(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 49 {
-		t.Fatalf("azure image generations without usage should deduct minimum token budget charge, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 49 {
+		t.Fatalf("azure image generations without usage should deduct minimum token budget charge, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -20622,8 +20195,8 @@ func TestAzureImageEditsMultipartUsesV1EndpointAndMinimumCharge(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "azure-image-edits",
-		"remain_quota": 50,
+		"name":        "azure-image-edits",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -20708,8 +20281,8 @@ func TestAzureImageEditsMultipartUsesV1EndpointAndMinimumCharge(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 49 {
-		t.Fatalf("azure image edits without usage should deduct minimum token budget charge, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 49 {
+		t.Fatalf("azure image edits without usage should deduct minimum token budget charge, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -20784,8 +20357,8 @@ func TestAzureImageVariationsMultipartUsesV1EndpointAndMinimumCharge(t *testing.
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "azure-image-variations",
-		"remain_quota": 50,
+		"name":        "azure-image-variations",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -20863,8 +20436,8 @@ func TestAzureImageVariationsMultipartUsesV1EndpointAndMinimumCharge(t *testing.
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 49 {
-		t.Fatalf("azure image variations without usage should deduct minimum token budget charge, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 49 {
+		t.Fatalf("azure image variations without usage should deduct minimum token budget charge, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -20925,8 +20498,8 @@ func TestAzureAudioSpeechUsesV1EndpointAndMinimumCharge(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "azure-audio-speech",
-		"remain_quota": 50,
+		"name":        "azure-audio-speech",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -20975,8 +20548,8 @@ func TestAzureAudioSpeechUsesV1EndpointAndMinimumCharge(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 49 {
-		t.Fatalf("azure audio speech without usage should deduct minimum token budget charge, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 49 {
+		t.Fatalf("azure audio speech without usage should deduct minimum token budget charge, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -21071,8 +20644,8 @@ func TestAzureAudioMultipartUsesV1EndpointAndMinimumCharge(t *testing.T) {
 				t.Fatal(err)
 			}
 			tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-				"name":         "azure-audio-" + tt.name,
-				"remain_quota": 50,
+				"name":        "azure-audio-" + tt.name,
+				"quota_limit": 50,
 			})
 			var tokenPayload struct {
 				Data struct {
@@ -21147,8 +20720,8 @@ func TestAzureAudioMultipartUsesV1EndpointAndMinimumCharge(t *testing.T) {
 			if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 				t.Fatal(err)
 			}
-			if storedToken.RemainQuota != 49 {
-				t.Fatalf("azure audio %s without usage should deduct minimum token budget charge, got %d", tt.name, storedToken.RemainQuota)
+			if storedToken.QuotaLimit != 49 {
+				t.Fatalf("azure audio %s without usage should deduct minimum token budget charge, got %d", tt.name, storedToken.QuotaLimit)
 			}
 			var root model.User
 			if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -21201,8 +20774,8 @@ func TestResponsesPassthroughExtractsUsageAndDeductsQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "responses",
-		"remain_quota": 50,
+		"name":        "responses",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -21250,8 +20823,8 @@ func TestResponsesPassthroughExtractsUsageAndDeductsQuota(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 43 {
-		t.Fatalf("responses usage should deduct token budget by 7, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 43 {
+		t.Fatalf("responses usage should deduct token budget by 7, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -21306,8 +20879,8 @@ func TestResponsesToClaudeUpstreamConvertsMessagesAndDeductsUsage(t *testing.T) 
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "responses-claude",
-		"remain_quota": 50,
+		"name":        "responses-claude",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -21368,8 +20941,8 @@ func TestResponsesToClaudeUpstreamConvertsMessagesAndDeductsUsage(t *testing.T) 
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 39 {
-		t.Fatalf("Responses to Claude usage should deduct token budget by 11, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 39 {
+		t.Fatalf("Responses to Claude usage should deduct token budget by 11, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -21422,8 +20995,8 @@ func TestResponsesToGeminiUpstreamConvertsGenerateContentAndDeductsUsage(t *test
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "responses-gemini",
-		"remain_quota": 50,
+		"name":        "responses-gemini",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -21490,8 +21063,8 @@ func TestResponsesToGeminiUpstreamConvertsGenerateContentAndDeductsUsage(t *test
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 41 {
-		t.Fatalf("Responses to Gemini usage should deduct token budget by 9, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 41 {
+		t.Fatalf("Responses to Gemini usage should deduct token budget by 9, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -21549,8 +21122,8 @@ func TestResponsesStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "responses-stream",
-		"remain_quota": 50,
+		"name":        "responses-stream",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -21603,8 +21176,8 @@ func TestResponsesStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 43 {
-		t.Fatalf("responses stream usage should deduct token budget by 7, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 43 {
+		t.Fatalf("responses stream usage should deduct token budget by 7, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -21655,8 +21228,8 @@ func TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "embeddings",
-		"remain_quota": 50,
+		"name":        "embeddings",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -21707,8 +21280,8 @@ func TestEmbeddingsPassthroughExtractsUsageAndDeductsQuota(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 42 {
-		t.Fatalf("embeddings usage should deduct token budget by 8, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 42 {
+		t.Fatalf("embeddings usage should deduct token budget by 8, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -21748,8 +21321,8 @@ func TestEmbeddingsRejectsInvalidInputBeforeUpstream(t *testing.T) {
 	}
 	rootJWT := loginBearer(t, r, "root", "password123")
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "embeddings-invalid",
-		"remain_quota": 50,
+		"name":        "embeddings-invalid",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -21830,8 +21403,8 @@ func TestModerationsPassthroughUsesMinimumChargeWithoutUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "moderations",
-		"remain_quota": 50,
+		"name":        "moderations",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -21879,8 +21452,8 @@ func TestModerationsPassthroughUsesMinimumChargeWithoutUsage(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 49 {
-		t.Fatalf("moderations without usage should use minimum token budget charge, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 49 {
+		t.Fatalf("moderations without usage should use minimum token budget charge, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -21934,8 +21507,8 @@ func TestModerationsRejectsInvalidInputBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "moderations-invalid",
-		"remain_quota": 50,
+		"name":        "moderations-invalid",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -21982,8 +21555,8 @@ func TestModerationsRejectsInvalidInputBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("invalid moderations input should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("invalid moderations input should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -22019,8 +21592,8 @@ func TestAzureModerationsUnsupportedAPITypeDoesNotCallUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "azure-moderations",
-		"remain_quota": 50,
+		"name":        "azure-moderations",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -22062,8 +21635,8 @@ func TestAzureModerationsUnsupportedAPITypeDoesNotCallUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("unsupported azure moderations should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("unsupported azure moderations should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -22112,8 +21685,8 @@ func TestUsageMissingStrategyRejectsWithoutDeductingQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "missing-usage-reject",
-		"remain_quota": 50,
+		"name":        "missing-usage-reject",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -22152,8 +21725,8 @@ func TestUsageMissingStrategyRejectsWithoutDeductingQuota(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("missing usage reject should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("missing usage reject should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -22207,8 +21780,8 @@ func TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage(t *testing.T) 
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "image-generations",
-		"remain_quota": 50,
+		"name":        "image-generations",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -22257,8 +21830,8 @@ func TestImageGenerationsPassthroughUsesMinimumChargeWithoutUsage(t *testing.T) 
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 49 {
-		t.Fatalf("image generation without usage should use minimum token budget charge, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 49 {
+		t.Fatalf("image generation without usage should use minimum token budget charge, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -22301,8 +21874,8 @@ func TestImageGenerationsRejectsInvalidSizeBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "image-generation-size",
-		"remain_quota": 10,
+		"name":        "image-generation-size",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -22342,8 +21915,8 @@ func TestImageGenerationsRejectsInvalidSizeBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("invalid image size should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("invalid image size should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -22379,8 +21952,8 @@ func TestImageGenerationsRejectsInvalidPromptBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "image-generation-prompt",
-		"remain_quota": 10,
+		"name":        "image-generation-prompt",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -22426,8 +21999,8 @@ func TestImageGenerationsRejectsInvalidPromptBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("invalid image prompt should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("invalid image prompt should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -22463,8 +22036,8 @@ func TestImageGenerationsRejectsInvalidCountBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "image-generation-count",
-		"remain_quota": 10,
+		"name":        "image-generation-count",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -22515,8 +22088,8 @@ func TestImageGenerationsRejectsInvalidCountBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("invalid image count should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("invalid image count should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -22567,41 +22140,37 @@ func TestImageMultipartPassthroughUsesRouteAndMinimumCharge(t *testing.T) {
 			upstreamHandler := func(label string, calls *int) http.HandlerFunc {
 				return func(w http.ResponseWriter, req *http.Request) {
 					*calls++
-					if label == "paid" {
-						upstreamPath = req.URL.Path
-						upstreamAuth = req.Header.Get("Authorization")
-					}
+					upstreamPath = req.URL.Path
+					upstreamAuth = req.Header.Get("Authorization")
 					if !strings.Contains(req.Header.Get("Content-Type"), "multipart/form-data") {
 						t.Errorf("%s upstream should receive multipart content type, got %q", label, req.Header.Get("Content-Type"))
 					}
 					if err := req.ParseMultipartForm(20 << 20); err != nil {
 						t.Errorf("%s upstream received invalid multipart body: %v", label, err)
 					}
-					if label == "paid" {
-						upstreamModel = req.FormValue("model")
-						upstreamPrompt = req.FormValue("prompt")
-						if leaked := req.FormValue("routerx"); leaked != "" {
-							t.Errorf("routerx private form field leaked to upstream: %q", leaked)
-						}
-						file, _, err := req.FormFile("image")
+					upstreamModel = req.FormValue("model")
+					upstreamPrompt = req.FormValue("prompt")
+					if leaked := req.FormValue("routerx"); leaked != "" {
+						t.Errorf("routerx private form field leaked to upstream: %q", leaked)
+					}
+					file, _, err := req.FormFile("image")
+					if err != nil {
+						t.Errorf("%s upstream missing image file: %v", label, err)
+					} else {
+						defer file.Close()
+						raw := new(bytes.Buffer)
+						_, _ = raw.ReadFrom(file)
+						upstreamImage = raw.Bytes()
+					}
+					if tc.withMask {
+						mask, _, err := req.FormFile("mask")
 						if err != nil {
-							t.Errorf("paid upstream missing image file: %v", err)
+							t.Errorf("%s upstream missing mask file: %v", label, err)
 						} else {
-							defer file.Close()
+							defer mask.Close()
 							raw := new(bytes.Buffer)
-							_, _ = raw.ReadFrom(file)
-							upstreamImage = raw.Bytes()
-						}
-						if tc.withMask {
-							mask, _, err := req.FormFile("mask")
-							if err != nil {
-								t.Errorf("paid upstream missing mask file: %v", err)
-							} else {
-								defer mask.Close()
-								raw := new(bytes.Buffer)
-								_, _ = raw.ReadFrom(mask)
-								upstreamMask = raw.Bytes()
-							}
+							_, _ = raw.ReadFrom(mask)
+							upstreamMask = raw.Bytes()
 						}
 					}
 					w.Header().Set("Content-Type", "application/json")
@@ -22629,8 +22198,8 @@ func TestImageMultipartPassthroughUsesRouteAndMinimumCharge(t *testing.T) {
 				t.Fatal(err)
 			}
 			tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-				"name":         "image-" + tc.name,
-				"remain_quota": 50,
+				"name":        "image-" + tc.name,
+				"quota_limit": 50,
 			})
 			var tokenPayload struct {
 				Data struct {
@@ -22707,13 +22276,13 @@ func TestImageMultipartPassthroughUsesRouteAndMinimumCharge(t *testing.T) {
 			resp := httptest.NewRecorder()
 			r.ServeHTTP(resp, req)
 
-			if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"url":"https://example.invalid/paid.png"`) {
-				t.Fatalf("image multipart passthrough should return paid upstream response, got %d %s", resp.Code, resp.Body.String())
+			if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"url":"https://example.invalid/free.png"`) {
+				t.Fatalf("image multipart passthrough should return normal-priority upstream response, got %d %s", resp.Code, resp.Body.String())
 			}
-			if paidCalls != 1 || freeCalls != 0 || upstreamPath != tc.expectedPath {
-				t.Fatalf("routerx.route should select paid image upstream, paid=%d free=%d path=%q", paidCalls, freeCalls, upstreamPath)
+			if paidCalls != 0 || freeCalls != 1 || upstreamPath != tc.expectedPath {
+				t.Fatalf("routerx form field should be ignored and normal priority should select free image upstream, paid=%d free=%d path=%q", paidCalls, freeCalls, upstreamPath)
 			}
-			if upstreamAuth != "Bearer upstream-secret-paid" {
+			if upstreamAuth != "Bearer upstream-secret-free" {
 				t.Fatalf("upstream authorization should use selected channel secret, got %q", upstreamAuth)
 			}
 			if upstreamModel != "gpt-image-test" || !bytes.Equal(upstreamImage, imageBytes) {
@@ -22729,8 +22298,8 @@ func TestImageMultipartPassthroughUsesRouteAndMinimumCharge(t *testing.T) {
 			if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 				t.Fatal(err)
 			}
-			if storedToken.RemainQuota != 49 {
-				t.Fatalf("image multipart without usage should use minimum token budget charge, got %d", storedToken.RemainQuota)
+			if storedToken.QuotaLimit != 49 {
+				t.Fatalf("image multipart without usage should use minimum token budget charge, got %d", storedToken.QuotaLimit)
 			}
 			var root model.User
 			if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -22775,8 +22344,8 @@ func TestImageMultipartRejectsInvalidSizeBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "image-multipart-size",
-		"remain_quota": 50,
+		"name":        "image-multipart-size",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -22849,8 +22418,8 @@ func TestImageMultipartRejectsInvalidSizeBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("invalid image multipart size should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("invalid image multipart size should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -22886,8 +22455,8 @@ func TestMultipartRejectsMissingRequiredFileBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "multipart-required-file",
-		"remain_quota": 50,
+		"name":        "multipart-required-file",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -22952,8 +22521,8 @@ func TestMultipartRejectsMissingRequiredFileBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("missing required multipart file should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("missing required multipart file should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -22998,8 +22567,8 @@ func TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "audio-speech",
-		"remain_quota": 50,
+		"name":        "audio-speech",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -23048,8 +22617,8 @@ func TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 49 {
-		t.Fatalf("audio speech without usage should use minimum token budget charge, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 49 {
+		t.Fatalf("audio speech without usage should use minimum token budget charge, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -23092,8 +22661,8 @@ func TestAudioSpeechRejectsInvalidResponseFormatBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "audio-speech-format",
-		"remain_quota": 50,
+		"name":        "audio-speech-format",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -23134,8 +22703,8 @@ func TestAudioSpeechRejectsInvalidResponseFormatBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("invalid audio response_format should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("invalid audio response_format should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -23171,8 +22740,8 @@ func TestAudioSpeechRejectsInvalidRequestFieldsBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "audio-speech-fields",
-		"remain_quota": 50,
+		"name":        "audio-speech-fields",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -23243,8 +22812,8 @@ func TestAudioSpeechRejectsInvalidRequestFieldsBeforeUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("invalid audio speech fields should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("invalid audio speech fields should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -23270,31 +22839,27 @@ func TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge(t *tes
 	upstreamHandler := func(label string, calls *int) http.HandlerFunc {
 		return func(w http.ResponseWriter, req *http.Request) {
 			*calls++
-			if label == "paid" {
-				upstreamPath = req.URL.Path
-				upstreamAuth = req.Header.Get("Authorization")
-			}
+			upstreamPath = req.URL.Path
+			upstreamAuth = req.Header.Get("Authorization")
 			if !strings.Contains(req.Header.Get("Content-Type"), "multipart/form-data") {
 				t.Errorf("%s upstream should receive multipart content type, got %q", label, req.Header.Get("Content-Type"))
 			}
 			if err := req.ParseMultipartForm(20 << 20); err != nil {
 				t.Errorf("%s upstream received invalid multipart body: %v", label, err)
 			}
-			if label == "paid" {
-				upstreamModel = req.FormValue("model")
-				upstreamPrompt = req.FormValue("prompt")
-				if leaked := req.FormValue("routerx"); leaked != "" {
-					t.Errorf("routerx private form field leaked to upstream: %q", leaked)
-				}
-				file, _, err := req.FormFile("file")
-				if err != nil {
-					t.Errorf("paid upstream missing audio file: %v", err)
-				} else {
-					defer file.Close()
-					raw := new(bytes.Buffer)
-					_, _ = raw.ReadFrom(file)
-					upstreamFile = raw.Bytes()
-				}
+			upstreamModel = req.FormValue("model")
+			upstreamPrompt = req.FormValue("prompt")
+			if leaked := req.FormValue("routerx"); leaked != "" {
+				t.Errorf("routerx private form field leaked to upstream: %q", leaked)
+			}
+			file, _, err := req.FormFile("file")
+			if err != nil {
+				t.Errorf("%s upstream missing audio file: %v", label, err)
+			} else {
+				defer file.Close()
+				raw := new(bytes.Buffer)
+				_, _ = raw.ReadFrom(file)
+				upstreamFile = raw.Bytes()
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"text":"` + label + ` transcript"}`))
@@ -23321,8 +22886,8 @@ func TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge(t *tes
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "audio-transcriptions",
-		"remain_quota": 50,
+		"name":        "audio-transcriptions",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -23388,13 +22953,13 @@ func TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge(t *tes
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"text":"paid transcript"`) {
-		t.Fatalf("audio transcription multipart passthrough should return paid upstream response, got %d %s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"text":"free transcript"`) {
+		t.Fatalf("audio transcription multipart passthrough should return normal-priority upstream response, got %d %s", resp.Code, resp.Body.String())
 	}
-	if paidCalls != 1 || freeCalls != 0 || upstreamPath != "/v1/audio/transcriptions" {
-		t.Fatalf("routerx.route should select paid transcription upstream, paid=%d free=%d path=%q", paidCalls, freeCalls, upstreamPath)
+	if paidCalls != 0 || freeCalls != 1 || upstreamPath != "/v1/audio/transcriptions" {
+		t.Fatalf("routerx form field should be ignored and normal priority should select free transcription upstream, paid=%d free=%d path=%q", paidCalls, freeCalls, upstreamPath)
 	}
-	if upstreamAuth != "Bearer upstream-secret-paid" {
+	if upstreamAuth != "Bearer upstream-secret-free" {
 		t.Fatalf("upstream authorization should use selected channel secret, got %q", upstreamAuth)
 	}
 	if upstreamModel != "whisper-test" || upstreamPrompt != "domain words" || !bytes.Equal(upstreamFile, audioBytes) {
@@ -23404,8 +22969,8 @@ func TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge(t *tes
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 49 {
-		t.Fatalf("audio transcription without usage should use minimum token budget charge, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 49 {
+		t.Fatalf("audio transcription without usage should use minimum token budget charge, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -23448,8 +23013,8 @@ func TestAudioMultipartRejectsInvalidResponseFormatBeforeUpstream(t *testing.T) 
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "audio-multipart-format",
-		"remain_quota": 50,
+		"name":        "audio-multipart-format",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -23511,8 +23076,8 @@ func TestAudioMultipartRejectsInvalidResponseFormatBeforeUpstream(t *testing.T) 
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("invalid audio multipart response_format should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("invalid audio multipart response_format should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -23523,7 +23088,7 @@ func TestAudioMultipartRejectsInvalidResponseFormatBeforeUpstream(t *testing.T) 
 	}
 }
 
-func TestRouterXOptionsHeaderRoutesMultipartRequest(t *testing.T) {
+func TestRouterXOptionsHeaderIgnoredForMultipartRequest(t *testing.T) {
 	t.Setenv("JWT_SECRET", "test-jwt-secret")
 	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
 
@@ -23563,8 +23128,8 @@ func TestRouterXOptionsHeaderRoutesMultipartRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "routerx-header",
-		"remain_quota": 50,
+		"name":        "routerx-header",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -23618,11 +23183,11 @@ func TestRouterXOptionsHeaderRoutesMultipartRequest(t *testing.T) {
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"text":"paid transcript"`) {
-		t.Fatalf("X-RouterX-Options should route multipart request to paid upstream, got %d %s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"text":"free transcript"`) {
+		t.Fatalf("X-RouterX-Options should be ignored and normal routing should return free upstream response, got %d %s", resp.Code, resp.Body.String())
 	}
-	if paidCalls != 1 || freeCalls != 0 {
-		t.Fatalf("X-RouterX-Options should select paid channel only, paid=%d free=%d", paidCalls, freeCalls)
+	if paidCalls != 0 || freeCalls != 1 {
+		t.Fatalf("X-RouterX-Options should be ignored and normal priority should select free, paid=%d free=%d", paidCalls, freeCalls)
 	}
 }
 
@@ -23662,8 +23227,8 @@ func TestChatCompletionStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "stream",
-		"remain_quota": 50,
+		"name":        "stream",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -23721,8 +23286,8 @@ func TestChatCompletionStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 43 {
-		t.Fatalf("stream usage should deduct token budget by 7, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 43 {
+		t.Fatalf("stream usage should deduct token budget by 7, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -23737,6 +23302,100 @@ func TestChatCompletionStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 	}
 	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 7 || callLog.TotalTokens != 7 || callLog.PromptTokens != 3 || callLog.CompletionTokens != 4 {
 		t.Fatalf("unexpected stream success log: %+v", callLog)
+	}
+}
+
+func TestChatCompletionStreamDeliveredUsageDebitsEvenWhenQuotaIsDepleted(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-encryption-key")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-delivered-debit\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-delivered-debit\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"total_tokens\":7}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	r := newTestRouter(t)
+	initResp := performJSON(r, http.MethodPost, "/v0/setup/init", "", map[string]interface{}{
+		"username": "root",
+		"password": "password123",
+	})
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("setup init failed: %d %s", initResp.Code, initResp.Body.String())
+	}
+	rootJWT := loginBearer(t, r, "root", "password123")
+	if err := internal.DB.Model(&model.User{}).Where("username = ?", "root").Update("quota", int64(1)).Error; err != nil {
+		t.Fatal(err)
+	}
+	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
+		"name":        "delivered-stream",
+		"quota_limit": 1,
+	})
+	var tokenPayload struct {
+		Data struct {
+			ID  uint   `json:"id"`
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(tokenResp.Body.Bytes(), &tokenPayload); err != nil {
+		t.Fatal(err)
+	}
+	if tokenResp.Code != http.StatusOK || tokenPayload.Data.Key == "" {
+		t.Fatalf("create token failed: %d %s", tokenResp.Code, tokenResp.Body.String())
+	}
+	channelResp := performJSON(r, http.MethodPost, "/v0/admin/channel", rootJWT, map[string]interface{}{
+		"type":     common.ChannelTypeOpenAICompat,
+		"name":     "delivered-stream",
+		"models":   "gpt-delivered-stream",
+		"base_url": upstream.URL,
+		"api_key":  "upstream-secret",
+	})
+	if channelResp.Code != http.StatusOK {
+		t.Fatalf("create channel failed: %d %s", channelResp.Code, channelResp.Body.String())
+	}
+
+	streamResp := performJSON(r, http.MethodPost, "/v1/chat/completions", "Bearer "+tokenPayload.Data.Key, map[string]interface{}{
+		"model":  "gpt-delivered-stream",
+		"stream": true,
+		"messages": []map[string]string{
+			{"role": "user", "content": "hello"},
+		},
+	})
+	body := streamResp.Body.String()
+	if streamResp.Code != http.StatusOK || !strings.Contains(body, "chatcmpl-delivered-debit") || !strings.Contains(body, "data: [DONE]") {
+		t.Fatalf("delivered stream should still reach client, got %d %s", streamResp.Code, body)
+	}
+
+	var storedToken model.Token
+	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedToken.QuotaLimit != -6 || storedToken.QuotaUsed != 7 {
+		t.Fatalf("delivered stream should debit token into debt, got quota_limit=%d quota_used=%d", storedToken.QuotaLimit, storedToken.QuotaUsed)
+	}
+	var root model.User
+	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
+		t.Fatal(err)
+	}
+	if root.Quota != -6 {
+		t.Fatalf("delivered stream should debit user into debt, got %d", root.Quota)
+	}
+	var callLog model.Log
+	if err := internal.DB.First(&callLog).Error; err != nil {
+		t.Fatal(err)
+	}
+	if callLog.Status != common.LogStatusSuccess || callLog.QuotaUsed != 7 {
+		t.Fatalf("delivered stream should have settled success log, got %+v", callLog)
+	}
+	if !strings.Contains(callLog.BillingSnapshot, `"billing_status":"settled"`) ||
+		!strings.Contains(callLog.BillingSnapshot, `"post_delivery_debit":true`) ||
+		!strings.Contains(callLog.BillingSnapshot, `"overdrawn":true`) {
+		t.Fatalf("billing snapshot should mark post-delivery overdrawn debit, got %s", callLog.BillingSnapshot)
 	}
 }
 
@@ -23778,8 +23437,8 @@ func TestCompletionsStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "completion-stream",
-		"remain_quota": 50,
+		"name":        "completion-stream",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -23832,8 +23491,8 @@ func TestCompletionsStreamForwardsSSEAndDeductsUsage(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 43 {
-		t.Fatalf("completion stream usage should deduct token budget by 7, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 43 {
+		t.Fatalf("completion stream usage should deduct token budget by 7, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -23883,8 +23542,8 @@ func TestChatCompletionStreamCancelsUpstreamWhenClientWriteFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "stream-cancel",
-		"remain_quota": 50,
+		"name":        "stream-cancel",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -23945,8 +23604,8 @@ func TestChatCompletionStreamCancelsUpstreamWhenClientWriteFails(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("failed stream should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("failed stream should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -23989,8 +23648,8 @@ func TestChatCompletionStreamRejectsNonOpenAISSEUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "stream-non-openai",
-		"remain_quota": 50,
+		"name":        "stream-non-openai",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -24032,8 +23691,8 @@ func TestChatCompletionStreamRejectsNonOpenAISSEUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("unsupported stream should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("unsupported stream should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -24083,8 +23742,8 @@ func TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "retry",
-		"remain_quota": 50,
+		"name":        "retry",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -24159,8 +23818,8 @@ func TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("retry success should deduct once by usage total 5, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("retry success should deduct once by usage total 5, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -24255,8 +23914,8 @@ func TestChatCompletionUsesConfiguredRetryStatuses(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "retry-status",
-		"remain_quota": 50,
+		"name":        "retry-status",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -24312,8 +23971,8 @@ func TestChatCompletionUsesConfiguredRetryStatuses(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 44 {
-		t.Fatalf("configured retry success should deduct once by usage total 6, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 44 {
+		t.Fatalf("configured retry success should deduct once by usage total 6, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -24385,8 +24044,8 @@ func TestChatCompletionSkipsTrippedChannelAtConfiguredThreshold(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "breaker",
-		"remain_quota": 50,
+		"name":        "breaker",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -24496,8 +24155,8 @@ func TestNoAvailableChannelWritesBreakerSnapshot(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "breaker-snapshot",
-		"remain_quota": 50,
+		"name":        "breaker-snapshot",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -24649,8 +24308,8 @@ func TestChatCompletionHonorsDisabledAutoBanSetting(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "breaker-disabled",
-		"remain_quota": 50,
+		"name":        "breaker-disabled",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -24743,8 +24402,8 @@ func TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "no-retry",
-		"remain_quota": 50,
+		"name":        "no-retry",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -24818,8 +24477,8 @@ func TestChatCompletionUpstreamBadRequestMapping(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "limited-sdk",
-		"remain_quota": 50,
+		"name":        "limited-sdk",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -24893,8 +24552,8 @@ func TestRelayFailureLogPersistsRequestIDAndErrorCode(t *testing.T) {
 	}
 
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "request-id-log",
-		"remain_quota": 50,
+		"name":        "request-id-log",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -25059,8 +24718,8 @@ func TestRelayMaxResponseBodyBytesRejectsOversizedUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "response-limit",
-		"remain_quota": 10,
+		"name":        "response-limit",
+		"quota_limit": 10,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -25112,8 +24771,8 @@ func TestRelayMaxResponseBodyBytesRejectsOversizedUpstream(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 10 {
-		t.Fatalf("oversized upstream response should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 10 {
+		t.Fatalf("oversized upstream response should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -25180,8 +24839,8 @@ func TestChatCompletionUpstreamErrorStatusMapping(t *testing.T) {
 				t.Fatal(err)
 			}
 			tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-				"name":         "upstream-" + tt.name,
-				"remain_quota": 50,
+				"name":        "upstream-" + tt.name,
+				"quota_limit": 50,
 			})
 			var tokenPayload struct {
 				Data struct {
@@ -25240,8 +24899,8 @@ func TestChatCompletionUpstreamErrorStatusMapping(t *testing.T) {
 			if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 				t.Fatal(err)
 			}
-			if storedToken.RemainQuota != 50 {
-				t.Fatalf("upstream failures should not deduct token budget, got %d", storedToken.RemainQuota)
+			if storedToken.QuotaLimit != 50 {
+				t.Fatalf("upstream failures should not deduct token budget, got %d", storedToken.QuotaLimit)
 			}
 			var root model.User
 			if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -25290,8 +24949,8 @@ func TestChatCompletionUpstreamTimeoutMapping(t *testing.T) {
 		t.Fatal(err)
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
-		"name":         "timeout",
-		"remain_quota": 50,
+		"name":        "timeout",
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -25351,8 +25010,8 @@ func TestChatCompletionUpstreamTimeoutMapping(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 50 {
-		t.Fatalf("timeout should not deduct token budget, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 50 {
+		t.Fatalf("timeout should not deduct token budget, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -25403,7 +25062,6 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		&model.PaymentProduct{},
 		&model.PaymentOrder{},
 		&model.PaymentEvent{},
-		&model.PaymentRefundRequest{},
 		&model.PaymentDispute{},
 		&model.AdminAuditLog{},
 		&model.AlertEvent{},
@@ -26080,15 +25738,15 @@ func stripeCheckoutSessionPayload(eventID, eventType, paymentStatus string, orde
 	return string(raw)
 }
 
-func stripeChargeRefundedPayload(eventID string, order model.PaymentOrder, paymentIntent string, amountRefunded int64) string {
+func stripeUnhandledChargeEventPayload(eventID string, order model.PaymentOrder, paymentIntent string, amountMinor int64) string {
 	raw, _ := json.Marshal(map[string]interface{}{
 		"id":   eventID,
 		"type": "charge.refunded",
 		"data": map[string]interface{}{
 			"object": map[string]interface{}{
 				"id":              "ch_" + paymentIntent,
-				"amount_refunded": amountRefunded,
-				"amount":          amountRefunded,
+				"amount_refunded": amountMinor,
+				"amount":          amountMinor,
 				"currency":        order.Currency,
 				"payment_intent":  paymentIntent,
 				"metadata": map[string]string{

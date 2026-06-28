@@ -115,7 +115,7 @@
 - `relay.max_response_body_bytes` 当前已在非流式上游响应读取路径生效，超过限制时返回 502 `upstream_response_too_large`，不反射下游响应体且不扣费。
 - `relay.routerx_max_hops` 当前已在 RouterX-Compatible 上游转发路径生效，达到或超过上限时返回 `routerx_hop_exceeded` 且不调用上游。
 - `relay.log_body_max_bytes` 和 `log.body_max_bytes` 当前默认是 `0`，表示默认不记录请求/响应 body；显式开启 `log.request_body_enabled` / `log.response_body_enabled` 且配置正数上限后，非流式 Relay 日志会保存截断和脱敏后的请求/响应片段。
-- `billing.usage_missing_strategy` 当前支持 `minimum` 和 `reject`；`minimum` 保持最低计费兼容行为，`reject` 在上游成功但缺少 usage 时返回 `usage_missing` 且不扣费。
+- `billing.usage_missing_strategy` 当前支持 `minimum` 和 `reject`；`minimum` 表示最低计费行为，`reject` 在上游成功但缺少 usage 时返回 `usage_missing` 且不扣费。
 - `alert.<target>.enabled=false` 时不会为新告警创建对应外部投递 outbox；当前 target 支持 `webhook`、`email` 和 `im`。开启且 `alert.<target>.url` 为绝对 URL 后，新告警会写入 `alert_delivery_outboxes`，后台 worker 或手动重放会发送脱敏告警 payload。
 
 ## P0 目标配置
@@ -231,21 +231,22 @@ P0 补齐这些配置时，应同时补测试：
 
 ### Payment
 
-支付 provider、充值码、退款和人工补账策略以 `docs/PAYMENTS.md` 为准。支付密钥本身优先来自环境变量、KMS 或加密配置，不应以明文写入普通 `settings` 响应。
+支付 provider、充值码和人工补账策略以 `docs/PAYMENTS.md` 为准。支付配置全部来自数据库 `settings`，其中 provider 密钥由 `SettingService` 加密落库、透明解密使用，管理端响应和审计只允许脱敏展示。
 
 | key | 默认 | stage | 说明 |
 |-----|------|-------|------|
 | `payment.stripe.enabled` | `false` | P2 | 是否启用 Stripe |
+| `payment.stripe.secret_key` | `` | P2 | Stripe Secret Key；敏感配置，加密落库 |
+| `payment.stripe.webhook_secret` | `` | P2 | Stripe Webhook 签名密钥；敏感配置，加密落库 |
+| `payment.stripe.api_base` | `` | P2 | Stripe API 基础地址；为空时使用 `https://api.stripe.com`，仅测试、私有代理或受控网络出口场景覆盖 |
 | `payment.epay.enabled` | `false` | P2 | 是否启用易支付 |
+| `payment.epay.key` | `` | P2 | 易支付商户签名密钥；敏感配置，加密落库 |
 | `payment.epay.gateway` | `` | P2 | 易支付收银台网关地址 |
 | `payment.epay.pid` | `` | P2 | 易支付商户 ID |
 | `payment.epay.notify_url` | `` | P2 | 易支付异步通知地址 |
 | `payment.epay.return_url` | `` | P2 | 易支付同步返回地址 |
-| `payment.epay.refund_url` | `` | P2 | 易支付退款请求地址 |
 | `payment.currency` | `usd` | P2 | 默认币种 |
 | `payment.order_expire_minutes` | `30` | P2 | 支付订单过期时间 |
-| `payment.refund.auto_deduct` | `false` | P2 | 退款成功后是否自动扣回原订单额度 |
-| `payment.refund.allow_negative_balance` | `false` | P2 | 自动扣回是否允许用户余额变成负数 |
 | `payment.dispute.auto_disable_tokens` | `false` | P2 | Stripe 争议/拒付事件成功记录后是否自动禁用该用户已启用 API Key |
 | `payment.manual_adjust.require_reason` | `true` | P2 | 支付人工补账/扣回是否必须填写原因 |
 | `payment.manual_adjust.large_amount_threshold` | `0` | P2 | 大额人工调整阈值，`0` 表示当前不触发额外二次确认 |
@@ -304,7 +305,7 @@ validate key exists
 - `auth.login.username_password.enabled=false`。
 - `auth.register.default_quota < 0`。
 - `auth.register.default_group_id` 为空。
-- `ENCRYPTION_KEY` 或 KMS 不可用，且数据库存在 `enc:v1:` 下游密钥或外部登录 `client_secret`。
+- `ENCRYPTION_KEY` 或 KMS 不可用，且数据库存在 `enc:v1:` 下游密钥、外部登录 `client_secret` 或支付 provider 密钥。
 - `SQL_DSN` 指向 PostgreSQL/MySQL 等外部数据库但 Redis 不可用。
 - `relay.timeout <= 0`。
 - `relay.max_request_body_bytes < 0`。
@@ -320,8 +321,8 @@ validate key exists
 - `billing.default_ratio <= 0`。
 - `billing.usage_missing_strategy` 不是 `minimum` 或 `reject`。
 - `billing.user_group_ratios`、`billing.channel_group_ratios`、`billing.model_group_ratios` 或 `billing.user_group_channel_ratios` 不是 JSON 对象，或包含空 key、`<= 0` 的倍率值。
-- `payment.epay.enabled=true` 但 `PAYMENT_EPAY_KEY` 不可用。
-- `payment.stripe.enabled=true` 但 `PAYMENT_STRIPE_SECRET_KEY` 或 `PAYMENT_STRIPE_WEBHOOK_SECRET` 不可用。
+- `payment.epay.enabled=true` 但 `payment.epay.key` 不可用。
+- `payment.stripe.enabled=true` 但 `payment.stripe.secret_key` 或 `payment.stripe.webhook_secret` 不可用。
 - 迁移状态 dirty 或必要 settings 未加载。
 - `observability.structured_logs_enabled` 不是布尔值。
 - `alert.<target>.enabled` 不是布尔值，`alert.<target>.url` 不是绝对 URL，或 `alert.<target>.timeout_seconds` / `alert.<target>.max_attempts` 不是正整数；当前 target 为 `webhook`、`email`、`im`。

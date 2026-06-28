@@ -36,7 +36,7 @@
 | `TestApifoxChannelResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查通道摘要、上游端点摘要、连通性测试和模型拉取响应字段都有可读说明，避免通道管理接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxObservabilityResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查审计日志、告警事件、告警投递和 dashboard 响应字段都有可读说明，避免运维观测接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxLogAndSettingResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查调用日志和设置项响应字段都有可读说明，避免运维排查和设置接口在 Apifox 中只展示裸字段名 |
-| `TestApifoxPaymentResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查支付商品、支付订单、人工调整、退款请求、充值码和额度流水响应字段都有可读说明，避免支付与额度接口在 Apifox 中只展示裸字段名 |
+| `TestApifoxPaymentResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查支付商品、支付订单、人工调整、充值码和额度流水响应字段都有可读说明，避免支付与额度接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxModelPricingResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查用户模型目录、全局模型价格和通道模型价格响应字段都有可读说明，避免模型与价格配置接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxProtocolResponseSchemasHaveHumanReadablePropertyDescriptions` | 检查 OpenAI、Anthropic 和 Gemini 兼容响应、模型列表、错误封套和 usage 字段都有可读说明，避免协议兼容接口在 Apifox 中只展示裸字段名 |
 | `TestApifoxCommonReusableSchemasHaveHumanReadablePropertyDescriptions` | 检查分页壳、汇总统计、Provider 扩展选项和 ChatMessage 等复用 schema 字段都有可读说明，避免复用结构在 Apifox 中只展示裸字段名 |
@@ -63,7 +63,7 @@
 | `TestTraceabilityP2AdvancedAPIEvidenceIncludesConcreteEndpointTests` | 检查 `P2-C5` 高级 API 证据必须列出 Responses、Embeddings、Images、Audio、Moderations 和 multipart 防护的具体测试 |
 | `TestTraceabilityP2AdvancedAPIKeyEvidenceIncludesConcreteManagementTests` | 检查 `P2-C6` 高级 API Key 管理证据必须列出生命周期、元数据过滤、服务账号主体、批量操作、风险视图、泄露窗口、告警投递和指标测试 |
 | `TestModelListSupportsRouterXProtocolSelector` | `/v1/models` 和 `/v1/models/{model}` 支持 `routerx_protocol` query 和 `X-RouterX-Protocol` header 选择 OpenAI、Anthropic 或 Gemini 模型外形；Gemini 外形声明生成、计数和 Embeddings 方法；`format` 保持最高优先级，无效 API Key 和模型详情 `model_not_found` 错误也按所选入口协议返回 |
-| `TestUserAPIKeyManagementAuditLogs` | API Key 创建、编辑、用户端额度/无限标记编辑拒绝、禁用和删除写入 `api_key.*` 管理审计，审计摘要不泄露 `sk-` 明文，并覆盖审计 `result`/`error_code`/时间范围过滤 |
+| `TestUserAPIKeyManagementAuditLogs` | API Key 创建、编辑、用户端额度/无限标记设置、禁用和删除写入 `api_key.*` 管理审计，审计摘要不泄露 `sk-` 明文，并覆盖审计 action/时间范围过滤 |
 | `TestUserAPIKeyAdvancedManagement` | 用户查看单 Key 用量摘要、轮换 Key、泄露上报禁用、轮换链路和禁用原因落库，相关审计不泄露明文 Key |
 | `TestAdminAPIKeyQueryAndBatchDisable` | 管理员跨用户脱敏查询 API Key；批量禁用必须带筛选条件，缺少筛选条件会写 `api_key.batch_disable_denied` 审计；批量禁用只影响命中 Key 并写 `api_key.batch_disabled` 审计 |
 | `TestAdminAPIKeyRiskViewSummarizesRiskyKeys` | 管理员风险视图按窗口聚合异常 Key，识别失败峰值和低剩余额度，返回风险等级、原因和建议动作，响应不包含明文 Key 或明文前缀 |
@@ -78,10 +78,10 @@
 | `TestAPIKeyEventWindowSummarizesErrorsAndRateLimits` | 用户和管理员查询单 Key 最近错误/限流事件聚合；窗口外日志、成功日志和其他 Key 日志不混入，响应包含错误 code、错误来源、上游状态和限流维度计数且不泄露原始 IP、错误正文或明文 Key |
 | `TestAPIKeyModelScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `allow_models` scope；允许模型成功转发，未允许模型返回 `model_not_allowed`，不调用上游、不额外扣费，并写失败日志、拒绝分支 `policy_snapshot` 和 `api_key.scope_updated` 审计 |
 | `TestAPIKeyAPIScopeRestrictsRelayBeforeUpstream` | 用户更新 API Key `api_types` scope；允许 APIType 成功转发，未允许 APIType 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
-| `TestAPIKeyChannelGroupScopeFiltersRelayCandidates` | 用户更新 API Key `channel_groups` scope；候选通道按允许分组过滤，越权 `routerx.route` 返回 `route_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestAPIKeyChannelGroupScopeFiltersRelayCandidates` | 用户更新 API Key `channel_groups` scope；候选通道按允许分组过滤，越权 API Key/channel-group scope 返回 `route_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyEntryProtocolScopeRejectsBeforeRelay` | 用户更新 API Key `entry_protocols` scope；允许入口协议成功转发，未允许入口协议按当前协议错误外形返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyEntryProtocolScopeAllowsGeminiEmbeddingActions` | `entry_protocols=["gemini"]` 允许 Gemini embedContent 和 batchEmbedContents，不会被误判为 OpenAI 入口 |
-| `TestUserGroupChannelGroupAccessFiltersRelayCandidates` | 默认用户分组只能访问 settings 允许的通道分组；更高优先级的未授权通道会被过滤，越权 `routerx.route` 返回 `route_forbidden` 且不调用上游，并写失败日志和拒绝分支 `policy_snapshot` |
+| `TestUserGroupChannelGroupAccessFiltersRelayCandidates` | 默认用户分组只能访问 settings 允许的通道分组；更高优先级的未授权通道会被过滤，越权 API Key/channel-group scope 返回 `route_forbidden` 且不调用上游，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyIPScopeRejectsBeforeRelay` | 用户更新 API Key `ip_cidrs` scope；允许 IP 成功转发，未允许 IP 返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyMethodScopeRejectsBeforeRelay` | 用户更新 API Key `methods` scope；允许方法路径成功转发，未允许方法路径返回 `token_forbidden`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
 | `TestAPIKeyDailyQuotaScopeRejectsAfterDailyBudgetUsed` | 用户更新 API Key `daily_quota` scope；当日成功日志已消耗额度达到上限后返回 `insufficient_quota`，不调用上游、不额外扣费，并写失败日志和拒绝分支 `policy_snapshot` |
@@ -117,15 +117,10 @@
 | `TestEpayFailedNotifyMarksOrderFailedAndAudits` | 易支付签名有效、金额匹配且明确失败的通知会把 pending 订单置为 failed，不入账并写 `payment_webhook.failed` 审计 |
 | `TestStripeWebhookPaysOrderIdempotently` | Stripe webhook 校验原始 body 签名、Checkout Session 金额和 metadata，成功事件 paid 入账并写 webhook/入账审计，重复事件不重复流水 |
 | `TestStripeAsyncPaymentFailedMarksOrderFailedAndAudits` | Stripe `checkout.session.async_payment_failed` 校验签名、金额和 metadata 后把 pending 订单置为 failed，不入账并写 `payment_webhook.failed` 审计 |
-| `TestStripeRefundWebhookRecordsAndOptionallyDeductsQuota` | Stripe 全额退款 webhook 幂等记录订单退款状态；默认不扣额度，开启自动扣回后写 refund_deduct 流水和退款/扣回审计且不重复扣 |
-| `TestStripePartialRefundWebhookRecordsAndDeductsProportionally` | Stripe 部分退款 webhook 记录 `partially_refunded` 状态；开启自动扣回后按退款金额比例写 refund_deduct 流水和退款/扣回审计 |
 | `TestStripeDisputeWebhookRecordsEventAndDisablesTokensByPolicy` | Stripe 争议 webhook 幂等记录争议事件和 `payment_dispute.created` 审计；开启自动禁用策略后禁用用户已启用 API Key，且不直接改用户额度 |
 | `TestStripeDisputeLifecycleUpdatesDisputeFact` | Stripe 争议 created/closed 生命周期写入并更新 `payment_disputes`，按 dispute id 写 `payment_dispute.*` 审计，重复事件不重复审计 |
 | `TestAdminPaymentManualAdjustmentRequiresReason` | 支付人工补账/扣回默认要求填写原因，缺少原因不改变用户余额，并写 `payment_manual_adjust.denied` 拒绝审计 |
 | `TestAdminPaymentManualAdjustmentWritesManualTransactionAndAudit` | 管理员通过支付人工修正接口扣回额度，写 `manual_debit` 流水、关联订单、记录操作者/原因/幂等键并写支付订单审计 |
-| `TestAdminPaymentManualRefundMarksOrderAndDeductsQuota` | 管理员通过支付人工退款接口扣回额度，订单置为 `partially_refunded` 或 `refunded`，写 `refund_deduct` 流水、原因、操作者、幂等键和 `payment_refund.manual` 审计；重复幂等键拒绝写 `payment_refund.manual_denied` |
-| `TestAdminStripeRefundRequestCreatesProviderRefundAndPendingOrder` | 管理员向 Stripe 发起 provider 退款请求，调用 Refund API，写 `payment_refund_requests` 和 `payment_refund.requested` 审计，订单进入 `refund_pending`，后续退款 webhook 收尾为最终退款状态；缺少原因会拒绝、不会调用 provider，并写 `payment_refund.request_denied` |
-| `TestAdminEpayRefundRequestCreatesProviderRefundAndPendingOrder` | 管理员向易支付发起 provider 退款请求，签名调用配置的退款地址，写 `payment_refund_requests` 和 `payment_refund.requested` 审计，订单进入 `refund_pending`；重复幂等键不重复调用 provider，并写 `payment_refund.request_denied` |
 | `TestChannelExtendedManagement` | 多 key、多 base URL、模型重写、通道分组、扩展配置、密钥加密 |
 | `TestAdminChannelManagementAuditLogs` | 通道创建、测试、拉取模型、编辑、禁用、启用和删除写入 `channel.*` 管理审计，且审计摘要不泄露下游密钥 |
 | `TestAdminLogClearWritesAuditLog` | 管理员按 `before` 清理调用日志写入 `log.clear` 审计，并记录清理截止时间 |
@@ -260,19 +255,19 @@
 | `TestImageGenerationsRejectsInvalidSizeBeforeUpstream` | Image Generations 在上游前拒绝超界 `size`，返回 `invalid_image_size`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestImageGenerationsRejectsInvalidPromptBeforeUpstream` | Image Generations 在上游前拒绝缺失、非字符串或空白 `prompt`，返回 `invalid_image_prompt`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestImageGenerationsRejectsInvalidCountBeforeUpstream` | Image Generations 在上游前拒绝 null、小于 1、非整数或非数字 `n`，返回 `invalid_image_count`，不调用上游且不扣用户额度或 API Key 预算 |
-| `TestImageMultipartPassthroughUsesRouteAndMinimumCharge` | Image Edits/Variations multipart 表单透传、`routerx` 表单字段剥离与路由偏好、图像/遮罩文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestImageMultipartPassthroughUsesRouteAndMinimumCharge` | Image Edits/Variations multipart 表单透传、`routerx` 表单字段剥离且不参与路由、图像/遮罩文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestImageMultipartRejectsInvalidSizeBeforeUpstream` | Image Edits/Variations 在上游前拒绝超界 `size`，返回 `invalid_image_size`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestAudioSpeechPassthroughReturnsBinaryAndUsesMinimumCharge` | Audio Speech 基础 JSON 透传、`routerx` 剥离、二进制音频响应和 Content-Type 透传、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestAudioSpeechRejectsInvalidResponseFormatBeforeUpstream` | Audio Speech 在上游前拒绝非法 `response_format`，返回 `invalid_audio_response_format`，不调用上游且不扣用户额度或 API Key 预算 |
 | `TestAudioSpeechRejectsInvalidRequestFieldsBeforeUpstream` | Audio Speech 在上游前拒绝空输入、超长输入和空 voice，返回稳定错误码，不调用上游且不扣用户额度或 API Key 预算 |
-| `TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge` | Audio Transcriptions multipart 表单透传、`routerx` 表单字段剥离与路由偏好、文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
+| `TestAudioTranscriptionsMultipartPassthroughUsesRouteAndMinimumCharge` | Audio Transcriptions multipart 表单透传、`routerx` 表单字段剥离且不参与路由、文件字段保留、上游无 usage 时按 P0 最低计费写日志和扣费 |
 | `TestAudioMultipartRejectsInvalidResponseFormatBeforeUpstream` | Audio Transcriptions/Translations 在上游前拒绝非法 `response_format`，返回 `invalid_audio_response_format`，不调用上游且不扣用户额度或 API Key 预算 |
-| `TestRouterXOptionsHeaderRoutesMultipartRequest` | `X-RouterX-Options` header 为 multipart 请求提供路由偏好，且不向真实上游泄露 `routerx` 私有字段 |
-| `TestRouterXUpstreamOptionsSupplementRequest` | `routerx.upstream` 安全补充上游 header/query/JSON body，敏感鉴权字段、`model`、`stream` 和原请求已存在字段不会被覆盖，`routerx` 私有字段不会泄露 |
-| `TestRouterXProviderOptionsApplyOnlyToSelectedProvider` | `routerx.provider.<provider>` 只在选中 provider 匹配时补充 JSON body 字段，provider 专属补充值优先于通用 upstream 补充值，非选中 provider 参数不泄露 |
-| `TestOpenAIChatToGeminiUpstreamPreservesProviderSafetySettings` | OpenAI-compatible Chat 命中 Gemini 上游时，`routerx.provider.gemini.safetySettings` 显式映射为 Gemini 原生 `safetySettings`，OpenAI 生成参数映射到 `generationConfig`，未支持的 Gemini provider 字段和其他 provider 字段不泄露 |
+| `TestRouterXOptionsHeaderIgnoredForMultipartRequest` | `X-RouterX-Options` header 被忽略，multipart 请求按正常优先级路由，且不向真实上游泄露 `routerx` 私有字段 |
+| `TestRouterXUpstreamOptionsAreIgnored` | 请求体中的 upstream 扩展被忽略，不补充上游 header/query/JSON body，`routerx` 私有字段不会泄露 |
+| `TestRouterXProviderOptionsAreIgnored` | 请求体中的 provider 扩展被忽略，不补充 provider 专属 JSON body 字段，`routerx` 私有字段不会泄露 |
+| `TestOpenAIChatToGeminiUpstreamIgnoresRouterXProviderSafetySettings` | OpenAI-compatible Chat 命中 Gemini 上游时，来自 `routerx.provider.gemini` 的 safetySettings 被忽略，OpenAI 生成参数仍映射到 `generationConfig` |
 | `TestGeminiGenerateContentToGeminiUpstreamPreservesNativeFields` | Gemini `generateContent` 入口命中 Gemini 上游时，真实上游 body 保留 `contents/systemInstruction/generationConfig/safetySettings/tools/toolConfig/cachedContent`，不泄露 `routerx`，也不发送 OpenAI `messages/max_tokens`；成功日志保留 `ingress_protocol=gemini`，且不把已原生保真的字段误记为 dropped |
-| `TestRouterXCompatibleUpstreamPreservesRouterXAndIncrementsHop` | RouterX-Compatible 上游保留 `routerx` 私有字段，转发递增后的 `X-RouterX-Hop`，并追加 `X-RouterX-Chain` 链路摘要 |
+| `TestRouterXCompatibleUpstreamStripsRouterXAndIncrementsHop` | RouterX-Compatible 上游剥离请求体 `routerx` 私有字段，转发递增后的 `X-RouterX-Hop`，并追加 `X-RouterX-Chain` 链路摘要 |
 | `TestRouterXCompatibleUpstreamRejectsHopLimit` | RouterX-Compatible 上游在 `X-RouterX-Hop` 达到默认上限时本地拒绝且不调用上游 |
 | `TestRouterXCompatibleUpstreamUsesConfiguredHopLimit` | `relay.routerx_max_hops` 可收紧 RouterX-Compatible 循环保护上限，达到配置值时本地拒绝、不调用上游且不扣费 |
 | `TestChatCompletionStreamForwardsSSEAndDeductsUsage` | OpenAI-compatible Chat SSE chunk 转发、usage 提取、日志和扣费 |
@@ -302,7 +297,7 @@
 | `TestAnthropicMessagesToAnthropicUpstreamPreservesNativeRequestFieldsAndDeductsUsage` | Anthropic Messages 命中 Anthropic 上游时保留 content blocks、tools、tool_choice、thinking、metadata 和 stop_sequences，成功日志不再记录这些字段降级 |
 | `TestAnthropicMessagesStreamToAnthropicUpstreamPreservesNativeSSEAndDeductsUsage` | Anthropic Messages Stream 命中 Anthropic 上游时调用 `/v1/messages`，原样透传 Anthropic SSE，并从原生 usage 事件扣费 |
 | `TestRelayPrecheckRejectsBeforeUpstream` | 无效 Key、禁用 Key、额度不足、禁用通道不调用下游 |
-| `TestRouterXRoutePreferenceFiltersChannels` | `routerx.route` 被接受、未知字段忽略、非法结构拒绝和筛选后无候选；无候选返回 `no_available_channel` 且写拒绝分支 `policy_snapshot` |
+| `TestRouterXRequestFieldIsIgnoredForRoutingAndStripped` | API Key/channel-group scope 被接受、未知字段忽略、非法结构拒绝和筛选后无候选；无候选返回 `no_available_channel` 且写拒绝分支 `policy_snapshot` |
 
 仍需优先补齐：
 
@@ -377,7 +372,7 @@ P0 OpenAI-compatible Chat 成功响应示例：
 | `logs` | `prompt_tokens`、`completion_tokens`、`total_tokens` | 与 usage fixture 一致 |
 | `logs` | `quota_used` | P0 等于 `total_tokens`；缺失 usage 时默认最低值 `1`，`billing.usage_missing_strategy=reject` 时失败且为 `0` |
 | `logs` | `status` | 成功为 `1`，失败为 `2` |
-| `tokens` | `remain_quota` / `quota_limit` / `quota_used` | 有限 API Key 按 `quota_used` 消耗预算 |
+| `tokens` | `quota_limit` / `quota_used` | 有限 API Key 按 `quota_used` 消耗预算 |
 | `users` | `quota` | 有限和无限 API Key 调用成功时均扣减用户额度 |
 | `channels` | `error_count` | 成功后清零或保持 0 |
 
@@ -613,7 +608,7 @@ Gemini-compatible 最小断言：
 - `GET /v0/user/billing?token_id=` 只聚合当前用户指定 API Key 的成功调用日志。
 - 失败调用默认不增加 `quota_used`。
 - 有限额度 API Key 调用同时扣 `users.quota` 和 Key 预算。
-- 无限 Token 调用扣 `users.quota`，`tokens.remain_quota` 保持 `-1`。
+- 无限 Token 调用扣 `users.quota`，`tokens.quota_limit` 保持 `-1`。
 - 创建有限额度 API Key 只设置预算上限，不扣用户余额，不计入模型消费日志。
 - 管理员日志筛选与用户日志视角一致。
 
@@ -623,7 +618,7 @@ Gemini-compatible 最小断言：
 |------|------|----------|
 | P0 | 开发者最小接入 | base URL + RouterX API Key、`/v1/models`、非流式 Chat、OpenAI Chat/Completions 基础 SSE、日志和扣费 |
 | P1 | SSE 流式 | 已覆盖 OpenAI-compatible Chat 和 Legacy Completions 基础 chunk 转发、Anthropic Messages Stream/Gemini streamGenerateContent 到 OpenAI-compatible SSE、Anthropic Messages Stream 到 Anthropic 原生 SSE、Gemini streamGenerateContent 到 Gemini 原生 SSE、usage 扣费和客户端断开取消；继续补 usage fallback 和已输出后不切换通道的更多故障注入 |
-| P1 | 路由偏好 | `routerx.route` 被接受、忽略、拒绝和筛选后无候选 |
+| P1 | 路由偏好 | API Key/channel-group scope 被接受、忽略、拒绝和筛选后无候选 |
 | P1 | 多协议入口 | 已覆盖 Anthropic/Gemini 基础非流式成功、Anthropic Messages 到 Anthropic 上游的原生请求字段保真、Gemini generateContent 到 Gemini 上游的非流式原生字段保真、Anthropic/Gemini 基础流式、Anthropic/Gemini 原生 SSE 路径、鉴权错误和基础下游错误外形；继续按 `docs/PROTOCOLS.md` 断言完整 SDK 行为和更长尾原生字段 |
 | P1 | 多上游转换 | 按 `docs/PROTOCOLS.md` 断言 OpenAI-compatible、Anthropic、Gemini、Azure、xAI、Qwen、DeepSeek 的请求/响应转换和降级原因 |
 | P1 | 调用事实快照 | 调用日志已覆盖 request_id、error_code、error_source、upstream_status、基础 request_snapshot、成功、API Key scope 拒绝、基础余额预检拒绝、用户分组访问控制拒绝、无可用候选拒绝、Redis 全局/IP/Token/User/Model/Channel 限流拒绝和 `rate_limit_snapshot`、usage 缺失拒绝和扣费失败分支 policy/billing 事实，基础 usage_source、含过滤/模型重写/重试摘要的基础 route_snapshot 和含价格表达式或 P0 回退表达式/规则版本/倍率/预算前后摘要的基础 billing_snapshot；继续补完整 route、usage、完整 billing、error 快照脱敏和历史解释 |
@@ -634,7 +629,7 @@ Gemini-compatible 最小断言：
 | P1 | 独立日志数据库 | 已覆盖 `LOG_SQL_DSN` 初始化、日志库副本写入、运行期写入失败时主库事实可恢复、主库 outbox 异步补写、管理日志列表读取日志库、查询失败回退主库、日志库健康指标和 outbox 积压指标；继续补冷热归档策略 |
 | P2 | 企业账号 | 本地密码成功登录审计、OAuth state、已绑定 subject 登录、OAuth/OIDC 首次补齐注册、注册验证码消费、注销账号恢复、登录用户 subject 绑定、禁止 email 自动接管、身份列表、非主 OAuth identity 解绑、OIDC Discovery、nonce、ID Token 签名校验和登录用户 OIDC subject 绑定已覆盖；更多企业风控测试后续补齐 |
 | P2 | 高级 API Key 管理 | 基础生命周期审计、轮换、泄露上报、单 Key 用量摘要、最近使用来源摘要、管理员跨用户查询、按环境/团队/应用/标签/服务账号主体过滤、脱敏 CSV 导出、批量禁用、批量过期、批量操作无筛选拒绝审计、基础风险视图、泄露风险基础轮换建议、单 Key 泄露窗口分析、单 Key 错误/限流事件统一视图、泄露上报管理员告警收件箱、告警确认处理、Webhook/邮件/IM 告警投递 outbox、列表、手动重放和脱敏 payload、模型/APIType/通道分组/入口协议/IP/方法路径 allow-list scope、日/月预算拒绝、并发上限拒绝、RPM/TPM 拒绝、基础 Redis 鉴权 lookup cache 命中/预热/禁用失效和 router Redis 兼容已覆盖 |
-| P2 | 支付充值 | 充值码批次/备注/过期策略、充值码创建拒绝、兑换成功与拒绝审计、Stripe Checkout Session 创建、Stripe/易支付 provider 退款请求及拒绝审计、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账和明确失败审计、Stripe 全额/部分退款和扣回审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回及拒绝审计、支付人工退款落账及拒绝审计；更多 provider 自动退款适配待补 |
+| P2 | 支付充值 | 充值码批次/备注/过期策略、充值码创建拒绝、兑换成功与拒绝审计、Stripe Checkout Session 创建、Stripe/易支付签名、金额校验、订单状态、重复回调幂等、额度流水、webhook 入账和明确失败审计、Stripe 争议生命周期和可选 API Key 禁用审计、支付人工补账/扣回及拒绝审计、已移除能力入口回归 |
 | P2 | 观测审计 | 成功登录、API Key 管理、用户管理、支付商品管理、settings 更新和校验拒绝、用户调额、充值码管理、通道管理、管理员账号管理、日志清理/导出审计、调用日志 request_id/error_code/usage_source/error_source/upstream_status、可配置 HTTP/Panic JSON line 结构化日志和基础 `/metrics`、HTTP 请求量/耗时、Relay/上游耗时、Relay 请求/错误/token/通道/限流/计费/支付/审计/DB/Redis up 与错误计数/日志库/outbox 指标测试已覆盖；继续补更完整结构化失败事实、更多管理审计动作和生产 `/ready` |
 
 ## 测试数据约定
@@ -650,9 +645,11 @@ Gemini-compatible 最小断言：
 文档和代码变更后至少运行：
 
 ```text
-go test ./...
+go test ./cmd/... ./internal/...
 git diff --check
 ```
+
+后端验证使用显式包集合，避免前端依赖安装后 `frontend/node_modules` 中的 Go 文件参与 `go test ./...` 包发现。
 
 文档一致性变更后额外搜索：
 

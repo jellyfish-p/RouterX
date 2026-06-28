@@ -25,7 +25,7 @@
 - `admin_audit_logs` 表保存基础管理审计日志，字段包含 actor、action、resource、before/after 摘要、request_id、IP 和 User-Agent。
 - `GET /v0/admin/audit` 已注册为超级管理员查询接口，支持按 `action`、`resource_type`、`resource_id`、`actor_user_id`、`result`、`error_code` 和时间范围过滤。
 - `GET /metrics` 已注册为 Prometheus 文本指标接口，默认由 `observability.metrics_enabled=false` 关闭；启用后暴露用户数、API Key 数、通道数、可用通道数、当日调用/额度、ready、DB/Redis/日志库 up、DB/Redis 错误计数、日志补写 outbox 状态、HTTP 请求量和耗时、调用日志状态、Relay 请求数、Relay 错误维度、token 用量、按模型/供应商/用户组的额度消耗、API Key 鉴权、生命周期、最近使用年龄、可用有限额度、轮换和泄露事件、逐通道可用状态、逐通道错误计数、后台熔断探测结果计数、限流拒绝、计费失败、支付订单、支付事件和审计事件指标。
-- API Key 创建、编辑、禁用、删除、scope 更新、元数据和服务账号主体更新、脱敏导出、批量禁用、批量过期、批量操作缺少筛选条件拒绝和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计摘要，完整 Key 明文和哈希不会写入审计摘要。
+- API Key 创建、编辑、额度设置、禁用、删除、scope 更新、元数据和服务账号主体更新、脱敏导出、批量禁用、批量过期和批量操作缺少筛选条件拒绝会写入 `api_key.*` 管理审计摘要，完整 Key 明文和哈希不会写入审计摘要。
 - 普通用户成功登录、自助改密码、创建、编辑、禁用、删除和拒绝角色变更会写入 `user.*` 管理审计摘要，密码和 JWT 不会写入审计摘要。
 - 支付商品创建、更新、启用和禁用会写入 `payment_product.*` 管理审计摘要。
 - 系统模型价格创建、更新、启用和禁用会写入 `model_price.*` 管理审计摘要，`resource_id` 使用模型名便于直接过滤。
@@ -34,15 +34,15 @@
 - `PATCH /v0/admin/user/:id/quota` 调整普通用户额度时会写入 `user.quota_update` 管理审计摘要，并关联调额原因。
 - 充值码生成、导入、创建拒绝、作废、兑换和兑换拒绝会写入 `redem_code.*` 管理审计摘要，完整兑换码不会明文写入审计摘要；创建拒绝使用 `redem_code.create_denied`，兑换拒绝使用 `redem_code.redeem_denied` 和稳定 `error_code` 区分原因。
 - 支付订单创建会写入 `payment_order.create` 管理审计摘要，checkout URL 不会写入审计摘要；本地参数、provider 未启用、商品不可用或 provider checkout 发起失败会写 `payment_order.create_denied`，使用稳定 `error_code` 支持审计过滤。
-- 支付 provider 成功回调会写入 `payment_webhook.processed` 和 `payment_order.paid` 管理审计摘要；provider 明确失败通知会写入 `payment_webhook.failed`；管理端向 Stripe 或易支付发起 provider 退款请求会写入 `payment_refund.requested`；Stripe 全额或部分退款会写入 `payment_refund.processed`，自动扣回成功时写入 `payment_refund.deducted`；Stripe 争议/拒付生命周期会写入 `payment_dispute.created`、`payment_dispute.updated`、`payment_dispute.closed` 或 `payment_dispute.funds_changed`，并在自动禁用策略开启时记录禁用的 API Key 数量。
-- 支付相关人工补账/扣回会写入 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 管理审计摘要，并记录原因、幂等键和前后余额；人工退款会写入 `payment_refund.manual`，记录订单、退款额度、订单状态、原因、幂等键和前后余额。
+- 支付 provider 成功回调会写入 `payment_webhook.processed` 和 `payment_order.paid` 管理审计摘要；provider 明确失败通知会写入 `payment_webhook.failed`；Stripe 争议/拒付生命周期会写入 `payment_dispute.created`、`payment_dispute.updated`、`payment_dispute.closed` 或 `payment_dispute.funds_changed`，并在自动禁用策略开启时记录禁用的 API Key 数量。
+- 支付相关人工补账/扣回会写入 `payment_manual_adjust.credit` 或 `payment_manual_adjust.debit` 管理审计摘要，并记录原因、幂等键和前后余额。
 - 通道创建、编辑、启用、禁用、删除、测试和拉取模型会写入 `channel.*` 管理审计摘要，下游密钥只记录数量或是否配置。
 - 管理员账号创建、编辑、禁用、删除和超级管理员权限拒绝会写入 `admin.*` 管理审计摘要，密码不会写入审计摘要。
 - 管理员按 `before` 清理调用日志会写入 `log.clear` 管理审计摘要，记录清理截止时间。
 - 管理员导出调用日志会写入 `log.export` 管理审计摘要，记录过滤条件、导出上限和导出条数，CSV 不包含请求/响应体、IP、错误原文或 snapshot。
 - HTTP Logger 中间件已经记录基础访问日志。
 
-这些能力构成 P0 的可见闭环，并补上了 API Key 管理、API Key 批量操作拒绝、用户管理、支付商品管理、系统/通道模型价格管理、支付入账/明确失败/退款回调、Stripe/易支付 provider 退款请求、Stripe 争议生命周期、支付人工修正与人工退款、settings 变更、用户调额、充值码管理、创建拒绝和兑换拒绝、通道管理、管理员账号管理、日志清理和日志导出审计的基础切片。当前已提供可配置 HTTP/Panic JSON line 结构化日志；商业级增强需要继续补更完整的审计覆盖、结构化字段、指标、告警、追踪和保留策略。
+这些能力构成 P0 的可见闭环，并补上了 API Key 管理、API Key 批量操作拒绝、用户管理、支付商品管理、系统/通道模型价格管理、支付入账/明确失败、Stripe 争议生命周期、支付人工修正、settings 变更、用户调额、充值码管理、创建拒绝和兑换拒绝、通道管理、管理员账号管理、日志清理和日志导出审计的基础切片。当前已提供可配置 HTTP/Panic JSON line 结构化日志；商业级增强需要继续补更完整的审计覆盖、结构化字段、指标、告警、追踪和保留策略。
 
 ## 观测事实分层
 
@@ -131,7 +131,7 @@
 | `access_rule_snapshot` | 访问控制事实 |
 | `rate_limit_snapshot` | 限流拒绝事实，包含 schema、kind、source、request_id、created_at、维度、窗口、阈值和当前计数摘要 |
 | `breaker_snapshot` | 自动熔断过滤事实和被挡通道摘要，包含 schema、kind、source、request_id 和 created_at |
-| `key_budget_snapshot` | API Key 最大消耗额度、调用前后剩余预算或累计已用 |
+| `key_budget_snapshot` | API Key 剩余可消耗额度、调用前后剩余预算和累计已用 |
 | `retry_count` | 本次调用重试次数 |
 | `latency_ms` | RouterX 端到端耗时 |
 | `upstream_latency_ms` | 上游调用耗时 |
@@ -177,7 +177,7 @@
 | 通道 | 创建、编辑、启用、禁用、删除、测试、拉取模型 |
 | settings | 修改、批量修改、类型校验失败、高风险配置拒绝 |
 | 计费 | 模型价格、通道价格、倍率、访问控制、规则版本变更 |
-| 支付 | 商品变更、订单创建、回调接收、入账、退款、人工修正 |
+| 支付 | 商品变更、订单创建、回调接收、入账、人工修正 |
 | 企业身份 | OAuth/OIDC provider 变更、绑定、解绑、恢复账号 |
 | 日志 | 管理员清理日志、导出数据 |
 
@@ -309,7 +309,7 @@
 - `docs/DATA_MODEL.md`：日志、审计、快照和索引字段。
 - `docs/ERRORS.md`：error_code、日志事实和排障语义。
 - `docs/SECURITY.md`：脱敏、审计和事故响应。
-- `docs/PAYMENTS.md`：支付事件、额度流水、退款、人工修正和支付指标。
+- `docs/PAYMENTS.md`：支付事件、额度流水、人工修正和支付指标。
 - `docs/RUNBOOKS.md`：告警触发后的检查顺序、证据和安全动作。
 - `docs/SETTINGS.md`：观测相关 settings。
 - `docs/OPERATIONS.md`：指标、告警、故障处理、保留和备份。

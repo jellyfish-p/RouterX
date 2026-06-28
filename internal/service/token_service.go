@@ -453,14 +453,18 @@ func (s *TokenService) GetByIDForUser(id, userID uint) (*model.Token, error) {
 }
 
 // Create 创建 API Token, 生成 sk-xxxx 格式 Key。
-func (s *TokenService) Create(userID uint, name string, remainQuota int64, unlimited bool, expiredAt *int64, metadata ...TokenMetadata) (*model.Token, error) {
+func (s *TokenService) Create(userID uint, name string, quotaLimit int64, unlimited bool, expiredAt *int64, metadata ...TokenMetadata) (*model.Token, error) {
+	return s.CreateWithLeakRisk(userID, name, quotaLimit, unlimited, expiredAt, nil, metadata...)
+}
+
+func (s *TokenService) CreateWithLeakRisk(userID uint, name string, quotaLimit int64, unlimited bool, expiredAt *int64, leakRiskEnabled *bool, metadata ...TokenMetadata) (*model.Token, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "default"
 	}
 	if unlimited {
-		remainQuota = common.QuotaUnlimited
-	} else if remainQuota < 0 {
+		quotaLimit = common.QuotaUnlimited
+	} else if quotaLimit < 0 {
 		return nil, errors.New("token quota cannot be negative")
 	}
 	var expires *time.Time
@@ -471,6 +475,10 @@ func (s *TokenService) Create(userID uint, name string, remainQuota int64, unlim
 	tokenMetadata, err := optionalTokenMetadata(metadata...)
 	if err != nil {
 		return nil, err
+	}
+	riskEnabled := true
+	if leakRiskEnabled != nil {
+		riskEnabled = *leakRiskEnabled
 	}
 
 	var created *model.Token
@@ -484,16 +492,24 @@ func (s *TokenService) Create(userID uint, name string, remainQuota int64, unlim
 			return ErrAPIUserDisabled
 		}
 		token, plain, err := createTokenWithPlain(tx, model.Token{
-			UserID:       userID,
-			Name:         name,
-			Status:       common.TokenStatusEnabled,
-			ExpiredAt:    expires,
-			RemainQuota:  remainQuota,
-			Unlimited:    unlimited,
-			MetadataJSON: tokenMetadata,
+			UserID:          userID,
+			Name:            name,
+			Status:          common.TokenStatusEnabled,
+			ExpiredAt:       expires,
+			QuotaLimit:      quotaLimit,
+			QuotaUsed:       0,
+			Unlimited:       unlimited,
+			LeakRiskEnabled: riskEnabled,
+			MetadataJSON:    tokenMetadata,
 		})
 		if err != nil {
 			return err
+		}
+		if leakRiskEnabled != nil && !*leakRiskEnabled {
+			if err := tx.Model(token).Update("leak_risk_enabled", false).Error; err != nil {
+				return err
+			}
+			token.LeakRiskEnabled = false
 		}
 		plainKey = plain
 		created = token
@@ -721,15 +737,17 @@ func (s *TokenService) RotateForUser(id, userID uint) (*model.Token, *model.Toke
 			expires = &t
 		}
 		token, plain, err := createTokenWithPlain(tx, model.Token{
-			UserID:        old.UserID,
-			Name:          old.Name,
-			Status:        common.TokenStatusEnabled,
-			ExpiredAt:     expires,
-			RemainQuota:   old.RemainQuota,
-			Unlimited:     old.Unlimited,
-			RotatedFromID: &rotatedFromID,
-			ScopeJSON:     append(model.JSONValue(nil), old.ScopeJSON...),
-			MetadataJSON:  append(model.JSONValue(nil), old.MetadataJSON...),
+			UserID:          old.UserID,
+			Name:            old.Name,
+			Status:          common.TokenStatusEnabled,
+			ExpiredAt:       expires,
+			QuotaLimit:      tokenRemainingQuota(old),
+			QuotaUsed:       old.QuotaUsed,
+			Unlimited:       tokenIsUnlimited(old),
+			LeakRiskEnabled: old.LeakRiskEnabled,
+			RotatedFromID:   &rotatedFromID,
+			ScopeJSON:       append(model.JSONValue(nil), old.ScopeJSON...),
+			MetadataJSON:    append(model.JSONValue(nil), old.MetadataJSON...),
 		})
 		if err != nil {
 			return err
@@ -1717,7 +1735,8 @@ func tokenRiskReasons(token model.Token, agg tokenRiskAggregate, filter TokenRis
 	if token.ExpiredAt != nil && !token.ExpiredAt.After(now) {
 		reasons = append(reasons, "expired")
 	}
-	if token.RemainQuota >= 0 && token.RemainQuota <= filter.LowQuotaBelow {
+	remainingQuota := tokenRemainingQuota(token)
+	if remainingQuota >= 0 && remainingQuota <= filter.LowQuotaBelow {
 		reasons = append(reasons, "low_quota")
 	}
 	if agg.ErrorCount >= filter.MinErrorCount {
@@ -1780,8 +1799,10 @@ func sortTokenRiskItems(items []TokenRiskItem) {
 		if items[i].ErrorCount != items[j].ErrorCount {
 			return items[i].ErrorCount > items[j].ErrorCount
 		}
-		if items[i].Token.RemainQuota != items[j].Token.RemainQuota {
-			return items[i].Token.RemainQuota < items[j].Token.RemainQuota
+		leftQuota := tokenRemainingQuota(items[i].Token)
+		rightQuota := tokenRemainingQuota(items[j].Token)
+		if leftQuota != rightQuota {
+			return leftQuota < rightQuota
 		}
 		return items[i].Token.ID > items[j].Token.ID
 	})
@@ -1904,7 +1925,7 @@ func (s *TokenService) BatchExpire(input BatchExpireTokensInput) (BatchExpireTok
 
 // Update 编辑 Token。
 func (s *TokenService) Update(id uint, updates map[string]interface{}) error {
-	allowed := filterUpdates(updates, "name", "status", "expired_at", "metadata_json")
+	allowed := filterUpdates(updates, "name", "status", "expired_at", "metadata_json", "quota_limit", "unlimited", "leak_risk_enabled")
 	if status, ok := allowed["status"].(int); ok {
 		if status != common.TokenStatusDisabled && status != common.TokenStatusEnabled {
 			return errors.New("invalid token status")
@@ -1935,7 +1956,7 @@ func (s *TokenService) Delete(id uint) error {
 }
 
 // DeductQuota 扣减 Token / User 额度。
-// 先扣 Token.RemainQuota, Token.remain_quota=-1 时只扣 User.Quota。
+// 有限 Key 同时扣用户余额和 Key 剩余可消耗额度；无限 Key 只扣用户余额，但仍累计 Key 已用量。
 func (s *TokenService) DeductQuota(tokenID uint, quota int64) error {
 	_, err := s.DeductQuotaWithSnapshot(tokenID, quota)
 	return err
@@ -1951,9 +1972,9 @@ func (s *TokenService) DeductQuotaWithSnapshot(tokenID uint, quota int64) (Quota
 		if err := tx.Preload("User").First(&token, tokenID).Error; err != nil {
 			return err
 		}
-		result.TokenUnlimited = token.Unlimited || token.RemainQuota == common.QuotaUnlimited
-		result.TokenQuotaBefore = token.RemainQuota
-		result.TokenQuotaAfter = token.RemainQuota
+		result.TokenUnlimited = tokenIsUnlimited(token)
+		result.TokenQuotaBefore = tokenRemainingQuota(token)
+		result.TokenQuotaAfter = result.TokenQuotaBefore
 		if result.TokenUnlimited {
 			result.TokenQuotaBefore = common.QuotaUnlimited
 			result.TokenQuotaAfter = common.QuotaUnlimited
@@ -1962,8 +1983,21 @@ func (s *TokenService) DeductQuotaWithSnapshot(tokenID uint, quota int64) (Quota
 			result.UserQuotaBefore = token.User.Quota
 			result.UserQuotaAfter = token.User.Quota - quota
 		}
-		if token.Unlimited || token.RemainQuota == common.QuotaUnlimited {
-			res := tx.Model(&model.User{}).
+		if result.TokenUnlimited {
+			res := tx.Model(&model.Token{}).
+				Where("id = ? AND status = ?", token.ID, common.TokenStatusEnabled).
+				Updates(map[string]interface{}{
+					"quota_limit": common.QuotaUnlimited,
+					"unlimited":   true,
+					"quota_used":  gorm.Expr("quota_used + ?", quota),
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return ErrAPIKeyDisabled
+			}
+			res = tx.Model(&model.User{}).
 				Where("id = ? AND status = ? AND quota >= ?", token.UserID, common.UserStatusEnabled, quota).
 				Update("quota", gorm.Expr("quota - ?", quota))
 			if res.Error != nil {
@@ -1974,10 +2008,14 @@ func (s *TokenService) DeductQuotaWithSnapshot(tokenID uint, quota int64) (Quota
 			}
 			return nil
 		}
-		result.TokenQuotaAfter = token.RemainQuota - quota
+		result.TokenQuotaAfter = result.TokenQuotaBefore - quota
 		res := tx.Model(&model.Token{}).
-			Where("id = ? AND status = ? AND remain_quota >= ?", token.ID, common.TokenStatusEnabled, quota).
-			Update("remain_quota", gorm.Expr("remain_quota - ?", quota))
+			Where("id = ? AND status = ? AND quota_limit >= ?", token.ID, common.TokenStatusEnabled, quota).
+			Updates(map[string]interface{}{
+				"quota_limit": gorm.Expr("quota_limit - ?", quota),
+				"quota_used":  gorm.Expr("quota_used + ?", quota),
+				"unlimited":   false,
+			})
 		if res.Error != nil {
 			return res.Error
 		}
@@ -2002,11 +2040,69 @@ func (s *TokenService) DeductQuotaWithSnapshot(tokenID uint, quota int64) (Quota
 	return result, nil
 }
 
+func (s *TokenService) DeductDeliveredQuotaWithSnapshot(tokenID uint, quota int64) (QuotaDeductionResult, error) {
+	result := QuotaDeductionResult{}
+	if quota <= 0 {
+		return result, nil
+	}
+	err := internal.DB.Transaction(func(tx *gorm.DB) error {
+		var token model.Token
+		if err := tx.Preload("User").First(&token, tokenID).Error; err != nil {
+			return err
+		}
+		result.TokenUnlimited = tokenIsUnlimited(token)
+		result.TokenQuotaBefore = tokenRemainingQuota(token)
+		result.TokenQuotaAfter = result.TokenQuotaBefore - quota
+		if result.TokenUnlimited {
+			result.TokenQuotaBefore = common.QuotaUnlimited
+			result.TokenQuotaAfter = common.QuotaUnlimited
+		}
+		if token.User != nil {
+			result.UserQuotaBefore = token.User.Quota
+			result.UserQuotaAfter = token.User.Quota - quota
+		}
+		tokenUpdates := map[string]interface{}{
+			"quota_used": gorm.Expr("quota_used + ?", quota),
+		}
+		if result.TokenUnlimited {
+			tokenUpdates["quota_limit"] = common.QuotaUnlimited
+			tokenUpdates["unlimited"] = true
+		} else {
+			tokenUpdates["quota_limit"] = gorm.Expr("quota_limit - ?", quota)
+			tokenUpdates["unlimited"] = false
+		}
+		res := tx.Model(&model.Token{}).
+			Where("id = ? AND status = ?", token.ID, common.TokenStatusEnabled).
+			Updates(tokenUpdates)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrAPIKeyDisabled
+		}
+		res = tx.Model(&model.User{}).
+			Where("id = ? AND status = ?", token.UserID, common.UserStatusEnabled).
+			Update("quota", gorm.Expr("quota - ?", quota))
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrAPIUserDisabled
+		}
+		return nil
+	})
+	if err != nil {
+		return result, err
+	}
+	s.invalidateAPIKeyAuthCacheByIDs(tokenID)
+	return result, nil
+}
+
 func (s *TokenService) HasAvailableQuota(token *model.Token) bool {
 	if token == nil {
 		return false
 	}
-	if token.Unlimited || token.RemainQuota == common.QuotaUnlimited {
+	if tokenIsUnlimited(*token) {
 		if token.User == nil {
 			var user model.User
 			if err := internal.DB.First(&user, token.UserID).Error; err != nil {
@@ -2016,7 +2112,7 @@ func (s *TokenService) HasAvailableQuota(token *model.Token) bool {
 		}
 		return token.User.Status == common.UserStatusEnabled && token.User.Quota > 0
 	}
-	if token.RemainQuota <= 0 {
+	if tokenRemainingQuota(*token) <= 0 {
 		return false
 	}
 	if token.User == nil {
@@ -2027,6 +2123,17 @@ func (s *TokenService) HasAvailableQuota(token *model.Token) bool {
 		token.User = &user
 	}
 	return token.User.Status == common.UserStatusEnabled && token.User.Quota > 0
+}
+
+func tokenIsUnlimited(token model.Token) bool {
+	return token.Unlimited || token.QuotaLimit == common.QuotaUnlimited
+}
+
+func tokenRemainingQuota(token model.Token) int64 {
+	if tokenIsUnlimited(token) {
+		return common.QuotaUnlimited
+	}
+	return token.QuotaLimit
 }
 
 func normalizeRevokedReason(reason, fallback string) string {

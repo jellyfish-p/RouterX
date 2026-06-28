@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +37,7 @@ func SetupRouter(
 ) *gin.Engine {
 	middleware.ResetHTTPMetrics()
 	middleware.ResetAPIKeyAuthMetrics()
+	middleware.ResetRateLimitState()
 	service.ResetRelayMetrics()
 	service.ResetInfrastructureErrorMetrics()
 
@@ -900,7 +900,7 @@ func collectAPIKeyLifecycleMetrics(now time.Time) ([]metricSample, []metricHisto
 				UserGroup: apiKeyMetricUserGroup(token),
 				KeyType:   "limited",
 			}
-			quotaRemaining[key] += maxInt64(token.RemainQuota, 0)
+			quotaRemaining[key] += maxInt64(apiKeyRemainingQuota(token), 0)
 		}
 		if token.RotatedFromID != nil {
 			rotationCounts["user_rotate"]++
@@ -929,7 +929,14 @@ func apiKeyLifecycleStatus(token model.Token, now time.Time) string {
 }
 
 func apiKeyIsUnlimited(token model.Token) bool {
-	return token.Unlimited || token.RemainQuota == common.QuotaUnlimited
+	return token.Unlimited || token.QuotaLimit == common.QuotaUnlimited
+}
+
+func apiKeyRemainingQuota(token model.Token) int64 {
+	if apiKeyIsUnlimited(token) {
+		return common.QuotaUnlimited
+	}
+	return token.QuotaLimit
 }
 
 func apiKeyMetricUserGroup(token model.Token) string {
@@ -1649,18 +1656,18 @@ func readinessSettingProblem() string {
 	if problem != "" {
 		return problem
 	}
-	if epayEnabled && strings.TrimSpace(os.Getenv("PAYMENT_EPAY_KEY")) == "" {
-		return "PAYMENT_EPAY_KEY"
+	if epayEnabled && !readinessHasSetting("payment.epay.key") {
+		return "payment.epay.key"
 	}
 	stripeEnabled, problem := readinessBoolSetting("payment.stripe.enabled")
 	if problem != "" {
 		return problem
 	}
-	if stripeEnabled && strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_SECRET_KEY")) == "" {
-		return "PAYMENT_STRIPE_SECRET_KEY"
+	if stripeEnabled && !readinessHasSetting("payment.stripe.secret_key") {
+		return "payment.stripe.secret_key"
 	}
-	if stripeEnabled && strings.TrimSpace(os.Getenv("PAYMENT_STRIPE_WEBHOOK_SECRET")) == "" {
-		return "PAYMENT_STRIPE_WEBHOOK_SECRET"
+	if stripeEnabled && !readinessHasSetting("payment.stripe.webhook_secret") {
+		return "payment.stripe.webhook_secret"
 	}
 	return ""
 }
@@ -1813,6 +1820,11 @@ func settingValue(key string) (string, bool) {
 		return "", false
 	}
 	return setting.Value, true
+}
+
+func readinessHasSetting(key string) bool {
+	raw, ok := settingValue(key)
+	return ok && strings.TrimSpace(raw) != ""
 }
 
 func readinessBoolSetting(key string) (bool, string) {

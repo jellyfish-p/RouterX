@@ -47,7 +47,6 @@ func main() {
 		&model.PaymentProduct{},
 		&model.PaymentOrder{},
 		&model.PaymentEvent{},
-		&model.PaymentRefundRequest{},
 		&model.PaymentDispute{},
 		&model.AdminAuditLog{},
 		&model.AlertEvent{},

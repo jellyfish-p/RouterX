@@ -57,7 +57,12 @@ func (h *TokenHandler) Create(c *gin.Context) {
 		common.FailWithStatus(c, 400, "创建 API Key 参数无效")
 		return
 	}
-	token, err := h.svc.Create(user.ID, req.Name, req.RemainQuota, req.Unlimited, req.ExpiredAt, tokenMetadataFromRequest(req.Metadata))
+	quotaLimit, unlimited, err := createTokenQuotaFromRequest(req)
+	if err != nil {
+		common.FailWithStatus(c, 400, err.Error())
+		return
+	}
+	token, err := h.svc.CreateWithLeakRisk(user.ID, req.Name, quotaLimit, unlimited, req.ExpiredAt, req.LeakRiskEnabled, tokenMetadataFromRequest(req.Metadata))
 	if err != nil {
 		common.FailWithStatus(c, 400, err.Error())
 		return
@@ -101,10 +106,20 @@ func (h *TokenHandler) Update(c *gin.Context) {
 	if req.Status != nil {
 		updates["status"] = *req.Status
 	}
-	if req.RemainQuota != nil || req.Unlimited != nil {
-		_ = h.recordAPIKeyAuditResult(c, user, "api_key.quota_limit_denied", id, tokenAuditSummary(before), tokenQuotaDeniedAuditSummary(before, req), "denied", "api_key_quota_edit_forbidden")
-		common.FailWithStatus(c, 403, "API Key 额度不能通过编辑接口修改")
-		return
+	quotaChanged := false
+	if req.QuotaLimit != nil || req.Unlimited != nil {
+		quotaUpdates, err := tokenQuotaUpdatesFromRequest(req, before)
+		if err != nil {
+			common.FailWithStatus(c, 400, err.Error())
+			return
+		}
+		for key, value := range quotaUpdates {
+			updates[key] = value
+		}
+		quotaChanged = true
+	}
+	if req.LeakRiskEnabled != nil {
+		updates["leak_risk_enabled"] = *req.LeakRiskEnabled
 	}
 	if req.ExpiredAt != nil {
 		if *req.ExpiredAt <= 0 {
@@ -134,12 +149,66 @@ func (h *TokenHandler) Update(c *gin.Context) {
 	action := "api_key.updated"
 	if status, ok := updates["status"].(int); ok && status == common.TokenStatusDisabled {
 		action = "api_key.disabled"
+	} else if quotaChanged {
+		action = "api_key.quota_limit_set"
 	}
 	if err := h.recordAPIKeyAudit(c, user, action, id, tokenAuditSummary(before), tokenAuditSummary(after)); err != nil {
 		common.FailWithStatus(c, 500, "写入审计日志失败")
 		return
 	}
 	common.SuccessMsg(c, "API Key 已更新")
+}
+
+func createTokenQuotaFromRequest(req dto.CreateTokenRequest) (int64, bool, error) {
+	quotaLimit := int64(0)
+	if req.QuotaLimit != nil {
+		quotaLimit = *req.QuotaLimit
+	}
+	unlimited := req.Unlimited || quotaLimit == common.QuotaUnlimited
+	if unlimited {
+		return common.QuotaUnlimited, true, nil
+	}
+	if quotaLimit < 0 {
+		return 0, false, errors.New("token quota cannot be negative")
+	}
+	return quotaLimit, false, nil
+}
+
+func tokenQuotaUpdatesFromRequest(req dto.UpdateTokenRequest, before *model.Token) (map[string]interface{}, error) {
+	requestedQuota := int64(0)
+	hasQuota := req.QuotaLimit != nil
+	if hasQuota {
+		requestedQuota = *req.QuotaLimit
+	}
+	unlimited := before != nil && (before.Unlimited || before.QuotaLimit == common.QuotaUnlimited)
+	if req.Unlimited != nil {
+		unlimited = *req.Unlimited
+	}
+	if hasQuota && requestedQuota == common.QuotaUnlimited {
+		unlimited = true
+	}
+	if unlimited {
+		return map[string]interface{}{
+			"quota_limit": common.QuotaUnlimited,
+			"unlimited":   true,
+		}, nil
+	}
+	if !hasQuota {
+		if before == nil {
+			return nil, errors.New("quota_limit is required")
+		}
+		requestedQuota = before.QuotaLimit
+		if requestedQuota == common.QuotaUnlimited {
+			return nil, errors.New("quota_limit is required when disabling unlimited quota")
+		}
+	}
+	if requestedQuota < 0 {
+		return nil, errors.New("token quota cannot be negative")
+	}
+	return map[string]interface{}{
+		"quota_limit": requestedQuota,
+		"unlimited":   false,
+	}, nil
 }
 
 func (h *TokenHandler) Delete(c *gin.Context) {
@@ -805,8 +874,10 @@ func tokenAuditSummary(token *model.Token) map[string]interface{} {
 		"name":                 info.Name,
 		"status":               info.Status,
 		"expired_at":           info.ExpiredAt,
-		"remain_quota":         info.RemainQuota,
+		"quota_limit":          info.QuotaLimit,
+		"quota_used":           info.QuotaUsed,
 		"unlimited":            info.Unlimited,
+		"leak_risk_enabled":    info.LeakRiskEnabled,
 		"rotated_from_id":      info.RotatedFromID,
 		"revoked_reason":       info.RevokedReason,
 		"scope":                info.Scope,
@@ -827,20 +898,6 @@ func queryInt64(c *gin.Context, key string, fallback int64) int64 {
 		return fallback
 	}
 	return value
-}
-
-func tokenQuotaDeniedAuditSummary(token *model.Token, req dto.UpdateTokenRequest) map[string]interface{} {
-	summary := map[string]interface{}{
-		"token":  tokenAuditSummary(token),
-		"reason": "api_key_quota_edit_forbidden",
-	}
-	if req.RemainQuota != nil {
-		summary["requested_remain_quota"] = *req.RemainQuota
-	}
-	if req.Unlimited != nil {
-		summary["requested_unlimited"] = *req.Unlimited
-	}
-	return summary
 }
 
 func tokenBatchDisableAuditSummary(req dto.BatchDisableTokensRequest, resp dto.BatchDisableTokensResponse, matched []model.Token) map[string]interface{} {

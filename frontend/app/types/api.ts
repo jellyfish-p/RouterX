@@ -91,8 +91,10 @@ export interface TokenInfo {
   name: string
   status: number
   expired_at?: string | null
-  remain_quota: number
+  quota_limit: number
+  quota_used: number
   unlimited: boolean
+  leak_risk_enabled: boolean
   created_at: string
   updated_at: string
   key?: string
@@ -100,16 +102,18 @@ export interface TokenInfo {
 
 export interface CreateTokenRequest {
   name: string
-  remain_quota: number
+  quota_limit: number
   unlimited: boolean
+  leak_risk_enabled?: boolean
   expired_at?: number | null
 }
 
 export interface UpdateTokenRequest {
   name?: string
   status?: number
-  remain_quota?: number
+  quota_limit?: number
   unlimited?: boolean
+  leak_risk_enabled?: boolean
   expired_at?: number | null
 }
 

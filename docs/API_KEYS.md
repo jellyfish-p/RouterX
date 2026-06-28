@@ -15,7 +15,7 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 
 - 网页布局、视觉样式、组件交互动画。
 - OAuth/OIDC 登录本身，见 `docs/ACCOUNTS.md`。
-- 支付 provider、充值码、退款和人工补账细节，见 `docs/PAYMENTS.md`。
+- 支付 provider、充值码和人工补账细节，见 `docs/PAYMENTS.md`。
 - 上游通道密钥管理，见 `docs/SECURITY.md`、`docs/RELAY.md` 和 `docs/DATA_MODEL.md`。
 
 ## 2. 设计原则
@@ -24,9 +24,9 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 |------|------|
 | 窄权限 | API Key 只允许调用 `/v1/*` 模型接口，不能调用 `/v0/user/*`、`/v0/admin/*` 或修改任何配置。 |
 | 一次性明文 | API Key 明文只在创建响应中出现一次，后续列表、日志、审计和缓存都不能保存完整明文。 |
-| 哈希长期保存 | 数据库长期保存 SHA256 哈希，兼容早期明文存量时只允许验证成功后迁移为哈希。 |
+| 哈希长期保存 | 数据库长期保存 SHA256 哈希，不保存 API Key 明文。 |
 | 后台策略优先 | API Key 作用域、`routerx` 偏好和调用方参数只能收窄能力，不能绕过用户、通道、额度、熔断和安全策略。 |
-| 账本可解释 | API Key 最大消耗额度是预算上限，不是余额划拨；模型消费以成功调用日志和扣费事务为准。 |
+| 账本可解释 | API Key 剩余可消耗额度是预算上限，不是余额划拨；模型消费以成功调用日志和扣费事务为准。 |
 | 可轮换 | 丢失、泄露、离职、环境迁移和定期安全策略都应通过创建新 Key、切换客户端、禁用旧 Key 完成。 |
 | 可审计 | 创建、禁用、删除、轮换、额度调整、作用域变更和泄露处理必须留下脱敏证据。 |
 
@@ -36,29 +36,28 @@ API Key 是 RouterX 给调用方使用的模型调用凭据。对外文档、控
 
 - 用户登录后通过 User JWT 调用 `/v0/user/token` 创建、列表、编辑和删除自己的 API Key。
 - 创建响应返回一次性 `sk-` 明文，`tokens.key` 保存 SHA256 哈希。
-- 校验时支持早期明文存量兼容，验证成功后迁移为 SHA256 哈希。
 - `status`、`expired_at`、软删除和所属用户状态会影响鉴权结果。
-- 普通用户编辑 API Key 时不能修改 `remain_quota` 或 `unlimited`，避免绕过预算上限。
-- 有限 API Key 创建不扣用户余额，`remain_quota` 或目标字段只表示 Key 剩余预算上限；成功调用同时扣用户余额和 Key 预算。
-- `unlimited=true` 或 `remain_quota=-1` 表示 API Key 自身不限额；成功调用仍扣用户额度。
+- 普通用户可设置自己的 API Key 剩余可消耗额度，也可将 Key 设置为自身无限额度；实际可消费额度始终同时受用户 `users.quota` 约束。
+- 有限 API Key 创建不扣用户余额，`quota_limit` 表示 Key 剩余可消耗额度；成功调用同时扣用户余额和 Key 剩余额度，并累加 `quota_used`。
+- `unlimited=true` 或 `quota_limit=-1` 表示 API Key 自身不限额；成功调用仍扣用户额度，并继续累加 Key 的 `quota_used`。
 - API Key 支持用户轮换、泄露上报、单 Key 用量摘要、按 Key 过滤用户日志和账单聚合、显式禁用、管理员跨用户脱敏查询，以及按 `token_ids`/`user_id` 批量禁用和批量过期。
 - API Key 已支持 `metadata_json` 非安全元数据，创建和编辑时可维护环境、团队、应用、标签、外部 ID、备注和服务账号主体；管理员可按 `environment`、`team`、`app`、`tag`、`principal_type`、`principal_id` 过滤并导出脱敏摘要。
 - 泄露上报会创建管理员告警收件箱记录，管理员可通过 `/v0/admin/alerts` 查询、通过 `/v0/admin/alerts/:id/ack` 确认处理；启用 `alert.webhook.*`、`alert.email.*` 或 `alert.im.*` 后会写入对应外部投递 outbox，并可通过 `/v0/admin/alerts/deliveries` 查看和重放。
 - 管理员 API Key 风险视图已支持按时间窗口聚合失败数、成功数、额度消耗、低剩余额度、泄露上报、禁用、过期和最近错误风险；泄露风险会返回基础轮换建议，响应只返回脱敏 Key 摘要。
 - `tokens.rotated_from_id` 保存轮换来源，`tokens.revoked_reason` 保存禁用原因；轮换会创建替换 Key、返回新明文一次并禁用旧 Key。
-- API Key 创建、编辑、禁用、删除、轮换、泄露上报、批量禁用、批量过期、批量操作缺少筛选条件拒绝和用户端额度/无限标记编辑拒绝会写入 `api_key.*` 管理审计，审计摘要不包含完整明文 Key 或哈希。
+- API Key 创建、编辑、额度设置、禁用、删除、轮换、泄露上报、批量禁用、批量过期和批量操作缺少筛选条件拒绝会写入 `api_key.*` 管理审计，审计摘要不包含完整明文 Key 或哈希。
 - `tokens.scope_json` 已支持基础模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list、日预算、月预算、并发上限和 RPM/TPM：用户可通过 `PUT /v0/user/token/:id/scope` 写入 `allow_models`、`api_types`、`channel_groups`、`entry_protocols`、`ip_cidrs`、`methods`、`daily_quota`、`monthly_quota`、`max_concurrency`、`rpm` 与 `tpm`，系统在上游调用前返回 `model_not_allowed`、`token_forbidden`、`route_forbidden`、`insufficient_quota` 或 `rate_limit_exceeded` 并写失败日志。
 - API Key 鉴权成功后向请求上下文注入当前用户和当前 Token，供 Relay、限流、日志和计费使用。
 - API Key 鉴权热路径已使用 Redis 缓存 `SHA256(api_key) -> token_id` 的 lookup 映射；缓存命中后仍回源数据库加载 Token、User 和用户分组，状态、过期、额度、scope、用户状态和软删除仍以数据库为准。
 
-当前代码事实是后续目标能力的基础，额度语义以 `docs/DECISIONS.md` 的 RXD-009/RXD-010 为目标口径；后续仍需补 `quota_limit`/`quota_used` 目标字段、更完整策略、更多告警来源和泄露窗口增强。
+当前代码事实是后续目标能力的基础，额度语义以 `docs/DECISIONS.md` 的 RXD-009/RXD-010 为目标口径；后续仍需补更完整策略、更多告警来源和泄露窗口增强。
 
 ## 4. 身份边界
 
 | 身份 | 允许 | 禁止 |
 |------|------|------|
 | 未登录用户 | 查看公开健康状态、按配置注册或登录 | 创建、查看、禁用 API Key |
-| 普通用户 User JWT | 创建、列表、改名、禁用、删除自己的 API Key，查看自己的日志和账单 | 修改自身额度、把有限 Key 改成无限 Key、查看完整明文、管理他人 Key |
+| 普通用户 User JWT | 创建、列表、改名、设置剩余可消耗额度、设置 Key 自身无限额度、配置泄露风控自动禁用开关、禁用、删除自己的 API Key，查看自己的日志和账单 | 修改自身用户余额、查看完整明文、管理他人 Key |
 | 管理员 User JWT | 在管理权限范围内查看用户、日志、账单和异常 API Key 摘要 | 用 API Key 管理系统、绕过超级管理员限制 |
 | 超级管理员 User JWT | 管理 settings、高风险安全策略、管理员账号和后续企业级 API Key 策略 | 恢复或查看历史 API Key 明文 |
 | API Key | 调用 `/v1/*`，受用户、Token、额度、通道和作用域约束 | 调用 `/v0/*`、覆盖上游密钥、修改账号或配置 |
@@ -80,7 +79,7 @@ User JWT 登录
 |------|------|----------|--------------|----------|
 | 创建 | 用户或管理员为自己创建 Key | 生成 `sk-` 明文，保存哈希，写入状态、额度和过期时间 | 返回一次性明文、Key 摘要、额度口径 | 明文只出现在本次响应 |
 | 使用 | 调用方请求 `/v1/*` | 校验 Bearer、状态、过期、用户状态、额度和作用域 | 成功响应或稳定错误 code | 不把用户 Key 转发给上游 |
-| 观察 | 用户查看列表、日志和账单 | 展示名称、状态、额度、过期时间、最近使用目标字段和脱敏摘要 | 能解释哪把 Key 在何时消耗多少 | 不展示完整明文 |
+| 观察 | 用户查看列表、日志和账单 | 展示名称、状态、额度、过期时间、最近使用字段和脱敏摘要 | 能解释哪把 Key 在何时消耗多少 | 不展示完整明文 |
 | 轮换 | 定期安全策略、泄露、人员变动、环境迁移 | 创建新 Key，迁移客户端，禁用旧 Key，保留日志关联 | 新旧 Key 摘要和切换时间 | 旧 Key 禁用后立即失效 |
 | 禁用 | 用户主动停用、管理员风控、用户禁用 | 更新状态、清理缓存、后续鉴权失败 | `token_forbidden` 或等价错误 | 禁用动作可审计 |
 | 删除 | 用户删除、清理长期不用 Key | 软删除 Token，保留历史日志和账单引用 | 列表不再作为可用 Key 展示 | 不删除账单事实 |
@@ -102,7 +101,7 @@ User JWT 登录
 
 - “这是调用凭据，不是登录密码。”
 - “关闭后无法再次查看完整 Key，丢失就重新创建。”
-- “Key 的最大消耗额度是预算上限，不会在创建时扣账户余额。”
+- “Key 的剩余可消耗额度是预算上限，不会在创建时扣账户余额。”
 - “在浏览器前端、公开仓库、工单和日志中暴露 Key 都应视为泄露。”
 
 ## 7. 技术用户进阶体验
@@ -141,8 +140,10 @@ User JWT 登录
 | `key` | API Key SHA256 哈希，响应中不返回。 |
 | `status` | 启用或禁用。 |
 | `expired_at` | 过期时间，空表示不过期。 |
-| `remain_quota` | 当前字段。目标语义中表示 Key 剩余预算上限；`-1` 表示 Key 自身不限额。旧实现中可能表示已划拨余额，迁移时需消除该歧义。 |
+| `quota_limit` | Key 剩余可消耗额度；成功调用会扣减该字段；`-1` 表示 Key 自身不限额。 |
+| `quota_used` | Key 已累计消耗额度；有限和无限 Key 成功调用都会累加。 |
 | `unlimited` | 是否 Key 自身不限额。 |
+| `leak_risk_enabled` | 是否启用泄露风控自动禁用，默认启用；关闭后仍保留风险提示和手动泄露上报能力。 |
 | `rotated_from_id` | 轮换来源 Key，用于解释迁移链路。 |
 | `revoked_reason` | 禁用原因，例如用户主动、泄露、轮换或风控。 |
 | `scope_json` | API Key 收窄策略 JSON；当前支持 `allow_models` 模型 allow-list、`api_types` APIType allow-list、`channel_groups` 通道分组 allow-list、`entry_protocols` 入口协议 allow-list、`ip_cidrs` IP/CIDR allow-list、`methods` 方法路径 allow-list、`daily_quota` 日预算、`monthly_quota` 月预算、`max_concurrency` 并发上限、`rpm` 每分钟请求上限和 `tpm` 每分钟模型 token 上限。 |
@@ -160,9 +161,7 @@ User JWT 登录
 | 字段 | 说明 |
 |------|------|
 | `prefix` | 可展示的短摘要，例如 `sk-abc...wxyz`，只用于识别，不用于鉴权。 |
-| `hash_version` | 哈希算法或迁移版本，支持未来升级。 |
-| `quota_limit` | 目标字段。Key 最大消耗额度；`null` 或 `-1` 表示不限 Key 自身额度。 |
-| `quota_used` | 目标字段。Key 已累计消耗额度，用于和 `quota_limit` 计算剩余预算。 |
+| `hash_version` | 哈希算法版本，支持未来升级。 |
 | `metadata_json` | 当前已落地；环境、应用名、团队、标签、外部系统关联 ID、服务账号主体和备注等非安全元数据，不保存 API Key 明文、上游密钥或支付密钥。服务账号主体使用 `principal_type=service_account`、`principal_id` 和 `principal_name` 描述非登录机器身份。 |
 | `created_by_user_id` | 创建动作的登录用户。 |
 | `updated_by_user_id` | 最近一次管理动作的登录用户。 |
@@ -179,28 +178,28 @@ User JWT 登录
 
 ## 9. 额度和预算语义
 
-API Key 最大消耗额度必须和账单文档保持一致。
+API Key 剩余可消耗额度必须和账单文档保持一致。
 
 | 事件 | 用户额度 | API Key 预算 | 模型消费日志 | 解释 |
 |------|----------|--------------|--------------|------|
-| 创建有限 API Key | 不变 | 设置最大消耗额度或剩余预算上限 | 不写消费日志 | Key 预算上限，不是余额划拨 |
-| 有限 API Key 成功调用 | 减少本次 `quota_used` | 减少剩余预算或增加累计已用 | 写成功日志 | 用户余额和 Key 预算同时约束 |
-| 创建无限 API Key | 不变 | `remain_quota=-1` | 不写消费日志 | Key 自身不限额 |
-| 无限 API Key 成功调用 | 减少本次 `quota_used` | 保持 `-1` | 写成功日志 | 本次模型消费由用户额度支付 |
+| 创建有限 API Key | 不变 | 设置剩余可消耗额度 | 不写消费日志 | Key 预算上限，不是余额划拨 |
+| 有限 API Key 成功调用 | 减少本次 `quota_used` | `quota_limit` 减少本次消耗，`quota_used` 增加本次消耗 | 写成功日志 | 用户余额和 Key 剩余额度同时约束 |
+| 创建无限 API Key | 不变 | `quota_limit=-1` | 不写消费日志 | Key 自身不限额 |
+| 无限 API Key 成功调用 | 减少本次 `quota_used` | `quota_limit` 保持 `-1`，`quota_used` 增加本次消耗 | 写成功日志 | 本次模型消费由用户额度支付 |
 | API Key 禁用或删除 | 不变 | 未用预算失效 | 历史日志保留 | 没有余额退回动作 |
 | 管理员调整额度 | 不直接改变用户余额，除非是独立额度调整 | 更新 Key 预算上限 | 不写模型消费日志 | 属于预算修正，不是模型消费 |
 
 商业级默认解释：
 
-- 有限 API Key 的额度是“最大消耗预算”，不是用户额外余额，也不是已冻结余额。
+- 有限 API Key 的额度是“剩余可消耗预算”，不是用户额外余额，也不是已冻结余额。
 - 删除有限 API Key 不退回余额；未用预算只是失效。
-- API Key 预算调整应进入审计；真正影响用户余额的充值、退款、充值码和人工补账应统一进入 `quota_transactions` 目标表，避免与模型消费日志混淆。
+- API Key 预算调整应进入审计；真正影响用户余额的充值、充值码和人工补账应统一进入 `quota_transactions` 目标表，避免与模型消费日志混淆。
 - 调用前必须同时检查用户余额和 Key 预算；调用成功后的扣费事务必须同时更新用户余额和 Key 预算计数。
 
 ## 10. 作用域和策略
 
 P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型 allow-list、APIType allow-list、通道分组 allow-list、入口协议 allow-list、IP/CIDR allow-list、方法路径 allow-list、日预算、月预算、并发上限与 RPM/TPM scope；后续作用域能力继续遵守只收窄、不放大的原则。
-跨模块策略决策顺序、访问控制、分组、限流、`routerx.route` 冲突规则和策略快照以 `docs/POLICIES.md` 为准；入口协议、APIType 和能力等级以 `docs/PROTOCOLS.md` 为准；调用事实快照封套和脱敏规则以 `docs/SNAPSHOTS.md` 为准。本节只说明 API Key scope 对调用凭据的影响。
+跨模块策略决策顺序、访问控制、分组、限流、API Key/channel-group scope 冲突规则和策略快照以 `docs/POLICIES.md` 为准；入口协议、APIType 和能力等级以 `docs/PROTOCOLS.md` 为准；调用事实快照封套和脱敏规则以 `docs/SNAPSHOTS.md` 为准。本节只说明 API Key scope 对调用凭据的影响。
 
 | 作用域 | 示例 | 拒绝时错误 |
 |--------|------|------------|
@@ -222,7 +221,7 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 2. 校验所属用户状态、用户额度和用户级策略。
 3. 校验 API Key 自身额度、作用域、预算和限流。
 4. 校验请求体格式、模型名和入口协议。
-5. 选择候选通道，再应用通道分组、模型匹配、熔断和 `routerx.route` 偏好。
+5. 选择候选通道，再应用通道分组、模型匹配、熔断和 API Key/channel-group scope 偏好。
 6. 写入策略快照、路由快照、日志和指标。
 
 ## 11. 接口契约
@@ -233,7 +232,7 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 |------|------|------|
 | GET | `/v0/user/token` | 当前用户 API Key 列表，不能返回完整明文。 |
 | POST | `/v0/user/token` | 创建 API Key，返回一次性明文，可写入环境、团队、应用、标签、外部 ID、备注和服务账号主体元数据，并写 `api_key.created` 审计。 |
-| PUT | `/v0/user/token/:id` | 编辑名称、状态、过期时间和元数据；普通编辑写 `api_key.updated`，禁用写 `api_key.disabled`，额度/无限标记编辑拒绝写 `api_key.quota_limit_denied`。 |
+| PUT | `/v0/user/token/:id` | 编辑名称、状态、过期时间、元数据、剩余可消耗额度、无限额度标记和 `leak_risk_enabled`；普通编辑写 `api_key.updated`，禁用写 `api_key.disabled`，额度变更写 `api_key.quota_limit_set`。 |
 | DELETE | `/v0/user/token/:id` | 删除自己的 API Key，并写 `api_key.deleted` 审计。 |
 | POST | `/v0/user/token/:id/disable` | 显式禁用自己的 API Key，可记录原因并写 `api_key.disabled` 审计。 |
 | POST | `/v0/user/token/:id/rotate` | 创建替换 Key，继承安全属性，禁用旧 Key，并写 `api_key.rotated` 审计。 |
@@ -245,7 +244,8 @@ P0 API Key 默认继承所属用户和系统策略。当前已支持基础模型
 用户接口必须保持这些边界：
 
 - 用户只能操作自己的 API Key。
-- 用户端编辑不能调整 `remain_quota`、`quota_limit`、`quota_used`、`unlimited`、所属用户或哈希字段。
+- 用户端可调整 `quota_limit` 和 `unlimited`，但不能调整 `quota_used`、所属用户或哈希字段；设置的 Key 剩余额度不会增加用户实际余额。
+- `leak_risk_enabled` 只控制自动泄露风控禁用；关闭后仍会展示风险提示，用户主动 `report-leak` 仍会立即禁用 Key 并创建告警。
 - 列表和详情只展示脱敏摘要、状态、额度、过期时间、非安全元数据和最近使用字段。
 
 ### 目标增强接口
@@ -302,9 +302,8 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 | `api_key.batch_expired` | 管理员批量过期 Key。 |
 | `api_key.batch_disable_denied` | 管理员批量禁用 Key 但缺少 `token_ids` 和 `user_id` 筛选条件。 |
 | `api_key.batch_expire_denied` | 管理员批量过期 Key 但缺少 `token_ids` 和 `user_id` 筛选条件。 |
-| `api_key.quota_limit_set` | 创建或修改 Key 最大消耗额度。 |
-| `api_key.quota_adjusted` | 管理员调整 Key 预算上限或迁移旧额度口径。 |
-| `api_key.quota_limit_denied` | 用户端尝试修改额度或无限标记被拒绝。 |
+| `api_key.quota_limit_set` | 创建或修改 Key 剩余可消耗额度或无限额度标记。 |
+| `api_key.quota_adjusted` | 管理员调整 Key 预算上限。 |
 
 审计字段：
 
@@ -359,7 +358,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 
 - 用户能创建、列表、编辑、删除自己的 API Key。
 - 创建响应返回一次性 `sk-` 明文，列表和日志不返回完整明文。
-- 数据库保存 SHA256 哈希，兼容早期明文存量迁移。
+- 数据库保存 SHA256 哈希，不保存 API Key 明文。
 - 禁用、过期、软删除、用户禁用和余额不足会阻止 `/v1` 调用。
 - 有限 API Key 和无限 API Key 的扣费语义与 `docs/BILLING.md` 一致。
 - API Key 不能调用 `/v0/user/*` 或 `/v0/admin/*`。
@@ -380,7 +379,7 @@ API Key 是热路径资源，缓存设计必须服务安全和性能。
 - 已支持环境、团队、应用、标签、外部 ID、备注和服务账号主体等 Key 元数据、按元数据和主体过滤并导出脱敏摘要。
 - 已支持入口协议 allow-list、IP/CIDR allow-list、日预算、月预算、并发上限和 RPM/TPM；更完整策略快照仍待补。
 - 已支持泄露上报、替换建议、风险视图基础轮换建议、基于调用日志的窗口分析、管理员告警确认，以及 Webhook、邮件和 IM 告警投递。
-- API Key 预算调整、支付入账、退款、充值码和人工补账统一走对应审计或额度流水。
+- API Key 预算调整、支付入账、充值码和人工补账统一走对应审计或额度流水。
 
 ## 16. 测试矩阵
 

@@ -94,8 +94,8 @@
 | `unsupported_stream_channel` | 502 | `upstream_error` / `UNAVAILABLE` | 流式请求命中非 OpenAI SSE 形态通道 | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用 OpenAI-compatible 流式通道或等待对应 provider chunk 转换 |
 | `unsupported_multipart_channel` | 502 | `upstream_error` / `UNAVAILABLE` | multipart 请求命中暂不支持文件表单透传的上游 adapter | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用 OpenAI-compatible 通道或等待对应 provider multipart 转换 |
 | `unsupported_api_type` | 502 | `upstream_error` / `UNAVAILABLE` | 选中上游 adapter 不支持该 APIType | 否 | 否 | 否 | channel_id、channel_type、api_type | 换用支持该 APIType 的通道或等待对应 provider adapter |
-| `invalid_routerx_options` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | `routerx` 结构非法 | 否 | 否 | 否 | 私有字段解析摘要 | 修正 `routerx` |
-| `invalid_routerx_route` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 路由偏好格式非法 | 否 | 否 | 否 | route 摘要 | 修正路由偏好 |
+| `已移除的 routerx 解析错误` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | `routerx` 结构非法 | 否 | 否 | 否 | 私有字段解析摘要 | 修正 `routerx` |
+| `已移除的 routerx route 解析错误` | 400 | `invalid_request_error` / `INVALID_ARGUMENT` | 路由偏好格式非法 | 否 | 否 | 否 | route 摘要 | 修正路由偏好 |
 | `unsupported_api` | 404 | `invalid_request_error` / `NOT_FOUND` | 已知前缀下不支持的 API | 否 | 否 | 否 | api_type、path | 换用支持的接口 |
 | `model_not_found` | 404 | `not_found_error` / `NOT_FOUND` | 模型详情或模型匹配失败 | 否 | 否 | 否 | model | 检查模型名 |
 | `invalid_api_key` | 401 | `authentication_error` / `UNAUTHENTICATED` | API Key 缺失或无效 | 否 | 否 | 否 | token hash 摘要或空 key 原因 | 更换 API Key |
@@ -103,7 +103,7 @@
 | `user_disabled` | 403 | `permission_error` / `PERMISSION_DENIED` | 用户禁用或软删除 | 否 | 否 | 否 | user_id、token_id | 联系管理员 |
 | `model_not_allowed` | 403 | `permission_error` / `PERMISSION_DENIED` | 策略或 API Key scope 禁止访问该模型 | 否 | 否 | 否 | model、scope 摘要、策略版本 | 调整模型名或访问策略 |
 | `token_forbidden` | 403 | `permission_error` / `PERMISSION_DENIED` | Token 禁用、软删除或策略禁止 | 否 | 否 | 否 | token_id、原因 | 启用或重建 API Key |
-| `route_forbidden` | 403 | `permission_error` / `PERMISSION_DENIED` | `routerx.route` 越权 | 否 | 否 | 否 | route 摘要、拒绝原因 | 移除偏好或调整权限 |
+| `route_forbidden` | 403 | `permission_error` / `PERMISSION_DENIED` | API Key/channel-group scope 越权 | 否 | 否 | 否 | route 摘要、拒绝原因 | 移除偏好或调整权限 |
 | `rate_limit_exceeded` | 429 | `rate_limit_error` / `RESOURCE_EXHAUSTED` | 限流 | 否 | 客户端可稍后重试 | 否 | 限流维度和 key 摘要 | 降低并发或等待窗口 |
 | `rate_limit_unavailable` | 503 | `server_error` / `UNAVAILABLE` | 外部数据库或集群模式下 Redis 限流依赖不可用 | 否 | 可在 Redis 恢复后重试 | 否 | 限流维度、Redis 依赖状态、request_id | 检查 Redis 连接、实例就绪状态和 `routerx_redis_errors_total` |
 | `insufficient_quota` | 429 | `insufficient_quota` 或 `rate_limit_error` / `RESOURCE_EXHAUSTED` | 预检余额或 Key 预算不足，或扣费失败 | 预检失败时否 | 否 | 预检失败不扣；已调用后按事务结果 | user quota、key budget、quota_used | 充值、调整额度或提高 Key 预算 |

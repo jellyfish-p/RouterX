@@ -17,13 +17,13 @@ P0 的交付目标是：
 | 决策 | P0 默认 |
 |------|---------|
 | 配置来源 | DB `settings` 是运行时配置权威来源；环境变量只承载启动项和密钥。 |
-| API Key 存储 | 明文只返回一次，数据库保存 SHA256 哈希，兼容早期明文存量迁移。 |
-| 有限 API Key 预算 | 创建时只设置最大消耗额度，不扣 `users.quota`；调用成功同时扣用户余额并消耗 Key 预算。 |
-| 无限 API Key 预算 | `unlimited=true` 或 `remain_quota=-1` 时，调用成功只扣用户 `quota`。 |
+| API Key 存储 | 明文只返回一次，数据库只保存 SHA256 哈希。 |
+| 有限 API Key 预算 | 创建时只设置剩余可消耗额度，不扣 `users.quota`；调用成功同时扣用户余额、扣 Key 剩余额度并累计 Key 已用量。 |
+| 无限 API Key 预算 | `unlimited=true`、`quota_limit=-1` 或 `quota_limit=-1` 时，调用成功只扣用户 `quota`，并累计 Key 已用量。 |
 | Relay 重试 | `relay.retry_count=0` 默认单次调用；大于 0 时仅非流式可对 `relay.retry_on_status` 白名单状态码、网络错误、超时和响应读取失败换候选通道。 |
 | P0 body 日志 | `log.body_max_bytes=0`、`relay.log_body_max_bytes=0`，默认不记录请求/响应 body。 |
 | `/v1` 错误 | 必须返回入口协议兼容错误，不返回 RouterX `{success,data,message}` 包装。 |
-| 用户路由偏好 | `routerx.route` 只能收窄管理员允许的候选集，不能绕过策略。 |
+| 用户路由偏好 | API Key/channel-group scope 只能收窄管理员允许的候选集，不能绕过策略。 |
 
 ## 文件地图
 
@@ -80,17 +80,17 @@ P0 的交付目标是：
 
 落地动作：
 
-1. 创建有限额度 API Key 时，只设置 Key 最大消耗额度或剩余预算上限，不扣用户 `quota`。
-2. 创建无限 API Key 不设置 Key 预算上限，调用成功后扣用户额度。
-3. `ValidateAndGetToken` 继续支持 SHA256 哈希，并兼容早期明文存量迁移。
+1. 创建有限额度 API Key 时，只设置 Key 剩余可消耗额度，不扣用户 `quota`。
+2. 创建无限 API Key 不扣 Key 剩余额度，调用成功后扣用户额度并累计 Key 已用量。
+3. `ValidateAndGetToken` 使用 SHA256 哈希校验 API Key。
 4. 禁用、删除、过期、用户禁用和余额不足在调用下游前失败。
 5. Redis 缓存失效必须跟随 Token 更新、删除和用户状态变化。
 
 验收：
 
 - 预检失败路径下游请求计数为 0。
-- 有限 API Key 调用同时扣用户余额并消耗 Key 预算，二者任一不足都拒绝。
-- 无限 Token 调用扣用户，Token `remain_quota` 保持 `-1`。
+- 有限 API Key 调用同时扣用户余额、扣 Key 剩余额度并累计 Key 已用量，二者任一不足都拒绝。
+- 无限 Token 调用扣用户并累计 Key 已用量，Token `quota_limit` / `quota_limit` 保持 `-1`。
 
 ### 4. OpenAI-compatible Chat 闭环
 
@@ -193,7 +193,7 @@ P0 通过后再进入 P1：
 - 不在日志、响应、审计或 Redis key 中泄露 API Key、下游密钥、支付密钥或 DSN。
 - 不在调用下游后才发现用户或 Token 明显无额度。
 - 不让有限 API Key 调用只更新 Key 预算或只扣用户余额；二者必须在同一事务中保持一致。
-- 不把 `routerx.route` 当成强制越权路由。
+- 不把 API Key/channel-group scope 当成强制越权路由。
 - 不把类型解析失败的配置静默当成 0、false 或空字符串。
 - 不用真实外部模型厂商作为 P0 自动化测试依赖。
 
@@ -221,7 +221,7 @@ git diff --check
 - `docs/POLICIES.md`，仅当新增或改变策略决策顺序、访问控制、限流、预算、分组或路由偏好语义。
 - `docs/PROTOCOLS.md`，仅当新增或改变入口协议、APIType、上游厂商、能力等级、字段降级、流式或 SDK 兼容矩阵。
 - `docs/MODULE_BOUNDARIES.md`，仅当新增模块、改变模块职责、依赖方向、跨层边界或测试边界。
-- `docs/PAYMENTS.md`，仅当新增或改变支付 provider、充值码、订单、事件、退款、人工调整或额度流水。
+- `docs/PAYMENTS.md`，仅当新增或改变支付 provider、充值码、订单、事件、人工调整或额度流水。
 - `docs/ACCEPTANCE.md`，仅当新增或改变阶段验收门禁、交付证据等级或不可接受状态。
 - `docs/SECURITY.md`，仅当新增或改变安全边界。
 - `docs/ERRORS.md`，仅当新增或改变错误语义。

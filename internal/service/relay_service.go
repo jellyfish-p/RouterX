@@ -48,12 +48,12 @@ type RelayRawResult struct {
 type relayUserAgentContextKey struct{}
 type relayRequestIDContextKey struct{}
 type relayIngressProtocolContextKey struct{}
-type relayRouterXOptionsContextKey struct{}
 type relayRouterXHopContextKey struct{}
 type relayRouterXChainContextKey struct{}
 type relayRequestSnapshotContextKey struct{}
 type relayAdapterDegradationsContextKey struct{}
 type relayAnthropicNativeBodyContextKey struct{}
+type relayGeminiNativeBodyContextKey struct{}
 type relayGeminiNativeEmbeddingContextKey struct{}
 type relayPolicySnapshotContextKey struct{}
 type relayRouteSnapshotContextKey struct{}
@@ -137,15 +137,6 @@ func ContextWithRelayRequestID(ctx context.Context, requestID string) context.Co
 	return context.WithValue(ctx, relayRequestIDContextKey{}, strings.TrimSpace(requestID))
 }
 
-// ContextWithRelayRouterXOptions stores the optional X-RouterX-Options header.
-// Request body or multipart form routerx fields still take precedence.
-func ContextWithRelayRouterXOptions(ctx context.Context, options string) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, relayRouterXOptionsContextKey{}, strings.TrimSpace(options))
-}
-
 // ContextWithRelayRouterXHop stores the inbound hop count from X-RouterX-Hop.
 // The value is validated only when the selected upstream is RouterX-compatible.
 func ContextWithRelayRouterXHop(ctx context.Context, hop string) context.Context {
@@ -200,6 +191,16 @@ func contextWithRelayAnthropicNativeBody(ctx context.Context, body []byte) conte
 		return ctx
 	}
 	return context.WithValue(ctx, relayAnthropicNativeBodyContextKey{}, append([]byte(nil), body...))
+}
+
+func contextWithRelayGeminiNativeBody(ctx context.Context, body []byte) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, relayGeminiNativeBodyContextKey{}, append([]byte(nil), body...))
 }
 
 func contextWithRelayGeminiNativeEmbedding(ctx context.Context, kind string) context.Context {
@@ -264,18 +265,6 @@ func relayRequestIDFromContext(ctx context.Context) string {
 	return strings.TrimSpace(value)
 }
 
-func relayRouterXOptionsFromContext(ctx context.Context) json.RawMessage {
-	if ctx == nil {
-		return nil
-	}
-	value, _ := ctx.Value(relayRouterXOptionsContextKey{}).(string)
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	return json.RawMessage(value)
-}
-
 func relayRouterXHopFromContext(ctx context.Context) (int, error) {
 	if ctx == nil {
 		return 0, nil
@@ -324,6 +313,17 @@ func relayAnthropicNativeBodyFromContext(ctx context.Context) []byte {
 		return nil
 	}
 	value, _ := ctx.Value(relayAnthropicNativeBodyContextKey{}).([]byte)
+	if len(value) == 0 {
+		return nil
+	}
+	return append([]byte(nil), value...)
+}
+
+func relayGeminiNativeBodyFromContext(ctx context.Context) []byte {
+	if ctx == nil {
+		return nil
+	}
+	value, _ := ctx.Value(relayGeminiNativeBodyContextKey{}).([]byte)
 	if len(value) == 0 {
 		return nil
 	}
@@ -404,8 +404,6 @@ var (
 	errUnsafeMultipartFile    = errors.New("multipart file is not allowed")
 	errModelRequired          = errors.New("model is required")
 	errUnsupportedMultipart   = errors.New("multipart relay is not supported for selected upstream channel")
-	errInvalidRouterXOptions  = errors.New("invalid routerx options")
-	errInvalidRouterXRoute    = errors.New("invalid routerx route")
 	errInvalidChatMessages    = errors.New("chat messages must be a non-empty array")
 	errInvalidGeminiEmbedding = errors.New("invalid gemini embedding request")
 	errInvalidEmbeddingInput  = errors.New("embeddings input must be a non-empty string, string array, token array, or token array batch")
@@ -539,6 +537,7 @@ func (s *RelayService) RelayGeminiGenerateContent(ctx context.Context, token *mo
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
 	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolGemini)
+	ctx = contextWithRelayGeminiNativeBody(ctx, body)
 	ctx = contextWithRelayAdapterDegradations(ctx, geminiGenerateAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -557,6 +556,7 @@ func (s *RelayService) RelayGeminiEmbedContent(ctx context.Context, token *model
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
 	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolGemini)
+	ctx = contextWithRelayGeminiNativeBody(ctx, body)
 	ctx = contextWithRelayGeminiNativeEmbedding(ctx, relayGeminiNativeEmbedContentKind)
 	ctx = contextWithRelayAdapterDegradations(ctx, geminiEmbedContentAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
@@ -576,6 +576,7 @@ func (s *RelayService) RelayGeminiBatchEmbedContents(ctx context.Context, token 
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
 	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolGemini)
+	ctx = contextWithRelayGeminiNativeBody(ctx, body)
 	ctx = contextWithRelayGeminiNativeEmbedding(ctx, relayGeminiNativeBatchEmbedContentsKind)
 	ctx = contextWithRelayAdapterDegradations(ctx, geminiBatchEmbedContentsAdapterDegradations(body))
 	resp, usage, err := s.Relay(ctx, token, relay.APIEmbeddings, canonical, clientIP)
@@ -595,6 +596,7 @@ func (s *RelayService) RelayGeminiGenerateContentStream(ctx context.Context, tok
 		return nil, relayInvalidRequestHTTPError(err)
 	}
 	ctx = contextWithRelayIngressProtocol(ctx, inputProtocolGemini)
+	ctx = contextWithRelayGeminiNativeBody(ctx, body)
 	ctx = contextWithRelayAdapterDegradations(ctx, geminiGenerateAdapterDegradations(body))
 	result, err := s.RelayStream(ctx, token, relay.APIChatCompletions, canonical, clientIP)
 	if err != nil {
@@ -760,7 +762,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	if token == nil {
 		return nil, nil, &HTTPError{Status: 401, Message: "invalid api key", Type: "authentication_error", Code: "invalid_api_key"}
 	}
-	reqInfo, err := parseRelayRequestWithContentType(apiType, body, contentType, relayRouterXOptionsFromContext(ctx), s.MaxMultipartFileBytes())
+	reqInfo, err := parseRelayRequestWithContentType(apiType, body, contentType, s.MaxMultipartFileBytes())
 	if err != nil {
 		return nil, nil, relayInvalidRequestHTTPError(err)
 	}
@@ -770,9 +772,6 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	ctx = s.contextWithRelayLogRequestBody(ctx, body)
 	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshot(ctx, token, clientIP, apiType, reqInfo))
 	if err := s.enforceTokenScope(ctx, token, apiType, reqInfo.Model, clientIP); err != nil {
-		return nil, nil, err
-	}
-	if err := s.enforceTokenRouteChannelGroupScope(ctx, token, reqInfo.Route, reqInfo.Model, clientIP); err != nil {
 		return nil, nil, err
 	}
 	if !s.tokenService.HasAvailableQuota(token) {
@@ -785,7 +784,7 @@ func (s *RelayService) relayNonStream(ctx context.Context, token *model.Token, a
 	ctx = ContextWithRelayPolicySnapshot(ctx, buildRelayPolicySnapshot(ctx, token, reqInfo))
 
 	filteredReasons := map[string]int{}
-	candidates, selectionFacts, err := s.channelService.SelectChannelCandidatesWithRouteDetailedFacts(reqInfo.Model, reqInfo.Route)
+	candidates, selectionFacts, err := s.channelService.SelectChannelCandidatesWithRouteDetailedFacts(reqInfo.Model, RoutePreference{})
 	mergeRouteFilterReasons(filteredReasons, selectionFacts.FilteredReasons)
 	if err != nil {
 		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, nil, nil, nil, filteredReasons))
@@ -876,7 +875,7 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 			return nil, nil, false, relayInvalidRequestHTTPError(err)
 		}
 	} else {
-		outInputBody, err := relayUpstreamInputBody(ctx, apiType, body, reqInfo, channel.Type, upstreamModel)
+		outInputBody, err := relayUpstreamInputBody(ctx, apiType, body, channel.Type, upstreamModel)
 		if err != nil {
 			return nil, nil, false, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 		}
@@ -899,7 +898,6 @@ func (s *RelayService) relayNonStreamAttempt(ctx context.Context, token *model.T
 	endpoint := adapter.GetAPIEndpoint(upstreamAPIType, upstreamModel)
 	timeout := s.relayTimeout()
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
-	reqCtx = relay.ContextWithUpstreamOptions(reqCtx, reqInfo.Upstream.Transport)
 	if forwardRouterXHop {
 		reqCtx = relay.ContextWithRouterXHop(reqCtx, routerXHop)
 	}
@@ -1005,7 +1003,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	if token == nil {
 		return nil, &HTTPError{Status: 401, Message: "invalid api key", Type: "authentication_error", Code: "invalid_api_key"}
 	}
-	reqInfo, err := parseRelayRequest(apiType, body, relayRouterXOptionsFromContext(ctx))
+	reqInfo, err := parseRelayRequest(apiType, body)
 	if err != nil {
 		return nil, &HTTPError{Status: 400, Message: err.Error(), Type: "invalid_request_error", Code: relayRequestErrorCode(err)}
 	}
@@ -1015,9 +1013,6 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	ctx = s.contextWithRelayLogRequestBody(ctx, body)
 	ctx = ContextWithRelayRequestSnapshot(ctx, buildRelayRequestSnapshot(ctx, token, clientIP, apiType, reqInfo))
 	if err := s.enforceTokenScope(ctx, token, apiType, reqInfo.Model, clientIP); err != nil {
-		return nil, err
-	}
-	if err := s.enforceTokenRouteChannelGroupScope(ctx, token, reqInfo.Route, reqInfo.Model, clientIP); err != nil {
 		return nil, err
 	}
 	if !s.tokenService.HasAvailableQuota(token) {
@@ -1030,7 +1025,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	ctx = ContextWithRelayPolicySnapshot(ctx, buildRelayPolicySnapshot(ctx, token, reqInfo))
 
 	filteredReasons := map[string]int{}
-	candidates, selectionFacts, err := s.channelService.SelectChannelCandidatesWithRouteDetailedFacts(reqInfo.Model, reqInfo.Route)
+	candidates, selectionFacts, err := s.channelService.SelectChannelCandidatesWithRouteDetailedFacts(reqInfo.Model, RoutePreference{})
 	mergeRouteFilterReasons(filteredReasons, selectionFacts.FilteredReasons)
 	if err != nil {
 		logCtx := ContextWithRelayRouteSnapshot(ctx, s.buildRelayRouteSnapshot(reqInfo, nil, nil, nil, filteredReasons))
@@ -1085,7 +1080,7 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	}
 	ctx = ContextWithRelayRouteSnapshot(ctx, addRelayRouteUpstreamTargetSnapshot(relayRouteSnapshotFromContext(ctx), target))
 	upstreamModel := s.channelService.ApplyModelRewrite(channel, reqInfo.Model)
-	outInputBody, err := relayUpstreamInputBody(ctx, apiType, body, reqInfo, channel.Type, upstreamModel)
+	outInputBody, err := relayUpstreamInputBody(ctx, apiType, body, channel.Type, upstreamModel)
 	if err != nil {
 		return nil, &HTTPError{Status: 400, Message: "invalid request body", Type: "invalid_request_error", Code: "invalid_json"}
 	}
@@ -1107,7 +1102,6 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 	upstreamAPIType := relayStreamUpstreamAPIType(ctx, apiType, channel.Type)
 	endpoint := adapter.GetAPIEndpoint(upstreamAPIType, upstreamModel)
 	reqCtx, cancel := context.WithTimeout(ctx, s.relayTimeout())
-	reqCtx = relay.ContextWithUpstreamOptions(reqCtx, reqInfo.Upstream.Transport)
 	if forwardRouterXHop {
 		reqCtx = relay.ContextWithRouterXHop(reqCtx, routerXHop)
 	}
@@ -1182,14 +1176,14 @@ func (s *RelayService) RelayStream(ctx context.Context, token *model.Token, apiT
 				return usage, httpErr
 			}
 			billing := s.calculateRelayBilling(token, channel, reqInfo.Model, usage)
-			deduction, err := s.tokenService.DeductQuotaWithSnapshot(token.ID, billing.QuotaUsed)
+			deduction, err := s.tokenService.DeductDeliveredQuotaWithSnapshot(token.ID, billing.QuotaUsed)
 			if err != nil {
 				logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingFailureSnapshot(usage, billing, deduction, err))
-				_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, "insufficient quota", clientIP)
+				_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusFailed, 0, "stream post-delivery billing failed", clientIP)
 				return usage, err
 			}
 			_ = s.markChannelSuccess(channel, latencyMs)
-			logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayBillingSnapshot(usage, billing, deduction))
+			logCtx := ContextWithRelayBillingSnapshot(ctx, buildRelayDeliveredBillingSnapshot(usage, billing, deduction))
 			_ = s.recordLog(logCtx, token, channel, reqInfo.Model, usage, common.LogStatusSuccess, billing.QuotaUsed, "", clientIP)
 			return usage, nil
 		},
@@ -1315,26 +1309,18 @@ func anthropicModelInfo(modelName string) map[string]interface{} {
 }
 
 type relayRequestInfo struct {
-	Model    string
-	Stream   bool
-	Route    RoutePreference
-	Upstream relayUpstreamOptions
+	Model  string
+	Stream bool
 }
 
-type relayUpstreamOptions struct {
-	Transport    relay.UpstreamOptions
-	Body         map[string]json.RawMessage
-	ProviderBody map[string]map[string]json.RawMessage
-}
-
-func parseRelayRequestWithContentType(apiType relay.APIType, body []byte, contentType string, headerRouterX json.RawMessage, maxMultipartFileBytes int64) (relayRequestInfo, error) {
+func parseRelayRequestWithContentType(apiType relay.APIType, body []byte, contentType string, maxMultipartFileBytes int64) (relayRequestInfo, error) {
 	if isMultipartRelayContentType(contentType) {
-		return parseMultipartRelayRequest(apiType, body, contentType, headerRouterX, maxMultipartFileBytes)
+		return parseMultipartRelayRequest(apiType, body, contentType, maxMultipartFileBytes)
 	}
-	return parseRelayRequest(apiType, body, headerRouterX)
+	return parseRelayRequest(apiType, body)
 }
 
-func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.RawMessage) (relayRequestInfo, error) {
+func parseRelayRequest(apiType relay.APIType, body []byte) (relayRequestInfo, error) {
 	if apiType == relay.APIModels {
 		return relayRequestInfo{}, nil
 	}
@@ -1348,18 +1334,9 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 		Size     json.RawMessage `json:"size"`
 		Voice    json.RawMessage `json:"voice"`
 		Format   json.RawMessage `json:"response_format"`
-		RouterX  json.RawMessage `json:"routerx"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return relayRequestInfo{}, errInvalidJSONBody
-	}
-	routerXRaw := payload.RouterX
-	if len(routerXRaw) == 0 || isJSONNull(routerXRaw) {
-		routerXRaw = headerRouterX
-	}
-	route, upstream, err := parseRouterXOptions(routerXRaw)
-	if err != nil {
-		return relayRequestInfo{}, err
 	}
 	payload.Model = strings.TrimSpace(payload.Model)
 	if payload.Model == "" {
@@ -1402,7 +1379,7 @@ func parseRelayRequest(apiType relay.APIType, body []byte, headerRouterX json.Ra
 			return relayRequestInfo{}, err
 		}
 	}
-	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream, Route: route, Upstream: upstream}, nil
+	return relayRequestInfo{Model: payload.Model, Stream: payload.Stream}, nil
 }
 
 // OpenAI-compatible Chat 的 messages 是对话主体；消息内部结构由适配器继续处理。
@@ -1680,14 +1657,13 @@ func validEmbeddingTokenID(raw json.RawMessage) bool {
 	return err == nil && tokenID >= 0
 }
 
-func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType string, headerRouterX json.RawMessage, maxFileBytes int64) (relayRequestInfo, error) {
+func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType string, maxFileBytes int64) (relayRequestInfo, error) {
 	boundary, err := multipartBoundary(contentType)
 	if err != nil {
 		return relayRequestInfo{}, err
 	}
 	reader := multipart.NewReader(bytes.NewReader(body), boundary)
 	info := relayRequestInfo{}
-	hasRouterXFormField := false
 	requiredFileField := requiredMultipartFileField(apiType)
 	hasRequiredFileField := false
 	for {
@@ -1735,23 +1711,7 @@ func parseMultipartRelayRequest(apiType relay.APIType, body []byte, contentType 
 					return relayRequestInfo{}, err
 				}
 			}
-		case "routerx":
-			hasRouterXFormField = true
-			route, upstream, err := parseRouterXOptions(bytes.TrimSpace(raw))
-			if err != nil {
-				return relayRequestInfo{}, err
-			}
-			info.Route = route
-			info.Upstream = upstream
 		}
-	}
-	if !hasRouterXFormField {
-		route, upstream, err := parseRouterXOptions(headerRouterX)
-		if err != nil {
-			return relayRequestInfo{}, err
-		}
-		info.Route = route
-		info.Upstream = upstream
 	}
 	if info.Model == "" {
 		return relayRequestInfo{}, errModelRequired
@@ -1812,10 +1772,6 @@ func relayRequestErrorCode(err error) string {
 		return "unsafe_multipart_file"
 	case errors.Is(err, errModelRequired):
 		return "model_required"
-	case errors.Is(err, errInvalidRouterXOptions):
-		return "invalid_routerx_options"
-	case errors.Is(err, errInvalidRouterXRoute):
-		return "invalid_routerx_route"
 	case errors.Is(err, errInvalidChatMessages):
 		return "invalid_chat_messages"
 	case errors.Is(err, errInvalidGeminiEmbedding):
@@ -1847,252 +1803,6 @@ func invalidGeminiEmbeddingRequest(reason string) error {
 	return fmt.Errorf("%w: %s", errInvalidGeminiEmbedding, reason)
 }
 
-func parseRouterXRoute(raw json.RawMessage) (RoutePreference, error) {
-	route, _, err := parseRouterXOptions(raw)
-	return route, err
-}
-
-func parseRouterXOptions(raw json.RawMessage) (RoutePreference, relayUpstreamOptions, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return RoutePreference{}, relayUpstreamOptions{}, nil
-	}
-	var options map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &options); err != nil {
-		return RoutePreference{}, relayUpstreamOptions{}, errInvalidRouterXOptions
-	}
-	route, err := parseRouterXRouteObject(options["route"])
-	if err != nil {
-		return RoutePreference{}, relayUpstreamOptions{}, err
-	}
-	upstream, err := parseRouterXUpstreamOptions(options["upstream"])
-	if err != nil {
-		return RoutePreference{}, relayUpstreamOptions{}, err
-	}
-	providerBody, err := parseRouterXProviderOptions(options["provider"])
-	if err != nil {
-		return RoutePreference{}, relayUpstreamOptions{}, err
-	}
-	upstream.ProviderBody = providerBody
-	return route, upstream, nil
-}
-
-func parseRouterXRouteObject(routeRaw json.RawMessage) (RoutePreference, error) {
-	if len(routeRaw) == 0 || isJSONNull(routeRaw) {
-		return RoutePreference{}, nil
-	}
-	var route map[string]json.RawMessage
-	if err := json.Unmarshal(routeRaw, &route); err != nil {
-		return RoutePreference{}, errInvalidRouterXRoute
-	}
-	preference := RoutePreference{}
-	for key, value := range route {
-		switch key {
-		case "channel_group", "group":
-			v, err := routeStringValue(value)
-			if err != nil {
-				return RoutePreference{}, errInvalidRouterXRoute
-			}
-			preference.ChannelGroup = v
-		case "channel_id":
-			v, err := routeUintValue(value)
-			if err != nil {
-				return RoutePreference{}, errInvalidRouterXRoute
-			}
-			preference.ChannelID = v
-		case "channel", "channel_name":
-			v, err := routeStringValue(value)
-			if err != nil {
-				return RoutePreference{}, errInvalidRouterXRoute
-			}
-			preference.ChannelName = v
-		case "provider", "upstream_provider":
-			v, err := routeStringValue(value)
-			if err != nil {
-				return RoutePreference{}, errInvalidRouterXRoute
-			}
-			preference.Provider = v
-		case "disabled_providers", "exclude_providers":
-			v, err := routeStringSliceValue(value)
-			if err != nil {
-				return RoutePreference{}, errInvalidRouterXRoute
-			}
-			preference.DisabledProvider = v
-		}
-	}
-	return preference, nil
-}
-
-func parseRouterXUpstreamOptions(raw json.RawMessage) (relayUpstreamOptions, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return relayUpstreamOptions{}, nil
-	}
-	var upstream struct {
-		Headers map[string]string          `json:"headers"`
-		Query   map[string]string          `json:"query"`
-		Body    map[string]json.RawMessage `json:"body"`
-	}
-	if err := json.Unmarshal(raw, &upstream); err != nil {
-		return relayUpstreamOptions{}, errInvalidRouterXOptions
-	}
-	return relayUpstreamOptions{
-		Transport: relay.UpstreamOptions{
-			Headers: sanitizeRouterXUpstreamHeaders(upstream.Headers),
-			Query:   sanitizeRouterXUpstreamQuery(upstream.Query),
-		},
-		Body: sanitizeRouterXUpstreamBody(upstream.Body),
-	}, nil
-}
-
-func parseRouterXProviderOptions(raw json.RawMessage) (map[string]map[string]json.RawMessage, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return nil, nil
-	}
-	var providers map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &providers); err != nil {
-		return nil, errInvalidRouterXOptions
-	}
-	clean := make(map[string]map[string]json.RawMessage, len(providers))
-	for provider, rawBody := range providers {
-		provider = strings.ToLower(strings.TrimSpace(provider))
-		if provider == "" || isJSONNull(rawBody) {
-			continue
-		}
-		var body map[string]json.RawMessage
-		if err := json.Unmarshal(rawBody, &body); err != nil {
-			return nil, errInvalidRouterXOptions
-		}
-		body = sanitizeRouterXUpstreamBody(body)
-		if len(body) > 0 {
-			clean[provider] = body
-		}
-	}
-	if len(clean) == 0 {
-		return nil, nil
-	}
-	return clean, nil
-}
-
-func sanitizeRouterXUpstreamHeaders(headers map[string]string) map[string]string {
-	if len(headers) == 0 {
-		return nil
-	}
-	clean := make(map[string]string, len(headers))
-	for key, value := range headers {
-		key = textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(key))
-		value = strings.TrimSpace(value)
-		if key == "" || value == "" || disallowedRouterXUpstreamHeader(key) {
-			continue
-		}
-		clean[key] = value
-	}
-	if len(clean) == 0 {
-		return nil
-	}
-	return clean
-}
-
-func disallowedRouterXUpstreamHeader(key string) bool {
-	lower := strings.ToLower(strings.TrimSpace(key))
-	if lower == "" || strings.HasPrefix(lower, "x-routerx-") || lower == strings.ToLower(common.RequestIDHeaderName()) {
-		return true
-	}
-	switch lower {
-	case "authorization", "proxy-authorization", "cookie", "set-cookie",
-		"x-api-key", "api-key", "x-goog-api-key", "anthropic-api-key",
-		"host", "content-length", "content-type":
-		return true
-	default:
-		return false
-	}
-}
-
-func sanitizeRouterXUpstreamQuery(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	clean := make(map[string]string, len(values))
-	for key, value := range values {
-		key = strings.TrimSpace(key)
-		if key == "" || disallowedRouterXUpstreamQuery(key) {
-			continue
-		}
-		clean[key] = value
-	}
-	if len(clean) == 0 {
-		return nil
-	}
-	return clean
-}
-
-func disallowedRouterXUpstreamQuery(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "key", "api_key", "apikey", "access_token":
-		return true
-	default:
-		return false
-	}
-}
-
-func sanitizeRouterXUpstreamBody(values map[string]json.RawMessage) map[string]json.RawMessage {
-	if len(values) == 0 {
-		return nil
-	}
-	clean := make(map[string]json.RawMessage, len(values))
-	for key, value := range values {
-		key = strings.TrimSpace(key)
-		if key == "" || disallowedRouterXUpstreamBodyField(key) {
-			continue
-		}
-		clean[key] = append(json.RawMessage(nil), value...)
-	}
-	if len(clean) == 0 {
-		return nil
-	}
-	return clean
-}
-
-func disallowedRouterXUpstreamBodyField(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "model", "routerx", "stream":
-		return true
-	default:
-		return false
-	}
-}
-
-func routeStringValue(raw json.RawMessage) (string, error) {
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(value), nil
-}
-
-func routeStringSliceValue(raw json.RawMessage) ([]string, error) {
-	var values []string
-	if err := json.Unmarshal(raw, &values); err != nil {
-		return nil, err
-	}
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			result = append(result, value)
-		}
-	}
-	return result, nil
-}
-
-func routeUintValue(raw json.RawMessage) (uint, error) {
-	var value string
-	if err := json.Unmarshal(raw, &value); err == nil {
-		parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
-		return uint(parsed), err
-	}
-	parsed, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
-	return uint(parsed), err
-}
-
 func isJSONNull(raw json.RawMessage) bool {
 	return strings.EqualFold(strings.TrimSpace(string(raw)), "null")
 }
@@ -2113,26 +1823,15 @@ func replaceRequestModel(body []byte, modelName string) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
-func mergeRelayUpstreamBody(body []byte, extra map[string]json.RawMessage) ([]byte, error) {
-	if len(extra) == 0 {
-		return body, nil
-	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
-	}
-	for key, value := range extra {
-		if _, exists := payload[key]; exists {
-			continue
-		}
-		payload[key] = append(json.RawMessage(nil), value...)
-	}
-	return json.Marshal(payload)
-}
-
-func relayUpstreamInputBody(ctx context.Context, apiType relay.APIType, body []byte, reqInfo relayRequestInfo, channelType int, upstreamModel string) ([]byte, error) {
+func relayUpstreamInputBody(ctx context.Context, apiType relay.APIType, body []byte, channelType int, upstreamModel string) ([]byte, error) {
 	out := body
 	var err error
+	if supportsGeminiNativeRequest(ctx, apiType, channelType) {
+		out, err = geminiNativeUpstreamBody(ctx, apiType)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if supportsAnthropicNativeRequest(ctx, apiType, channelType) {
 		// Anthropic native fields are applied only after route selection so OpenAI-compatible upstreams keep the canonical Chat body.
 		out, err = anthropicNativeMessagesUpstreamBody(relayAnthropicNativeBodyFromContext(ctx))
@@ -2140,11 +1839,29 @@ func relayUpstreamInputBody(ctx context.Context, apiType relay.APIType, body []b
 			return nil, err
 		}
 	}
-	out, err = mergeRelayUpstreamBody(out, relayUpstreamBodyForChannel(reqInfo.Upstream, channelType))
-	if err != nil {
+	return replaceRequestModel(out, upstreamModel)
+}
+
+func geminiNativeUpstreamBody(ctx context.Context, apiType relay.APIType) ([]byte, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(relayGeminiNativeBodyFromContext(ctx), &payload); err != nil {
 		return nil, err
 	}
-	return replaceRequestModel(out, upstreamModel)
+	var native map[string]json.RawMessage
+	switch {
+	case apiType == relay.APIChatCompletions:
+		native = geminiNativeProviderBody(payload)
+	case apiType == relay.APIEmbeddings && strings.EqualFold(relayGeminiNativeEmbeddingFromContext(ctx), relayGeminiNativeEmbedContentKind):
+		native = geminiEmbedContentNativeProviderBody(payload)
+	case apiType == relay.APIEmbeddings && strings.EqualFold(relayGeminiNativeEmbeddingFromContext(ctx), relayGeminiNativeBatchEmbedContentsKind):
+		native = geminiBatchEmbedContentsNativeProviderBody(payload)
+	default:
+		native = nil
+	}
+	if len(native) == 0 {
+		return nil, errInvalidJSONBody
+	}
+	return json.Marshal(native)
 }
 
 func anthropicNativeMessagesUpstreamBody(body []byte) ([]byte, error) {
@@ -2184,33 +1901,6 @@ func anthropicNativeMessagesUpstreamBody(body []byte) ([]byte, error) {
 		output["max_tokens"] = json.RawMessage(`1024`)
 	}
 	return json.Marshal(output)
-}
-
-func relayUpstreamBodyForChannel(options relayUpstreamOptions, channelType int) map[string]json.RawMessage {
-	merged := cloneRawMessageMap(options.Body)
-	for provider, body := range options.ProviderBody {
-		if !channelMatchesProvider(channelType, provider) {
-			continue
-		}
-		if merged == nil {
-			merged = map[string]json.RawMessage{}
-		}
-		for key, value := range body {
-			merged[key] = append(json.RawMessage(nil), value...)
-		}
-	}
-	return merged
-}
-
-func cloneRawMessageMap(values map[string]json.RawMessage) map[string]json.RawMessage {
-	if len(values) == 0 {
-		return nil
-	}
-	cloned := make(map[string]json.RawMessage, len(values))
-	for key, value := range values {
-		cloned[key] = append(json.RawMessage(nil), value...)
-	}
-	return cloned
 }
 
 func (s *RelayService) nextRouterXHop(ctx context.Context, channel *model.Channel) (int, bool, error) {
@@ -2645,10 +2335,6 @@ func anthropicMessagesToOpenAI(body []byte) ([]byte, error) {
 }
 
 func geminiGenerateToOpenAI(modelName string, body []byte, stream bool) ([]byte, error) {
-	var rawPayload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawPayload); err != nil {
-		return nil, errInvalidJSONBody
-	}
 	var input struct {
 		Contents []struct {
 			Role  string            `json:"role"`
@@ -2710,14 +2396,6 @@ func geminiGenerateToOpenAI(modelName string, body []byte, stream bool) ([]byte,
 			output["stop"] = value
 		}
 	}
-	if native := geminiNativeProviderBody(rawPayload); len(native) > 0 {
-		// 保留 Gemini 原生请求字段，只有最终选中 Gemini 通道时才会合并到上游 body。
-		output["routerx"] = map[string]interface{}{
-			"provider": map[string]interface{}{
-				"gemini": native,
-			},
-		}
-	}
 	return json.Marshal(output)
 }
 
@@ -2755,10 +2433,6 @@ func rawJSONFieldPresent(raw json.RawMessage) bool {
 }
 
 func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {
-	var rawPayload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawPayload); err != nil {
-		return nil, errInvalidJSONBody
-	}
 	var input struct {
 		Content struct {
 			Parts []json.RawMessage `json:"parts"`
@@ -2785,14 +2459,6 @@ func geminiEmbedContentToOpenAI(modelName string, body []byte) ([]byte, error) {
 			return nil, invalidGeminiEmbeddingRequest("outputDimensionality must be positive")
 		}
 		output["dimensions"] = *input.OutputDimensionality
-	}
-	if native := geminiEmbedContentNativeProviderBody(rawPayload); len(native) > 0 {
-		// Preserve Gemini embedContent fields only when route selection lands on a Gemini upstream.
-		output["routerx"] = map[string]interface{}{
-			"provider": map[string]interface{}{
-				"gemini": native,
-			},
-		}
 	}
 	return json.Marshal(output)
 }
@@ -2823,10 +2489,6 @@ func geminiEmbedContentNativeProviderBody(payload map[string]json.RawMessage) ma
 }
 
 func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, int, error) {
-	var rawPayload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawPayload); err != nil {
-		return nil, 0, errInvalidJSONBody
-	}
 	var input struct {
 		Requests []struct {
 			Content struct {
@@ -2872,14 +2534,6 @@ func geminiBatchEmbedContentsToOpenAI(modelName string, body []byte) ([]byte, in
 	}
 	if hasDimensions {
 		output["dimensions"] = dimensions
-	}
-	if native := geminiBatchEmbedContentsNativeProviderBody(rawPayload); len(native) > 0 {
-		// Preserve Gemini batchEmbedContents requests only when route selection lands on a Gemini upstream.
-		output["routerx"] = map[string]interface{}{
-			"provider": map[string]interface{}{
-				"gemini": native,
-			},
-		}
 	}
 	canonical, err := json.Marshal(output)
 	if err != nil {
@@ -3668,13 +3322,6 @@ func (s *RelayService) enforceTokenScope(ctx context.Context, token *model.Token
 	return s.enforceTokenTPMScope(ctx, token, modelName, clientIP)
 }
 
-func (s *RelayService) enforceTokenRouteChannelGroupScope(ctx context.Context, token *model.Token, route RoutePreference, modelName, clientIP string) error {
-	if strings.TrimSpace(route.ChannelGroup) == "" {
-		return nil
-	}
-	return s.enforceTokenChannelGroupValueScope(ctx, token, route.ChannelGroup, modelName, clientIP)
-}
-
 func (s *RelayService) filterTokenChannelGroupScope(ctx context.Context, token *model.Token, candidates []model.Channel, modelName, clientIP string) ([]model.Channel, int, error) {
 	if s.tokenService == nil || len(candidates) == 0 {
 		return candidates, 0, nil
@@ -4256,11 +3903,6 @@ func buildRelayRequestSnapshotForChannel(ctx context.Context, token *model.Token
 			snapshot["tracestate"] = tracestate
 		}
 	}
-	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
-		snapshot["routerx_summary"] = map[string]interface{}{
-			"route": preference,
-		}
-	}
 	if degradations := relayAdapterDegradationsForSnapshot(ctx, apiType, channel); len(degradations) > 0 {
 		snapshot["adapter_degradations"] = degradations
 	}
@@ -4370,9 +4012,6 @@ func buildRelayPolicySnapshot(ctx context.Context, token *model.Token, reqInfo r
 	}
 	if token != nil {
 		addRelayPolicyActorStatusSnapshot(snapshot, token)
-	}
-	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
-		snapshot["route_preference"] = preference
 	}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
@@ -4512,7 +4151,7 @@ func addRelayPolicyActorStatusSnapshot(snapshot map[string]interface{}, token *m
 		"id":         token.ID,
 		"status":     tokenStatusSnapshot(token.Status),
 		"expired_at": nil,
-		"unlimited":  token.Unlimited || token.RemainQuota == common.QuotaUnlimited,
+		"unlimited":  token.Unlimited || token.QuotaLimit == common.QuotaUnlimited,
 	}
 	if token.ExpiredAt != nil {
 		tokenStatus["expired_at"] = token.ExpiredAt.UTC().Format(time.RFC3339Nano)
@@ -4573,9 +4212,6 @@ func (s *RelayService) buildRelayRouteSnapshot(reqInfo relayRequestInfo, candida
 		"requested_model":  requestedModel,
 		"normalized_model": requestedModel,
 		"candidate_count":  len(candidates),
-	}
-	if preference := routePreferenceSnapshot(reqInfo.Route); len(preference) > 0 {
-		snapshot["route_preference"] = preference
 	}
 	if reasons := compactRouteFilterReasons(filteredReasons); len(reasons) > 0 {
 		snapshot["filtered_reasons"] = reasons
@@ -4756,6 +4392,24 @@ func buildRelayBillingSnapshot(usage *relay.Usage, billing relayBillingResult, d
 	return string(raw)
 }
 
+func buildRelayDeliveredBillingSnapshot(usage *relay.Usage, billing relayBillingResult, deduction QuotaDeductionResult) string {
+	raw := buildRelayBillingSnapshot(usage, billing, deduction)
+	if raw == "" {
+		return raw
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return raw
+	}
+	snapshot["post_delivery_debit"] = true
+	snapshot["overdrawn"] = (!deduction.TokenUnlimited && deduction.TokenQuotaAfter < 0) || deduction.UserQuotaAfter < 0
+	updated, err := json.Marshal(snapshot)
+	if err != nil {
+		return raw
+	}
+	return string(updated)
+}
+
 func buildRelayBillingFailureSnapshot(usage *relay.Usage, billing relayBillingResult, deduction QuotaDeductionResult, err error) string {
 	quotaUsed := billing.QuotaUsed
 	usageSource := logUsageSource(usage, common.LogStatusSuccess, quotaUsed)
@@ -4866,29 +4520,6 @@ func defaultMultiplierSnapshot() map[string]interface{} {
 		"ratio_mode":               "separate_factors",
 		"effective_ratio":          1.0,
 	}
-}
-
-func routePreferenceSnapshot(route RoutePreference) map[string]interface{} {
-	preference := map[string]interface{}{}
-	if route.ChannelGroup != "" {
-		preference["channel_group"] = route.ChannelGroup
-	}
-	if route.ChannelID != 0 {
-		preference["channel_id"] = route.ChannelID
-	}
-	if route.ChannelName != "" {
-		preference["channel_name"] = route.ChannelName
-	}
-	if route.Provider != "" {
-		preference["provider"] = route.Provider
-	}
-	if len(route.DisabledProvider) > 0 {
-		preference["disabled_providers"] = route.DisabledProvider
-	}
-	if len(preference) > 0 {
-		preference["decision"] = "accepted"
-	}
-	return preference
 }
 
 func channelProviderName(channelType int) string {

@@ -60,7 +60,7 @@ func TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce(t *testing.T) {
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
 		"name":         "retry",
-		"remain_quota": 50,
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
@@ -135,8 +135,8 @@ func TestChatCompletionRetriesRetryableUpstreamAndDeductsOnce(t *testing.T) {
 	if err := internal.DB.First(&storedToken, tokenPayload.Data.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedToken.RemainQuota != 45 {
-		t.Fatalf("retry success should deduct once by usage total 5, got %d", storedToken.RemainQuota)
+	if storedToken.QuotaLimit != 45 {
+		t.Fatalf("retry success should deduct once by usage total 5, got %d", storedToken.QuotaLimit)
 	}
 	var root model.User
 	if err := internal.DB.Where("username = ?", "root").First(&root).Error; err != nil {
@@ -219,7 +219,7 @@ func TestChatCompletionDoesNotRetryNonRetryableUpstreamStatus(t *testing.T) {
 	}
 	tokenResp := performJSON(r, http.MethodPost, "/v0/user/token", rootJWT, map[string]interface{}{
 		"name":         "no-retry",
-		"remain_quota": 50,
+		"quota_limit": 50,
 	})
 	var tokenPayload struct {
 		Data struct {
